@@ -320,5 +320,62 @@ _fill gitlab.example.com | grep -q 'terminal prompts disabled' \
     && ok "and an unauthenticated host fails in one legible line" \
     || bad "and an unauthenticated host fails in one legible line"
 
+# --- the model proxy ----------------------------------------------------------------------------
+#
+# With --model-proxy a container is handed NO model credential at all: a read-only mount of the
+# directory the host's proxy opens its socket in, and settings that are not secret.
+echo "model proxy: what a proxied container is handed"
+stage_proxy() {   # stage_proxy <name> [extra ffbox args...] -> RC, LOG, ARGV
+    _n=$1; shift
+    ARGV="$TMP/$_n.argv"; LOG="$TMP/$_n.log"
+    : > "$ARGV"
+    mkdir -p "$TMP/pool" "$TMP/model-$_n"
+    set +e
+    PATH="$TMP/bin:$PATH" \
+    FFBOX_TEST_ARGV="$ARGV" \
+    FFBOX_SECRETS="$TMP/secrets.env" \
+    FFBOX_CONFIG_JSON="$TMP/config.json" \
+    FFBOX_CACHE_DIR="$TMP/cache" \
+        timeout 120 bash "$HERE/ffbox" --stage-pool "$_n" --pool-dir "$TMP/pool" \
+            --agent-class ffagent --network bridge --ref master \
+            --model-proxy "$TMP/model-$_n" "$@" > "$LOG" 2>&1
+    RC=$?
+    set -e
+    unset _n
+}
+argv_has() { tr '\0' '\n' < "$ARGV" | grep -qxF -- "$1"; }
+argv_names() { tr '\0' '\n' < "$ARGV" | grep -cE "^$1(=.*)?\$" || true; }
+
+stage_proxy mp1
+[ "$RC" -eq 0 ] && ok "a spare stages behind the proxy with no credential named" \
+    || bad "a spare stages behind the proxy with no credential named (rc=$RC): $(tail -3 "$LOG")"
+argv_has "$TMP/model-mp1:/ffbox/model:ro" && ok "its socket directory is mounted read-only" \
+    || bad "its socket directory is mounted read-only"
+argv_has "FFBOX_MODEL_SOCKET=/ffbox/model/model.sock" && ok "and it is told where the socket will be" \
+    || bad "and it is told where the socket will be"
+for _name in CLAUDE_CODE_OAUTH_TOKEN ANTHROPIC_API_KEY ANTHROPIC_AUTH_TOKEN; do
+    [ "$(argv_names "$_name")" = 0 ] && ok "and $_name is not forwarded" \
+        || bad "and $_name is not forwarded (saw $(argv_names "$_name"))"
+done
+[ "$(argv_names FFBOX_MODEL_KIND)" = 0 ] && ok "a spare nobody has chosen an account for carries no kind" \
+    || bad "a spare nobody has chosen an account for carries no kind"
+
+stage_proxy mp2 --claude-key CLAUDE_CODE_OAUTH_TOKEN
+[ "$RC" -eq 0 ] && ok "a container whose account is chosen stages behind the proxy too" \
+    || bad "a container whose account is chosen stages behind the proxy too (rc=$RC): $(tail -3 "$LOG")"
+argv_has "FFBOX_MODEL_KIND=subscription" && ok "and is told the kind, which is not secret" \
+    || bad "and is told the kind, which is not secret"
+[ "$(argv_names CLAUDE_CODE_OAUTH_TOKEN)" = 0 ] && ok "but still not the token" \
+    || bad "but still not the token"
+if grep -q '^ANTHROPIC_BASE_URL=' "$ARGV.env" 2>/dev/null; then
+    bad "and docker's environment carries no provider URL for it to forward"
+else
+    ok "and docker's environment carries no provider URL for it to forward"
+fi
+
+stage_proxy mp3 --model-proxy "$TMP/no-such-directory"
+[ "$RC" -eq 2 ] && ok "a socket directory that does not exist is refused before anything is created" \
+    || bad "a socket directory that does not exist is refused (rc=$RC)"
+
 printf '\n%d passed, %d failed\n' "$PASS" "$FAIL"
 [ "$FAIL" -eq 0 ]

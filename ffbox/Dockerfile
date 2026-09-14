@@ -186,8 +186,8 @@ ARG CLAUDE_VERSION=latest
 COPY install-claude.sh /ffbox/install-claude.sh
 RUN bash /ffbox/install-claude.sh "${CLAUDE_VERSION}"
 
-COPY entrypoint.sh entrypoint-ci.sh run-as-user.sh unity-license.sh restore-workspace.sh harvest-workspace.sh /ffbox/
-RUN chmod +x /ffbox/entrypoint.sh /ffbox/entrypoint-ci.sh /ffbox/run-as-user.sh /ffbox/restore-workspace.sh /ffbox/harvest-workspace.sh
+COPY entrypoint.sh entrypoint-ci.sh run-as-user.sh unity-license.sh restore-workspace.sh harvest-workspace.sh model-forward.py /ffbox/
+RUN chmod +x /ffbox/entrypoint.sh /ffbox/entrypoint-ci.sh /ffbox/run-as-user.sh /ffbox/restore-workspace.sh /ffbox/harvest-workspace.sh /ffbox/model-forward.py
 
 # BOTH PATHS, and the second one is not redundant. main.yml is already pushed with
 # `. /opt/ffghr/unity-license.sh`, and changing a workflow file needs a token scope this box
