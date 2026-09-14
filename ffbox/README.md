@@ -14,8 +14,10 @@ front door decides only what goes in and where the answer is read.
 | **Discord** | a thread, a mention, or an operator's DM becomes a turn; the harness composes and posts the reply. A DM from anybody else is answered by the harness itself, with one line pointing at the public channels |
 | **the web page** | `ffweb` — every conversation, run, transcript and queued reply, whatever it came from; its prompt box starts one too, kind `web`, and a local conversation's reply box continues it |
 
-`ffbox --direct` is the exception: it clones and runs right here, skipping the database, the
-ceilings and the page. It exists for bootstrapping a machine and for debugging the container.
+There is no exception any more. `ffbox --direct` used to clone and run right here, skipping the
+database, the ceilings and the page, and so it also skipped the model proxy. Since 2026-09-14 it
+goes through ffwatch like every other prompt. With no daemon running, `ffbox` drives the turn
+itself from the same process.
 
 A machine that has ffbox has all of it — harness, Discord pipeline and page — installed and
 started together as `ffbox.target`. There is deliberately no supported way to run the lanes

@@ -23,8 +23,9 @@ this note got it wrong.** There must be exactly one path by which Claude is invo
 the shell and the web page are ways IN; they are not separate implementations. `ffbox "prompt"`
 therefore submits a turn to ffwatch and waits, rather than cloning and running a container on
 its own, and everything downstream — scheduler, ceilings, kill switch, container launch,
-verification, transcript index, the web page — is shared. `ffbox --direct` is the deliberate
-exception, for bootstrapping and container debugging only.
+verification, transcript index, the web page — is shared. `ffbox --direct` was the one exception
+until 2026-09-14; it now routes through ffwatch too, because the path that skipped the pipeline also
+skipped the model proxy and could no longer reach a model once the fence dropped the providers.
 
 - **Discord** — a thread or a mention becomes a turn; the reply is composed on the host.
 - **The shell** — `ffbox "<prompt>"`; the answer prints and the run appears on the page.
