@@ -164,14 +164,22 @@ done
 # a pool that is already satisfied, and the lane stops minting runners while it sits under its
 # ceiling with no idle registration for GitHub to hand a queued job to. lib-workloads.sh:321 and
 # 05-services.sh:136 both flatten the same way; this is the site that forgot.
-LIVE=$(docker ps --filter label=ffghr.slot --format '{{.Names}}' 2>/dev/null | tr '\n' ' ' || true)
+#
+# `-a`, BECAUSE A CONTAINER THAT HAS EXITED STILL HAS A TEARDOWN COMING. ffwatch tears a runner down
+# after its container exits: it posts the check run, promotes the archive out of the staging
+# directory, and removes the container last. A sweep that landed in those seconds found no RUNNING
+# container of that name and deleted the staging directory under the promotion. That is how
+# ffghr-loth2400-3-d43f34e0 lost an 8.9G master archive on 2026-09-13, in the same second its check
+# run posted. A container whose owner is gone was removed by the container sweep above before this
+# line runs, so its markers and staging still go.
+LIVE=$(docker ps -a --filter label=ffghr.slot --format '{{.Names}}' 2>/dev/null | tr '\n' ' ' || true)
 if [ -d "$FFGHR_STATE_DIR" ]; then
     for m in "$FFGHR_STATE_DIR"/*.busy "$FFGHR_STATE_DIR"/*.idle; do
         [ -e "$m" ] || continue
         kind=${m##*.}
         cname=$(basename -- "$m" ".$kind")
         case " $LIVE " in
-            *" $cname "*) skip "$cname is running; keeping its $kind marker"; continue ;;
+            *" $cname "*) skip "$cname still exists; keeping its $kind marker"; continue ;;
         esac
         if [ "$DRY" = 1 ]; then
             act "would remove the $kind marker for $cname, which is gone"
