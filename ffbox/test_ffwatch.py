@@ -19673,8 +19673,72 @@ def test_the_model_proxy_keeps_the_credential_out_of_the_container():
     check("a heartbeat a minute old is not trusted", not w.model_proxy_ready())
     check("so the spare staged behind the proxy serves nobody",
           not w.pool_matches(spare, "master", "ANTHROPIC_API_KEY"))
-    check("and the next spare is staged with a credential again",
-          w.pool_stage_key("ffagent") == "ANTHROPIC_API_KEY", w.pool_stage_key("ffagent"))
+    # A FENCED CLASS DOES NOT FALL BACK. The fence allows no model provider, so a credential in the
+    # environment gives an ffagent container nothing to reach; its turns wait and nothing is staged.
+    check("a fenced class is held while the proxy is down",
+          "model proxy is not answering" in w.model_proxy_hold_why("ffagent"),
+          w.model_proxy_hold_why("ffagent"))
+    check("an unfenced class is not, since its fallback still works",
+          w.model_proxy_hold_why("ffdev") == "", w.model_proxy_hold_why("ffdev"))
+    check("and no fenced spare is staged that could not reach a model",
+          w.pool_stage_key("ffagent") is None, w.pool_stage_key("ffagent"))
+    check("the keeper says why", "model proxy" in w.pool_keyless_why("ffagent"),
+          w.pool_keyless_why("ffagent"))
+
+    # AND A QUEUED FENCED TURN STAYS QUEUED rather than launching with a credential it cannot use.
+    case3, turn3 = player_turn("modelproxy-hold", 9463)
+    w3 = case3.watcher
+    w3.cfg["model_proxy"] = {"enabled": True}
+    check("with the proxy not answering, the fenced turn is not started", w3.schedule() == [])
+    check("it stays queued",
+          case3.rows("SELECT status FROM turn WHERE id=?", (turn3["id"],))[0]["status"]
+          == "queued")
+    check("and the hold names the proxy",
+          "model proxy" in (w3._holds_said.get(f"turn {turn3['id']}") or ""), w3._holds_said)
+
+
+def test_a_pinned_turn_takes_the_base_branch_spare_first():
+    """A turn pinned to a commit takes a spare on its class's branch before another branch's.
+
+    pool_matches skips the branch rule for a sha, so such a turn could take any spare, and spares
+    came in `docker ps` order, newest first. On 2026-09-14 conversation 175's turn took the
+    warm-branch spare staged for conversation 182 while a held master spare sat beside it. Another
+    branch's spare is still better than a cold start, so it stays allowed when nothing else is warm.
+    """
+    print("pool: a pinned turn prefers the base branch's spare")
+    case = Case("poolpinned", base_fixture())
+    w = case.watcher
+    w.cfg["agent_classes"]["ffdev"]["idle_agents"] = 1
+    sha = "6136c2efe0be321e096381ef614de9c327ec25e7"
+    other = {"name": "e1", "id": "e1", "branch": "ffbox/somebody-elses-branch",
+             "class": "ffdev", "tier": "evictable"}
+    held = {"name": "h1", "id": "h1", "branch": w.pool_branch("ffdev"), "class": "ffdev",
+            "tier": "held"}
+    taken = []
+    w.pool_take = lambda pool_id: taken.append(pool_id) or True
+    w.pool_warm = lambda agent_class=None: [other, held]          # newest first, as docker ps
+    check("with both warm, the pinned turn takes the base branch's spare",
+          w.pool_claim_for(sha, "ffdev") == "h1", taken)
+    w.pool_warm = lambda agent_class=None: [other]
+    check("with only another branch's spare warm, it takes that rather than starting cold",
+          w.pool_claim_for(sha, "ffdev") == "e1", taken)
+    check("a turn on a branch still takes only that branch's spare",
+          w.pool_claim_for("ffbox/a-third-branch", "ffdev") is None, taken)
+
+    # AND THE BRANCH WHOSE SPARE WAS TAKEN IS WARMED AGAIN. A dispatched spare keeps its pool label,
+    # so it used to go on counting as staged for its branch and nothing replaced it.
+    print("pool: a branch whose spare was taken is backfilled")
+    w.pool_branch_activity = lambda window_secs=None: {
+        ("ffdev", "ffbox/somebody-elses-branch"): "2026-09-14T15:11:00"}
+    w.mirror_carries = lambda branch: True
+    containers = [dict(other)]
+    check("while its spare waits, the branch counts as staged",
+          list(w.pool_branch_candidates("ffdev", containers)) == [])
+    os.makedirs(os.path.dirname(w.pool_owner_path("e1")), exist_ok=True)
+    open(w.pool_owner_path("e1"), "w").close()
+    check("once a turn has taken it, the branch is a candidate again",
+          list(w.pool_branch_candidates("ffdev", containers))
+          == ["ffbox/somebody-elses-branch"])
 
 
 def test_a_spare_is_staged_for_whoever_is_likely_to_want_it():
@@ -21432,6 +21496,7 @@ def main():
         test_an_operators_turn_is_billed_to_their_own_subscription,
         test_a_warm_container_can_only_serve_the_account_it_was_staged_with,
         test_the_model_proxy_keeps_the_credential_out_of_the_container,
+        test_a_pinned_turn_takes_the_base_branch_spare_first,
         test_a_spare_is_staged_for_whoever_is_likely_to_want_it,
         test_a_box_that_cannot_bill_anybody_says_so_at_startup,
         test_the_account_that_would_pay_is_the_one_the_hold_asks_about,

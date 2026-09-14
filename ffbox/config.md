@@ -521,9 +521,14 @@ Two things change when it is on:
   it turns thinking on by default and emits no `rate_limit_event`; nothing in ffbox reads that
   event, and the subscription holds still come from ffwatch's own header probe.
 
-**It falls back on its own.** The proxy writes `<state_dir>/modelproxy/alive` every second. When
-that is more than ten seconds old, new runs get their credential in the environment again, and
-spares staged behind the proxy stop matching until it is back. A config edit restarts ffwatch,
+**When it stops answering.** The proxy writes `<state_dir>/modelproxy/alive` every second, and
+ffwatch restarts it if it exits. While that file is more than ten seconds old:
+
+- an **ffdev** run gets its credential in the environment again, which still works on the open
+  bridge;
+- an **ffagent** turn waits in the queue instead, and no ffagent spare is staged, because the
+  fence gives a fenced container no other route to a model;
+- spares staged behind the proxy stop matching until it is back. A config edit restarts ffwatch,
 and the proxy with it.
 
 Routes live in `<state_dir>/modelproxy/routes/<run id>.json`. ffwatch removes a route once its run
