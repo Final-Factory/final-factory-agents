@@ -19492,6 +19492,151 @@ def test_a_warm_container_can_only_serve_the_account_it_was_staged_with():
           "--claude-key" not in argv, argv)
 
 
+def test_the_model_proxy_keeps_the_credential_out_of_the_container():
+    """With model_proxy on, a run's container is handed a socket directory and a credential NAME.
+
+    The proxy itself is ffbox/test_modelproxy.py's; this is ffwatch's half: the route a run gets,
+    the spare that holds no credential and so serves anybody, the sweep that closes a finished run's
+    socket, and the fall back to the environment when the proxy's heartbeat goes stale.
+    """
+    print("the model proxy: routes, spares, and falling back")
+
+    def player_turn(name, message_id):
+        fixture = base_fixture()
+        fixture["messages"][ASK_CHANNEL] = [message(message_id, "how do belts work?")]
+        case = Case(name, fixture)
+        case.events(ask_event(message_id))
+        case.watcher.drain_events()
+        case.watcher.claim_turns()
+        return case, case.rows("SELECT * FROM turn")[0]
+
+    def launched(case, turn):
+        run = case.rows("SELECT * FROM run WHERE turn_id=?", (turn["id"],))[0]
+        with open(os.path.join(os.path.dirname(run["stream_path"]), "ffbox-argv.json"),
+                  encoding="utf-8") as fh:
+            return run, json.load(fh)
+
+    def after(argv, flag):
+        return argv[argv.index(flag) + 1] if flag in argv else None
+
+    def read_route(w, run):
+        path = os.path.join(w.model_routes_dir(), f"{run['ffbox_run_id']}.json")
+        if not os.path.exists(path):
+            return path, {}
+        with open(path, encoding="utf-8") as fh:
+            return path, json.load(fh)
+
+    def beat(w, age=0):
+        os.makedirs(w.model_proxy_home(), exist_ok=True)
+        alive = os.path.join(w.model_proxy_home(), "alive")
+        with open(alive, "w", encoding="utf-8") as fh:
+            fh.write("1 1\n")
+        when = time.time() - age
+        os.utime(alive, (when, when))
+
+    case, turn = player_turn("modelproxy-cold", 9461)
+    w = case.watcher
+    check("the proxy is off unless config.json turns it on", not w.model_proxy_enabled())
+    w.cfg["model_proxy"] = {"enabled": True}
+    check("on, with no heartbeat, it is not trusted", not w.model_proxy_ready())
+    beat(w)
+    check("a fresh heartbeat is", w.model_proxy_ready())
+
+    # A COLD RUN.
+    w.launch(turn["id"])
+    run, argv = launched(case, turn)
+    run_dir = os.path.dirname(run["stream_path"])
+    check("the run is billed to the credential it routed to, as before",
+          run["claude_key"] == "ANTHROPIC_API_KEY", run["claude_key"])
+    check("ffbox is still told which one, by name", after(argv, "--claude-key") == "ANTHROPIC_API_KEY",
+          argv)
+    socket_dir = after(argv, "--model-proxy")
+    check("and to go through the proxy, with a socket directory in the run's own",
+          socket_dir == os.path.join(run_dir, "model"), argv)
+    check("which any uid may pass through and nobody may list",
+          bool(socket_dir) and os.path.isdir(socket_dir)
+          and os.stat(socket_dir).st_mode & 0o777 == 0o711,
+          oct(os.stat(socket_dir).st_mode & 0o777) if socket_dir and os.path.isdir(socket_dir) else None)
+    route_path, route = read_route(w, run)
+    check("the proxy is given a route naming that socket and that credential",
+          route.get("socket") == os.path.join(run_dir, "model", "model.sock")
+          and route.get("credential") == "ANTHROPIC_API_KEY", route)
+    check("AND NO TOKEN REACHES ARGV", not any("sk-ant-" in a for a in argv), argv)
+
+    # THE SWEEP.
+    w.model_route_sweep()
+    check("the sweep leaves a run that is still going alone", os.path.exists(route_path))
+    w.db.execute("UPDATE run SET terminal_state='done' WHERE id=?", (run["id"],))
+    w.model_route_sweep()
+    check("and closes the route once the run has ended", not os.path.exists(route_path))
+
+    # A SPARE.
+    stage_key = w.pool_stage_key("ffagent")
+    check("the next spare is staged behind the proxy", stage_key == ffwatch.MODEL_PROXY_KEY, stage_key)
+    seen = []
+
+    class _Done:
+        returncode = 0
+        stdout = ""
+        stderr = ""
+
+    class _Shim:
+        SubprocessError = subprocess.SubprocessError
+        TimeoutExpired = subprocess.TimeoutExpired
+
+        @staticmethod
+        def run(cmd, *a, **kw):
+            seen.append(list(cmd))
+            return _Done()
+
+    real, ffwatch.subprocess = ffwatch.subprocess, _Shim
+    try:
+        pool_id = w.pool_stage("ffagent", claude_key=stage_key)
+    finally:
+        ffwatch.subprocess = real
+    staging = next((c for c in seen if "--stage-pool" in c), [])
+    check("with its socket directory mounted", after(staging, "--model-proxy")
+          == os.path.join(w.pool_dir(pool_id or "none"), "model"), staging)
+    check("and no credential named at all", "--claude-key" not in staging, staging)
+    check("its record says it was staged behind the proxy",
+          w.pool_claude_key(pool_id) == ffwatch.MODEL_PROXY_KEY, w.pool_claude_key(pool_id))
+    spare = {"id": pool_id, "branch": "master", "class": "ffagent", "tier": "held"}
+    check("it serves a turn billed to the API key", w.pool_matches(spare, "master", "ANTHROPIC_API_KEY"))
+    check("and a turn billed to an operator's subscription",
+          w.pool_matches(spare, "master", SUITE_CLAUDE_SLOT))
+    check("the branch rule still applies", not w.pool_matches(spare, "develop", "ANTHROPIC_API_KEY"))
+
+    # A DISPATCH INTO ONE.
+    case2, turn2 = player_turn("modelproxy-dispatch", 9462)
+    w2 = case2.watcher
+    w2.cfg["model_proxy"] = {"enabled": True}
+    beat(w2)
+    os.makedirs(w2.pool_dir("mp1"), exist_ok=True)
+    with open(os.path.join(w2.pool_dir("mp1"), "claude-key"), "w", encoding="utf-8") as fh:
+        fh.write(ffwatch.MODEL_PROXY_KEY + "\n")
+    w2.pool_claim_for = lambda ref, agent_class=None, claude_key=None: "mp1"
+    w2.stage_session_into = lambda *a, **k: None
+    w2.stage_attachments_into = lambda *a, **k: None
+    w2.launch(turn2["id"])
+    run2, argv2 = launched(case2, turn2)
+    check("a turn dispatched into it bills who asked, not the spare's record",
+          run2["claude_key"] == "ANTHROPIC_API_KEY", run2["claude_key"])
+    check("the dispatch names that credential and the spare's socket directory",
+          "--dispatch" in argv2 and after(argv2, "--claude-key") == "ANTHROPIC_API_KEY"
+          and after(argv2, "--model-proxy") == os.path.join(w2.pool_dir("mp1"), "model"), argv2)
+    _path2, route2 = read_route(w2, run2)
+    check("and the route points into the spare",
+          route2.get("socket") == os.path.join(w2.pool_dir("mp1"), "model", "model.sock"), route2)
+
+    # FALLING BACK.
+    beat(w, age=60)
+    check("a heartbeat a minute old is not trusted", not w.model_proxy_ready())
+    check("so the spare staged behind the proxy serves nobody",
+          not w.pool_matches(spare, "master", "ANTHROPIC_API_KEY"))
+    check("and the next spare is staged with a credential again",
+          w.pool_stage_key("ffagent") == "ANTHROPIC_API_KEY", w.pool_stage_key("ffagent"))
+
+
 def test_a_spare_is_staged_for_whoever_is_likely_to_want_it():
     print("which credential the next spare carries")
     case = Case("claude-stage-key")
@@ -21246,6 +21391,7 @@ def main():
         test_the_routed_account_reaches_ffbox_as_a_name_and_lands_on_the_run,
         test_an_operators_turn_is_billed_to_their_own_subscription,
         test_a_warm_container_can_only_serve_the_account_it_was_staged_with,
+        test_the_model_proxy_keeps_the_credential_out_of_the_container,
         test_a_spare_is_staged_for_whoever_is_likely_to_want_it,
         test_a_box_that_cannot_bill_anybody_says_so_at_startup,
         test_the_account_that_would_pay_is_the_one_the_hold_asks_about,

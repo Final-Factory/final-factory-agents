@@ -56,6 +56,9 @@ run "test_entry_ladder.sh"  sh  "$HERE/test_entry_ladder.sh"
 # that a reset onto a branch resolves LFS from the mirror rather than from GitHub -- cannot be
 # checked with LFS absent.
 run "test_restore_workspace.sh" sh "$HERE/test_restore_workspace.sh"
+# THE MODEL PROXY AND THE CONTAINER'S FORWARDER, as the real scripts against a fake provider. What
+# it holds is that a run's container reaches the model with no credential in it.
+run "test_modelproxy.py"    python3 "$HERE/test_modelproxy.py"
 # THE TWO BIG PYTHON SUITES BELONG HERE TOO, and leaving them out was the same mistake this file
 # was written to stop. I built a single entry point for the shell suites and then went on running
 # test_ffwatch.py and test_ffweb.py by hand -- which meant reading their output rather than their

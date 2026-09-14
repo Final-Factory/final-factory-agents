@@ -1268,6 +1268,61 @@ mapfile -d '' -t ARGV < "$FFBOX_OUT/argv"
 rm -f "$FFBOX_OUT/argv"
 
 # ------------------------------------------------------------------------------------------
+# the host's model proxy, when this run was given one
+# ------------------------------------------------------------------------------------------
+# NO MODEL CREDENTIAL IN THIS CONTAINER. ffbox mounted a directory at /ffbox/model, and the host's
+# model proxy opens model.sock in it once ffwatch has chosen who pays -- before the container
+# starts for a cold run, at dispatch for a warm spare. claude wants an http:// base URL, so
+# model-forward.py relays a loopback port to that socket and the proxy adds the real credential on
+# the far side (ffbox/modelproxy.py). claude is handed a placeholder, so an agent that reads its own
+# environment, or /proc, finds nothing it could spend from outside this run.
+#
+# BEFORE BOTH CLAUDE INVOCATIONS, the compaction and the turn, which inherit it. WAITED FOR rather
+# than assumed: a spare's socket appears when the host writes the route, a moment after dispatch.
+# A socket that never appears ends the turn here, in one line, rather than as three minutes of
+# claude retrying a connection nobody will answer.
+if [ -n "${FFBOX_MODEL_SOCKET:-}" ]; then
+    _model_waited=0
+    while [ ! -S "$FFBOX_MODEL_SOCKET" ] && [ "$_model_waited" -lt "${FFBOX_MODEL_SOCKET_WAIT:-60}" ]; do
+        sleep 1
+        _model_waited=$((_model_waited + 1))
+    done
+    if [ ! -S "$FFBOX_MODEL_SOCKET" ]; then
+        log "ERROR: the host's model proxy never opened $FFBOX_MODEL_SOCKET (waited ${_model_waited}s)"
+        exit 78
+    fi
+    _model_port=$(mktemp)
+    python3 /ffbox/model-forward.py "$FFBOX_MODEL_SOCKET" "$_model_port" \
+        2>>"$FFBOX_OUT/model-forward.log" &
+    for _ in $(seq 50); do
+        [ -s "$_model_port" ] && break
+        sleep 0.1
+    done
+    if [ ! -s "$_model_port" ]; then
+        log "ERROR: the model forwarder did not start; see model-forward.log"
+        exit 78
+    fi
+    export ANTHROPIC_BASE_URL="http://127.0.0.1:$(tr -d ' \n' < "$_model_port")"
+    # PRESENT BECAUSE CLAUDE WILL NOT START WITHOUT ONE. The proxy discards whatever arrives.
+    export ANTHROPIC_AUTH_TOKEN=ffbox-model-proxy
+    unset CLAUDE_CODE_OAUTH_TOKEN
+    if [ "${FFBOX_MODEL_KIND:-}" = openrouter ] && [ -n "${FFBOX_MODEL_NAME:-}" ]; then
+        # OpenRouter serves one model per slot, so every alias points at it, and it asks for
+        # ANTHROPIC_API_KEY to be present and empty -- the same shape ffbox used to pass in.
+        export ANTHROPIC_API_KEY=
+        export ANTHROPIC_DEFAULT_FABLE_MODEL="$FFBOX_MODEL_NAME"
+        export ANTHROPIC_DEFAULT_OPUS_MODEL="$FFBOX_MODEL_NAME"
+        export ANTHROPIC_DEFAULT_SONNET_MODEL="$FFBOX_MODEL_NAME"
+        export ANTHROPIC_DEFAULT_HAIKU_MODEL="$FFBOX_MODEL_NAME"
+    else
+        unset ANTHROPIC_API_KEY
+    fi
+    rm -f "$_model_port"
+    log "model: through the host's model proxy (${FFBOX_MODEL_KIND:-kind not given}); no model credential in this container"
+    unset _model_waited _model_port
+fi
+
+# ------------------------------------------------------------------------------------------
 # compact the session first, when the host asked for one
 # ------------------------------------------------------------------------------------------
 # cluster.compact_turns came round: this session has been resumed many times and the turn

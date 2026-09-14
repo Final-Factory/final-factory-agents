@@ -496,6 +496,40 @@ every ffagent turn. The ffdev pool stages for whichever operator has run somethi
 skipping anyone who already has a spare waiting — a guess, made out of what this box has actually
 run, and a wrong one costs one cold launch and ages out.
 
+### `model_proxy` — no model credential in the container
+
+A top-level key, not seeded:
+
+```json
+"model_proxy": {"enabled": false}
+```
+
+**Off (the default), every run's container holds its credential in its environment, as above.**
+**On, none does.** ffwatch starts `ffbox/modelproxy.py` as a child process, holding only the
+model credentials. For each run it writes a route that names a socket and a credential. The
+socket sits in a `model/` directory mounted into that run's container and no other, so whatever
+connects to it is that run. Inside the container, `model-forward.py` relays a loopback port to
+the socket, and `claude` is pointed at it with a placeholder token. The proxy removes the
+placeholder, adds the real credential, and forwards to the provider.
+
+Two things change when it is on:
+
+- **A warm spare holds no credential, so it serves any turn.** The rule above about a spare
+  matching only its own credential no longer applies to spares staged behind the proxy. One spare
+  covers every operator, and the account is chosen at dispatch.
+- **A run that ends up behind the proxy costs Claude Code's API-key behaviour.** Behind a base URL
+  it turns thinking on by default and emits no `rate_limit_event`; nothing in ffbox reads that
+  event, and the subscription holds still come from ffwatch's own header probe.
+
+**It falls back on its own.** The proxy writes `<state_dir>/modelproxy/alive` every second. When
+that is more than ten seconds old, new runs get their credential in the environment again, and
+spares staged behind the proxy stop matching until it is back. A config edit restarts ffwatch,
+and the proxy with it.
+
+Routes live in `<state_dir>/modelproxy/routes/<run id>.json`. ffwatch removes a route once its run
+has a terminal state, and the proxy closes the socket within a second. The container fence still
+allows the providers' hosts while this is being proven.
+
 ### When a credential or a classification does not answer
 
 **A classification that fails waits.** Until 2026-09-10 an engagement gate that could not decide
