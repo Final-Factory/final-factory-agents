@@ -284,9 +284,10 @@ usage() {
 
 Options:
   --prompt-file FILE   Read the prompt from FILE instead of the command line.
-  --direct             Do not route the prompt through ffwatch; run right here.
-                       Skips the database, the ceilings and the web page. For bootstrapping a
-                       machine and for debugging the container itself.
+  --direct             Kept for callers that still pass it. Since 2026-09-14 a prompt always goes
+                       through ffwatch, --direct included, so a hand-run turn gets the same model
+                       proxy, scheduler, ceilings and page as a Discord one. With no daemon
+                       running, ffwatch drives the turn itself from this process.
   --keep               Kept for callers that still pass it; there is nothing left to keep. The
                        workspace is a ramdrive inside the container and the kernel frees it when
                        the run ends. The run's output is under <results>/<run id> regardless.
@@ -529,9 +530,14 @@ else
     ffbox_agent_slot_release() { return 0; }
     FFBOX_WORKLOAD_LABEL=ffbox.workload
 fi
-if [ "$DIRECT" = 0 ] && [ -z "$TASK" ] && [ -z "$JOB_FILE" ] \
+if [ -z "$TASK" ] && [ -z "$JOB_FILE" ] \
    && [ -z "$STAGE_POOL$DISPATCH$FINISH_DIR" ] \
    && [ -r "$FFWATCH_PY" ]; then
+    # --direct TOO, since 2026-09-14. It used to skip ffwatch and run the old one-shot container
+    # right here, which also skipped the model proxy: the container got a credential in its
+    # environment, and once the fence stopped allowing model providers it could not reach a model
+    # at all. One path in, so a fix to that path reaches every way a prompt arrives.
+    [ "$DIRECT" = 0 ] || echo "ffbox: --direct no longer bypasses ffwatch; the prompt runs through it" >&2
     ROUTE=("python3" "$FFWATCH_PY" "submit" "--wait")
     [ -z "$REF" ] || ROUTE+=("--ref" "$REF")
     [ -z "$BRANCH" ] || ROUTE+=("--branch" "$BRANCH")
