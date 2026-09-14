@@ -9907,6 +9907,10 @@ class Watcher:
         A BOX WITH ONE ACTIVE OPERATOR GETS THEIR KEY EVERY TIME, which is the common case and
         the one worth being right about.
         """
+        # A FENCED SPARE WITH THE PROXY DOWN COULD REACH NO MODEL, since its only fallback is a
+        # credential the fence gives no route to use. Staging one would hold a workspace for nothing.
+        if self.model_proxy_hold_why(agent_class):
+            return None
         if discord_pool(self.cfg, "user_pool") == agent_class:
             dflt, _why = self.claude_keys_now()[1]
             if dflt and self.model_proxy_ready():
@@ -9984,6 +9988,23 @@ class Watcher:
             return False
         return age < MODEL_PROXY_STALE_SECS
 
+    def model_proxy_hold_why(self, agent_class):
+        """Why a turn or spare of this class must wait for the model proxy, or "" if it need not.
+
+        ONLY A FENCED CLASS, AND ONLY WITH THE PROXY SWITCHED ON. Since 2026-09-14 the container
+        fence allows no model provider, so a fenced run that fell back to a credential in its
+        environment would spend its retries on names that do not resolve and fail minutes later.
+        An unfenced class keeps the fallback, which still works for it. With model_proxy off, the
+        credential in the environment is the configuration somebody chose, and holding every fenced
+        turn for a proxy nobody asked for would stop that class outright.
+        """
+        if not self.model_proxy_enabled() or self.model_proxy_ready():
+            return ""
+        if class_cfg(self.cfg, agent_class).get("docker_network") == NETWORK_MODES["full"]:
+            return ""
+        return (f"the host's model proxy is not answering, and a {agent_class} container is "
+                f"behind the egress fence with no other route to a model")
+
     def model_proxy_keep(self):
         """Start the proxy if it should be running and is not. Every pass; a no-op while it runs.
 
@@ -10019,6 +10040,18 @@ class Watcher:
                  "--heartbeat", os.path.join(self.model_proxy_home(), "alive")],
                 env=env, stdin=subprocess.DEVNULL)
             log(f"model proxy: started (pid {self._model_proxy.pid})")
+            # WAIT FOR ITS FIRST BEAT, a few seconds at most, so the pass that started it can use
+            # it. `ffwatch submit` with no daemon drives the turn from this very pass, and without
+            # the wait that turn found no heartbeat and launched without the proxy.
+            started = time.time()
+            alive = os.path.join(self.model_proxy_home(), "alive")
+            while time.time() - started < 5 and self._model_proxy.poll() is None:
+                try:
+                    if os.stat(alive).st_mtime >= started - 1:
+                        break
+                except OSError:
+                    pass
+                time.sleep(0.1)
         except OSError as exc:
             self._model_proxy = None
             log(f"model proxy: could not be started: {exc}")
@@ -10158,7 +10191,13 @@ class Watcher:
         activity = self.pool_branch_activity(window)
         if containers is None:
             containers = self.pool_containers()
-        taken = {c["branch"] for c in containers if c["class"] == agent_class}
+        # UNCLAIMED SPARES ONLY. A dispatched spare keeps its `ffbox.pool` label for life, so
+        # counting every container kept a branch whose spare a turn had just taken looking staged,
+        # and nothing backfilled it: "1 already staged" at 11:12:32 on 2026-09-14, a second after
+        # conversation 175's turn took the spare staged for conversation 182's branch.
+        taken = {c["branch"] for c in containers
+                 if c["class"] == agent_class
+                 and not os.path.exists(self.pool_owner_path(c["id"]))}
         held_branch = self.pool_branch(agent_class)
         now = time.monotonic()
         wanted = sorted(((seen, branch) for (cls, branch), seen in activity.items()
@@ -10442,6 +10481,9 @@ class Watcher:
         `idle` asking for more spares than there are accounts to bill them to, which is a number
         somebody chose and which no amount of looking at the journal explains.
         """
+        proxy_why = self.model_proxy_hold_why(agent_class)
+        if proxy_why:
+            return proxy_why
         if discord_pool(self.cfg, "user_pool") == agent_class:
             # THE DEFAULT'S OWN REFUSAL, because since 2026-09-10 the metered default is whatever
             # model.default names, and "no ANTHROPIC_API_KEY" is only one of the ways it can fail
@@ -10985,7 +11027,18 @@ class Watcher:
         agent_class = agent_class or DEFAULT_AGENT_CLASS
         if int(class_cfg(self.cfg, agent_class).get("idle_agents") or 0) <= 0:
             return None
-        for c in self.pool_warm(agent_class):
+        # THE CLASS'S OWN BRANCH FIRST, then anything else that matches. Only a turn pinned to a
+        # commit can match more than one branch -- pool_matches skips the branch rule for a sha --
+        # and for that turn a held spare on the base branch is the right one: it is what `idle`
+        # promised, while a warm-branch spare was staged for one particular conversation, which
+        # loses its warm start if somebody else takes it. Conversation 175 turn 5 took conversation
+        # 182's that way on 2026-09-14, because spares came in `docker ps` order, newest first.
+        #
+        # ANOTHER BRANCH'S SPARE IS STILL TAKEN when the base branch has none free: resetting a warm
+        # workspace beats an 80-second cold restore, and pool_branch_candidates backfills the branch
+        # it was staged for. sorted() is stable, so each group keeps the order it had.
+        base = self.pool_branch(agent_class)
+        for c in sorted(self.pool_warm(agent_class), key=lambda c: c.get("branch") != base):
             if not self.pool_matches(c, ref, claude_key):
                 continue
             if self.pool_take(c["id"]):
@@ -11125,6 +11178,11 @@ class Watcher:
             if sched_key and self.credential_down(sched_key) is not None:
                 self.log_hold(f"turn {turn['id']}", f"{sched_key} is not answering; the turn "
                                                     f"stays queued until it does")
+                continue
+            proxy_why = self.model_proxy_hold_why(turn_class)
+            if proxy_why:
+                self.log_hold(f"turn {turn['id']}", f"{proxy_why}; the turn stays queued until "
+                                                    f"it answers")
                 continue
             self.log_hold(f"turn {turn['id']}", "")
             if ((self.workload_room() <= 0 or self.agent_room(turn_class) <= 0)
