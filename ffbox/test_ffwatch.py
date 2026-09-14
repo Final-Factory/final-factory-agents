@@ -7026,7 +7026,7 @@ def test_verification_results_path_is_per_invocation():
 
 
 def test_the_run_is_on_the_filtered_network():
-    """An ffagent run reaches Anthropic and Unity, and nothing else — including this host.
+    """An ffagent run reaches Unity, and the model only through the host's proxy — nothing else.
 
     FFAGENT, not "a run". Since 2026-09-02 the network is per class and ffdev is deliberately on
     the open bridge, which is asserted separately in
@@ -7038,9 +7038,10 @@ def test_the_run_is_on_the_filtered_network():
       ffbox            puts the container on ffbox-net and refuses to run when it or the proxy
                        is absent. A fallback to the default bridge here would restore the whole
                        internet without a word in any log.
-      allowlist.txt    still contains api.anthropic.com. The container runs `claude -p`; an
-                       allowlist trimmed to Unity alone is not a stricter posture, it is a box
-                       that cannot do anything.
+      allowlist.txt    carries Unity and none of the model's vendors. The container still runs
+                       `claude -p`, but it reaches the model through the host's model proxy over a
+                       mounted socket, so a provider's name here would only be somewhere a run
+                       could send the workspace.
       entrypoint.sh    defaults to enforce, and an unlisted name lands in the deny sink rather
                        than being passed through.
     """
@@ -7082,8 +7083,14 @@ def test_the_run_is_on_the_filtered_network():
 
     egress = os.path.join(HERE, "egress")
     allow = open(os.path.join(egress, "allowlist.txt"), encoding="utf-8").read()
-    check("the model's own endpoint is allowed, because otherwise no run does anything",
-          "api.anthropic.com" in allow)
+    # THE MODEL'S OWN ENDPOINTS ARE NOT, since 2026-09-14. A run reaches the model through the
+    # host's model proxy over a mounted socket (ffbox/modelproxy.py), which needs no network, so
+    # these names would only be three vendors a run could write the workspace to.
+    active = [ln.strip() for ln in allow.splitlines()
+              if ln.strip() and not ln.strip().startswith("#")]
+    for host in ("api.anthropic.com", "platform.claude.com", "openrouter.ai"):
+        check(f"{host} is not on the fence; the model proxy carries model traffic",
+              host not in active, active)
     check("Unity licensing is allowed", "license.unity3d.com" in allow)
     check("and nothing has quietly added a git forge",
           "github.com" not in allow and "githubusercontent" not in allow)
@@ -9091,10 +9098,14 @@ def test_the_harness_stops_the_bridge_before_it_reads_the_tree():
     boot = body.find("ffmcp start")
     argv_build = body.find('if ! python3 - "$JOB_FILE" "$FFBOX_OUT/argv"')
     agent = body.find(': > "$FFBOX_OUT/.agent-started"')
-    check("the boot happens before the argv is built, which is what decides the tool list",
+    check("the boot is started before the argv is built, which is what decides the tool list",
           0 < boot < argv_build, (boot, argv_build))
-    check("and before .agent-started, so it is warm-up and not the model's clock",
+    check("and before .agent-started, so the agent launches with the editor already on its way",
           0 < boot < agent, (boot, agent))
+    # NOT WAITED FOR, since 2026-09-14: the editor boots in the background and claude starts at
+    # once, because a 46s boot was most of a one-minute reply to a turn that never touched Unity.
+    check("the boot runs in the background rather than holding the agent back",
+          "FFBOX_MCP_BOOT_PID=$!" in body)
 
     # CODE ONLY. Both of these strings appear in the prose that explains them as well, and a
     # naive find lands in a comment -- which is how the first version of this test failed while

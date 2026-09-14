@@ -38,7 +38,7 @@ And an `ffagent` container's only way off the machine, which is a fence built ou
 rather than out of asking the agent nicely:
 
 ```
-ffagent -> ffbox-net -> ffbox-egress -> api.anthropic.com, *.unity3d.com, ...
+ffagent -> ffbox-net -> ffbox-egress -> *.unity3d.com, packages.unity.com, ...
            (internal:    (SNI allowlist)
             no default
             route at all)
@@ -248,11 +248,13 @@ and it warns.
 
 ### What the allowlist cannot do
 
-**It cannot exclude the model's vendors.** The container runs `claude -p`, so `api.anthropic.com`
-has to be on the list, and so does `openrouter.ai`, because a credential in a fenced container may
-be an OpenRouter key. An agent that wants to smuggle the workspace out can write it into a prompt
-to its own account at either. The allowlist narrows exfiltration from anywhere to three vendors;
-it does not close it, and no arrangement that runs the model from inside the container can.
+**It no longer has to include the model's vendors.** Until 2026-09-14, `api.anthropic.com`,
+`platform.claude.com` and `openrouter.ai` were on the list. The container ran `claude -p` against
+them with a credential in its environment, which left three vendors an agent could write the
+workspace to, into a prompt to an account it controlled. The model now goes through the host's
+model proxy over a socket mounted into the container (`ffbox/modelproxy.py`), which needs no
+network, so the fence dropped all three. What remains is the proxy itself: an agent can still put
+the workspace into a prompt, but only to this box's own account, on its own run's route.
 
 **It is a name list, not an authorisation list.** Anything reachable at an allowlisted name is
 reachable. Both credentials in the container are for services on that list, which is precisely
@@ -550,7 +552,7 @@ them needs a push credential. Against that:
 
 - An injected agent exfiltrates the token and the attacker has persistent repo write from outside
   this machine. The egress filter makes that harder rather than impossible — a token is small, and
-  `api.anthropic.com` has to stay reachable — and it does nothing about the credential being usable
+  Unity's hosts stay reachable — and it does nothing about the credential being usable
   from anywhere in the world once it is out. Today the worst case is one bad branch, visible in the
   run row.
 - The whole threat model assumes this container is hostile. Handing it a credential undoes the

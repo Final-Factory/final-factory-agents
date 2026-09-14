@@ -11,23 +11,14 @@
 #     ffbox/egress/ffbox-egress.sh log
 # Add what the runs actually asked for, restart in enforce mode, and confirm nothing new appears.
 #
-# The container runs `claude -p`, so the model's own endpoint has to be here. There is no
-# version of this file that is Unity alone and still does any work. See
-# docs/docker-security-model.md, "What the allowlist cannot do", for what remains reachable
-# through the entries below.
-
-# --- Anthropic ---------------------------------------------------------------------------------
-# api.anthropic.com carries the model traffic, feature flags and telemetry logging.
-# platform.claude.com is OAuth token exchange and refresh: CLAUDE_CODE_OAUTH_TOKEN is long-lived,
-# so this is here for the refresh path rather than for every run.
-api.anthropic.com
-platform.claude.com
-
-# --- OpenRouter --------------------------------------------------------------------------------
-# openrouter.ai carries the model traffic for a credential declared as OPENROUTER_API_KEY<n>
-# (design/openrouter_provider_design.txt). Listed whether or not this box declares one, because
-# which credential a fenced container holds is decided per turn by who asked.
-openrouter.ai
+# NO MODEL PROVIDER IS HERE, since 2026-09-14. The container still runs `claude -p`, but it
+# reaches the model through the host's model proxy over a Unix socket mounted into the run
+# (ffbox/modelproxy.py), which needs no network at all. api.anthropic.com, platform.claude.com
+# and openrouter.ai used to be listed; with the proxy they were only three vendors a run could
+# write the workspace to, into a prompt to an account it controls. A fenced run whose proxy is not
+# answering falls back to a credential in its environment and CANNOT reach a model -- that is the
+# intended failure, not a reason to add them back. See docs/docker-security-model.md, "What the
+# allowlist cannot do".
 
 # Deliberately ABSENT, and the container's environment is what keeps them absent rather than
 # this file: the two Datadog intake hosts (CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC=1) and
