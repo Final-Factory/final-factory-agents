@@ -9188,6 +9188,12 @@ def test_the_harness_stops_the_bridge_before_it_reads_the_tree():
     # once, because a 46s boot was most of a one-minute reply to a turn that never touched Unity.
     check("the boot runs in the background rather than holding the agent back",
           "FFBOX_MCP_BOOT_PID=$!" in body)
+    # AND NOTHING WAITS ON IT, since the same day: not even for ffmcp's "booting the editor" line,
+    # whose once-a-second loop was 1.1s of every turn on a class with the editor enabled.
+    after_boot = body[body.find("FFBOX_MCP_BOOT_PID=$!"):body.find('if [ -n "$FFBOX_MCP_PORT" ]; then')]
+    check("the tools go on the argv at once, with no loop between the boot and the config",
+          "FFBOX_MCP_PORT=booting" in after_boot and "while " not in after_boot
+          and "sleep" not in after_boot, after_boot[:400])
 
     # CODE ONLY. Both of these strings appear in the prose that explains them as well, and a
     # naive find lands in a comment -- which is how the first version of this test failed while
