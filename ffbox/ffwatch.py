@@ -5845,6 +5845,11 @@ class Watcher:
         self._github_poll = None
         self._catchup_async = False     # run() sets this; ingest_event reads it
         self._catchup_wanted = False    # a `catchup` doorbell arrived; the loop starts a worker
+        # THE EXIT WATCHERS AND THE FINISH THAT SENDS ITS OWN REPLY. run()'s too, for the same
+        # reason: a pass-at-a-time caller keeps finishing on a pass. See watch_exit.
+        self._finish_promptly = False   # run() sets this
+        self._finish_lock = threading.Lock()
+        self._exit_watchers = set()     # run row ids with a `docker wait` thread on them
         # index_transcript is called from TWO threads for the same run — the scheduler's live
         # pass while the container works, and the launch thread's final catch-up in finish_run.
         # Nothing in transcript_event is UNIQUE, so two overlapping passes would each read the
@@ -8203,8 +8208,18 @@ class Watcher:
     # answers WHETHER we are answering it, which for a forced turn is settled by
     # always_a_turn() from facts about the messages themselves.
 
-    def mark_working(self, conv, msg):
+    def mark_working(self, conv, msg, background=False):
         """Put the 👀 on this message now. Returns the outbound row id, or None.
+
+        WITH background=True IT RETURNS THE SENDING THREAD INSTEAD, or None when nothing needs
+        sending, and the caller must join it. create_turn does, straight after resettle(): until
+        2026-09-14 the selector waited behind this send, and conversation 185's ping was marked
+        at 17:52:12.9 and queued at 16.7 with the selector running only after the mark had
+        landed. The two share nothing that makes them wait on each other -- the selector is a
+        classifier subprocess, the send holds only ffdiscord_run's lock, every thread has its
+        own database connection and the row is claimed by compare-and-swap -- so they run side
+        by side. The join is what keeps clear_marks and clear_ack unchanged: neither can see a
+        mark still in flight, so a removal can never overtake the mark it removes.
 
         SENT HERE RATHER THAN LEFT FOR THE NEXT send_pending, because the caller is about to
         block: create_turn goes straight from this into resettle(), which is fifteen seconds of
@@ -8224,7 +8239,7 @@ class Watcher:
         existing = self.db.one("SELECT id FROM outbound WHERE local_id=? ORDER BY id DESC"
                                " LIMIT 1", (local_id,))
         if existing is not None:
-            return existing["id"]
+            return None if background else existing["id"]
         payload = ack_payload(conv, msg["discord_id"], local_id)
         if payload is None:
             return None                 # nothing this message can wear; see ack_payload
@@ -8234,8 +8249,23 @@ class Watcher:
         row = self.db.one("SELECT * FROM outbound WHERE nonce=?", (nonce,))
         if row is None or self.killed():
             return None
-        self._send_row(row, bool(self.cfg.get("approve_before_send")))
-        return row["id"]
+        approve = bool(self.cfg.get("approve_before_send"))
+        if not background:
+            self._send_row(row, approve)
+            return row["id"]
+        sender = threading.Thread(target=self._send_mark_guarded, args=(row, approve),
+                                  name=f"ffwatch-mark-{row['id']}", daemon=True)
+        sender.start()
+        return sender
+
+    def _send_mark_guarded(self, row, approve):
+        """mark_working's background send. Never raises into the thread runner; a row that
+        failed stays retryable, exactly as it does for the batch sender."""
+        try:
+            self._send_row(row, approve)
+        except Exception as exc:  # noqa: BLE001 — a mark must never take the daemon down
+            log(f"ERROR sending the acknowledgement in outbound {row['id']}: "
+                f"{type(exc).__name__}: {exc}")
 
     def claim_ack(self, turn_id, conv, msg):
         """Give this turn the mark that is already on its message, or queue one if there is none.
@@ -9015,10 +9045,14 @@ class Watcher:
         # "are we answering this" is already final and was reached without a model.
         #
         # Where it files is a separate question, and the only one resettle is asking.
+        #
+        # ON A THREAD, JOINED STRAIGHT AFTER resettle(), so the selector does not wait for the
+        # send either, and nothing below this can see a send still in flight. See mark_working.
         early = self.pending_messages(conv["id"])
+        marking = None
         if (early and not conv["is_thread"] and not is_local_conversation(conv)
                 and not held and self.always_a_turn(conv, early)):
-            self.mark_working(conv, early[-1])
+            marking = self.mark_working(conv, early[-1], background=True)
 
         # THE LAST MOMENT ANYTHING MAY MOVE. After this a turn exists, the messages are claimed,
         # and a session is about to read them (design 4.3).
@@ -9026,7 +9060,11 @@ class Watcher:
         # failing. The gate is skipped below, and a selector that still cannot answer keeps the
         # deterministic answer instead of holding the conversation again.
         released = row_col(conv, "gate_released_by")
-        settled = self.resettle(conv)
+        try:
+            settled = self.resettle(conv)
+        finally:
+            if marking is not None:
+                marking.join()
         if isinstance(settled, ClassifyHold):
             if not released:
                 return self.classify_held(conv, settled.failure)
@@ -13964,6 +14002,8 @@ class Watcher:
         # the wait, the harvest, the verification, the push, the reply -- is finish_runs's, off
         # a pass, from what is on disk. Nothing in this process outlives the container any more.
         log(f"run {run_id}: container is up; the finish pass owns it from here")
+        # AND ITS EXIT IS WATCHED FROM NOW, not from the next pass. See watch_exit.
+        self.watch_exit(self.db.one("SELECT * FROM run WHERE id=?", (run_row_id,)))
 
     def record_container_id(self, run_row_id, out_dir):
         """Copy the container id ffbox wrote into `out/container-id` onto the run row.
@@ -16204,8 +16244,11 @@ class Watcher:
 
     # -- the sender (design section 11: the sender enforces, the skills only advise) ---------
 
-    def send_pending(self, limit=200):
+    def send_pending(self, limit=200, conversation_id=None):
         """Send what may be sent. Returns the number of rows that reached Discord.
+
+        `conversation_id` narrows it to one conversation's rows, which is what a finished run
+        sends from its own thread; see deliver_finished.
 
         Everything the design puts in one place lives here: --silent on every reply, the
         2000-character cap turned into a head plus an attachment instead of a failed post, the
@@ -16236,12 +16279,15 @@ class Watcher:
         # SELECT would return 200 posts and no reactions for as long as the backlog lasted, and
         # the acknowledgement — the one thing in here that is supposed to land within a poll —
         # would never be looked at. Sending is still bounded, by _send_limited, not by this.
+        only, params = "", ()
+        if conversation_id is not None:
+            only, params = " AND conversation_id=?", (conversation_id,)
         rows = self.db.query(
-            "SELECT * FROM outbound WHERE status IN ('pending','approved')"
-            " AND action NOT IN ('react','unreact') ORDER BY id LIMIT ?", (limit,))
+            "SELECT * FROM outbound WHERE status IN ('pending','approved')" + only +
+            " AND action NOT IN ('react','unreact') ORDER BY id LIMIT ?", params + (limit,))
         rows += self.db.query(
-            "SELECT * FROM outbound WHERE status IN ('pending','approved')"
-            " AND action IN ('react','unreact') ORDER BY id LIMIT ?", (limit,))
+            "SELECT * FROM outbound WHERE status IN ('pending','approved')" + only +
+            " AND action IN ('react','unreact') ORDER BY id LIMIT ?", params + (limit,))
         approve = bool(self.cfg.get("approve_before_send"))
         sent = held = 0
         for row in rows:
@@ -16961,23 +17007,126 @@ class Watcher:
         """
         started = 0
         for run in self.db.query("SELECT * FROM run WHERE terminal_state IS NULL"):
-            run_id = run["ffbox_run_id"]
-            if run_id in self._finishing:
+            if run["ffbox_run_id"] in self._finishing:
                 continue
             if self.run_container_live(run):
-                continue                       # still working; enforce_clocks bounds it
-            turn = self.db.one("SELECT * FROM turn WHERE id=?", (run["turn_id"],))
-            if turn is None:
+                # Still working; enforce_clocks bounds it. Watched, so the finish starts when
+                # the container stops rather than on the pass after; see watch_exit.
+                self.watch_exit(run)
                 continue
+            if self.start_finish(run):
+                started += 1
+        return started
+
+    def start_finish(self, run):
+        """Finish this run on a thread of its own. True when one was started.
+
+        TWO CALLERS, the pass and an exit watcher, so the look at _finishing and the add are
+        one step under _finish_lock. The conversation flock would refuse the second of two
+        anyway; this stops it getting as far as opening the file.
+        """
+        run_id = run["ffbox_run_id"]
+        turn = self.db.one("SELECT * FROM turn WHERE id=?", (run["turn_id"],))
+        if turn is None:
+            return False
+        with self._finish_lock:
+            if run_id in self._finishing:
+                return False
             lock = ConversationLock(
                 os.path.join(self.conv_dir(turn["conversation_id"]), "lock"))
             if not lock.acquire():
-                continue                       # somebody else has this conversation
+                return False                   # somebody else has this conversation
             self._finishing.add(run_id)
-            threading.Thread(target=self._finish_guarded, args=(run["id"], run_id, lock),
-                             name=f"ffwatch-finish-{run_id}", daemon=True).start()
-            started += 1
-        return started
+        threading.Thread(target=self._finish_guarded, args=(run["id"], run_id, lock),
+                         name=f"ffwatch-finish-{run_id}", daemon=True).start()
+        return True
+
+    # How long an exit watcher whose `docker wait` came back with the container still running
+    # holds its place before the pass may arm another. That happens when the docker daemon
+    # restarts under a run, or the CLI cannot reach it at all, and without the hold the pass
+    # would re-arm a watcher that returns at once on every tick.
+    EXIT_WATCH_RETRY_SECS = 30
+
+    def watch_exit(self, run):
+        """Put a thread on `docker wait` for this run's container. True when one was started.
+
+        THE PASS WAS THE ONLY THING THAT NOTICED A CONTAINER HAD EXITED, and it looks once per
+        poll_secs at best. Conversation 185's ping, 2026-09-14: the container exited at
+        17:52:33.3, the pass found it gone at 40.3, and the reply was posted at 48.1 -- fifteen
+        of the thirty-eight seconds between the question and the answer were the loop waiting,
+        against four for the model. The watcher starts the finish the moment `docker wait`
+        returns, and deliver_finished sends the reply from that same thread.
+
+        run()'S ONLY. `ffwatch once` and the offline suite leave _finish_promptly off and keep
+        finishing on a pass, where what happened is visible when the call returns.
+
+        A LOST WATCHER COSTS A PASS AND NOTHING ELSE. finish_runs still looks at every run on
+        every pass and still finishes what it finds gone; the watcher only gets there first. By
+        id when the row has one, because dispatch renames a pooled container and an id is fixed.
+        """
+        if not self._finish_promptly or run is None:
+            return False
+        ref = (run["container_id"] if "container_id" in run.keys() else None) \
+            or run["container_name"]
+        if not ref:
+            return False
+        with self._finish_lock:
+            if run["id"] in self._exit_watchers:
+                return False
+            self._exit_watchers.add(run["id"])
+        threading.Thread(target=self._wait_for_exit, args=(run["id"], ref),
+                         name=f"ffwatch-exit-{run['ffbox_run_id']}", daemon=True).start()
+        return True
+
+    def _wait_for_exit(self, run_row_id, ref):
+        """One exit watcher. Never raises into the thread runner."""
+        try:
+            try:
+                # NO TIMEOUT. A run can take hours, and enforce_clocks on the pass bounds it.
+                subprocess.run([self.cfg["docker"], "wait", ref], capture_output=True, text=True,
+                               encoding="utf-8", errors="replace")
+            except (OSError, subprocess.SubprocessError):
+                pass
+            run = self.db.one("SELECT * FROM run WHERE id=?", (run_row_id,))
+            if run is None or run["terminal_state"] is not None:
+                return
+            if self.run_container_live(run):
+                time.sleep(self.EXIT_WATCH_RETRY_SECS)
+                return
+            self.start_finish(run)
+        except Exception as exc:  # noqa: BLE001 — a watcher must never take the daemon down
+            log(f"ERROR watching run {run_row_id}'s container: {type(exc).__name__}: {exc}")
+        finally:
+            with self._finish_lock:
+                self._exit_watchers.discard(run_row_id)
+
+    def deliver_finished(self, run_row_id):
+        """Send what a finished run queued, then wake the loop. Returns rows sent.
+
+        THE OTHER HALF OF THE WAIT watch_exit removes. A reply queued by a finish sat until
+        send_pending on the next pass: seven seconds for conversation 185's ping, finished at
+        17:52:41.1 and posted at 48.1. It goes from the finishing thread now, narrowed to the
+        run's own conversation so a finish never becomes the thread draining somebody else's
+        backlog. The claim in _send_row, which already lets `ffwatch send` race the daemon, is
+        what makes racing the pass safe.
+
+        THE DOORBELL RINGS EITHER WAY, because a finish frees more than its reply: a follow-up
+        that waited for the run is claimed on the next pass, and so is a turn waiting for a slot.
+        """
+        if not self._finish_promptly:
+            return 0
+        sent = 0
+        try:
+            conv_id = self.db.scalar(
+                "SELECT t.conversation_id FROM run r JOIN turn t ON t.id = r.turn_id"
+                " WHERE r.id=?", (run_row_id,))
+            if conv_id is not None:
+                sent = self.send_pending(conversation_id=conv_id)
+        except Exception as exc:  # noqa: BLE001 — the pass sends it if this could not
+            log(f"ERROR sending run {run_row_id}'s reply from its finish: "
+                f"{type(exc).__name__}: {exc}")
+        self.ring_doorbell()
+        return sent
 
     def _finish_guarded(self, run_row_id, run_id, lock):
         """One run finished off the daemon's loop. Never raises into the thread runner."""
@@ -17017,6 +17166,8 @@ class Watcher:
         finally:
             self._finishing.discard(run_id)
             lock.release()
+            # THE REPLY GOES NOW, whichever way the finish went. See deliver_finished.
+            self.deliver_finished(run_row_id)
 
     def collect_run_output(self, run):
         """Move a pooled run's output into its own directory, and record that it moved.
@@ -17907,6 +18058,21 @@ class Watcher:
             log(f"WARNING: could not bind the doorbell socket at {path} ({exc}); "
                 f"falling back to polling every {self.cfg['poll_secs']}s")
             return None
+
+    def ring_doorbell(self):
+        """Wake this daemon's own loop, from any thread. True when the poke was sent.
+
+        The listener's datagram, sent by the process that bound the socket to itself. A process
+        that did not bind one has no loop waiting on it, and rings nothing.
+        """
+        if self._doorbell is None:
+            return False
+        try:
+            with socket.socket(socket.AF_UNIX, socket.SOCK_DGRAM) as sock:
+                sock.sendto(b"1", self.doorbell_path())
+            return True
+        except OSError:
+            return False
 
     def wait_for_doorbell(self, secs):
         """Sleep for `secs`, cut short by a poke from the listener."""
@@ -19315,6 +19481,9 @@ class Watcher:
         # THE WORKER IS LIVE FROM HERE, which is what routes a `catchup` doorbell off the loop
         # as well: ingest_event asks for a catchup rather than sweeping inline once this is set.
         self._catchup_async = True
+        # AND A RUN IS FINISHED WHEN ITS CONTAINER EXITS, with its reply sent from the finish,
+        # rather than both waiting for a pass. See watch_exit and deliver_finished.
+        self._finish_promptly = True
         self.recover()
         # WHATEVER IS ALREADY RUNNING IN THE CI LANE. Nothing to do but say so: the containers are
         # running, the clocks are files and the drop boxes are named after the containers, so the
