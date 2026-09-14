@@ -187,6 +187,49 @@ else
     bad "second.bin is $(head -c 60 "$TMP/ws/second.bin" 2>/dev/null)"
 fi
 
+# --- already at the target --------------------------------------------------------------------
+#
+# A pooled container restores at staging and is usually dispatched onto the same commit. The
+# second resync keeps the fetch, the branch and base_sha.txt, and skips the seeding, reset and
+# clean -- but only on the word of a marker the last successful restore wrote for this exact HEAD.
+printf '\nrestore: a resync already at its target skips the reset, and trusts nothing else\n'
+fresh_workspace
+restore || bad "the first restore failed: $(tail -3 "$TMP/log" | tr '\n' ' ')"
+if grep -q 'LFS file(s) at' "$TMP/log" && ! grep -q 'already at' "$TMP/log"; then
+    ok "a first restore does the whole job"
+else
+    bad "the first restore skipped something: $(tr '\n' ' ' < "$TMP/log")"
+fi
+rm -f "$TMP/out/base_sha.txt"
+if restore && grep -q 'already at' "$TMP/log" && ! grep -q 'LFS file(s) at' "$TMP/log"; then
+    ok "a second resync onto the same commit skips seeding, reset and clean"
+else
+    bad "the second resync: $(tr '\n' ' ' < "$TMP/log")"
+fi
+if [ "$(cat "$TMP/out/base_sha.txt" 2>/dev/null)" = "$(git -C "$SRC" rev-parse feature)" ]; then
+    ok "and still records base_sha.txt for the run"
+else
+    bad "base_sha.txt is $(cat "$TMP/out/base_sha.txt" 2>/dev/null)"
+fi
+if restore mixed && grep -q 'LFS file(s) at' "$TMP/log" && ! grep -q 'already at' "$TMP/log" \
+   && [ "$(git -C "$TMP/ws" rev-parse HEAD)" = "$(git -C "$SRC" rev-parse mixed)" ]; then
+    ok "a resync onto a different commit does the whole job"
+else
+    bad "the resync onto mixed: $(tr '\n' ' ' < "$TMP/log")"
+fi
+git -C "$SRC" rev-parse feature > "$TMP/ws/.git/ffbox-synced"
+if restore mixed && ! grep -q 'already at' "$TMP/log"; then
+    ok "a marker naming another commit is not taken as synced"
+else
+    bad "a stale marker was trusted: $(tr '\n' ' ' < "$TMP/log")"
+fi
+rm -f "$TMP/ws/.git/ffbox-synced"
+if restore mixed && ! grep -q 'already at' "$TMP/log"; then
+    ok "and neither is a tree with no marker, even at the right commit"
+else
+    bad "a tree with no marker was taken as synced: $(tr '\n' ' ' < "$TMP/log")"
+fi
+
 # --- an object damaged through its hardlink ---------------------------------------------------
 #
 # The cache entry stores each LFS file once: CI hardlinks the stored object to the checked-out file.
