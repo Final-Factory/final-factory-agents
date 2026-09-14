@@ -102,6 +102,16 @@ a git one; see the last section.
 Exactly one of those three kinds goes in, chosen host-side by who asked
 (design/operator_subscriptions_design.txt, design/openrouter_provider_design.txt).
 
+**With `model_proxy.enabled` (since 2026-09-13), none of them goes in.** The container gets a
+read-only mount of a directory holding one Unix socket. The host's model proxy
+(`ffbox/modelproxy.py`) listens on that socket for that one run and adds the credential on the
+host side. The container also gets `FFBOX_MODEL_SOCKET`, `FFBOX_MODEL_KIND` and, for OpenRouter,
+`FFBOX_MODEL_NAME`. None of those is secret. `claude` runs against a loopback forwarder with a
+placeholder token. An agent that reads its environment or `/proc` finds nothing that works outside
+that run, and a route is closed once the run has a terminal state. While the proxy is not
+answering, ffwatch falls back to the environment variables below. See `ffbox/config.md`,
+`model_proxy`.
+
 That is the list, and "exactly one" is still exactly one now that `secrets.env` holds a POOL of
 Claude tokens (`CLAUDE_CODE_OAUTH_TOKEN1`, `…2`, one per account). `ffbox` resolves the pool
 host-side and exports the single token it picked under the unnumbered name; `docker run -e
