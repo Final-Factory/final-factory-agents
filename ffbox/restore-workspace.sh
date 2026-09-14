@@ -159,8 +159,69 @@ fi
 # that dies before the agent starts -- and it is recorded, in the log and in lfs_pointers.txt
 # under the run's output, rather than being silently wrong.
 #
-# ONE PASS OVER THE TARGET'S LFS FILES, in the shell, with no process per object: `git lfs
-# ls-files --long` names every oid at that ref and the rest is file tests against two directories.
+# ONE PASS OVER THE TARGET'S LFS FILES, with no process per object: one batch read names every oid
+# at that ref and the rest is file tests against two directories.
+#
+# PLAIN GIT, NOT `git lfs ls-files --long`, which gives the same list and was most of a pooled
+# dispatch's setup: 2.3s warm and 4.8s cold on the build server on 2026-09-14, for master's 3,191
+# LFS files, against 0.17s for this. Neither can tell a file is LFS without reading it, so both read
+# every blob small enough to be a pointer -- 15,695 at master, mostly .meta files -- and git-lfs
+# pays a per-blob cost that one `git cat-file --batch` does not. The rule is git-lfs's own: a blob
+# under 1024 bytes whose first line is a pointer version, carrying one sha256 oid and a size. On
+# master both named the same 3,022 objects; test_restore_workspace.sh holds the two to one answer.
+#
+# ONLY THE REF'S TREE AND BLOBS ARE READ, never the worktree, so the hardlinks a cache entry carries
+# between checked-out files and .git/lfs/objects make no difference to the list.
+#
+# PYTHON FOR THE PARSE, because a blob is read by its byte count and small blobs include binaries
+# with NULs in them, which is not a job for awk. The image has python3; without it this falls back
+# to git-lfs, slow and correct.
+LFS_POINTER_PY='
+import re, sys
+VERSIONS = (b"version https://git-lfs.github.com/spec/v1",
+            b"version https://hawser.github.com/spec/v1")
+OID = re.compile(rb"oid sha256:([0-9a-f]{64})")
+SIZE = re.compile(rb"size [0-9]+")
+src = sys.stdin.buffer
+while True:
+    header = src.readline()
+    if not header:
+        break
+    fields = header.split()
+    if len(fields) != 3 or fields[1] != b"blob":
+        sys.exit("unexpected git cat-file output: %r" % header[:100])
+    size = int(fields[2])
+    body = src.read(size)
+    if len(body) != size or src.read(1) != b"\n":
+        sys.exit("git cat-file output ended inside a blob")
+    lines = body.split(b"\n")
+    if lines[-1] == b"":
+        lines.pop()
+    if not lines or lines[0] not in VERSIONS:
+        continue
+    oids = [m.group(1) for m in map(OID.fullmatch, lines[1:]) if m]
+    if len(oids) == 1 and any(map(SIZE.fullmatch, lines[1:])):
+        sys.stdout.write(oids[0].decode() + "\n")
+'
+
+lfs_pointer_list() {   # $1 = ref; one line per LFS file at that ref, starting with its oid
+    if ! command -v python3 >/dev/null 2>&1; then
+        git -C "$WORKSPACE" lfs ls-files --long "$1"
+        return
+    fi
+    _tree=$(mktemp 2>/dev/null) || return 1
+    if ! git -C "$WORKSPACE" ls-tree -r -l "$1" > "$_tree"; then
+        rm -f "$_tree"
+        return 1
+    fi
+    awk '$2 == "blob" && $4 + 0 < 1024 { print $3 }' "$_tree" \
+        | git -C "$WORKSPACE" cat-file --batch \
+        | python3 -c "$LFS_POINTER_PY"
+    _rc=$?
+    rm -f "$_tree"
+    return $_rc
+}
+
 LFS_UNSEEDABLE=0
 
 lfs_seed_from_mirror() {
@@ -169,10 +230,12 @@ lfs_seed_from_mirror() {
     [ -n "$MIRROR" ] && [ -d "$MIRROR/lfs/objects" ] || return 0
     git -C "$WORKSPACE" lfs version >/dev/null 2>&1 || return 0
     _list=$(mktemp 2>/dev/null) || return 0
-    if ! git -C "$WORKSPACE" lfs ls-files --long "$_ref" > "$_list" 2>/dev/null; then
+    if ! lfs_pointer_list "$_ref" > "$_list" 2>/dev/null; then
         rm -f "$_list"
+        log "WARNING: could not list the LFS files at $_ref; nothing was seeded from the mirror"
         return 0
     fi
+    log "$(wc -l < "$_list" | tr -d ' ') LFS file(s) at $_ref"
     _seeded=0
     _absent=0
     # `read` takes the path as the remainder, so a name with spaces in it cannot split the line.
