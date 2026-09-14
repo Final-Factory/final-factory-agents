@@ -145,7 +145,7 @@ into the JSON.
 
 ```json
 "discord": {
-  "app_token": "<the Bot tab's token — not the Application ID, not the public key>",
+  "app_token": "DISCORD_TOKEN",
   "server_id": "<right-click the server name > Copy Server ID>",
   "channels": { "<alias>": "<channel id, or \"\" to resolve it by name>" },
   "mentions": { "<name>": "<user id>" },
@@ -172,6 +172,13 @@ unambiguous single matches; an alias that hits two channels stays blank and is r
 The keys are `app_token` and `server_id`, matching what the developer portal and the Discord
 client call them. The older `token` / `guild_id` spellings are still read, and stage 5 renames
 them in place. Discord's API still says "guild", so the URL paths are unchanged.
+
+`app_token` should name a `secrets.env` variable rather than hold the token:
+`"app_token": "DISCORD_TOKEN"`, with `DISCORD_TOKEN="<token>"` in `~/.config/ffbox/secrets.env`.
+The CLI reads that variable from the environment, or from the secrets file when the environment
+does not have it, so the token never sits in `config.json`. Only a value of capitals, digits and
+underscores with at least one underscore is read as a name; anything else is still taken as the
+token itself.
 
 `FFDISCORD_APP_TOKEN` and `FFDISCORD_SERVER_ID` override the file (`FFDISCORD_TOKEN` and
 `FFDISCORD_GUILD_ID` are the older spellings, still read). Channel and mention ids come only

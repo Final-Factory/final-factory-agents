@@ -112,14 +112,18 @@ missing = 0
 # through EnvironmentFile=, so a token living only there is configured even though the JSON
 # blank is still empty.
 def filled(key, *env_names):
-    if str(discord.get(key) or "").strip():
-        return True
-    return any(os.environ.get(e) or in_secrets(e) for e in env_names)
+    value = str(discord.get(key) or "").strip()
+    fallback = any(os.environ.get(e) or in_secrets(e) for e in env_names)
+    # A SECRETS.ENV VARIABLE NAME rather than the value -- `"app_token": "DISCORD_TOKEN"`, which
+    # ffdiscord.load_config resolves -- is filled only when that variable actually holds something.
+    if re.fullmatch(r"[A-Z][A-Z0-9]*_[A-Z0-9_]*", value):
+        return bool(os.environ.get(value) or in_secrets(value)) or fallback
+    return bool(value) or fallback
 
 
 if not filled("app_token", "FFDISCORD_APP_TOKEN"):
-    missing += out("app_token", "FFDISCORD_APP_TOKEN=<bot token> in secrets.env, "
-                                "or: ffdiscord set app_token <bot token>")
+    missing += out("app_token", "DISCORD_TOKEN=\"<bot token>\" in secrets.env and "
+                                "\"app_token\": \"DISCORD_TOKEN\" in config.json")
 
 # Not counted as missing: ffdiscord infers the guild when the bot is in exactly one, so a box
 # that never sets it still works. Reported anyway, because inference is not something you want

@@ -620,7 +620,8 @@ def main():
         The point of these checks is what the FILE alone can authenticate with, and run()
         always exports a token, which would mask a config that does not work on its own.
         """
-        env = {k: v for k, v in os.environ.items() if not k.startswith("FFDISCORD_")}
+        env = {k: v for k, v in os.environ.items()
+               if not k.startswith("FFDISCORD_") and k not in ("DISCORD_TOKEN", "FFBOX_SECRETS")}
         env["FFDISCORD_API"] = f"http://127.0.0.1:{PORT[0]}"
         env["FFDISCORD_HOME"] = home
         env["FFBOX_CONFIG_DIR"] = home
@@ -658,6 +659,33 @@ def main():
     out = run_bare(h, "config").stdout
     check("redaction covers a stray token key as well as app_token",
           "TESTTOKEN" not in out, out)
+
+    # A NAME INSTEAD OF A TOKEN, so config.json carries no secret. The units have secrets.env in
+    # their environment; a shell does not, so the file beside the config is read for that one name.
+    print("app_token naming a secrets.env variable")
+    no_secrets = os.path.join(tempfile.mkdtemp(prefix="ffdiscord-nosecrets-"), "secrets.env")
+    h = home_with({**live, "app_token": "DISCORD_TOKEN", "server_id": GUILD})
+    check("a name is looked up in the environment",
+          "bug-reports" in run_bare(h, "channels", DISCORD_TOKEN="TESTTOKEN",
+                                    FFBOX_SECRETS=no_secrets).stdout)
+    with open(os.path.join(h, "secrets.env"), "w", encoding="utf-8") as fh:
+        fh.write('# the box keeps other secrets here too\nGH_PR_TOKEN="not this one"\n'
+                 'DISCORD_TOKEN="TESTTOKEN"\n')
+    p = run_bare(h, "channels")
+    check("and in secrets.env beside the config, double quotes and all",
+          "bug-reports" in p.stdout, p.stdout + p.stderr)
+    out = run_bare(h, "config").stdout
+    check("`config` says which variable it read and never prints the token",
+          "DISCORD_TOKEN" in out and "TESTTOKEN" not in out, out)
+    h = home_with({**live, "app_token": "MISSING_TOKEN", "server_id": GUILD})
+    check("FFDISCORD_APP_TOKEN still wins over a name",
+          "bug-reports" in run_bare(h, "channels", FFDISCORD_APP_TOKEN="TESTTOKEN",
+                                    FFBOX_SECRETS=no_secrets).stdout)
+    p = run_bare(h, "channels", FFBOX_SECRETS=no_secrets)
+    check("a name that is set nowhere is refused, and the refusal names it",
+          p.returncode != 0 and "MISSING_TOKEN" in p.stderr, p.stderr)
+    check("rather than being sent to Discord as if it were the token",
+          "bug-reports" not in p.stdout, p.stdout)
 
     print("resolve-channels")
     # Aliases are snake_case (they are JSON keys); Discord channel names are hyphenated.

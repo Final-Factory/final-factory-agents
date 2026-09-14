@@ -1342,7 +1342,7 @@ read cursors, the doorbell socket, the listener's lock.
 
 ```json
 "discord": {
-  "app_token": "",
+  "app_token": "DISCORD_TOKEN",
   "server_id": "530867164866150410",
   "channels": { "bug_reports": "1069745561672106015" },
   "mentions": { "ben": "226422780445458432" },
@@ -1354,10 +1354,19 @@ read cursors, the doorbell socket, the listener's lock.
 
 ## `app_token`
 
-Discord developer portal, your app, Bot, Reset Token. **Not** the Application ID and **not**
-the public key. Better: leave it blank and put `FFDISCORD_APP_TOKEN` in
-`~/.config/ffbox/secrets.env`, which keeps the secret out of a file that also holds channel
-ids. `FFDISCORD_TOKEN` is the pre-2026-08-24 spelling and is still read.
+**The name of a `secrets.env` variable, not the token.** Put the token in
+`~/.config/ffbox/secrets.env` as `DISCORD_TOKEN="<token>"` and set `"app_token": "DISCORD_TOKEN"`.
+The services already load `secrets.env`, and `ffdiscord` run from a shell reads that one line of
+the file itself. Quotes around the value are fine.
+
+A value made only of capital letters, digits and underscores, with at least one underscore, is
+always read as a name. Anything else is used as the token itself, which still works but keeps the
+secret in `config.json`.
+`FFDISCORD_APP_TOKEN` overrides both, and `FFDISCORD_TOKEN` is its pre-2026-08-24 spelling. A
+name that is set nowhere stops `ffdiscord` and the listener with an error naming the variable.
+
+The token comes from the Discord developer portal: your app, Bot, Reset Token. **Not** the
+Application ID and **not** the public key.
 
 ## `server_id`
 
