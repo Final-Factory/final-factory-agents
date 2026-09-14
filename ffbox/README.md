@@ -208,14 +208,16 @@ resolve once and write the id back — after that the sweep asks for the snowfla
 matches no channel at all is reported once per process, with the command that fixes it, and is
 not swept.
 
-Better than filling in `discord.app_token`: put `FFDISCORD_APP_TOKEN` in
-`~/.config/ffbox/secrets.env`,
-which both units read through `EnvironmentFile=` and which never enters a container — `ffbox`
-names the container's env vars one at a time and that is not one of them. A token change is a
+Keep the token out of `config.json`: put it in `~/.config/ffbox/secrets.env` as
+`DISCORD_TOKEN="<token>"` and set `discord.app_token` to the name, `"DISCORD_TOKEN"`. Both units
+read that file through `EnvironmentFile=`, and it never enters a container — `ffbox` names the
+container's env vars one at a time and that is not one of them. `ffdiscord` run from a shell reads
+the one variable out of the file itself. `FFDISCORD_APP_TOKEN` still overrides. A token change is a
 restart, not a reinstall — the units read the file, they do not embed it.
 
-`ffdiscord doctor` reads the environment, not the secrets file, so source it first if the token
-lives there: `set -a; . ~/.config/ffbox/secrets.env; set +a`. It verifies the token, the server,
+`ffdiscord doctor` finds a named `app_token` on its own. A token kept only as
+`FFDISCORD_APP_TOKEN` in the secrets file still needs sourcing first:
+`set -a; . ~/.config/ffbox/secrets.env; set +a`. It verifies the token, the server,
 and the per-channel permissions — View Channels and Read Message History included, which a bot
 invited without them silently lacks.
 

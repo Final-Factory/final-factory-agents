@@ -709,7 +709,10 @@ def main(argv=None):
     # load_config has already folded FFDISCORD_APP_TOKEN in from the environment, so this one
     # read covers the file and the unit's EnvironmentFile alike.
     if not cfg.get("app_token"):
-        print("no app token configured. Set FFDISCORD_APP_TOKEN, or fill in \"app_token\" "
+        named = cfg.get("app_token_name")
+        print((f"no app token: app_token names {named}, which is set neither in the environment "
+               "nor in secrets.env. " if named else "no app token configured. ")
+              + "Set FFDISCORD_APP_TOKEN, or fill in \"app_token\" "
               "in the config; `sh ffbox/05-discord-setup.sh --check` lists every blank.",
               file=sys.stderr)
         return 2

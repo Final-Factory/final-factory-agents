@@ -7,10 +7,11 @@ Python 3 standard library only (urllib) — no pip install, no venv, no lockfile
 
 Config (first match wins):
   1. env vars  FFDISCORD_APP_TOKEN, FFDISCORD_SERVER_ID
-  2. the "discord" section of ~/.config/ffbox/config.json
+  2. the "discord" section of ~/.config/ffbox/config.json, where app_token is best the NAME of a
+     secrets.env variable, read from the environment or from that file
 
   "discord": {
-    "app_token": "<the Bot tab's token — NOT the Application ID or public key>",
+    "app_token": "DISCORD_TOKEN   <- secrets.env holds DISCORD_TOKEN=\"<the Bot tab's token>\"",
     "server_id": "<right-click the server name > Copy Server ID>",
     "channels": { "<alias>": "<channel id, or \"\" to have it resolved by name>" },
     "mentions": { "<name>": "<user id>" }
@@ -108,6 +109,46 @@ STATE_PATH = os.path.join(FFDISCORD_HOME, "state.json")
 FFBOX_CONFIG_DIR = os.path.expanduser(os.environ.get("FFBOX_CONFIG_DIR") or "~/.config/ffbox")
 CONFIG_PATH = os.path.join(FFBOX_CONFIG_DIR, "config.json")
 CONFIG_SECTION = "discord"
+# Where `"app_token": "<NAME>"` is looked up when the environment does not have NAME. The same
+# override ffbox and claude_keys honour.
+SECRETS_PATH = os.path.expanduser(os.environ.get("FFBOX_SECRETS")
+                                  or os.path.join(FFBOX_CONFIG_DIR, "secrets.env"))
+# What a secrets.env variable name looks like: capitals, digits and underscores, WITH AT LEAST ONE
+# UNDERSCORE. A Discord bot token has lowercase letters and dots, so it can never be mistaken for
+# one. The underscore is what keeps an all-capitals literal -- the offline suite's TESTTOKEN, or
+# anybody's placeholder -- being used as the token rather than looked up as a name.
+SECRET_NAME = re.compile(r"[A-Z][A-Z0-9]*_[A-Z0-9_]*")
+
+
+def secret_value(name):
+    """The value of the variable `name`: the environment first, then secrets.env, else "".
+
+    THE ENVIRONMENT FIRST because that is how the units get it: ffwatch, ffweb and the listener load
+    secrets.env through EnvironmentFile=, which has already stripped any quotes. THE FILE SECOND,
+    for `ffdiscord` run from a shell, which has no such environment.
+
+    NOT A SHELL. secrets.env also holds the GitHub tokens and the model credentials, so this reads
+    the one line it was asked for -- KEY=value, an optional `export `, matching single or double
+    quotes stripped -- and executes nothing, the same way claude_keys reads its own names.
+    """
+    value = os.environ.get(name)
+    if value:
+        return value
+    try:
+        with open(SECRETS_PATH, "r", encoding="utf-8", errors="replace") as fh:
+            for line in fh:
+                key, sep, raw = line.strip().partition("=")
+                key = key.strip()
+                if key.startswith("export "):
+                    key = key[len("export "):].strip()
+                if sep and key == name:
+                    raw = raw.strip()
+                    if len(raw) >= 2 and raw[0] == raw[-1] and raw[0] in "\"'":
+                        raw = raw[1:-1]
+                    return raw
+    except OSError:
+        pass
+    return ""
 
 DISCORD_EPOCH = 1420070400000
 
@@ -180,6 +221,16 @@ def load_config():
     # guild a server. Discord's API still says "guild", so every /guilds/... path below is
     # unchanged — these names cover what somebody types, not what goes on the wire.
     #
+    # THE TOKEN IS BEST A NAME. `"app_token": "DISCORD_TOKEN"` names a secrets.env variable, so
+    # config.json -- which every session reads to change a channel id -- carries no secret. A
+    # value that is not a variable name is the token itself, as it always was. `app_token_name`
+    # is kept only so a refusal can say which variable was empty; update_config writes from the
+    # file on disk, never from this dict, so it cannot be saved back.
+    named = str(cfg.get("app_token") or "").strip()
+    if SECRET_NAME.fullmatch(named):
+        cfg["app_token"] = secret_value(named)
+        cfg["app_token_name"] = named
+
     # ENV BEATS FILE, which is how a container gets a token without one being written to a disk
     # it can read back.
     for env_name, key in (("FFDISCORD_APP_TOKEN", "app_token"),
@@ -360,11 +411,14 @@ class Client:
         self.cfg = cfg
         self.token = cfg.get("app_token")
         if not self.token:
+            named = cfg.get("app_token_name")
             die(
-                "no bot token. Set FFDISCORD_APP_TOKEN, or fill in the \"app_token\" field "
-                f"in the \"{CONFIG_SECTION}\" section of {CONFIG_PATH}. "
-                "`sh ffbox/05-discord-setup.sh --check` lists every blank, and "
-                "ffbox/config.md says where each value comes from."
+                (f"no bot token: app_token names {named}, which is set neither in the "
+                 f"environment nor in {SECRETS_PATH}. " if named else "no bot token. ")
+                + f"Put DISCORD_TOKEN=\"<token>\" in {SECRETS_PATH} and set \"app_token\": "
+                f"\"DISCORD_TOKEN\" in the \"{CONFIG_SECTION}\" section of {CONFIG_PATH}, or "
+                "set FFDISCORD_APP_TOKEN. `sh ffbox/05-discord-setup.sh --check` lists every "
+                "blank, and ffbox/config.md says where each value comes from."
             )
         self.ctx = ssl.create_default_context()
 
