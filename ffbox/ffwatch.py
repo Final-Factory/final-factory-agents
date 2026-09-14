@@ -19350,7 +19350,8 @@ class Watcher:
                     ARE durable: the row is in the database and the next daemon start sends it.
                     Counted anyway, because a shutdown that lands between "the agent answered"
                     and "Discord has the answer" is exactly what looks, to the person who
-                    asked, like nothing happened.
+                    asked, like nothing happened. A row that has already FAILED is not
+                    counted: waiting cannot fix what it failed on, and the restart sometimes can.
 
         ONLY WHAT THE SENDER WILL SEND BY ITSELF. Under approve_before_send a `pending` row is
         not waiting on this machine at all — it is waiting on a person, possibly for days — and
@@ -19383,8 +19384,15 @@ class Watcher:
             # be decided because docker hiccuped should report nothing owed rather than refuse to
             # answer -- the caller is an updater trying to work out whether it may proceed.
             "ci_publishing": self._ci_publishing_count(),
+            # A ROW THAT HAS ALREADY FAILED IS NOT WAITED ON. It is durable, it backs off between
+            # attempts, and what it is failing on is usually outside this machine. On 2026-09-14 a
+            # revoked bot token 401'd every send while the updater waited on those very sends
+            # before the restart that would load the new token, for the whole drain window.
+            # A first attempt still in flight has attempts=1 and no last_error (the claim
+            # counts before the send), so it is still counted.
             "outbound": int(self.db.scalar(
-                f"SELECT COUNT(*) FROM outbound WHERE status IN {sendable}", (), 0)),
+                f"SELECT COUNT(*) FROM outbound WHERE status IN {sendable}"
+                " AND last_error IS NULL", (), 0)),
         }
 
     def _ci_publishing_count(self):

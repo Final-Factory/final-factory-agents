@@ -335,7 +335,9 @@ Nine things worth knowing:
   branch push, the pull request and the Discord reply happen on the host after it exits, in a
   thread that a restart does not survive. So the updater waits — five minutes, not an hour — for
   turns whose container has *already* gone and whose publishing is still in flight:
-  `ffwatch quiet --host-only`. `FFBOX_DRAIN_TIMEOUT` is that window.
+  `ffwatch quiet --host-only`. `FFBOX_DRAIN_TIMEOUT` is that window. A reply that has already
+  failed to send is not waited on: it is saved, the daemon retries it after the restart, and
+  what it failed on (a revoked bot token, say) is often exactly what the restart fixes.
 
 - **When you do need everything stopped**, `touch ~/.config/ffbox/update.stop-running` (or set
   `FFBOX_UPDATE_STOP_RUNNING=1`) and the next tick behaves the old way for one pass: wait an

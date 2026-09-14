@@ -9844,6 +9844,35 @@ def test_drain_never_blocks_on_a_dead_daemon():
     case.watcher.resume()
 
 
+def test_a_reply_that_already_failed_does_not_hold_the_update():
+    """The updater waits on replies the sender will send by itself, not on ones that are failing.
+
+    THE FAILURE THIS PREVENTS. On 2026-09-14 the Discord bot token was changed in secrets.env,
+    which revoked the old one. Every send from the running daemon came back 401, and the update
+    that would have loaded the new token waited on those same sends for the whole drain window.
+    A failed row is durable and retried after the restart, so waiting on it buys nothing.
+    """
+    print("drain: a reply that is failing is not waited on")
+    case = Case("drainfailing")
+    conv = seed_conversation(case)
+    case.watcher.record_outbound(None, conv, "post",
+                                 {"channel": ASK_CHANNEL, "text": "an answer Discord refuses"})
+    check("a reply not yet tried is part of the host tail",
+          case.watcher.settling()["outbound"] == 1, case.watcher.settling())
+
+    before = case.watcher.db.one("SELECT * FROM outbound")
+    check("the sender claims it", case.watcher._claim_for_send(before))
+    check("and a first attempt still in flight is still waited on",
+          case.watcher.settling()["outbound"] == 1, case.watcher.settling())
+
+    case.watcher._send_failed(before, "error: HTTP 401 for https://discord.com/api/v10/channels/"
+                                      "1/messages  (bad or revoked bot token)")
+    check("once that attempt has failed, the update no longer waits on it",
+          case.watcher.settling()["outbound"] == 0, case.watcher.settling())
+    check("and the row is still pending, so the restarted daemon sends it",
+          case.rows("SELECT status FROM outbound")[0]["status"] == "pending",
+          case.rows("SELECT status, attempts, last_error FROM outbound"))
+
 def test_config_failsafe_stops_every_launch():
     """A config file that does not parse launches nothing, and says so on disk.
 
@@ -21561,6 +21590,7 @@ def main():
         test_the_cli_can_continue_a_conversation,
         test_drain_pauses_launches_without_holding_replies,
         test_drain_never_blocks_on_a_dead_daemon,
+        test_a_reply_that_already_failed_does_not_hold_the_update,
         test_a_local_conversation_never_reaches_discord,
         test_past_standalone_runs_import,
         test_config_lives_under_ffbox,
