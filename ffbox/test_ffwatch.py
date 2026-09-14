@@ -18907,7 +18907,7 @@ def test_a_log_line_from_another_thread_cannot_land_inside_a_json_reply():
 
 
 def test_the_mark_goes_on_before_the_selector_is_asked():
-    """👀 must not wait behind resettle(), because resettle is a Claude call.
+    """👀 must not wait behind resettle(), and resettle must not wait behind the 👀.
 
     Measured on the build server 2026-09-02: a ping to conversation 34 was ingested at 21:14:12
     and marked at 21:14:31. The nineteen seconds between were one haiku selector call deciding
@@ -18915,11 +18915,15 @@ def test_the_mark_goes_on_before_the_selector_is_asked():
     the message is being answered, which always_a_turn had already settled from the fact that
     somebody addressed the bot.
 
-    The check is an ordering one and it is made from INSIDE the selector, because that is the
-    only place the two events can be told apart: by the time claim_turns returns, both have
-    happened either way.
+    THE OTHER WAY ROUND SINCE 2026-09-14. The mark was still sent inline, so the selector waited
+    on Discord instead: conversation 185's ping was marked at 17:52:12.9 and queued at 16.7, the
+    selector starting only once the reaction had landed. The two run side by side now.
+
+    The check is made from INSIDE the selector while the send is held open: the send has begun
+    and not finished, and the selector is already running. When claim_turns returns the send has
+    finished, because create_turn joins it before anything below resettle can see it in flight.
     """
-    print("the acknowledgement leads the selector")
+    print("the acknowledgement and the selector run side by side")
     mid = sflake(0, 1)
     fixture = base_fixture()
     fixture["messages"][ASK_CHANNEL] = [message(mid, "hey @max is the smelter meant to stall?")]
@@ -18930,25 +18934,185 @@ def test_the_mark_goes_on_before_the_selector_is_asked():
     case.watcher.drain_events()
 
     seen = {}
+    sending, release = threading.Event(), threading.Event()
+    real_send = case.watcher.send_one
+
+    def held_send(row):
+        if row["action"] == "react":
+            sending.set()
+            release.wait(10)
+        return real_send(row)
 
     def selector(conv, pending):
         seen["asked"] = True
+        seen["sending"] = sending.wait(10)
         seen["reacts"] = sent_calls(case, "react")
         seen["turns"] = case.rows("SELECT * FROM turn")
+        release.set()
         return conv["id"], "the stub agrees"
 
+    case.watcher.send_one = held_send
     case.watcher.cluster_selector = selector
-    case.watcher.claim_turns()
+    try:
+        case.watcher.claim_turns()
+    finally:
+        release.set()
 
     check("the selector was actually consulted, so this test is not vacuous",
           seen.get("asked"), seen)
-    check("the 👀 was already on Discord when the selector was asked",
-          seen.get("reacts") == [["react", ASK_CHANNEL, mid, ffwatch.ACK_EMOJI]],
-          seen.get("reacts"))
-    check("and it went out before any turn existed, which is what it can now promise",
-          seen.get("turns") == [], seen.get("turns"))
+    check("the 👀 was already being sent when the selector was asked",
+          seen.get("sending"), seen)
+    check("and the selector did not wait for it to land",
+          seen.get("reacts") == [], seen.get("reacts"))
+    check("no turn existed while the two were running", seen.get("turns") == [],
+          seen.get("turns"))
+    check("the mark had landed by the time claim_turns returned",
+          sent_calls(case, "react") == [["react", ASK_CHANNEL, mid, ffwatch.ACK_EMOJI]],
+          sent_calls(case, "react"))
     check("the turn is created after", len(case.rows("SELECT * FROM turn")) == 1,
           case.rows("SELECT * FROM turn"))
+
+
+def _a_running_run(case, name):
+    """A conversation, a running turn and an in-flight run row, inserted directly. (conv, run)."""
+    db = case.watcher.db
+    conv_id = db.execute("INSERT INTO conversation(thread_id, kind) VALUES (?, 'ask')",
+                         (f"t-{name}",)).lastrowid
+    turn_id = db.execute("INSERT INTO turn(conversation_id, seq, status)"
+                         " VALUES (?, 1, 'running')", (conv_id,)).lastrowid
+    run_id = db.execute("INSERT INTO run(turn_id, ffbox_run_id, container_name, container_id)"
+                        " VALUES (?, ?, ?, ?)",
+                        (turn_id, f"r-{name}", f"ffbox-dev-r-{name}", f"cafe-{name}")).lastrowid
+    return conv_id, run_id
+
+
+def _wait_until(pred, secs=5.0):
+    deadline = time.monotonic() + secs
+    while time.monotonic() < deadline:
+        if pred():
+            return True
+        time.sleep(0.02)
+    return bool(pred())
+
+
+def test_a_run_is_finished_the_moment_its_container_exits():
+    """An exit watcher starts the finish; the pass is only the fallback.
+
+    Conversation 185's ping, 2026-09-14: the container exited at 17:52:33.3 and nothing noticed
+    until the pass at 40.3, because only finish_runs looked, and only once per poll_secs. The
+    daemon puts a `docker wait` on each live run now and finishes it when that returns.
+    """
+    print("exit watcher: a container's exit starts its finish")
+    case = Case("exitwatch", base_fixture())
+    w = case.watcher
+    exited = os.path.join(case.root, "exited")
+    waits = os.path.join(case.root, "docker_waits.txt")
+    w.cfg["docker"] = write_stub(
+        os.path.join(case.root, "docker_wait_stub.sh"),
+        "#!/bin/sh\n"
+        f"echo \"$*\" >> '{waits}'\n"
+        f"if [ \"$1\" = wait ]; then while [ ! -e '{exited}' ]; do sleep 0.05; done; fi\n"
+        "exit 0\n")
+    _conv, run_id = _a_running_run(case, "exitwatch")
+
+    def wait_calls():
+        try:
+            with open(waits, encoding="utf-8") as fh:
+                return [ln.strip() for ln in fh if ln.strip()]
+        except OSError:
+            return []
+
+    alive = [True]
+    finished = []
+    w.run_container_live = lambda run: alive[0]
+    w.start_finish = lambda run: finished.append(run["id"]) or True
+
+    w.finish_runs()
+    check("off the daemon, the pass arms no watcher", not w._exit_watchers and not wait_calls(),
+          (w._exit_watchers, wait_calls()))
+
+    w._finish_promptly = True
+    w.finish_runs()
+    w.finish_runs()
+    _wait_until(lambda: wait_calls())
+    time.sleep(0.2)
+    check("the daemon arms one watcher per live run, however many passes see it",
+          wait_calls() == ["wait cafe-exitwatch"], wait_calls())
+    check("and nothing is finished while the container runs", finished == [], finished)
+
+    alive[0] = False
+    open(exited, "w").close()
+    check("the container's exit starts the finish with no pass in between",
+          _wait_until(lambda: finished == [run_id]), finished)
+    check("and the watcher lets go of the run",
+          _wait_until(lambda: run_id not in w._exit_watchers), w._exit_watchers)
+
+    # A wait that comes back while the container is still running -- a docker daemon restart --
+    # finishes nothing, and holds its place long enough that the pass cannot spin on it.
+    finished.clear()
+    alive[0] = True
+    w.EXIT_WATCH_RETRY_SECS = 0.5
+    row = w.db.one("SELECT * FROM run WHERE id=?", (run_id,))
+    check("a watcher can be armed again", w.watch_exit(row), w._exit_watchers)
+    time.sleep(0.2)
+    check("a wait that returns early finishes nothing", finished == [], finished)
+    check("and the pass cannot arm a second one inside the hold", not w.watch_exit(row),
+          w._exit_watchers)
+    check("after the hold the run is free to be watched again",
+          _wait_until(lambda: run_id not in w._exit_watchers), w._exit_watchers)
+
+    src = io.open(os.path.join(HERE, "ffwatch.py"), encoding="utf-8").read()
+    check("the launch arms the watcher as soon as the container is up",
+          "container is up; the finish pass owns it from here\")\n"
+          "        # AND ITS EXIT IS WATCHED FROM NOW" in src, None)
+
+
+def test_a_finished_run_sends_its_own_reply_and_wakes_the_loop():
+    """The reply goes from the finishing thread, and the loop is woken for the rest.
+
+    Conversation 185's ping, 2026-09-14: the run finished at 17:52:41.1 and its reply waited for
+    the next pass's send_pending, going out at 48.1.
+    """
+    print("a finish sends its own reply")
+    fixture = base_fixture()
+    fixture["messages"][ASK_CHANNEL] = [message(9701, "one"), message(9702, "two")]
+    case = Case("finishsend", fixture)
+    w = case.watcher
+    mine, run_id = _a_running_run(case, "finishsend")
+    other, _ = _a_running_run(case, "finishsend-other")
+    for conv_id, mid in ((mine, "9701"), (other, "9702")):
+        w.db.execute(
+            "INSERT INTO outbound(conversation_id, action, payload_json, nonce, status)"
+            " VALUES (?, 'react', ?, ?, 'pending')",
+            (conv_id, json.dumps({"channel": ASK_CHANNEL, "message": mid,
+                                  "emoji": ffwatch.ACK_EMOJI}), f"nonce-{mid}"))
+
+    check("off the daemon a finish sends nothing itself",
+          w.deliver_finished(run_id) == 0 and not sent_calls(case, "react"),
+          sent_calls(case, "react"))
+
+    w._finish_promptly = True
+    w._doorbell = w.open_doorbell()
+    try:
+        sent = w.deliver_finished(run_id)
+        check("the finished run's own conversation is sent from the finish",
+              sent == 1 and sent_calls(case, "react")
+              == [["react", ASK_CHANNEL, "9701", ffwatch.ACK_EMOJI]],
+              (sent, sent_calls(case, "react")))
+        check("and another conversation's queue is left to the pass",
+              w.db.scalar("SELECT status FROM outbound WHERE conversation_id=?", (other,))
+              == "pending",
+              case.rows("SELECT conversation_id, status FROM outbound"))
+        check("and the loop is woken", w.wait_for_doorbell(5.0), None)
+    finally:
+        w.close_doorbell()
+        w._doorbell = None
+
+    src = inspect.getsource(ffwatch.Watcher._finish_guarded)
+    check("every finish ends by delivering, whichever way it went",
+          "self.deliver_finished(run_row_id)" in src.split("finally:")[-1], None)
+    check("and run() is what turns it on",
+          "self._finish_promptly = True" in inspect.getsource(ffwatch.Watcher.run), None)
 
 
 def test_the_turn_adopts_the_mark_rather_than_sending_a_second():
@@ -21894,6 +22058,8 @@ def main():
         test_a_failed_in_process_call_reads_like_a_failed_subprocess,
         test_a_log_line_from_another_thread_cannot_land_inside_a_json_reply,
         test_the_mark_goes_on_before_the_selector_is_asked,
+        test_a_run_is_finished_the_moment_its_container_exits,
+        test_a_finished_run_sends_its_own_reply_and_wakes_the_loop,
         test_the_turn_adopts_the_mark_rather_than_sending_a_second,
         test_an_unforced_turn_still_does_not_flicker,
         test_a_message_that_loses_its_turn_gives_the_mark_back,
