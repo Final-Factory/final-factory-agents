@@ -19016,9 +19016,11 @@ def test_a_run_is_finished_the_moment_its_container_exits():
     _conv, run_id = _a_running_run(case, "exitwatch")
 
     def wait_calls():
+        # Only the waits: the watcher asks `docker inspect` for the container's pid first, which
+        # this stub answers with nothing, and that is what sends it to `docker wait`.
         try:
             with open(waits, encoding="utf-8") as fh:
-                return [ln.strip() for ln in fh if ln.strip()]
+                return [ln.strip() for ln in fh if ln.startswith("wait ")]
         except OSError:
             return []
 
@@ -19065,6 +19067,82 @@ def test_a_run_is_finished_the_moment_its_container_exits():
     check("the launch arms the watcher as soon as the container is up",
           "container is up; the finish pass owns it from here\")\n"
           "        # AND ITS EXIT IS WATCHED FROM NOW" in src, None)
+
+
+def test_a_container_that_has_let_go_is_finished_before_docker_says_so():
+    """The kernel's word, not docker's, when the kernel's can be read.
+
+    The last process in a container frees its 40 GB workspace tmpfs on the way out and docker
+    records the exit after: 2.9s of conversation 185's pings. The watcher finishes the run once the
+    container's first process is exiting AND nothing else is left in its cgroup -- both, because a
+    process still running could still write into out/.
+    """
+    print("exit watcher: the kernel's view beats docker's")
+    case = Case("letgo", base_fixture())
+    w = case.watcher
+    w._finish_promptly = True
+    w.EXIT_POLL_SECS = 0.02
+    _conv, run_id = _a_running_run(case, "letgo")
+    let_go = [False]
+    finished = []
+    w.container_init = lambda ref: (4242, 1, "/nowhere")
+    w.init_has_let_go = lambda init: let_go[0]
+    w.run_container_live = lambda run: True          # docker still says the container is up
+    w.start_finish = lambda run: finished.append(run["id"]) or True
+
+    check("a watcher is armed", w.watch_exit(w.db.one("SELECT * FROM run WHERE id=?", (run_id,))),
+          w._exit_watchers)
+    time.sleep(0.2)
+    check("nothing is finished while the container holds on", finished == [], finished)
+    let_go[0] = True
+    check("once it lets go the run is finished, though docker still says running",
+          _wait_until(lambda: finished == [run_id]), finished)
+
+    # The rule itself, against a fake /proc and cgroup.
+    real_stat = ffwatch._proc_stat
+    cg = os.path.join(case.root, "cgroup")
+    os.makedirs(cg, exist_ok=True)
+
+    def pids(n):
+        with open(os.path.join(cg, "pids.current"), "w", encoding="utf-8") as fh:
+            fh.write(f"{n}\n")
+
+    real = ffwatch.Watcher.init_has_let_go
+    try:
+        ffwatch._proc_stat = lambda pid: ("S", 0, 77)
+        pids(1)
+        check("a first process still in userspace has not let go",
+              not real(w, (4242, 77, cg)), None)
+        ffwatch._proc_stat = lambda pid: ("S", ffwatch.PF_EXITING, 77)
+        pids(3)
+        check("exiting with other processes still in the container is not enough",
+              not real(w, (4242, 77, cg)), None)
+        pids(1)
+        check("exiting and alone is let go", real(w, (4242, 77, cg)), None)
+        check("but not when there is no cgroup to prove it alone",
+              not real(w, (4242, 77, None)), None)
+        ffwatch._proc_stat = lambda pid: None
+        check("a process that is gone has let go", real(w, (4242, 77, cg)), None)
+        ffwatch._proc_stat = lambda pid: ("S", 0, 78)
+        check("and so has one whose pid now belongs to another process",
+              real(w, (4242, 77, cg)), None)
+    finally:
+        ffwatch._proc_stat = real_stat
+
+    if os.path.exists("/proc/self/stat"):
+        mine = ffwatch._proc_stat(os.getpid())
+        check("the stat reader reads a live process as live and not exiting",
+              mine is not None and mine[0] not in ("Z", "X") and not mine[1] & ffwatch.PF_EXITING
+              and mine[2] > 0, mine)
+
+    task = io.open(os.path.join(HERE, "discord-task.sh"), encoding="utf-8").read()
+    finish = task.split("_ffbox_finish() {", 1)[1].split("\n}\n", 1)[0]
+    check("the trap reaps every other process as its very last step",
+          finish.rstrip().endswith("_ffbox_reap_others\n    return $_rc")
+          and finish.index(".container-rc") < finish.index("_ffbox_reap_others"), finish[-300:])
+    reaper = task.split("_ffbox_reap_others() {", 1)[1].split("\n}\n", 1)[0]
+    check("and only as PID 1, where kill -1 means this container and nothing more",
+          reaper.lstrip().startswith('[ "$$" = 1 ] || return 0'), reaper[:120])
 
 
 def test_a_finished_run_sends_its_own_reply_and_wakes_the_loop():
@@ -22059,6 +22137,7 @@ def main():
         test_a_log_line_from_another_thread_cannot_land_inside_a_json_reply,
         test_the_mark_goes_on_before_the_selector_is_asked,
         test_a_run_is_finished_the_moment_its_container_exits,
+        test_a_container_that_has_let_go_is_finished_before_docker_says_so,
         test_a_finished_run_sends_its_own_reply_and_wakes_the_loop,
         test_the_turn_adopts_the_mark_rather_than_sending_a_second,
         test_an_unforced_turn_still_does_not_flicker,

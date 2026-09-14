@@ -168,6 +168,37 @@ _ffbox_release_config() {
     return 0
 }
 
+# EVERY OTHER PROCESS GOES BEFORE PID 1 DOES, and the host is counting on it. The last process in
+# this container frees its 40 GB workspace tmpfs inside the kernel on its way out, which took 2.9s
+# after this trap on both of conversation 185's measured pings, and docker only records the exit
+# after that. ffwatch reads the kernel instead: this process exiting, and nothing else left in the
+# container's cgroup (init_has_let_go in ffwatch.py). The second half is what makes the first safe
+# to act on -- anything still running could still write into out/ -- and this is what makes it come
+# true at once, rather than only when the kernel's own kill has reached every straggler: an editor,
+# the model forwarder, the failsafe's sleep, whatever the agent left behind.
+#
+# ONLY AS PID 1. `kill -1` from anywhere else is every process this user owns, on a host included.
+# The loop is bounded: a process this user cannot signal just leaves the host waiting for docker.
+_ffbox_reap_others() {
+    [ "$$" = 1 ] || return 0
+    _ro_n=0
+    while [ "$_ro_n" -lt 40 ]; do
+        kill -KILL -1 2>/dev/null || :
+        # A foreground child, so bash reaps what the kill left as zombies while it waits.
+        sleep 0.05
+        _ro_left=0
+        for _ro_p in /proc/[0-9]*; do
+            _ro_p=${_ro_p#/proc/}
+            [ "$_ro_p" = 1 ] && continue
+            kill -0 "$_ro_p" 2>/dev/null && { _ro_left=1; break; }
+        done
+        [ "$_ro_left" = 1 ] || break
+        _ro_n=$((_ro_n + 1))
+    done
+    unset _ro_n _ro_left _ro_p
+    return 0
+}
+
 _ffbox_finish() {
     _rc=$?
     _ffbox_stop_agent
@@ -210,6 +241,8 @@ _ffbox_finish() {
     # Last, after the harvest and the licence, so a crash in either still leaves the code that
     # says what happened. Never fatal, and never allowed to change our own status.
     printf '%s\n' "$_rc" > "$FFBOX_OUT/.container-rc" 2>/dev/null || true
+    # And then nothing else is left. Truly last: see _ffbox_reap_others.
+    _ffbox_reap_others
     return $_rc
 }
 trap _ffbox_finish EXIT INT TERM
