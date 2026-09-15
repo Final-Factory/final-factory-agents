@@ -829,6 +829,14 @@ DEFAULTS = {
         # question. False turns the poller off entirely, which is what a box that is not the
         # Discord harness wants.
         "announce_merges": True,
+        # A MERGED PULL REQUEST TAKES ITS BRANCH WITH IT, for branches under branch_prefix only:
+        # on origin, in the host checkout (the branch, refs/ffbox/ and the tracking ref) and in
+        # the mirror. See prune_merged_branches. False leaves every branch where it is.
+        "delete_merged_branches": True,
+        # HOW OFTEN THAT SWEEP RUNS. It asks GitHub once per branch, and a merged branch that
+        # sits on origin for a day costs nobody anything. The last run is stamped in the state
+        # directory, so the updater restarting ffwatch does not restart the clock.
+        "delete_merged_branches_secs": 24 * 3600,
         # PULL REQUEST FEEDBACK (design/pr_feedback_design.txt). A comment an operator leaves on
         # an open pull request -- in the conversation, on a line of the diff, or in the body of a
         # submitted review -- starts a run on that pull request's branch which makes the changes
@@ -5309,8 +5317,10 @@ def pull_facts(got):
     empty or falsy rather than missing, which is what lets a caller test a field it may not have
     been given.
     """
-    head = got.get("head") or {}
-    base = got.get("base") or {}
+    # AN OBJECT OR NOTHING. pull_request_for now shapes its answer here too, and a head or base
+    # that is not an object must read as absent rather than raise out of publish().
+    head = got.get("head") if isinstance(got.get("head"), dict) else {}
+    base = got.get("base") if isinstance(got.get("base"), dict) else {}
     return {
         "number": got.get("number"),
         "url": got.get("html_url"),
@@ -5431,9 +5441,8 @@ class GitHub:
         if not isinstance(found, list) or not found:
             return None
         pull = next((p for p in found if p.get("state") == "open"), found[0])
-        return {"number": pull.get("number"), "url": pull.get("html_url"),
-                "state": pull.get("state") or "closed",
-                "merged": bool(pull.get("merged_at") or pull.get("merged"))}
+        # pull_facts, so the branch sweep gets the head sha and base that the merge was of.
+        return pull_facts(pull)
 
 
     def list_issue_comments(self, since=None, per_page=100, max_pages=10, etag=None):
@@ -5914,6 +5923,8 @@ class Watcher:
         # Conversations the branch backstop in create_turn has already turned away, so it says
         # so once rather than once per tick. Same shape and same reason as _hold_decided.
         self._branchless_reviews = set()
+        # (branch, reason) pairs prune_merged_branch has already logged a keep or a failure for.
+        self._prune_said = set()
         # Which conversations have been told they are at the feedback turn cap, so the line is
         # said once an hour rather than once a poll. Same idiom as _branchless_reviews.
         self._hot_said = set()
@@ -12600,8 +12611,8 @@ class Watcher:
         log(f"mirror: took {branch} from {self.cfg['git_dir']}")
         return True
 
-    def git_here(self, *args, timeout=300):
-        """Run git in the host checkout. Returns a CompletedProcess, never raises.
+    def git_here(self, *args, timeout=300, repo=None):
+        """Run git in the host checkout, or in `repo`. Returns a CompletedProcess, never raises.
 
         The same shape push_bundle's local `git()` has, lifted out because adoption and the
         mirror sync ask the checkout the same questions before any run exists. A subprocess
@@ -12609,7 +12620,7 @@ class Watcher:
         below reads one thing rather than two.
         """
         try:
-            return subprocess.run(["git", "-C", self.cfg["git_dir"], *args],
+            return subprocess.run(["git", "-C", repo or self.cfg["git_dir"], *args],
                                   capture_output=True, text=True, encoding="utf-8",
                                   errors="replace", timeout=timeout)
         except (OSError, subprocess.SubprocessError) as exc:
@@ -15931,6 +15942,231 @@ class Watcher:
             if result.get("opened"):
                 opened += 1
         return opened
+
+    # -- deleting what merged ----------------------------------------------------------------
+    def prune_merged_branches(self):
+        """Delete every branch under branch_prefix whose pull request merged. Returns the names.
+
+        ON ORIGIN AND ON THIS BOX. The repository does not delete a head branch on merge, and
+        every publish leaves four refs behind here besides the one on origin -- the local branch
+        set_upstream makes, refs/ffbox/<branch>, the tracking ref and the mirror's copy -- so
+        until this existed they only ever accumulated.
+
+        WHAT KEEPS A BRANCH, all of it decided per branch in prune_merged_branch:
+
+        - a name outside branch_prefix, or a protected one. An adopted branch somebody else
+          pushed is theirs to delete, merged or not;
+        - no merged pull request: none at all, an open one (pull_request_for prefers it), or a
+          newest one a human closed;
+        - ANY COPY OF THE BRANCH HOLDING A COMMIT THE MERGED HEAD DOES NOT. This repository squash
+          merges, so a commit a later turn pushed after the merge is on the branch and nowhere
+          else, and deleting the branch would delete the work. The same holds for a refs/ffbox/
+          copy whose push failed and that reconcile has not yet retried;
+        - a conversation owning the branch with a turn in flight, or with its lock held;
+        - a merge notice not yet sent, because that notice finds an adopted branch's thread by
+          conversation.branch, which this clears.
+
+        THE REMOTE GOES FIRST, under a lease on the sha that was checked, so a push landing in
+        between is not deleted with it. A remote deletion that fails leaves every local copy
+        where it is and the next sweep tries again.
+        """
+        gh_cfg = self.cfg.get("github") or {}
+        prefix = self.cfg.get("branch_prefix") or ""
+        # AN EMPTY PREFIX WOULD MAKE EVERY BRANCH ON ORIGIN A CANDIDATE, a person's included.
+        if not gh_cfg.get("delete_merged_branches", True) or not prefix:
+            return []
+        # ONCE A DAY BY DEFAULT, on a stamp that survives a restart: the updater restarts ffwatch
+        # on every push, and an in-memory clock would run the sweep after each one.
+        every = float(gh_cfg.get("delete_merged_branches_secs", 24 * 3600) or 0)
+        stamp = os.path.join(self.state_dir, "github.prune.last")
+        try:
+            with open(stamp, "r", encoding="utf-8") as fh:
+                last = float(fh.read().strip() or 0)
+        except (OSError, ValueError):
+            last = 0.0
+        if every > 0 and 0 <= time.time() - last < every:
+            return []
+        gh = GitHub(self.cfg)
+        if not gh.token or not gh.repo:
+            return []
+        # STAMPED BEFORE THE WORK, so a sweep that raises part-way waits a day like one that
+        # finished, rather than running again every catchup tick.
+        with open(stamp, "w", encoding="utf-8") as fh:
+            fh.write(f"{time.time():.0f}\n")
+        remote = self.cfg["push_remote"]
+        # THE FETCH FIRST, so every remote tip the ancestry check names is an object here.
+        self.git_here("fetch", "--quiet", remote)
+        listed = self.git_here("ls-remote", "--heads", remote)
+        if listed.returncode != 0:
+            log(f"prune: could not list the branches on {remote}, so nothing was deleted: "
+                f"{(listed.stderr or '').strip()[:200]}")
+            return []
+        on_remote = {}
+        for line in (listed.stdout or "").splitlines():
+            sha, _, ref = line.partition("\t")
+            name = ref[len("refs/heads/"):] if ref.startswith("refs/heads/") else ""
+            if name.startswith(prefix):
+                on_remote[name] = sha
+        copies = self.local_branch_copies(prefix)
+        if copies is None:
+            return []
+        deleted = []
+        for branch in sorted(set(on_remote) | set(copies)):
+            try:
+                if self.prune_merged_branch(gh, branch, on_remote.get(branch),
+                                            copies.get(branch, [])):
+                    deleted.append(branch)
+            except Exception as exc:  # noqa: BLE001 — one branch must not stop the sweep
+                log(f"ERROR pruning {branch}: {type(exc).__name__}: {exc}")
+        return deleted
+
+    def local_branch_copies(self, prefix):
+        """{branch: [(repo, ref, sha)]} for every copy of a prefixed branch on this box.
+
+        None when the host checkout cannot be read. Deleting the remote branch without knowing
+        what the checkout holds could delete the only other copy of work it has not pushed.
+        """
+        remote = self.cfg["push_remote"]
+        spaces = [(self.cfg["git_dir"], ("refs/heads/", "refs/ffbox/", f"refs/remotes/{remote}/"),
+                   True)]
+        mirror = self.cfg.get("mirror_repo")
+        if mirror and os.path.isdir(mirror):
+            spaces.append((mirror, ("refs/heads/",), False))
+        found = {}
+        for repo, namespaces, required in spaces:
+            got = self.git_here("for-each-ref", "--format=%(objectname) %(refname)",
+                                *namespaces, repo=repo)
+            if got.returncode != 0:
+                log(f"prune: could not read the refs in {repo}: "
+                    f"{(got.stderr or '').strip()[:200]}")
+                if required:
+                    return None
+                continue
+            for line in (got.stdout or "").splitlines():
+                sha, _, ref = line.partition(" ")
+                space = next((ns for ns in namespaces if ref.startswith(ns)), None)
+                name = ref[len(space):] if space else ""
+                if name.startswith(prefix):
+                    found.setdefault(name, []).append((repo, ref, sha))
+        return found
+
+    def merge_notice_pending(self, pull):
+        """Is the merge notice for this pull request still to be decided by poll_github_merges?
+
+        Pending means the notice poller is on, the merge is after the moment it started
+        watching, it has not marked the pull request seen, and its walk has not already gone
+        past it. The last test is what keeps a merge the walk dropped out of `seen` (it holds
+        500) from holding its branch forever.
+        """
+        if not (self.cfg.get("github") or {}).get("announce_merges", True):
+            return False
+        since, seen, _etag, watching = self.read_merge_cursor()
+        if since is None or not watching or (pull.get("merged_at") or "") < watching:
+            return False
+        if str(pull.get("number") or "") in seen:
+            return False
+        return (pull.get("updated_at") or "") > since
+
+    def _prune_note(self, branch, why, line):
+        """Log `line` once per branch and reason. A kept branch is asked about every sweep."""
+        if (branch, why) not in self._prune_said:
+            self._prune_said.add((branch, why))
+            log(line)
+
+    def prune_merged_branch(self, gh, branch, remote_sha, copies):
+        """One branch, decided, and deleted when its pull request merged. True if it was deleted.
+
+        See prune_merged_branches for what keeps a branch.
+
+        THE CONVERSATIONS THAT OWN IT LET GO OF IT. A turn cannot continue a branch that is
+        gone: launch would fail it with BranchUnavailable. So the branch, the adoption and the
+        pinned base sha are cleared, and the base the pull request merged into becomes the
+        requested base. The next turn then starts on that base, which now carries the squashed
+        work, and publishes a new branch. Starting on the old pin instead would begin from a tree
+        without the conversation's own merged change. github_pr is kept, which stops
+        reconcile_publications from asking about the old head again.
+        """
+        prefix = self.cfg["branch_prefix"]
+        if (not prefix or not branch.startswith(prefix) or branch in PROTECTED_BRANCHES
+                or branch in (self.cfg.get("publish_bases") or {})):
+            return False
+        try:
+            pull = gh.pull_request_for(branch)
+        except GitHubError as exc:
+            self._prune_note(branch, "github", f"prune: could not ask GitHub about {branch}: {exc}")
+            return False
+        if not pull or pull.get("state") == "open" or not pull.get("merged"):
+            return False
+        number, head = pull.get("number"), pull.get("head_sha") or ""
+        if not head or self.merge_notice_pending(pull):
+            return False
+        remote = self.cfg["push_remote"]
+        for sha in {remote_sha, *(sha for _, _, sha in copies)} - {None, "", head}:
+            # IN THE HOST CHECKOUT FOR EVERY COPY. The fetch above put origin's tips here, and the
+            # mirror's copies came from here or from origin, so the objects are here too. A sha
+            # that is somehow missing fails the test, which keeps the branch.
+            if self.git_here("merge-base", "--is-ancestor", sha, head).returncode != 0:
+                self._prune_note(branch, f"ahead:{sha}",
+                                 f"prune: keeping {branch}: PR #{number} merged {head[:12]}, and "
+                                 f"a copy of the branch is at {sha[:12]}, which that merge does "
+                                 f"not include")
+                return False
+
+        owners = [row["id"] for row in
+                  self.db.query("SELECT id FROM conversation WHERE branch=?", (branch,))]
+        locks = []
+        try:
+            for conv_id in owners:
+                lock = ConversationLock(os.path.join(self.conv_dir(conv_id), "lock"))
+                if not lock.acquire():
+                    return False                # a run of its own is in flight
+                locks.append(lock)
+                if self.conversation_in_flight(conv_id):
+                    return False
+            if remote_sha:
+                gone = self.git_here("push", f"--force-with-lease=refs/heads/{branch}:{remote_sha}",
+                                     remote, f":refs/heads/{branch}")
+                if gone.returncode != 0:
+                    self._prune_note(branch, "push",
+                                     f"prune: could not delete {branch} on {remote}: "
+                                     f"{(gone.stderr or '').strip()[:200]}")
+                    return False
+            for repo, ref, sha in copies:
+                # ALREADY GONE is the ordinary case for the tracking ref: the push above removes
+                # it when it deletes the branch on origin.
+                if self.git_here("rev-parse", "--verify", "--quiet", ref,
+                                 repo=repo).returncode != 0:
+                    continue
+                if repo == self.cfg["git_dir"] and ref == f"refs/heads/{branch}":
+                    # `branch -D` RATHER THAN update-ref: it refuses a branch checked out in any
+                    # worktree, and it drops the branch.<name> config set_upstream wrote.
+                    done = self.git_here("branch", "-D", branch)
+                else:
+                    done = self.git_here("update-ref", "-d", ref, sha, repo=repo)
+                if done.returncode != 0:
+                    self._prune_note(branch, f"local:{repo}:{ref}",
+                                     f"WARNING: prune: left {ref} in {repo}: "
+                                     f"{(done.stderr or '').strip()[:200]}")
+            base = pull.get("base_ref") or ""
+            for conv_id in owners:
+                if base in (self.cfg.get("publish_bases") or {}):
+                    self.db.execute(
+                        "UPDATE conversation SET branch=NULL, branch_adopted_at=NULL,"
+                        " branch_adopted_by=NULL, base_sha=NULL, requested_base=?,"
+                        " requested_base_at=?, requested_base_by=? WHERE id=? AND branch=?",
+                        (base, now_iso(), f"PR #{number} merged", conv_id, branch))
+                else:
+                    self.db.execute(
+                        "UPDATE conversation SET branch=NULL, branch_adopted_at=NULL,"
+                        " branch_adopted_by=NULL, base_sha=NULL WHERE id=? AND branch=?",
+                        (conv_id, branch))
+        finally:
+            for lock in locks:
+                lock.release()
+        log(f"prune: deleted {branch}, PR #{number} merged"
+            + (f"; conversation(s) {', '.join(map(str, owners))} will start their next turn on "
+               f"{pull.get('base_ref') or 'their base'}" if owners else ""))
+        return True
 
     def push_bundle(self, bundle, branch):
         """(ok, error, existed). Fetch the run's commits out of the bundle and push them to
@@ -19477,6 +19713,13 @@ class Watcher:
         # silently stopping code reviews is not a trade anybody chose. It has its own worker,
         # its own clock and its own error boundary now; see start_github_poll.
         self.reconcile_publications()
+        # ON THIS TICK AND NOT THE GITHUB ONE: it asks GitHub once per branch, which is not the
+        # one conditional request a minute that worker is built around. It keeps its own daily
+        # clock (github.delete_merged_branches_secs), so most ticks it returns at once.
+        try:
+            self.prune_merged_branches()
+        except Exception as exc:  # noqa: BLE001 — a failed prune must not look like a failed sweep
+            log(f"ERROR pruning merged branches: {type(exc).__name__}: {exc}")
 
     def start_github_poll(self):
         """Kick off the GitHub polls if one is not already running. True if they started.
