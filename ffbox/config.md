@@ -1476,6 +1476,8 @@ The model aliases a turn and a classification ask for are in [`model`](#model).
 | `github.review_pool` | `"ffdev"` | Which agent class a review runs in. `"ffagent"` puts it behind the fence, where it will not be able to push. |
 | `github.poll_secs` | `60` | How often the comment poller looks, and the merge poller with it. Its own clock and its own worker, not `catchup_secs`. |
 | `github.announce_merges` | `true` | Whether a merged pull request tells the Discord threads behind it which build carries the fix. `false` turns that poller off. |
+| `github.delete_merged_branches` | `true` | Whether a branch under `branch_prefix` is deleted once its pull request has merged, on origin and in the host checkout and the mirror. Branches outside the prefix are never touched. `false` leaves every branch where it is. See [Merged branches are deleted](#merged-branches-are-deleted). |
+| `github.delete_merged_branches_secs` | `86400` | How often that sweep runs. The last run is stamped in `github.prune.last` in the state directory, so a restart does not reset the clock. `0` runs it on every catchup tick. |
 
 The token itself is read from the environment, not from this file, so it is never written to
 disk beside channel ids and never lands in a config a container could see. A token that IS in
@@ -1665,6 +1667,46 @@ The first poll on a box records the moment it started watching and announces not
 same watermark the comment poller and every watched Discord channel get. It is kept in the
 cursor as `watching_since` and never moves, so a comment on a pull request that merged months
 ago walks it back into the poll's view without walking it back into anybody's thread.
+
+### Merged branches are deleted
+
+```jsonc
+"github": { "delete_merged_branches": true, "delete_merged_branches_secs": 86400 }
+```
+
+GitHub is not set to delete a head branch on merge, and every publish leaves a branch on origin
+plus four refs on this box: the local branch in the host checkout, `refs/ffbox/<branch>`, the
+tracking ref, and the mirror's copy. Once a day (`delete_merged_branches_secs`, checked on the
+`catchup_secs` tick, with the last run stamped in the state directory so a restart does not
+reset it) ffwatch asks GitHub about each branch under `branch_prefix` it finds in any of those
+places. When the pull request has merged,
+it deletes the branch on origin first, then every copy here.
+
+A branch is kept when any of these is true:
+
+- **It is outside `branch_prefix`,** or it is a protected name. Somebody else's branch is theirs
+  to delete, merged or not, and GitHub is not even asked about it.
+- **It has no merged pull request.** That covers no pull request, an open one, and a newest one
+  somebody closed without merging.
+- **Any copy holds a commit the merge did not include.** The repository squash merges, so
+  commits a later turn pushed after the merge exist only on that branch. The same goes for a
+  `refs/ffbox/` copy whose push failed and has not been retried yet. A kept branch is logged once.
+- **A conversation that owns it has a turn queued or running,** or holds its lock. The next sweep
+  tries again.
+- **The merge notice for it has not been decided yet** (only while `announce_merges` is on). The
+  notice finds an adopted branch's thread through `conversation.branch`, which the deletion clears.
+
+The origin deletion is a push with `--force-with-lease` on the sha that was checked, so a commit
+pushed in the meantime is not deleted with it. If that push fails, the local copies stay and
+the next sweep tries again. It uses the host checkout's git credential, the same one publication
+pushes with; `GH_PR_TOKEN` only reads.
+
+**The conversation lets go of the branch.** A turn cannot continue a branch that no longer exists,
+so each conversation that owned it has `branch`, the adoption and the pinned `base_sha` cleared,
+and the base the pull request merged into becomes its `requested_base` (by `PR #<n> merged`). Its
+next turn starts on that base, which now carries the squashed work, and publishes a new branch
+and a new pull request. `github_pr` still names the merged one until then, which keeps the
+reconcile sweep from asking about the old head.
 
 ## Conversation clustering
 

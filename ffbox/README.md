@@ -1718,6 +1718,16 @@ and the agent cannot touch:
   point in them, and the harvest writes no `publish_base.txt`. Until 2026-09-11 only the default
   was tried, so develop-based work from a shallow workspace was refused master and never offered
   develop.
+- **A merged branch is deleted** (2026-09-14). Once a day, ffwatch asks GitHub
+  about each `ffbox/` branch on origin or on this box. If its pull request has merged, the branch
+  is deleted on origin and then here: the local branch, `refs/ffbox/<branch>`, the tracking ref
+  and the mirror's copy. It is kept if any copy holds a commit the merge did not include (the
+  repository squash merges, so those commits exist nowhere else), if a turn on it is queued or
+  running, or if the merge notice for it has not gone out yet. Branches outside the prefix are
+  never touched. The conversation that owned the branch lets go of it: its next turn starts on
+  the base the pull request merged into and publishes a new branch, instead of failing with
+  `BranchUnavailable`. `github.delete_merged_branches: false` turns it off; `config.md` has the
+  details.
 - **The second look** (2026-09-02). `publish()` runs once, inside the turn that produced the
   commits, and every way it can stop short used to strand a branch with nobody scheduled to come
   back to it: a push that failed left `bundle_path` in the run row and nothing on the box ever

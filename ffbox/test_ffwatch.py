@@ -16142,7 +16142,8 @@ def test_a_conversation_is_forked_once_and_never_into_itself():
 
 
 def a_pull_request(number, head, *, state="open", repo="Final-Factory/FinalFactory",
-                   base="develop", merged=False, merge_sha="", updated="2026-09-06T12:00:00Z"):
+                   base="develop", merged=False, merge_sha="", updated="2026-09-06T12:00:00Z",
+                   head_sha="0" * 40):
     GH_STATE["pulls"].append({
         "number": number, "html_url": "https://github.com/Final-Factory/FinalFactory/pull/%d"
                                       % number,
@@ -16150,7 +16151,7 @@ def a_pull_request(number, head, *, state="open", repo="Final-Factory/FinalFacto
         "merged_at": (updated if merged else None),
         "draft": False, "_head": head, "updated_at": updated,
         "merge_commit_sha": merge_sha,
-        "head": {"ref": head, "sha": "0" * 40, "repo": {"full_name": repo}},
+        "head": {"ref": head, "sha": head_sha, "repo": {"full_name": repo}},
         "base": {"ref": base}})
 
 
@@ -17994,6 +17995,158 @@ def test_the_merge_poller_is_not_the_review_pollers_passenger():
     check("announce_merges false makes no request at all",
           case.watcher.poll_github_merges() == [] and GH_STATE["requests"] == [],
           GH_STATE["requests"])
+
+
+def a_published_branch(case, name, commits=1, base="develop"):
+    """Publish `name` the way a run does: a bundle, push_bundle, then the mirror.
+
+    Returns (the scratch clone the commits were made in, the tip). push_bundle and mirror_take
+    leave every copy a real publish leaves: origin, refs/ffbox/, the local branch with its
+    upstream, the tracking ref and the mirror.
+    """
+    slug = name.replace("/", "-")
+    scratch = os.path.join(case.root, "scratch-" + slug)
+    git_run("clone", "-q", os.path.join(case.root, "origin.git"), scratch)
+    git_run("-C", scratch, "config", "user.email", "ffbox@final-factory.invalid")
+    git_run("-C", scratch, "config", "user.name", "ffbox")
+    git_run("-C", scratch, "checkout", "-q", "-B", name, "origin/%s" % base)
+    for n in range(commits):
+        with open(os.path.join(scratch, "Assets", "Belt.cs"), "a", encoding="utf-8") as fh:
+            fh.write("// %s %d\n" % (name, n))
+        git_run("-C", scratch, "add", "-A")
+        git_run("-C", scratch, "commit", "-qm", "ffbox: %s %d" % (name, n))
+    bundle = os.path.join(case.root, slug + ".bundle")
+    git_run("-C", scratch, "bundle", "create", bundle, "origin/%s..%s" % (base, name))
+    ok, err, _ = case.watcher.push_bundle(bundle, name)
+    assert ok, err
+    assert case.watcher.mirror_take(name), name
+    return scratch, git_run("-C", scratch, "rev-parse", "HEAD").stdout.strip()
+
+
+def branch_copies(case, branch):
+    """Every ref naming `branch`, as `where:ref`, across origin, the host checkout and the mirror."""
+    places = (("origin", os.path.join(case.root, "origin.git"), ["refs/heads/"]),
+              ("host", case.watcher.cfg["git_dir"],
+               ["refs/heads/", "refs/ffbox/", "refs/remotes/origin/"]),
+              ("mirror", case.watcher.cfg["mirror_repo"], ["refs/heads/"]))
+    return ["%s:%s%s" % (where, space, branch) for where, repo, spaces in places
+            for space in spaces
+            if git_run("-C", repo, "rev-parse", "--verify", "--quiet",
+                       space + branch).returncode == 0]
+
+
+def test_a_merged_branch_is_deleted_on_origin_and_on_this_box():
+    """A merged pull request takes its ffbox/ branch with it, and takes nothing else.
+
+    The repository squash merges, so a branch that moved on after its merge holds work nothing
+    else does. Deleting that one, or one a turn is running on, or somebody else's, would lose it.
+    """
+    print("publication: a merged branch is deleted everywhere")
+    case = Case("prunemerged")
+    origin, host = git_origin(case)
+    merge_cfg(case, announce=False)
+    prefix = case.watcher.cfg["branch_prefix"]
+
+    # THE DAILY CLOCK. A sweep inside the window asks nothing; the rest of this test turns the
+    # clock off so each sweep below actually runs.
+    with open(os.path.join(case.watcher.state_dir, "github.prune.last"), "w") as fh:
+        fh.write("%d\n" % time.time())
+    GH_STATE["requests"] = []
+    check("a sweep less than a day after the last one does nothing",
+          case.watcher.prune_merged_branches() == [] and GH_STATE["requests"] == [],
+          GH_STATE["requests"])
+    case.watcher.cfg["github"]["delete_merged_branches_secs"] = 0
+
+    merged = prefix + "merged"
+    _, tip = a_published_branch(case, merged)
+    pr_61 = "https://github.com/Final-Factory/FinalFactory/pull/61"
+    a_pull_request(61, merged, state="closed", merged=True, base="master", head_sha=tip)
+    conv = a_reported_bug(case, github_pr=pr_61, branch=merged)
+    case.watcher.db.execute("UPDATE conversation SET base_sha='0123abc' WHERE id=?", (conv,))
+    check("the fixture leaves every copy a publish leaves",
+          len(branch_copies(case, merged)) == 5, branch_copies(case, merged))
+
+    # A LATER TURN PUSHED AFTER THE MERGE. With a squash merge those commits are nowhere else.
+    ahead = prefix + "ahead"
+    scratch, first = a_published_branch(case, ahead)
+    a_pull_request(62, ahead, state="closed", merged=True, head_sha=first)
+    with open(os.path.join(scratch, "Assets", "Belt.cs"), "a", encoding="utf-8") as fh:
+        fh.write("// after the merge\n")
+    git_run("-C", scratch, "commit", "-qam", "ffbox: after the merge")
+    git_run("-C", scratch, "push", "-q", "origin", ahead)
+
+    opened = prefix + "open"
+    _, tip = a_published_branch(case, opened)
+    a_pull_request(63, opened, head_sha=tip)
+    closed = prefix + "closed"
+    _, tip = a_published_branch(case, closed)
+    a_pull_request(64, closed, state="closed", merged=False, head_sha=tip)
+    nopr = prefix + "no-pr"
+    a_published_branch(case, nopr)
+    busy = prefix + "busy"
+    _, tip = a_published_branch(case, busy)
+    a_pull_request(66, busy, state="closed", merged=True, head_sha=tip)
+    busy_conv = a_reported_bug(case, thread="70002", branch=busy)
+    case.watcher.db.execute("UPDATE conversation SET state='running' WHERE id=?", (busy_conv,))
+    stranger = "loth/merged"
+    git_run("-C", scratch, "push", "-q", "origin", "origin/develop:refs/heads/%s" % stranger)
+    a_pull_request(65, stranger, state="closed", merged=True,
+                   head_sha=git_run("-C", scratch, "rev-parse", "origin/develop").stdout.strip())
+
+    GH_STATE["requests"] = []
+    deleted = case.watcher.prune_merged_branches()
+    check("only the merged branch whose every copy the merge carries is deleted",
+          deleted == [merged], deleted)
+    check("it is gone from origin, the host checkout and the mirror",
+          branch_copies(case, merged) == [], branch_copies(case, merged))
+    check("and so is the upstream config set_upstream wrote for it",
+          git_run("-C", host, "config", "--get", "branch.%s.remote" % merged).returncode != 0)
+    row = case.rows("SELECT * FROM conversation WHERE id=?", (conv,))[0]
+    check("its conversation lets go of the branch and the stale pin",
+          row["branch"] is None and row["base_sha"] is None, dict(row))
+    check("and starts its next turn on the base the work merged into",
+          row["requested_base"] == "master", dict(row))
+    check("keeping the pull request, so reconcile does not ask about the old head again",
+          row["github_pr"] == pr_61, dict(row))
+    for name, why in ((ahead, "one with commits after its merge"),
+                      (opened, "one with an open pull request"),
+                      (closed, "one a human closed without merging"),
+                      (nopr, "one with no pull request"),
+                      (busy, "one a turn is running on")):
+        check("%s is kept" % why, "origin:refs/heads/%s" % name in branch_copies(case, name),
+              branch_copies(case, name))
+    check("a branch outside the prefix is kept, and GitHub is never asked about it",
+          "origin:refs/heads/%s" % stranger in branch_copies(case, stranger)
+          and not any(stranger in r[1] for r in GH_STATE["requests"]), GH_STATE["requests"])
+    check("the running conversation still owns its branch",
+          case.rows("SELECT branch FROM conversation WHERE id=?", (busy_conv,))[0]["branch"]
+          == busy, None)
+
+    case.watcher.db.execute("UPDATE conversation SET state='idle' WHERE id=?", (busy_conv,))
+    check("once the turn is over the next sweep takes it",
+          case.watcher.prune_merged_branches() == [busy] and branch_copies(case, busy) == [],
+          branch_copies(case, busy))
+
+    # THE MERGE NOTICE GOES FIRST. It finds an adopted branch's thread by conversation.branch,
+    # which the prune clears.
+    pending = prefix + "pending"
+    _, tip = a_published_branch(case, pending)
+    a_pull_request(67, pending, state="closed", merged=True, head_sha=tip)
+    case.watcher.cfg["github"]["announce_merges"] = True
+    check("a merge the notice poller has not decided yet keeps its branch",
+          case.watcher.prune_merged_branches() == [], branch_copies(case, pending))
+    case.watcher.write_merge_cursor("2000-01-01T00:00:00Z", ["67"], None, "2000-01-01T00:00:00Z")
+    check("and it goes once the poller has marked it seen",
+          case.watcher.prune_merged_branches() == [pending], branch_copies(case, pending))
+
+    off = prefix + "off"
+    _, tip = a_published_branch(case, off)
+    a_pull_request(68, off, state="closed", merged=True, head_sha=tip)
+    case.watcher.cfg["github"]["delete_merged_branches"] = False
+    GH_STATE["requests"] = []
+    check("delete_merged_branches false deletes nothing and asks GitHub nothing",
+          case.watcher.prune_merged_branches() == [] and GH_STATE["requests"] == []
+          and "origin:refs/heads/%s" % off in branch_copies(case, off), GH_STATE["requests"])
 
 
 def test_the_version_is_read_off_the_file_the_build_increments():
@@ -22175,6 +22328,7 @@ def main():
         test_the_first_merge_poll_announces_nothing_that_predates_it,
         test_a_quiet_merge_poll_costs_nothing_and_a_deferred_one_stands_still,
         test_the_merge_poller_is_not_the_review_pollers_passenger,
+        test_a_merged_branch_is_deleted_on_origin_and_on_this_box,
         test_the_version_is_read_off_the_file_the_build_increments,
         test_a_fork_takes_the_branch_the_session_and_the_history,
         test_a_fork_resumes_on_its_very_first_turn,
