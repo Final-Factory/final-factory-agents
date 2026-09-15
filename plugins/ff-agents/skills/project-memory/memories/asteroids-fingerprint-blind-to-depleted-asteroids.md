@@ -22,11 +22,16 @@ checkpoint over that window (`f4-cp1`, 16,776 shared heartbeats, hb 1..16776) re
 - A green fingerprint over a window in which you KNOW an entity-set change happened on one peer is a
   blind-spot finding, not a pass. Instrument the entity set directly (a per-peer existence/snapshot poll,
   e.g. `snapshot/nearby` -- see [[built-pair-lab-traps-073]] for its radius trap) before believing the hash.
-- Widen the instrument at the surface that OWNS the entity kind. Pending Ben's call (plan.md 22:30 UTC
-  header): fold every `Asteroid` with `OreRemaining == 0` into `asteroids` keyed by tile. Not a
-  crown-jewel path (`Documentation/Crown-Jewel-Surfaces.md` globs), no new surface so no three-mirror
-  update ([[wire-surface-adds-have-three-mirrors]]), but it moves one golden
-  (`ForeignLookupCharacterizationTest.cs:95`) and the surface doc (`Mining-Bot-Determinism.md:168`).
+- Widen the instrument at the surface that OWNS the entity kind. DONE the same day (Ben: "Both"):
+  `asteroids` now also folds every `Asteroid` with `OreRemaining == 0` (no DeletionMarker / preview
+  ghost), on BOTH the serial and the batched job call sites (`CreateExhaustedAsteroidQuery`,
+  `AsteroidsFingerprintExhaustedTest`). Not a crown-jewel path, no new surface so no three-mirror update
+  ([[wire-surface-adds-have-three-mirrors]]); the pinned golden did not move because its fixture has no
+  zero-ore asteroid. Follow-up 073 T021: a general entity-set / archetype-census surface (new field →
+  three mirrors + peer-local exclusions).
+- A widened instrument is proven when it goes POSITIVE: the unit test shows the deleting peer's hash
+  moves on the DeletionMarker heartbeat; the live proof (a built pair carrying the widening but not the
+  fix, showing the f4 fork as an `asteroids` RED) is still queued.
 - The first-diverging surface a live desync reports (Hazel: `grids+power`, `movers+vision`,
   `camps+movers`) can be many heartbeats downstream of an entity-set fork no surface sees; archetype
   creation order ([[ecs-iteration-order-is-archetype-creation-order]]) is the carrier.
