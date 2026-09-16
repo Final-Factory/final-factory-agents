@@ -21,8 +21,8 @@ Lab on M5: `/private/tmp/ff073-hazel-20260915/xplat/` (`run-f4.sh` RED shape, `r
    (`run-g2.sh:21`): `ssh beast '"C:\Program Files\Git\bin\bash.exe" -c "poll.sh LOG 700"' > out 2>&1 &`
    -- the ssh session itself is backgrounded locally and stays open for the poll's lifetime. Same family as
    the "BEAST go-scripts must run in the ssh foreground" rule in [[fleet-harness-operational-2026-09-12]].
-4. **No `|` in a plain ssh→cmd.exe line.** `ssh beast '"…bash.exe" -c "grep \"a\|b\" file"'` ran nothing:
-   cmd.exe splits on the pipe before bash sees it. Route PowerShell through `beast_ps.sh '<script>'`
+4. **No `|` (and no `&&`) in a plain ssh→cmd.exe line.** `ssh beast '"…bash.exe" -c "grep \"a\|b\" file"'` ran nothing:
+   cmd.exe splits on the pipe (and on `&&`) before bash sees it. Route PowerShell through `beast_ps.sh '<script>'`
    (base64 -EncodedCommand) or scp a script and run it by path. Related quoting rules: [[three-peer-lane-recipe-and-traps]].
 
 Also from these legs: BEAST's git cannot `fetch` GitHub non-interactively (no credential in that shell);

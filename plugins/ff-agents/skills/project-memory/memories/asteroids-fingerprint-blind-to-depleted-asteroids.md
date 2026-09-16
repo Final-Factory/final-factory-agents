@@ -29,9 +29,14 @@ checkpoint over that window (`f4-cp1`, 16,776 shared heartbeats, hb 1..16776) re
   ([[wire-surface-adds-have-three-mirrors]]); the pinned golden did not move because its fixture has no
   zero-ore asteroid. Follow-up 073 T021: a general entity-set / archetype-census surface (new field →
   three mirrors + peer-local exclusions).
-- A widened instrument is proven when it goes POSITIVE: the unit test shows the deleting peer's hash
-  moves on the DeletionMarker heartbeat; the live proof (a built pair carrying the widening but not the
-  fix, showing the f4 fork as an `asteroids` RED) is still queued.
+- A widened instrument is proven when it goes POSITIVE. **Proven live 2026-09-16 (073 leg h1):** a
+  built Mac↔Windows pair at scratch `ca67a7c9d` (= `a7ac582d8` with `800974582` reverted, see
+  [[revert-pair-proves-a-widened-instrument]]) ran the f4 shape; `fpcompare.py` epoch 1 = 1,201 shared
+  heartbeats, 4 mismatching (hb 1198–1201), fields `asteroids` + `combined` ONLY; the host's
+  `RuntimeDesyncDetectorSystem` said `diverged … at heartbeat 1200 (surfaces: asteroids)`, recovered the
+  client, and epoch 2 was clean over 5,231 heartbeats. The depleted husk cannot mask it: its prefab bakes
+  `DepletedAsteroid`/`AsteroItem`/`CosmicTerrain` and NO `Asteroid`, so the deleting peer's exhausted set
+  goes empty while the other peer still folds `(tile, 0)`.
 - The first-diverging surface a live desync reports (Hazel: `grids+power`, `movers+vision`,
   `camps+movers`) can be many heartbeats downstream of an entity-set fork no surface sees; archetype
   creation order ([[ecs-iteration-order-is-archetype-creation-order]]) is the carrier.
