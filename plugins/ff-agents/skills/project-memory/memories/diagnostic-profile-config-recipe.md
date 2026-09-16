@@ -15,7 +15,7 @@ relaunching). The shape that works, on top of a verification config:
 "AuditDiagnosticEpoch": 0,                          // 0 = any epoch
 "AuditDiagnosticStartHeartbeat": 0, "AuditDiagnosticEndHeartbeat": 65535,   // ushort, end >= start
 "AuditDiagnosticSurfaces": ["PlayerCombatDetail"],  // >= 1, valid NetworkDeterminismAuditSurface names
-"AuditMaxEventsPerSurface": 200000, "AuditMaxBytesPerSurface": 134217728, "AuditMaxDiagnosticBytes": 536870912,  // all > 0
+"AuditMaxEventsPerSurface": 200000, "AuditMaxBytesPerSurface": 134217728, "AuditMaxDiagnosticBytes": 536870912,  // all > 0 AND < 2^31 (int32; 1073741824/2147483648 read as "must all be positive", 073)
 "AuditDwellReleaseTimeoutSeconds": 7200             // unlimited (0) is allowed only with v3-continuous
 ```
 (`NetworkDeterminismAuditCapturePolicy.cs:300-370`.) Surface names: the `NetworkDeterminismAuditSurface`
