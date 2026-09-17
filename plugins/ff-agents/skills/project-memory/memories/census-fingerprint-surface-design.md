@@ -55,3 +55,10 @@ fork no other surface folds — get the dump. `asteroids+census` at the same hea
 surface and the census agree (h3: the deletion fork at epoch 2 hb 2264). Red on EVERY heartbeat from the
 first sample of an epoch = a set-size difference that pre-dates the epoch (a leftover or a load-path
 asymmetry), not a fork that happened inside it.
+
+**Found on day two (2026-09-17), all on built pairs:** the camera-gated inserter display link (T027), the
+breadcrumb count (T028: `[Breadcrumb, FogObserver, AsteroItem]` host 26,464 vs client 26,467) and
+`ValidForPlayerAbility` on Defense Platforms and their Bats (T029) — one class, see
+[[per-peer-gates-on-structural-changes-fork-the-census]]. Counting rule worth knowing: the three arrow
+child property types ARE counted, while the display RECORD types (`ArrowDisplayMetaData`,
+`LogisticsDisplayReferences`) are on the explicit strip list (`DeterminismStateFingerprintJobs.cs:3976-3977`).
