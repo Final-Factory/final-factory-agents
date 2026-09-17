@@ -48,3 +48,14 @@ simulation-visible; use `SimulationElapsedTime` (and `FFTimeData.deltaTime`,
 never index a decision by a query's entity order ([[ecs-iteration-order-is-archetype-creation-order]]) — sort
 by a replicated identity first. Never position a player-range decision from `LocalToWorld`
 ([[player-presentation-transform-forks-combat]]).
+
+**T026 (2026-09-17, fixed `403e95e00`) — `OrphanedShipSystem` had THREE per-peer inputs, not one.** The
+wall clock; the runtime `Entity` handle (`RandomSystem.GetRandomForEntity` → `GetSeed` folds it, and it is
+each World's allocation history); and the command HOLDER — it appended the `ShipSpawnCommand` to the peer's
+own `MePlayer` while `ExecuteShipSpawnCommandSystem` applies holders in `Guid` order, first come first
+served per commander. Fix: `GetRandomForStableHashAndSimulationTime` over
+`FleetShipDeterministicIdentity.GetStableHash`, the lowest-`Guid` player as holder, and no
+`RequireForUpdate<MePlayer>`. A host-authored op was the wrong tool: `LootSpawn`-style ops name what they
+CREATE (position + prefab), and an existing ship has no identity every save guarantees
+(`DeterministicCombatObjectId` stamping skips unidentified commanders). When a roll is only a THROTTLE, a
+peer-stable hash that may collide is enough. No live paired proof yet (blocked behind T029).
