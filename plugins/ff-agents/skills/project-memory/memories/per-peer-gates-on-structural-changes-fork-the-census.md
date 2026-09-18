@@ -1,6 +1,6 @@
 ---
 name: per-peer-gates-on-structural-changes-fork-the-census
-description: "Three census forks found in one 073 session share one shape: a fixed-group system makes a STRUCTURAL change (instantiate, add/remove a tag, link into a LinkedEntityGroup) behind a per-peer gate — the local camera (`InserterMovementSystem` route displays, T027), the player's presentation `LocalTransform` plus one unsaved shared position (`BreadcrumbSystem`, 26,464 crumbs in hazel1831, T028), or `MePlayer` (`PlayerEntityProximitySystem` tagging Defense Platforms and their ships `ValidForPlayerAbility`, T029, open). Audit recipe and the tell for an unsaved per-peer tag (census red on EVERY heartbeat after a recovery) inside."
+description: "Three census forks found in one 073 session share one shape: a fixed-group system makes a STRUCTURAL change (instantiate, add/remove a tag, link into a LinkedEntityGroup) behind a per-peer gate — the local camera (`InserterMovementSystem` route displays, T027), the player's presentation `LocalTransform` plus one unsaved shared position (`BreadcrumbSystem`, 26,464 crumbs in hazel1831, T028), or `MePlayer` (`PlayerEntityProximitySystem` tagging Defense Platforms and their ships `ValidForPlayerAbility`, T029 — resolved by keeping the tag local, stripping it from the census and moving the one simulation reader onto a per-player record). Audit recipe and the tell for an unsaved per-peer tag (census red on EVERY heartbeat after a recovery) inside."
 ---
 
 # Per-peer gates on structural changes fork the census (073 T027/T028/T029, 2026-09-17)
@@ -28,11 +28,18 @@ unsaved system state. The entity set then differs across peers and the `census` 
   it is simulation state. Fix: stateless — one live trail crumb per 300-unit cell of
   `Player.SimulationPosition`, players in `Guid` order; the cap ranks by age then position and applies in
   one heartbeat. Side effect: headless host 139 → 244 fps on that save.
-- **T029 — `ValidForPlayerAbility` (OPEN, needs Ben's sign-off).** `PlayerEntityProximitySystem` queries
-  `MePlayer` only and tags Defense Platforms within 150 units of THAT peer's player, and their owned ships.
-  The tag feeds `AbilitySystemHelper.InactiveAbilityShape`, which the per-peer ability systems AND the host's
-  ordered-ability validator (`PlayerAbilityFireCandidates`) use, so the host judges a client's cast by the
-  host player's proximity; `ExecuteShipSpawnCommandSystem` also copies the owner's tag onto new ships.
+- **T029 — `ValidForPlayerAbility` (fixed `4b775f06c`, Ben's option B).** `PlayerEntityProximitySystem`
+  queried `MePlayer` only and tagged Defense Platforms within 150 units of THAT peer's player, and their
+  owned ships. The tag fed `AbilitySystemHelper.InactiveAbilityShape`, which the host's ordered-ability
+  validator (`PlayerAbilityFireCandidates`) shared with the per-peer ability systems, so the host judged a
+  client's cast by the HOST player's proximity. Fix shape when a per-peer tag has ONE simulation reader:
+  keep the tag local (it still drives the HUD and the local preview), STRIP it from the census
+  (`CensusTypePolicy.BuildExplicitStrip`), and give the reader an agreed per-player record — the system
+  now runs over every `Player` and writes each player's `NearbyEntity` buffer from its replicated
+  `SimulationPosition`; the validator keeps a ship if it is a `PlayerShip` or its `FleetShip.OwnerEntity`
+  is in the CASTER's buffer. Live: the platform/Bat rows that differed on g9d were equal on g10 at the same
+  heartbeats. The strip's residual (a per-peer archetype split perturbing order-sensitive ship consumers)
+  did not show on g10/g11 — the fork that DID show was [[station-grid-mailboxes-must-share-one-holder]].
 
 **Audit recipe.** Grep fixed-group systems for `WithAll<MePlayer>`, `GetSingletonEntity<MePlayer>`,
 `IsWithinCamera`, `CameraState`, and `LocalTransform` reads on `Player` entities; keep only the hits that
