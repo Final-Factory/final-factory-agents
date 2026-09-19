@@ -45,3 +45,17 @@ port in `~/.unity-mcp/unity-mcp-status-<hash>.json`, and never batch a `set_acti
 an `execute_code` (the pin is session-global). Give every run its own `AuditLegId` (the auto-written
 report cannot overwrite). A clone straight off a forced recompile forks on its COLD Burst cache even
 after `preflight-pass` — see [[paired-leg-preflight-and-editor-wedges]].
+
+**The callback is not the fingerprint boundary.** Always compare the actual Fingerprint audit
+records over the entire shared window before treating matching callback TSVs as a clean run.
+An `EditorApplication.update` callback can observe a later point in the same engine frame,
+after a temporary entity has already been destroyed. In 074 T111, pair2 at `8784b57d0` had
+matching callback rows through panel placement and both rotations, but the actual census hash
+differed at placement heartbeat 1027. A fresh pair3 with symmetric `CensusDetail` diagnostic
+capture identified the transient at epoch 3 heartbeat 847: one host-only
+`FFComponents.Core.SoundEffect` request, signature `3CA052F0E348E175`, gone at 848.
+`BlueprintPlacementSystem.BlueprintPlacerJob` emits the click; `SoundEffectSystem` invokes its
+audio callback and queues request destruction; `DeterminismFingerprintSystem.RecordDetail`
+captures the census at the fingerprint pass. Use that diagnostic capture for an apply-heartbeat
+fork. The callback remains useful for persistent join/recovery shape differences, but a
+matching end-of-frame row cannot disprove a transient. Preserve both instruments' evidence.
