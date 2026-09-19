@@ -37,3 +37,14 @@ joins a stale player (the g10d client was still alive when g10i was being armed)
 - scp to BEAST only with the Windows path form `rydin@10.0.0.158:C:/Users/rydin/ff-worker/` — the `/c/Users/…` form fails "remote mkdir … No such file or directory".
 - The Windows build that actually runs: a FOREGROUND `ssh … "C:\Program Files\Git\bin\bash.exe" -c /c/Users/rydin/ff-worker/build-win-<leg>.sh` inside a `run_in_background` Bash call (the ssh stays up ~7 min: prepare pass ~2.5 min + build ~4.5 min; `build-status.txt` records `head=<sha40>` and both rc's).
 - `mk-leg.sh FROM TO SHA7 SHA40 SAVE SAVESHA` derives every leg file from the previous leg (run/launch/beast/m3/build-win scripts, all three configs, `beast-sync-<TO>.sh`); the Mac player is a one-shot `execute_code` `EditorApplication.update` callback calling `BuildPipeline.BuildPlayer` (Development, StandaloneOSX, `<xplat>/player-<leg>-<sha7>/finalfactory.app`) that writes `mac-build-<leg>-<sha7>.marker` (`scheduled → running → returned result=… seconds=…`; ~220 s); it refuses if the dir or marker exists and requires `FF_ENABLE_MULTIPLAYER_BUILD` already in ProjectSettings (the dirty `ProjectSettings.asset` carries it) and the OSX target. The M3 copy is `rsync -ac --delete --rsync-path='ulimit -n 8192; rsync' --link-dest=<previous player dir>/`; prove completeness by comparing `sha256` of `FFSystems.dll` Mac vs M3.
+
+**Day 4 additions (074 T108 lane, 2026-09-19).** `ffauto:construction.place` reports "placed
+blueprint (1 structures)" even when the ghost never commits: a Mining/Research Station validates
+only with a Mineable inside its 16-tile finder range (`ExecuteConstructionPlace` comment,
+`LocalMultiplayerAutomationCommandRunner.cs:6586-6600`) and the player inside its 200-unit
+action range — verify with a `TerrainExtractorStation` count or the site row, never the verb's
+reply. `ffauto:desync.inject` on a client is a one-second forced recovery (verdict at the next
+8-hb sample; it leaves a dropped-Connector pickupable row at hb 0). A fork that only "lasts" until
+a kick at hb 13 is not permanent — measure past the settle time (a construction site heals when
+the bot builds it, ~150 hb with the player nearby). `game.save` works in single-player
+(`SaveGameManager.IsSaveAuthorityPeer` = not listening OR server, `SaveGameManager.cs:270-284`).
