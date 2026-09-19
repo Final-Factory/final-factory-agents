@@ -33,3 +33,12 @@ Two config facts for rejoin (park + reclaim) legs: the host needs `"OutlivePairB
 or `net.leave` ends the session; the clone editor reads
 `reclaim-identity-editor-<hash>.txt` and `ClientReclaimIdentity` caches it, so an identity
 override must go through `OverrideForSession` (restore the files afterwards).
+
+**Cold Burst cache after a forced clone recompile (074, 2026-09-19).** A clone whose assembly
+was ~80 h stale was force-recompiled (`refresh_unity scope=all mode=force`), passed
+`editor-preflight.sh` ("Burst enabled+drained"), and STILL forked from hb 1 of its first two
+sessions — `movers` in a 7-of-9-heartbeat pattern, then `census` — while its third session on the
+same code was clean on every dumped heartbeat. Play-mode jobs are Burst-compiled asynchronously on
+first schedule, so the first session after a recompile runs a mixed managed/Burst codegen against
+a warm host. Treat the first paired session after any recompile as a throwaway warm-up; a fork
+that vanishes on the second session was never the game's.
