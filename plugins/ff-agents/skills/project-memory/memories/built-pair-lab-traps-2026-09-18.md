@@ -30,3 +30,10 @@ Also confirmed: a diagnostic leg must checkpoint on the FIRST `DesyncRecoveryAtt
 within seconds ([[built-pair-structure-removal-and-early-diagnostic-checkpoint]]); and both peers must be
 stopped BY PATH and both `.ff-local-automation.json` removed after every leg, or the next launch silently
 joins a stale player (the g10d client was still alive when g10i was being armed).
+
+## Added 2026-09-19 (074 leg t6, M5 FF15)
+- macOS `wc -l` pads its count with spaces, so `tail -n +$B` built from it fails with "illegal offset"; grep a fixed `tail -n 3000` of the log instead.
+- zsh does NOT word-split `set -- $var` (a `for spec in "a 1" "b 2"; do set -- $spec` loop sees one argument); write the cases out or use `read -r a b <<< "$spec"`.
+- scp to BEAST only with the Windows path form `rydin@10.0.0.158:C:/Users/rydin/ff-worker/` — the `/c/Users/…` form fails "remote mkdir … No such file or directory".
+- The Windows build that actually runs: a FOREGROUND `ssh … "C:\Program Files\Git\bin\bash.exe" -c /c/Users/rydin/ff-worker/build-win-<leg>.sh` inside a `run_in_background` Bash call (the ssh stays up ~7 min: prepare pass ~2.5 min + build ~4.5 min; `build-status.txt` records `head=<sha40>` and both rc's).
+- `mk-leg.sh FROM TO SHA7 SHA40 SAVE SAVESHA` derives every leg file from the previous leg (run/launch/beast/m3/build-win scripts, all three configs, `beast-sync-<TO>.sh`); the Mac player is a one-shot `execute_code` `EditorApplication.update` callback calling `BuildPipeline.BuildPlayer` (Development, StandaloneOSX, `<xplat>/player-<leg>-<sha7>/finalfactory.app`) that writes `mac-build-<leg>-<sha7>.marker` (`scheduled → running → returned result=… seconds=…`; ~220 s); it refuses if the dir or marker exists and requires `FF_ENABLE_MULTIPLAYER_BUILD` already in ProjectSettings (the dirty `ProjectSettings.asset` carries it) and the OSX target. The M3 copy is `rsync -ac --delete --rsync-path='ulimit -n 8192; rsync' --link-dest=<previous player dir>/`; prove completeness by comparing `sha256` of `FFSystems.dll` Mac vs M3.
