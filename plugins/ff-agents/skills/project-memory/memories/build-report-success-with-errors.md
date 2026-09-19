@@ -9,6 +9,17 @@ step contained Burst BC1054 resolving `MinerBotPhysicalState` through `LocalPlay
 The completion marker also said `SUCCEEDED`. Neither signal established a clean build.
 Evidence was preserved under `/private/tmp/ff-miner-physical-011/rejected-mac-attempt-1/` on M5.
 
+Feature 074 T9 repeated this on Windows: `-batchmode -nographics` returned rc 0 and reported
+`Succeeded`, while `LastBuild.buildreport` contained `totalErrors: 8` (RootHandler/scene NREs and
+`RenderTexture.Create` failures). Reject that artifact. Rebuilding the same source (`d108b2bd6`) to a
+fresh owned output with `-batchmode -force-d3d11` (without `-nographics`) reported `Succeeded`,
+zero errors, and 113 warnings. This records the observed build outcomes, not a universal cause claim.
+
+A successful log is insufficient. The serialized Windows `Library/LastBuild.buildreport` may be
+copied to a Mac with `scp` and inspected read-only in Unity through
+`UnityEditorInternal.InternalEditorUtility.LoadSerializedFileAndForget`, cast to `BuildReport`; inspect
+the summary and every step/message with `Error` or `Exception` severity before accepting the artifact.
+
 Require `Succeeded` **and zero total errors**, inspect C#/Burst diagnostics, and preserve the
 rejected artifact and log. If diagnostics indicate the documented stale Burst resolver problem,
 follow [the existing recovery ritual](stale-burst-after-merge.md): stop only the positively

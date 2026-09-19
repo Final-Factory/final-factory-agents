@@ -35,3 +35,8 @@ directly (the r9 `combatdiff.py` pattern). A kicked client writes its report aut
 `ffauto:audit.write` is refused once the client is back in the menu.
 
 **Multi-peer legs:** the block must be IDENTICAL on every peer's config or pairing is refused — see [[audit-capture-policy-must-be-symmetric]] (limits that launched three peers, log growth, anchor closes at the first recovery).
+
+**Changing to verification:** Feature 074 T9 found that changing `AuditCaptureProfile` from
+`diagnostic` to `verification` also requires removing the old `AuditDiagnostic*` and `AuditMax*`
+fields, especially `AuditDiagnosticSurfaces`. Changing only the profile caused the T9 configuration to
+be rejected before game start.
