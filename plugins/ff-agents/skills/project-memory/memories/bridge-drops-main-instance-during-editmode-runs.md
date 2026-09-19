@@ -23,3 +23,14 @@ the main editor, this project's compile results (`Reloading assemblies after…`
 `===== LOAD PROFILE`) are in `~/Library/Logs/Unity/Editor-prev.log`; `Editor.log` is the clone's.
 Check the file's mtime against the action you just took before trusting either
 ([[verify-compile-dll-string-check]]).
+
+**During a LONG suite it drops repeatedly, and a blip can even answer `Unknown job_id` (2026-09-19,
+074).** A 4,288-test run (~4 min of runner time, ~6 min wall) dropped the instance three times; one
+`get_test_job` in the middle answered `Unknown job_id`, yet the SAME job id answered `succeeded` with
+full counts a minute later — the blip was the bridge, not the job. Readiness signal that works:
+`~/.unity-mcp/unity-mcp-status-d91200fa.json` freshly written with `"reloading": false` AND its
+`unity_port` accepting a TCP connect (python socket), then `set_active_instance("<port>")`. Batch the
+readiness wait and the MCP poll in SEPARATE turns — a poll issued in the same batch as the wait fires
+before the port is back. `execute_code` also times out ("Timeout receiving Unity response") on any
+call longer than ~2 min (a Mac player build); the call keeps running inside the editor — judge it by
+its marker file, never by the timeout ([[judge-a-build-by-marker-and-children-not-editor-cpu]]).
