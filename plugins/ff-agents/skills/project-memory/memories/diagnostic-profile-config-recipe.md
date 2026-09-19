@@ -33,3 +33,5 @@ surface, load both reports' `Fingerprint` records and diff their `fields` dict p
 directly (the r9 `combatdiff.py` pattern). A kicked client writes its report automatically under
 `…/Never Games/finalfactory/DeterminismAudit/network-determinism-audit-<runId>-<legId>-client.log`;
 `ffauto:audit.write` is refused once the client is back in the menu.
+
+**Multi-peer legs:** the block must be IDENTICAL on every peer's config or pairing is refused — see [[audit-capture-policy-must-be-symmetric]] (limits that launched three peers, log growth, anchor closes at the first recovery).
