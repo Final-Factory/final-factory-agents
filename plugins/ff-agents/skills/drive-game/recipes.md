@@ -68,6 +68,12 @@ var files = System.IO.Directory.GetFiles(dir, "*.zip"); // filename minus .zip =
 ```
 Headless alternative without UI (what `Assets/Editor/DevLoadSave.cs` does):
 `Serialization.SaveGameManager.LoadGame(FFNetcode.Lobby.LobbyCreationParameters.SinglePlayerGame, "<saveName>", true)`.
+With the editor occluded the title-screen load flow needs PUMPED frames (the frame counter sits
+still and `SaveProcessState` stays `Performing` forever): loop `EditorApplication.Step()` with a
+real-time budget (100 steps took ~12 s mid-load) until `FFSystems.Core.ConfigInitializerSystem.GameStarted
+&& <MePlayer exists> && Heartbeat.CurrentHeartbeatFrame > 40`; a 600-step loop that returns in 165 ms
+did nothing (it ran before the load began). The built players' saves and the editor share
+`SaveGamePath`, so a leg's checkpoint loads in the editor by name (074 T104/T105 probes).
 
 ⚠️ The `NewGame` save is a **modded** save and the editor disables mods, so it loads with missing
 items/tech — pick a non-modded save for clean loads.

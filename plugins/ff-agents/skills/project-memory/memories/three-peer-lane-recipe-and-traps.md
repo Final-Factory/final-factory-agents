@@ -37,3 +37,12 @@ description: "How to run a THREE-peer live lane (M3 built host, M5 built client 
   hosting — a host whose audit ended at session start has no checkpoint comparator for the run.
 - Related: [[session-reset-marker-and-the-three-peer-backlog-fork]], [[fleet-harness-operational-2026-09-12]],
   [[dropreconnect-verb-and-injected-disconnect-verdict-record]], [[verdict-script-rejects-eviction-records]].
+
+**Built-player three-peer additions (074, 2026-09-19).** The M3 client copy via `rsync -ac
+--link-dest=<previous player dir>/` dies with "Too many open files" unless the remote side is started
+with `--rsync-path='ulimit -n 8192; rsync'` — and the failure is SILENT for the leg: the copy is
+incomplete and the DLL symbol scan on M3 answers False (scan every machine before launching). A leg
+that only RESUMES a checkpoint save at the same sha needs no rebuild: `mk-leg.sh FROM TO SHA7 SHA40
+SAVE SAVESHA` (074 lab) derives run/launch/client/build/config files with the host `SaveName` +
+`AuditSaveName`/`AuditSaveSha256` re-pinned; BEAST syncs by `git bundle create … ^<its HEAD>` +
+`beast-sync-<leg>.sh` (fetch + ff-only merge) before `build-win-<leg>.sh`.
