@@ -45,3 +45,12 @@ diagnostic profile ([[diagnostic-profile-config-recipe]]) is the fallback when t
 
 **Not fixed (presentation, pre-existing).** Remote peers and loaded games never show the
 station→asteroid route arrow.
+
+**Not the whole story (074 t6, 2026-09-19).** The strip covered the ORIGINATING peer's extra children only. On
+leg t6 a recovery AFTER the placement re-forked census on every heartbeat from hb 1 of the served epoch
+(T108; both clients exhausted their recovery budget and were kicked), and a 1-hb fork at the remote apply
+heartbeat persists with `TerrainItemFinderMarker` stripped (T107's marker was not its cause). Hypothesis,
+unverified: the host's station came through the blueprint-ghost → confirm path (a remote apply too, which
+converges next heartbeat) while a loaded/recovered world instantiates it from the prefab — different
+`LinkedEntityGroup` children with kept FF types. Needs a CensusDetail capture ([[diagnostic-profile-config-recipe]])
+or the live-vs-saved+loaded single-player census diff ([[health-bar-chain-forks-the-census-on-join]] recipe).
