@@ -24,3 +24,7 @@ accepted event sequences spaced exactly one config cooldown apart while the UI s
 charges means the host was dropping clicks between them. A read-only `execute_code` probe of
 the saved state + candidate query answered it in minutes; the host-validation code path was
 correct line by line and would never have shown it.
+
+The second half of the same rule — keep the original RELEASE owner as well as the gate owner — is
+[[request-apply-conversion-must-keep-the-release-owner-too]] (073 T030); the stale-saved-row false
+alarm that followed is [[a-does-not-resolve-log-from-saved-history-is-not-a-fork]] (073 T035).
