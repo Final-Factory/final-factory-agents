@@ -98,7 +98,7 @@ worktrees and apply to ALL branches.
 
 ## Testing & tooling gotchas
 
-- [Native build success with errors](memories/build-report-success-with-errors.md) — require a zero-error BuildReport and inspect Burst diagnostics before accepting the artifact
+- [Native build success with errors](memories/build-report-success-with-errors.md) — require a zero-error BuildReport, C#/Burst checks, baked SubScene files, and real startup; CleanBuildCache recovered an observed missing-scene build
 - [Baseline before lifecycle tests](memories/live-baseline-before-lifecycle.md) — preserve both paired reports before reconnect, and verify temporal capture framing
 - [Mirror implementations need a golden fixture](memories/mirror-implementation-golden-fixture.md) — a report-only set (or any logic) reimplemented in more than one language (C#/shell/python) drifts silently without a shared golden fixture pinned in every mirror, plus a test that they agree
 - [Hand-rolled test double must mirror or say so](memories/hand-rolled-test-double-must-mirror-or-say-so.md) — a test double that deliberately reproduces a production shape (055 R37 KnnLateSpawnTransformPassWitnessTest mirroring AttackingShipSpawnerSystem) must name the real-system test covering the actual code path, or the mirror can go vacuous silently when either side changes
