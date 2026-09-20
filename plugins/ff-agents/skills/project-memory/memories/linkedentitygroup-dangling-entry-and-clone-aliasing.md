@@ -43,3 +43,28 @@ prune INSIDE `BlueprintPlacerJob` was tried and reverted (nine `Tests.Blueprints
 threw a Burst NRE). Tests: `LogisticsDisplayLinkedEntitySetupSystemTest` (5),
 `BlueprintPreviewGroupHygieneSystemTest` (3), `LinkedEntityGroupHygieneTest` (3). Record: 069 plan,
 02:15 UTC PROGRESS block; RED/GREEN scans `repro5.out` / `repro7-green.out` in that session's scratchpad.
+
+## SetEnabled also traverses the group (074 T117, 2026-09-20)
+
+A live root is insufficient for `SetEnabled`: Unity's `EntityDataAccess.SetEnabled` walks its
+`LinkedEntityGroup` when adding/removing `Disabled`. A destroyed route/start/end child can abort
+a built player during ECB playback even though the arrow and its parent still exist.
+T117 reproduced by placing three Research Stations from the P2 save; the editor's ECB exception
+named `TerrainExtractorArrowVisibilitySystem` as the writer. The original six stale-child tests
+failed before the guard.
+
+A guard that only returns can strand hidden or unmarked roots. Check the cleanup query first:
+`LogisticsRouteDisplaySystem.OnCreate` requires `UpdateMarker` and excludes disabled roots;
+its normal draw consumes the marker. In `TerrainExtractorArrowVisibilityJob.Execute`, incomplete
+still-linked sets now receive root-only `RemoveComponent<Disabled>` plus `UpdateMarker`.
+Surviving renderers retain their visibility until the existing orphan branch destroys them.
+Do not queue this work after cleanup has unlinked the root: its destruction is already queued
+on the shared post-transform buffer.
+
+Tests must assert eventual teardown, not merely absence of an exception: cover each missing
+child with visible and hidden roots, surviving-renderer state, real cleanup, and the interval
+between immediate unlinking and deferred destruction. See
+`TerrainExtractorArrowVisibilitySystemTest.MissingDisplayChild_ReachesOrphanTeardown` and
+`MissingDisplayChild_AlreadyQueuedForTeardownReceivesNoLaterCommands` at fix `f8025df0b`.
+Focused suite 13/13; synchronous-Burst fast suite 4319 passed, zero failed, 16 existing skips.
+Editor replay passed; three-machine built replay was still pending when this lesson was recorded.
