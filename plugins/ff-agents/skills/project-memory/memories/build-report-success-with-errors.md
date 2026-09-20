@@ -27,3 +27,24 @@ identified project editor, preserve its JIT cache, restart, re-pin, await fresh 
 Burst completion, rerun tests with Burst enabled, then rebuild. Do not disable Burst or ignore
 the error to obtain a passing verdict. A clean rebuilt artifact remains necessary before the
 matching cross-machine live gameplay test.
+
+## Zero errors can still omit baked SubScene files
+
+Feature074 t11 on2026-09-20 built source54824f8df to a fresh Mac output. The report said
+Succeeded/errors0, but StreamingAssets/EntityScenes contained only scene_info.bin. Boot logged
+that `8acec14bc12bf1342a62a3972c315f45.entityheader` could not be opened and remained at
+Starting game. That GUID is `Assets/Scenes/main/EntitySubScene.unity.meta:2`; the main scene
+autoloads it (`Assets/Scenes/main.unity:175704`). `StartController` defers startup without
+the baked EntityPrefabContainer (`Assets/Scripts/Behaviours/StartController.cs:271-274`).
+
+The same source rebuilt with `BuildOptions.Development | BuildOptions.CleanBuildCache`
+to another fresh owned output succeeded/errors0 and included both the `.entityheader`
+and `.0.entities` files. The replacement booted, joined Windows and native ARM64 M3, and
+passed the three-peer baseline. This is an observed recovery, not proof of the cache root cause.
+Preserve the rejected build/log; do not copy scene data from an older player. Before accepting
+a player, verify the required main SubScene files exist under its StreamingAssets/EntityScenes
+and perform a real startup check. A zero-error BuildReport alone is insufficient.
+
+Witness: M5 `/private/tmp/ff073-hazel-20260915/xplat/t11-artifacts/`, rejected
+`player-t11-54824f8`, accepted `player-t11b-54824f8`; build manifest and rejected startup log
+are preserved there.
