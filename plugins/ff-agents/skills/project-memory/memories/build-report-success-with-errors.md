@@ -48,3 +48,12 @@ and perform a real startup check. A zero-error BuildReport alone is insufficient
 Witness: M5 `/private/tmp/ff073-hazel-20260915/xplat/t11-artifacts/`, rejected
 `player-t11-54824f8`, accepted `player-t11b-54824f8`; build manifest and rejected startup log
 are preserved there.
+
+Give every startup retry a fresh audit RunId/LegId, even when the first player never reached a
+world. The rejected t11 startup wrote a3863-byte canonical host report during shutdown. Reusing
+its identity let later checkpoints pass, but automatic host finalization then failed closed with
+`Audit artifact identity collision` (`NetworkDeterminismAudit.PublishReport`,
+`Assets/Scripts/FFCore/Network/NetworkDeterminismAudit.cs:1565`). Preserve that old artifact;
+never overwrite it. In this witness both client automatic barriers completed, and a uniquely
+named `audit.write` retained the live host's final data; the automatic host barrier still failed
+and must be reported as such. A clean earlier checkpoint remains valid for its original window.
