@@ -166,6 +166,9 @@ worktrees and apply to ALL branches.
 - [Accepted casts log nothing; objective counters are presentation hooks (074 T104)](memories/accepted-casts-log-nothing-objective-counters-are-presentation-hooks.md) — `[PlayerAbilityFire]` lines are rejects only; prove an apply from `DeterministicAbilityFireState.LastAppliedEventSequence` or the ships' components; `FrenzyUsed`/… ride `AbilityNotifierService.OnAbilityUsed`, now raised once in `PlayerAbilityFireDispatch.Dispatch`
 - [New-game audit legs, the diagnostic anchor latch, post-recovery evidence (074)](memories/new-game-audit-leg-config-and-the-diagnostic-anchor-latch.md) — a new-game leg declares `AuditSaveName: seed:<seed>` + sha256(seed); the diagnostic anchor closes at the next block (arm after the LAST join); a recovery makes `cp3.sh` `evidence-invalid` — diff the per-hb `Fingerprint.fields` directly
 
+- [Preview descendants leak into the census](memories/preview-descendants-leak-into-census.md) — inspect the live parent chain before stripping a component; the held printer preview adds two RotationParameters children, while real Krillo claws must remain covered.
+- [Continuous capture for long acceptance](memories/continuous-capture-for-long-acceptance.md) — verification-v3-continuous journals beyond the v2 16384 cap and avoids legacy ring rows rejected by the strict parser; require a live typed baseline.
+
 ## Modding
 
 - [Mod ABI package pinning](memories/mod-abi-package-pinning.md) — why Entities/URP versions are pinned (entities 1.3.10 / URP 17 on Unity 6000.0.71f1)
