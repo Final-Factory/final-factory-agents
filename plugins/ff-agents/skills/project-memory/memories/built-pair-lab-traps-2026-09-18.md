@@ -48,3 +48,23 @@ reply. `ffauto:desync.inject` on a client is a one-second forced recovery (verdi
 a kick at hb 13 is not permanent — measure past the settle time (a construction site heals when
 the bot builds it, ~150 hb with the player nearby). `game.save` works in single-player
 (`SaveGameManager.IsSaveAuthorityPeer` = not listening OR server, `SaveGameManager.cs:270-284`).
+
+**Day 6 addition (074 T116 leg t19, 2026-09-20) — WHY the BEAST bundle is mandatory, and the two
+ways the bundle itself fails.** BEAST cannot fetch from GitHub at all under non-interactive ssh:
+Git Credential Manager reports `fatal: Unable to persist credentials with the 'wincredman'
+credential store`, then `could not read Username for 'https://github.com' `. With a TTY absent and
+no `GIT_TERMINAL_PROMPT=0`, `git fetch` HANGS INDEFINITELY with zero output — a silent six-minute
+stall that looks like a slow network, not an auth failure. Diagnose it by re-running with
+`export GIT_TERMINAL_PROMPT=0` so it fails fast and names the cause. Two gotchas in the workaround
+itself: (a) `git bundle create f.bundle <sha>..<sha>` refuses with "Refusing to create empty
+bundle" — a bundle needs a REF range, so use `<base>..develop`; (b) receive it with
+`git fetch /c/Users/rydin/ff-worker/f.bundle develop:refs/remotes/origin/develop` then
+`git merge --ff-only`. `mk-leg.sh` already emits a `beast-sync-<TO>.sh` doing exactly this — use
+it rather than improvising. Worth fixing at the source (an SSH remote, or a credential store that
+persists) instead of re-bundling every session.
+
+Same leg: when both Macs are arm64 and the player is a universal x86_64+arm64 binary, COPYING the
+host's built `.app` to M3 is stronger evidence than two independent builds — it makes the managed
+assemblies byte-identical by construction (verify `sha256` of FFSpaghetti/FFSystems/FFCore on both
+ends) and avoids quitting M3's editor for the project lock. The x86_64-vs-arm64 distinction is only
+which slice each launcher selects (`arch -x86_64` on the host), not two different builds.
