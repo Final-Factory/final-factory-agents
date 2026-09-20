@@ -1,6 +1,6 @@
 ---
 name: player-inventory-arrangement-diverges-by-design
-description: "The playerInventories fingerprint field (slot ARRANGEMENT) diverges cross-peer as soon as the local player's inventory changes, because PlayerInventoryUpdateNotifier sorts only the local peer's OWN player; it is exempt by design and the verdict script only counts it — check playerInvTotals instead. It cannot reach a structure through an InventoryTransfer (containers folds every slot; the saturating leftover depends on a permutation-invariant fit sum), so a containers fork from a grab needs the acting player's TOTALS to differ. transfer.grab is the exact panel dispatch path minus the UI's SlotIndex."
+description: "The playerInventories fingerprint field (slot ARRANGEMENT) diverges cross-peer as soon as the local player's inventory changes, because PlayerInventoryUpdateNotifier sorts only the local peer's OWN player; it is exempt by design and the verdict script only counts it — check playerInvTotals instead. It cannot reach a structure through an InventoryTransfer (containers folds every slot; the saturating leftover depends on a permutation-invariant fit sum), so a containers fork from a grab needs the acting player's TOTALS to differ. transfer.grab uses the panel dispatch API but defaults to Primary and omits SlotIndex; it cannot withdraw crafter output/Connector stock."
 ---
 
 # The player-inventory arrangement diverges by design; chase totals, not slots (2026-09-12, 069 lane r12a)
@@ -32,11 +32,22 @@ on `containers`/`beltItems`/`playerInvTotals`/`combined`. A `containers` fork fr
 therefore needs the acting player's TOTALS to differ across peers (an op dropped on one peer, a
 non-op inventory write) — instrument that, not the arrangement.
 
-**Verb facts.** `ffauto:transfer.grab|<item|first>|<count>|<x>|<z>` calls the same
-`InventoryOperationsDispatch.DispatchTransferFromStructure` the panel uses
-(`ModuleInventoryPanel.cs:105-107,123-125`; `LocalMultiplayerAutomationCommandRunner.cs:4884-4890`),
-`first` = QuickTransfer, an item name = PanelTransfer; count 0 = a full stack. It does NOT carry the
-UI stack-click's `SlotIndex`. Host-side rejects are logged `[InventoryTransferClientRequest] Reject at
+**Verb facts (rechecked 074 t10, 2026-09-20).**
+`ffauto:transfer.grab|<item|first>|<count>|<x>|<z>` calls the panel's
+`InventoryOperationsDispatch.DispatchTransferFromStructure`, but omits BOTH the source-section
+argument and `SlotIndex` (`LocalMultiplayerAutomationCommandRunner.ExecuteTransferGrab:4959-4965`).
+The API defaults to `InventoryType.Primary` and rejects `count <= 0`
+(`InventoryOperationsDispatch.cs:55-64`): supply a positive count; zero is a no-op, not a full stack.
+`first` selects QuickTransfer; an item name selects PanelTransfer. A command receipt says the request
+was submitted, not that items moved. Check authoritative inventory totals afterward.
+
+This shortcut cannot withdraw a printer's Secondary output or Connector inventory. Real panel
+stack clicks send the clicked section (`ModuleInventoryPanel.HandleStackClicked:111-125`). Use
+that UI path and verify the transfer, or route output through a downstream Cargo Hold and grab
+from its Primary inventory. The latter worked in t10 when a separate drag bug blocked output
+clicks: twelve printed LDS transferred from the buffer and were used to craft the assembler.
+
+Host-side rejects are logged `[InventoryTransferClientRequest] Reject at
 transfer-bake/TargetFull` (holds full) — benign. Separate finding: `ActingPeerFeedback`
 (`:148-175`) increments the `[Save]`d `ObjectivesTracker.ItemsCollectedFromBuilding` on the acting
 peer only (`ObjectivesTrackingSystem.cs:191-196`) — objective progress, not a compared surface.
