@@ -193,6 +193,8 @@ worktrees and apply to ALL branches.
 
 - [UnityMCP works headless in an ffbox container](memories/unitymcp-works-headless-in-a-container.md) — 46 tools are served to the packaged server and `read_console` answers live from a batchmode editor. Needs four things: the PyPI `mcpforunityserver` baked into the image via uv at BUILD time (then it runs under `--network none`, so the egress fence needs nothing new), `UNITY_MCP_ALLOW_BATCH=1` (the bridge returns early in batchmode without it), `-executeMethod MCPForUnity.Editor.McpCiBoot.StartStdioForCi` with no `-quit`, and killing the editor as a PROCESS GROUP. Readiness is the log line `StdioBridgeHost started on port N`, NOT the port registry file, which is only written when the default port is taken. LIVE for ffdev on ffbox since 2026-09-12: 78-83s to a bridge, 863/863 EditMode in ~57s vs ffverify's 226s, 0 files dirtied by a whole turn. `No Unity Editor instances found` usually means BUSY (mid assembly-reload after run_tests; `wait_timeout` does not absorb it) or a `$HOME` mismatch — never assume the editor died
 
+- [Staged rebuilds and power fixtures](memories/staged-structure-rebuild-and-power-fixtures.md) — a fresh rebuilt prefab needs the staged-construction tag; a nearby Standard provider cannot connect directly to a Standard consumer.
+
 ## Maintaining this skill
 
 New durable lessons go here (one file in `memories/`, one index line above, in the topical
