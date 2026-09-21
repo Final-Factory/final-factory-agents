@@ -35,6 +35,20 @@ Ben: “make sure youre testing using all machines on the network, do real tests
 - Apply this automatically. Ben should not need to repeat the multi-machine requirement.
   An explicit narrower task or constraint from Ben can override it; explain any remaining gap.
 
+## Coordinator sequencing and worker artifacts
+
+- Finish the host's entire pre-connect chain before launching any client. `host-ready` is
+  emitted before that chain, and `pre-connect-command-complete` also appears after each
+  individual segment. Require the completed **full chain**, followed by
+  `waiting-host-peers-connected`, before joining. Feature074 t34 connected during the final
+  five-second wait; `enemy.activateeconomy` correctly rejected the now-postjoin mutation and
+  invalidated the setup. Source: `LocalMultiplayerAutomationBootstrap.RunHostAsync` and
+  `ExecuteChainedCommandsAsync`; `LocalMultiplayerAutomationCommandRunner.EnsureHostBeforeClientsJoin`.
+- A remote worker's artifact and the CLI final-response output must have different paths.
+  For example, ask it to write `recipe.md` and use `codex exec -o result.txt`. In feature074's
+  t33 M3 job, using `final.txt` for both overwrote the completed recipe with the final
+  acknowledgment. Retrieve and inspect the actual artifacts, not just the worker's final text.
+
 Read [fleet operations](../../editor-ops/references/codex-fleet.md) for routes, remote workers,
 capacity and editor ownership. These obligations apply to both Claude Code and Codex; use each
 runtime's own worker mechanisms.
