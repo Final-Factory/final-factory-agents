@@ -45,6 +45,17 @@ Preserve the rejected build/log; do not copy scene data from an older player. Be
 a player, verify the required main SubScene files exist under its StreamingAssets/EntityScenes
 and perform a real startup check. A zero-error BuildReport alone is insufficient.
 
+The omission recurred in feature074 t42 on2026-09-21 at source2758ab975, despite
+`Development | CleanBuildCache` and a zero-error report. Both native and headless Mac startup
+logged the missing header; no clients were connected. Force-reimporting
+`Assets/Scenes/main/EntitySubScene.unity` with `ForceUpdate | ForceSynchronousImport` through
+the pinned MCP editor, then rebuilding to fresh `player-t42c-research`, produced both files
+and reached `waiting-host-peers-connected`. This is another observed recovery, not a proven
+cache root cause. Evidence: M5 `xplat/t42-artifacts` and `mac-build-t42c-research.marker`.
+The first native attempt also waited in Metal presentation while the desktop was locked;
+headless retry exposed the packaging error independently. Do not attribute a startup hang
+to screen lock without checking the owned player's earlier startup errors.
+
 Witness: M5 `/private/tmp/ff073-hazel-20260915/xplat/t11-artifacts/`, rejected
 `player-t11-54824f8`, accepted `player-t11b-54824f8`; build manifest and rejected startup log
 are preserved there.

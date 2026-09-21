@@ -636,6 +636,15 @@ build method returned. Preserve any rejected artifact and its diagnostics, recov
 project editor/JIT using the existing ritual when indicated, and rebuild before live testing.
 See [the observed false-success build](../project-memory/memories/build-report-success-with-errors.md).
 
+Before transferring or launching a build, also check that its
+`StreamingAssets/EntityScenes/` contains the main SubScene's `.entityheader` and
+`.0.entities` files (resolve the GUID from `Assets/Scenes/main/EntitySubScene.unity.meta`).
+`scene_info.bin` alone is an incomplete package, even with zero build errors and
+`CleanBuildCache`. Preserve it; force-reimport the SubScene through the pinned editor and
+rebuild into a fresh output, then repeat the file check and a real startup. Never repair a
+new player by copying baked scene data from an older build. Give every startup retry a fresh
+audit identity, including retries that never loaded a world.
+
 Unity Editor menu `Build > Build and Upload All` (requires Steamworks SDK).
 
 ## Capturing editor memory
