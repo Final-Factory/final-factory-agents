@@ -42,3 +42,31 @@ before touching it.
 
 **Proof.** Unit RED (job `7329f2ee…`) → GREEN (`6f25c60a…`); fast suite `9893df30…` 4275 / 0 failed / 16 ignores;
 built pair `1174e30bd` (Mac host, BEAST client, hazel1831, r8 chain) leg g13: 5,189 shared heartbeats, typed `mismatchCount` 0, 0 verdicts, 0 recoveries, `census` equal on EVERY shared heartbeat (g12 on the previous sha had 4 `census` heartbeats; the only remaining differing field is the by-design-exempt `playerInventories`, see [[player-inventory-arrangement-diverges-by-design]]).
+
+
+## Destruction ghosts are the same class (074 T122)
+
+The recorder need not itself be fixed: `PlaceableDeletionSystem` runs controller-late and used
+its already-played `FFPreTransformBufferSystem` to recreate destroyed buildings. A peer with
+zero intervening render frames creates the task after the next fixed-pre assigner; another
+peer creates it before that assigner. T32 at3fb929bd6: new AddStation task(-160,0,65), ep2HB1992,
+host cooldown1 versus both clients0; all other ConstructionDetail rows agree. Source:
+`PlaceableDeletionSystem.OnUpdate/PlaceableDeletionJob.Execute`, `SystemGroups.cs:318–325`,
+`ConstructionTaskAssignerSystem.TryProcessTower`.
+
+Do not call the next matching boolean a full recovery. `ConstructionTaskData.IgnoreTaskCooldown`
+is saved state, but the construction fingerprint folds only `IsOnCooldown`, and ConstructionDetail
+also omits the raw timer (`DeterminismStateFingerprintJobs.cs:2512`,
+`DeterminismStateFingerprint.DescribeConstruction`). Compare the raw timer in a cadence regression.
+`DestroyedStructureGhostCadenceTest` varies0/1/4 render frames and runs the real deletion/assigner:
+RED two expected failures/6; repaired focused suite11/11, synchronous-Burst fast4362/4346/0/16.
+Repair7e3d94506 is committed; its physical replay is still pending at this note's publication.
+
+Same-frame late creation is after the regular transform pass. Preserve the first render too:
+`ConstructionGhostTransformSystem` projects eligible new ghost roots and linked descendants before
+`DeletionSystem`, using `TransformHelpers.ComputeWorldTransformMatrix` from remapped Parent chains.
+Fresh `Child` buffers may not exist yet; the heartbeat compose sweep handles roots only.
+Respect custom LocalToWorld writers on descendants AND ancestors, and skip unrelated linked
+entities. No new simulation marker is needed: existing OutOfPlay+ConstructionTaskData+
+InstantiationUpdaterMarker scopes the projection. `ConstructionGhostTransformTest` checks nested
+poses, PostTransformMatrix, repeated controller passes, custom writers and unrelated links.
