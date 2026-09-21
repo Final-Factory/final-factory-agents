@@ -42,6 +42,16 @@ Ben: “make sure youre testing using all machines on the network, do real tests
   window and byte limits. A large per-surface limit is permission to consume that capacity,
   not proof that a peer can afford it. On exhaustion, preserve the failure, stop the owned run,
   archive completed project artifacts with hash verification and retry a smaller capture.
+- Before each platform build, measure that machine's current free space and budget the expected
+  output, staging copies, and incremental-build headroom. Fail early when the measured capacity
+  cannot cover that specific build; do not substitute a universal free-space threshold.
+  To recover capacity, inventory only completed project-owned outputs selected for removal.
+  Archive them to a different machine when remote scratch is scarce, then verify every file's
+  relative path, size, and streaming SHA-256 against the archive and retain the receipt. Recheck
+  that no process uses the exact roots, delete only those literal roots, remeasure free space, and
+  retry into a fresh output directory. Preserve failed build reports. T65 archived 1,639 files
+  from four closed BEAST build roots and restored about 8.4 GiB; its 8 GiB retry guard was specific
+  to that retry, not a standing rule.
 - Apply this automatically. Ben should not need to repeat the multi-machine requirement.
   An explicit narrower task or constraint from Ben can override it; explain any remaining gap.
 
