@@ -1,5 +1,5 @@
 ---
-description: Verify positive diagnostic capture on both peers early, and give each delegated peer separate helper filenames in the shared workspace.
+description: Verify positive capture on every peer, nonempty comparisons and terminal reports; give delegated peers separate helper filenames.
 ---
 
 # Paired diagnostic capture and helper ownership
@@ -28,6 +28,20 @@ helper names and explicit file ownership in every peer brief. Never rewrite the 
 checkpoint, watcher, screenshot or HTTP helper to adapt it for the other peer. Outputs must
 also use peer-specific names. Return actual copied paths and hashes; the driver verifies them
 before comparison or cleanup.
+
+Inspect an actual retained line before writing a parser. Typed metadata/fingerprints use
+`# audit-record-v1`, while diagnostic detail rows can use the plain `[DeterminismAudit]`
+format. Assert positive expected record counts, heartbeat coverage and unique keys before
+comparing payloads. Two empty maps are not evidence of equality. In 074 T70, a parser aimed
+at the wrong encoding initially found zero rows; the corrected full-window comparison
+counted 9,204 records per peer (four actions × 2,301 heartbeats).
+
+Releasing dwell/teardown is a request, not proof that final publication finished. Before
+stopping a peer, wait for its automatic terminal report, verify required lifecycle phases
+(`dwell-complete`, `session-ended`), then retain a stable size/SHA-verified copy. Preserve a
+manual checkpoint separately; never promote it to a complete terminal report. T70 M3 retained
+its full diagnostic window but had no automatic final after stop, so native v2 correctly
+rejected the missing terminal phases. Evidence: `074-20260921/t70-terminal-artifacts/receipt.json`.
 
 Evidence: FinalFactory specs/069-research-bot-physical-determinism/plan.md, September 10
 spawner and C3-preview replay records. The corrected replay captured all 5,000 requested
