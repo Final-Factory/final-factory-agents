@@ -11,6 +11,8 @@ worktrees and apply to ALL branches.
 
 ## Standing user feedback (always applies)
 
+- [Playtest health, arrival and construction gates](memories/playtest-arrival-and-alive-gates.md) — movement chain completion is estimated pacing, not arrival; verify health, authoritative position, bots and actual construction before dependent actions.
+
 - [Context relay at ~65% and the network-tutorial goal](memories/feedback-context-relay-and-network-tutorial-goal.md) — Ben 2026-09-11/12: at ~65% context run /ff-agents:handoff then open a FRESH Claude Code instance on the same Mac via osascript Terminal + `claude --remote-control "M5 FF<n>" "/ff-agents:resumeFromHandoff"` (numbered in relay order, never compact); standing goal = the Hand-Hold tutorial across the network (M5 windowed HOST, BEAST headless CLIENT) with two agents as real players, zero desyncs, fix as you go; no Lothsahn FYI needed
 - [Use all networked machines for orchestration and real proof](memories/feedback-prove-over-live-networked-machines.md) — Ben 2026-09-20: inventory and assign every available fleet machine; real built-player acceptance across the fleet; useful remote work in parallel; own every job to its terminal result. Local subagents are not remote machines. Read at the start of every orchestration lane.
 - [Use standard test commands](memories/feedback_test_command.md) — run tests via MCP `run_tests`/`get_test_job` (pinned instance); for remote Pipeline access, use the public MCPForUnity API through project-scoped `eval_file` for exact assembly filtering; the file-trigger channel is retired for routine runs

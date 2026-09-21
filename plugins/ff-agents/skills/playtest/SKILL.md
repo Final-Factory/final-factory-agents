@@ -10,6 +10,11 @@ Assign the available fleet real work, run live built-player acceptance across th
 and collect each job's result. Local tests and local subagents do not substitute for remote coverage.
 # Agent playtest sessions (feature 020)
 
+**Verify action prerequisites and outcomes:** read
+[health, arrival and construction gates](../project-memory/memories/playtest-arrival-and-alive-gates.md).
+A completed movement chain is not proof of arrival; assert authoritative proximity before
+dependent actions and inspect health/bots plus the actual constructed result.
+
 **Standing authorization:** Ben has authorized launching, driving, screenshotting, testing, and recovering Final Factory on his machines during development. Do not ask again for app use or routine playtest steps. Use existing project-specific tools, bounded calls, and autonomous recovery; platform permissions remain independently enforced. Read [the authorization and uninterrupted-run rule](../project-memory/memories/drive-interactive-verification.md) before handing any routine step back to Ben.
 
 
