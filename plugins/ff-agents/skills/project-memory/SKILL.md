@@ -53,6 +53,8 @@ worktrees and apply to ALL branches.
 
 ## Editor & play mode traps
 
+- [Raw ECS save bytes use Unity's layout](memories/raw-ecs-save-bytes-use-unity-layout.md) — validate saved stride with UnsafeUtility.SizeOf and decode with NativeArray.Reinterpret; Marshal Boolean widths can shift fields and invent apparent save corruption.
+
 - [Play mode needs main scene](memories/playmode-needs-main-scene.md) — entering play mode hangs forever unless Assets/Scenes/main.unity is the active scene; check editor_state.active_scene first; a FRESH editor boot with no scene open instead looks wedged as an empty ~26-entity world under EditorApplication.Step()
 - [No external edits to open Unity scenes](memories/no-external-edits-to-open-unity-scenes.md) — Write/Edit on an open .unity/.prefab raises a modal reload dialog that blocks the main thread and hangs the MCP bridge; edit via SerializedObject + SaveScene instead
 - [Unity keyword-remap shader crash](memories/unity-keyword-remap-shader-crash.md) — known Unity engine bug crashing import worker on ParticlesUnlit fallback keyword remap
