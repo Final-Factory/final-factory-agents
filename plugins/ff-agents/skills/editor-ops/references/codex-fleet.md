@@ -4,6 +4,8 @@ The main Codex task owns design, the queue, final verdicts, commits and pushes. 
 children own bounded implementation or lookup legs. SSH runs commands on the other machines;
 a native child is not a remote worker merely because its prompt names M3 or BEAST.
 
+**Required at lane start:** apply [Ben’s all-machines orchestration requirement](../../project-memory/memories/feedback-prove-over-live-networked-machines.md). Inventory the fleet, assign useful work across available machines, and plan real built-player acceptance on all of them before calling a gameplay/MP fix proven.
+
 ## Routing
 
 | Work | Codex model / effort | Role |
@@ -55,7 +57,7 @@ to a task-specific `.ps1` or `.sh` and transferred with scp; nested SSH quoting 
 
 ## Remote Codex workers
 
-Prefer native local roles unless remote compute or an OS-specific task justifies a remote agent.
+Distribute useful independent work to available remote machines while the driver owns the critical path. Use native local roles for tightly coupled local work; remote workers run on the assigned host through SSH. A local child is not a substitute for the remote assignment.
 For a remote worker, stage a bounded prompt on that machine, then use Codex's own CLI. A typical
 Git Bash/macOS command is:
 
