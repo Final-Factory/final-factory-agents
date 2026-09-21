@@ -49,6 +49,12 @@ state. One writer/build/editor owner per checkout. Never sync C# into a checkout
 job owns its editor. Use an isolated checkout based explicitly on `origin/develop` for concurrent
 code work. Do not reset or clean shared state to manufacture parity.
 
+Before a platform build, record the target machine's free bytes and the expected output, staging,
+and incremental-build headroom. Fail the build plan early if those measured needs do not fit.
+For the archive-and-cleanup rule, including streaming SHA-256 verification, literal-root process
+checks, and fresh retry outputs, read [the standing fleet requirement](../../project-memory/memories/feedback-prove-over-live-networked-machines.md). On Windows, write a task-specific PowerShell
+script and transfer it before archive or cleanup work; do not rely on nested quoted commands.
+
 `scripts/fleet-sync.sh` in the game repo fast-forwards the fleet and checks exact HEAD parity.
 Read it before use; verify each remote command's exit status, not just its final printed SHA.
 BEAST normally receives a Git bundle because its game-repo GitHub credentials are unavailable.
