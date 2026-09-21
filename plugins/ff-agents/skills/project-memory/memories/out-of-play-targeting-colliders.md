@@ -21,3 +21,18 @@ completed structures still obstruct. This matches `ProjectilePhysicsCollisionSys
 existing exclusion. `CombatTargetingTest.LineOfSight_UnbuiltGateDoesNotOccludeButBuiltGateDoes`
 replays the observed fraction and checks obstruction returns when OutOfPlay is removed.
 Both cases failed before the fix, then passed; live acceptance must still run on all machines.
+
+Projectile collisions have a separate closest-hit failure. In
+`ProjectilePhysicsCollisionSystem.Execute`, the former path chose the closest
+`PerformRaycast` hit and only then returned for a resolved OutOfPlay collider
+which let an ignored local collider hide a valid equal-distance or farther hit. Filter every raw hit
+through the parent/player and OutOfPlay exclusions before choosing the closest.
+`TargetingSystem.TargeterJob.HasLineOfSight` already applies its ignored-hit
+rule before distance reduction; do not copy a post-selection projectile rule
+from another consumer. Keep equal-distance selection on the full
+`KnnSourceOrder` keys with an explicit blocker priority, never traversal order
+or `Entity.Index`; unsupported damageable ties must fail loudly. Trace the
+consumed collision before choosing the repair. The focused physics cases passed
+after this change (15/15), followed by the full fast suite (4,380 passed, zero
+failed, 15 existing ignores). Live proof was still pending, and the T63 BEAST
+early-join fork was a separate unknown.
