@@ -52,3 +52,20 @@ Source/evidence: FinalFactory specs/074-three-peer-full-playthrough/tasks.md T11
 `DeterminismFingerprintSystem` CensusDetail producer. Preserve strict verdict limitations: the
 untyped diagnostic rows are rejected by the strict verification parser, so this is attribution
 evidence, not an acceptance pass.
+
+## Capacity and persistence (074 T57, 2026-09-21)
+
+The broad CensusDetail + MoversDetail + ProjectilePipelineDetail capture produced a
+533 MB Windows checkpoint by heartbeat171 and a 1.03 GB host final report by heartbeat283.
+M3 had about2 GiB free, failed publication with disk-full, and disconnected before gate
+placement. Its swap use reached3 GiB. No gate conclusion follows from that run.
+
+Use the narrowest useful surfaces and a short scheduled window around the action. Measure
+actual bytes before extending the window; account for log/report copies and memory pressure.
+Do not print whole matching diagnostic lines: one line can contain megabytes of entity data.
+Parse selected fields and bound output instead.
+
+A subsequent M5 restart removed the scratch run directory, including copies archived there
+from peers. Persistent game-data reports and the peer builds had to be recovered. Keep the
+sole evidence archive outside temporary storage before removing any peer original; follow
+the [fleet evidence and capacity rules](feedback-prove-over-live-networked-machines.md).
