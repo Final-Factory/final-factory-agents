@@ -4,10 +4,10 @@ description: Verify positive diagnostic capture on both peers early, and give ea
 
 # Paired diagnostic capture and helper ownership
 
-Before a long diagnostic replay, write a checkpoint on BOTH connected peers. Verify the
+Before a long diagnostic replay, write a checkpoint on every connected peer. Verify the
 anchor is latched to the intended shared block, each requested surface has positive captured
 records inside its window, and omissions/overflow are zero. Matching config declarations and
-green fingerprints do not prove detailed capture ran. If either peer captured zero, fix or
+green fingerprints do not prove detailed capture ran. If any peer captured zero, fix or
 explicitly bound the capture gap before spending the full run on attribution.
 
 The September 10 spawner replay configured C3VisionDetail and SpawnerArmDetail correctly but
@@ -33,25 +33,27 @@ Evidence: FinalFactory specs/069-research-bot-physical-determinism/plan.md, Sept
 spawner and C3-preview replay records. The corrected replay captured all 5,000 requested
 per-spawner records on BOTH peers; the comparison found no differences.
 
-## Three-peer capture: put the investigated client last
+## Three-peer capture: select the intended epoch
 
-The anchor closes when its heartbeat block ends; an epoch0 declaration does not reopen it
-after another join or recovery (`NetworkDeterminismAudit.ObserveHeartbeatForDiagnosticAnchor`,
-`ShouldCaptureDiagnostic`). In a three-peer replay, the first client can anchor to epoch1 and
-lose detail when the third player creates epoch2. Join the comparison client LAST, then verify
-positive detail on it and the host before replaying the action. Treat the first client's later
-full fingerprints separately; do not claim it has detailed coverage just because its config matches.
+Pre-T133 guidance to join the investigated client last was a workaround for an explicit later
+epoch being consumed by an earlier block. Since FinalFactory `f0a59a878`,
+`ObserveHeartbeatForDiagnosticAnchor` ignores a new block whose epoch differs from a nonzero
+`DiagnosticEpoch` and latches the selected epoch's next block. An epoch of zero remains
+unspecified: it still latches the first eligible block. A later block still closes an existing
+capture. This does not detect a full peer set automatically.
 
-Feature074 t18 (2026-09-20) used host → BEAST → M3, diagnostic epoch2 hb0–6000 with CensusDetail
-and DirectionsDetail. Both host and M3 had positive epoch2 detail. At the first fork hb1261,
-their CensusDetail rows isolated two Landing Zone signatures differing only by OutOfPlay.
-Earlier t14 rejoin fingerprints remained complete, but detail ended when the anchored block
-closed; those post-rejoin fingerprints never established post-rejoin CensusDetail coverage.
-Source/evidence: FinalFactory specs/074-three-peer-full-playthrough/tasks.md T115/T116;
-`NetworkDeterminismAudit.ObserveHeartbeatForDiagnosticAnchor` and
-`DeterminismFingerprintSystem` CensusDetail producer. Preserve strict verdict limitations: the
-untyped diagnostic rows are rejected by the strict verification parser, so this is attribution
-evidence, not an acceptance pass.
+Feature074 T69 used host → BEAST → M3 with CampsDetail and AttacksDetail at epoch2 HB1–5000.
+All three live peers latched epoch2 HB1. CampsDetail and AttacksDetail had positive captures with
+zero omissions; the 159 shared heartbeats had matching authoritative fingerprints and raw times.
+The run intentionally stopped after anchor and budget measurement, so it is not P6 acceptance.
+Evidence: `ff-audit-artifacts/074-20260921/t69-early-artifacts/parent-verdict.json`.
+
+Budget from the M3 T69 report: CampsDetail emitted three records per heartbeat
+(`AttackScheduleDetail`, `CampOccupancyDetail`, and `CampsDetail` in
+`DeterminismFingerprintSystem:808–841`). Its 477 records across 159 heartbeats used 34,587,787 B:
+about 217,533 B per heartbeat, or about 1.087 GB over 5,000 heartbeats. Do not project from
+bytes/477*5000. Measure both the heartbeat span and records per surface, then budget events:
+HB1200–3500 spans 2,301 heartbeats and therefore produces 6,903 CampsDetail records.
 
 ## Capacity and persistence (074 T57, 2026-09-21)
 
