@@ -24,3 +24,27 @@ gate did not power it. `StationConnectionsSystem.IsConnectionValid` rejects Stan
 connections. The fixture needs compatible Connector links. Inspect the consumer's actual power
 satisfaction and construction stage, not only a nearby provider's output or a resolved grid.
 A corrected blueprint is still a proposal until live connection and processing are observed.
+
+Feature 074 T67 fixture lessons: `StationConnectionsSystem.IsConnectorConnectionValid`
+(`Assets/Scripts/FFSystems/Stations/StationConnectionsSystem.cs:756-768`) accepts a Standard
+only on a connector's Input or Output; its Perpendicular side requires a Connector. Inserting an
+Up connector beside a Standard chest alone therefore does not make a valid connection. The live
+successful geometry used gate anchor `(-955,564)`, Up connectors at x `[-952,-948,-944,-940,-936]`,
+z `563`, and Standard chests at the same x positions at z `562`; the live consumer reported
+`power.satisfaction=1`.
+
+`ConstructionTaskAssignerSystem.TryProcessPlayer`
+(`Assets/Scripts/FFSystems/ConstructionBots/ConstructionTaskAssignerSystem.cs:246,265-278`) measures
+the placeable's `CenterTile` against the integer tile from `PlayerSimulationPosition`, using the
+circular range `ActionRange / 10`. A near corner or anchor does not establish that construction bots
+can reach the task.
+
+`transfer.put` reports the requested count because
+`LocalMultiplayerAutomationCommandRunner.ExecuteTransferPut` only dispatches the request; the bake in
+`InventoryTransferOutcomeBuilder.TryBakeTransfer` clamps it to source availability and target capacity.
+The gate accepts only a small connector inventory, so space transfers across heartbeats and prove
+actual stage progress with the production reader rather than command status. T67's initial request
+for 25 engines delivered 8; later spaced transfers delivered the remaining 17 and proved stage 1.
+
+Use an assertion tolerance at least as large as the preceding `movement.goto` completion tolerance:
+`goto` at 12 followed by `assertnear` at 10 can reject a normal completed arrival; use 20 here.
