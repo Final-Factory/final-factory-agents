@@ -32,6 +32,16 @@ Ben: “make sure youre testing using all machines on the network, do real tests
 - The orchestrator owns every dispatched job through completion, failure or a concrete blocker,
   and reports the actual machine coverage with the result. No “tests passed” claim based only
   on launch receipts, command acceptance, an idle world, or one peer's report.
+- Store the authoritative evidence bundle, build receipts, replay saves and next-run scripts in
+  a persistent project-owned directory. Temporary folders are scratch space only: a restart can
+  remove them. Before deleting a peer's only copy, independently verify its size and streaming
+  SHA-256 against the retained persistent copy. Record the destination and any missing evidence.
+- Budget diagnostics against the smallest available machine. Account for the in-memory capture,
+  editor/player memory, OS swap, terminal output, partial reports and final reports together.
+  First measure a short capture with the selected surfaces; use the smallest useful heartbeat
+  window and byte limits. A large per-surface limit is permission to consume that capacity,
+  not proof that a peer can afford it. On exhaustion, preserve the failure, stop the owned run,
+  archive completed project artifacts with hash verification and retry a smaller capture.
 - Apply this automatically. Ben should not need to repeat the multi-machine requirement.
   An explicit narrower task or constraint from Ben can override it; explain any remaining gap.
 
