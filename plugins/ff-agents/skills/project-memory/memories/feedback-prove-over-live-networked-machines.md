@@ -3,10 +3,41 @@ name: feedback-prove-over-live-networked-machines
 description: "Ben (2026-09-11): always test in live networked multiplayer games between machines on his network — a determinism/multiplayer fix is proven by a cross-machine networked leg (BEAST Windows host / Mac peer), never by an editor pair on one box."
 ---
 
-# Prove multiplayer work over live networked machines (Ben, 2026-09-11)
+# Prove multiplayer work over live networked machines (Ben, 2026-09-11; reinforced 2026-09-20)
 
 **What Ben said:** "Remember you need to always be testing in live networked multiplayer games
 over machines on my network."
+
+## Standing orchestration requirement — 2026-09-20
+
+Ben: “make sure youre testing using all machines on the network, do real tests. make use of the other machines to do parallel tasks too if necessary. you are supposed to be orchestating work using all machines.”
+
+- At the start of an orchestration lane, inventory every reachable machine in the project's
+  configured fleet, including additions to the saved routes. Assign each available machine a
+  concrete role. Do not quietly reduce the run to the driver's machine or a familiar pair.
+  Record an unavailable/busy machine and the actual reason; recover in-scope failures yourself.
+- Multiplayer/gameplay acceptance runs the actual scenario in live built players across all
+  available fleet machines, with matching source revisions and verified build artifacts. The
+  current desktop fleet is M5, M3 and BEAST. Editor probes and unit tests are intermediate
+  evidence; they do not replace this run. Host choice follows the scenario, not the historical
+  BEAST-host example below. Preserve architecture, platform, roles, PIDs, commands and reports.
+- Use spare machines for useful independent work while the critical path runs: platform builds,
+  test suites, artifact/save verification, source investigation, or bounded remote workers.
+  Prefer a real remote assignment when independent work and capacity exist. Local children all
+  run on the driver's host; naming one “M3” does not distribute work. Do not create busywork or
+  duplicate the same test merely to occupy a machine.
+- Keep a per-machine ownership/status record. One writer/editor/build owner per checkout; use
+  isolated checkouts for concurrent edits. Never sync into a checkout with an active editor job.
+  Bound remote workers, preserve other work, and collect real exit codes and artifacts.
+- The orchestrator owns every dispatched job through completion, failure or a concrete blocker,
+  and reports the actual machine coverage with the result. No “tests passed” claim based only
+  on launch receipts, command acceptance, an idle world, or one peer's report.
+- Apply this automatically. Ben should not need to repeat the multi-machine requirement.
+  An explicit narrower task or constraint from Ben can override it; explain any remaining gap.
+
+Read [fleet operations](../../editor-ops/references/codex-fleet.md) for routes, remote workers,
+capacity and editor ownership. These obligations apply to both Claude Code and Codex; use each
+runtime's own worker mechanisms.
 
 **Why:** an editor pair on one machine shares the platform, the codegen, the frame cadence and
 the file system, so it cannot see the cross-platform and cross-machine classes that players hit

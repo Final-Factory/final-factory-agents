@@ -3,6 +3,11 @@ name: editor-ops
 description: Final Factory Unity editor operations via the MCP bridge — pinning the right editor instance, compile verification after code changes (the stale-assembly and .meta false-green traps), running the EditMode test suites, editor readiness/recovery when the bridge is down or the editor hangs, the Unity CLI recovery channel, long-background-run monitoring, and editor memory capture. Use BEFORE any task that needs the live editor - running tests, verifying a compile, entering play mode, recovering a stuck editor or bridge, or monitoring a long build/audit run.
 ---
 
+
+**Multi-machine orchestration is the default:** read and apply
+[Ben's all-machines requirement](../project-memory/memories/feedback-prove-over-live-networked-machines.md).
+Assign the available fleet real work, run live built-player acceptance across those machines,
+and collect each job's result. Local tests and local subagents do not substitute for remote coverage.
 # Editor operations (MCP bridge, verification, recovery)
 
 **Standing authorization:** Ben has authorized launching, driving, screenshotting, testing, and recovering Final Factory on his machines during development. Do not ask again for app use or routine playtest steps. Use existing project-specific tools, bounded calls, and autonomous recovery; platform permissions remain independently enforced. Read [the authorization and uninterrupted-run rule](../project-memory/memories/drive-interactive-verification.md) before handing any routine step back to Ben.

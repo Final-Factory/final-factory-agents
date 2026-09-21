@@ -3,6 +3,11 @@ name: playtest
 description: Run a goal-directed agent playtest of Final Factory through the 020 harness — boot or attach a session, drive the game with ffauto pointer/ui/movement commands, observe via state snapshots, screenshots, and temporal visual episodes (the Watch/playback surface), wait on predicates non-blockingly, judge outcomes, and author reproducible bug reports. Use when asked to playtest or watch the game, pursue a gameplay goal, verify a feature by playing, judge motion/pacing, or hunt gameplay bugs.
 ---
 
+
+**Multi-machine orchestration is the default:** read and apply
+[Ben's all-machines requirement](../project-memory/memories/feedback-prove-over-live-networked-machines.md).
+Assign the available fleet real work, run live built-player acceptance across those machines,
+and collect each job's result. Local tests and local subagents do not substitute for remote coverage.
 # Agent playtest sessions (feature 020)
 
 **Standing authorization:** Ben has authorized launching, driving, screenshotting, testing, and recovering Final Factory on his machines during development. Do not ask again for app use or routine playtest steps. Use existing project-specific tools, bounded calls, and autonomous recovery; platform permissions remain independently enforced. Read [the authorization and uninterrupted-run rule](../project-memory/memories/drive-interactive-verification.md) before handing any routine step back to Ben.
