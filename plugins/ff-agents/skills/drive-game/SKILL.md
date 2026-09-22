@@ -206,6 +206,10 @@ return "frame=" + UnityEngine.Time.frameCount;                       // ALWAYS v
 
 ## 📸 Screenshots — THE canonical recipe (all channels)
 
+> **Verifying UI you added or changed?** Shoot the WORST case (longest text, notice mode, all
+> co-visible HUD) and fix what you see — Ben's standing rule and the layout traps:
+> `project-memory` → `ui-screenshot-worst-case-before-done`.
+
 > **Single source of truth.** The `playtest` skill, `massdriver-visual-e2e`, the `game-driver`
 > agent, `recipes.md`, `Documentation/Agent-Playtest-Harness.md` and `docs/UI-Architecture.md` all
 > point HERE. Fix this section; don't re-copy it.
