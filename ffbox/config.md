@@ -101,6 +101,7 @@ already there:
     "cache_quota": "250G",
     "cache_sync": "standard"
   },
+  "intake": { "host": "127.0.0.1", "port": 8790, "root": "/opt/ffreports" },
   "max_concurrent_runs": 6,
   "workload_reserve": 1,
   "max_send_attempts": 5,
@@ -1295,6 +1296,55 @@ one only when you mean to.
 
 ---
 
+# `intake`
+
+Where `ffintake` — the door game clients upload crash and desync reports through — listens,
+where it stores them, and how much it will take. The protocol, the storage layout and how to put
+it on the internet are in `ffbox/README.md`, "Crash and desync intake".
+
+```json
+"intake": {
+  "host": "127.0.0.1",
+  "port": 8790,
+  "root": "/opt/ffreports",
+  "max_body_mb": 48,
+  "max_file_mb": 40,
+  "per_address_per_hour": 12,
+  "per_hour": 600,
+  "min_free_mb": 2048,
+  "trusted_proxies": ["127.0.0.1", "::1"]
+}
+```
+
+**This block is not live, and it is the one block here that cannot be.** `ffintake` never reads
+this file: it holds the Discord bot token, and the account `ffintake` runs as is exactly the one
+that must not be able to open it. `06-services.sh` reads the block instead and renders it into
+the `ExecStart` line of `ffintake.service`. So a change here is
+`sudo sh ffbox/06-services.sh --install`, like `web_host`, and the updater's five-minute check
+reports the unit as drifted until somebody runs it.
+
+**Every value is checked before it reaches that line**, against a shape that cannot carry a
+space, a quote or a systemd specifier. A value that fails is replaced with its default and the
+install prints a `WARNING: intake.<key> = … is not valid` line; it never becomes argv.
+
+| Key | Default | What it is |
+|---|---|---|
+| `host` | `127.0.0.1` | The bind address; an IP literal, IPv4 or IPv6. `ffintake` serves HTTPS itself with a pinned self-signed key (`/etc/ffintake/`), so putting it on the internet is `0.0.0.0` or the LAN address plus a router port forward. Nothing may sit in front of it that terminates TLS, or the game's pin stops matching. |
+| `port` | `8790` | |
+| `root` | `/opt/ffreports` | The storage directory: an absolute path of plain characters, no `..`. Must be the dataset `02-zfsSetup.sh --reports` created — its quota is the hard cap on what the internet can write here. The unit is skipped (condition unmet, not failed) while it does not exist. |
+| `max_body_mb` | `48` | The largest request accepted, as sent. Checked against `Content-Length` before any of the body is read. A 25 MB save file is ~34 MB once base64'd into the envelope. |
+| `max_file_mb` | `40` | The largest single file, decoded. The whole report, decoded, may be twice this (at least 96 MB) — which is also the ceiling on a gzip body's inflated size. |
+| `per_address_per_hour` | `12` | Reports one sender may make per hour, with a burst of 4. A sender is one IPv4 address or one IPv6 `/64`. |
+| `per_hour` | `600` | Reports everybody together may make per hour, with a minute's worth of burst. The flood ceiling. |
+| `min_free_mb` | `2048` | Below this much free space in `root`, uploads are refused with `507` before they are read. The dataset's quota is the backstop if this is ever wrong. |
+| `trusted_proxies` | `["127.0.0.1", "::1"]` | Peers whose `X-Forwarded-For` is believed, and then only its last entry. Anything else is rate-limited by its socket address. With no proxy in front (the pinned setup) only local processes match the default, so it changes nothing. `[]` trusts nobody. |
+
+Four limits are ffintake's own and deliberately not configurable: 32 connections at once, 2
+bodies in memory at once, 180 seconds for a whole connection and 20 for any single read. They
+are what `MemoryMax=1G` in the unit is sized against.
+
+---
+
 # `operators`
 
 **Whose messages may command this box**, in one block, one entry per PERSON, one id per service.
@@ -1785,6 +1835,7 @@ commit as a change here:
 | `ffbox/ci_lane.py` (`PoolConfig`) | the two CI pool numbers and the box ceiling, as the daemon re-reads them live |
 | `ffbox/runners/lib/config.sh` | every key the CI lane reads and its default |
 | `ffbox/ffbox` | the three `container` limits an agent run is launched with, and the preflight that refuses to start anything when this file does not parse |
+| `ffbox/06-services.sh` (`intake_settings`) | the `intake` block: which keys are rendered into `ffintake.service`, the shape each must have, and its default |
 
 Adding, renaming, moving or retiring a key without updating this file leaves the only
 documentation the operator has saying something untrue, and there is no longer a `_help`

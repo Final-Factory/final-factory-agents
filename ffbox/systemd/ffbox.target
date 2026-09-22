@@ -15,10 +15,11 @@
 # propagate down to them.
 #
 # Wants= and not Requires=: a failed web UI must never take the conversation pipeline with it.
-# The pipeline is the product; the page is a window onto it.
+# The pipeline is the product; the page is a window onto it. The same goes for ffintake, the
+# crash-report door, which also sits out a box whose reports dataset does not exist yet.
 Description=ffbox Discord pipeline (listener + conversation manager + web UI)
-Wants=ffdiscord-listener.service ffwatch.service ffweb.service
-After=ffdiscord-listener.service ffwatch.service ffweb.service
+Wants=ffdiscord-listener.service ffwatch.service ffweb.service ffintake.service
+After=ffdiscord-listener.service ffwatch.service ffweb.service ffintake.service
 
 [Install]
 WantedBy=multi-user.target

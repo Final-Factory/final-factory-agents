@@ -526,6 +526,12 @@ for key, value in (
     # off with. Widening it stays a deliberate edit, made here where it is reviewable.
     ("web_host", "127.0.0.1"),
     ("web_port", 8787),
+    # THE CRASH-REPORT DOOR, and the one thing on this box a stranger talks to directly. Loopback
+    # until somebody decides how the internet reaches it -- see "Crash and desync intake" in
+    # ffbox/README.md. Only the three values 06-services.sh renders into ffintake.service are
+    # seeded; the limits are ffintake's own defaults and config.md lists them. root must match
+    # the dataset 02-zfsSetup.sh created.
+    ("intake", {"host": "127.0.0.1", "port": 8790, "root": "/opt/ffreports"}),
     # approve_before_send holds every reply at 'pending' until `ffwatch approve <id>` releases
     # it — turn it on for the first days on a live server.
     ("approve_before_send", False),

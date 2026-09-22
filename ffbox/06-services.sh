@@ -109,7 +109,7 @@ done
 say()  { printf '[services] %s\n' "$*"; }
 did()  { printf '[services]   %s\n' "$*"; }
 
-UNIT_NAMES="ffbox.target ffdiscord-listener.service ffwatch.service ffweb.service"
+UNIT_NAMES="ffbox.target ffdiscord-listener.service ffwatch.service ffweb.service ffintake.service"
 # The updater is rendered and installed with the rest, but it is NOT part of ffbox.target
 # and is enabled separately — it has to survive a broken ffbox to be able to fix one.
 # See design/self_update_design.txt section 3.
@@ -152,6 +152,129 @@ PY
 }
 
 
+# THE CRASH-REPORT DOOR'S SETTINGS, from the `intake` block, as four lines: storage root, bind
+# host, port, and the rest of its argv. Rendered into ffintake.service rather than read by
+# ffintake itself, because config.json holds the Discord token and the account ffintake runs as
+# must never be able to open it (see the header of ffbox/ffintake.py).
+#
+# EVERYTHING PRINTED HERE LANDS ON AN ExecStart LINE, so every value is checked against a shape
+# that cannot carry a space, a quote, a `|` (the sed delimiter below) or a `%` (systemd's
+# specifier), and a value that fails its check falls back to the default with a warning on
+# stderr. A typo costs a line in the install log, not a unit that runs something else.
+intake_settings() {
+    FFBOX_CONFIG_JSON="$FFBOX_CONFIG_JSON" python3 - <<'PY'
+import ipaddress, json, os, re, sys
+
+
+def read(path):
+    try:
+        with open(path, encoding="utf-8") as fh:
+            loaded = json.load(fh)
+        return loaded if isinstance(loaded, dict) else {}
+    except Exception:
+        return {}
+
+
+block = read(os.environ["FFBOX_CONFIG_JSON"]).get("intake")
+block = block if isinstance(block, dict) else {}
+
+
+def warn(key, value, default):
+    print("[services] WARNING: intake.%s = %r is not valid; using %s" % (
+        key, value, "ffintake's default" if default is None else repr(default)), file=sys.stderr)
+    return default
+
+
+def get(key, default, ok):
+    if key not in block or block[key] is None:
+        return default
+    value = block[key]
+    try:
+        if ok(value):
+            return value
+    except Exception:
+        pass
+    return warn(key, value, default)
+
+
+def is_ip(v):
+    return isinstance(v, str) and bool(ipaddress.ip_address(v))
+
+
+def positive(v):
+    return type(v) in (int, float) and 0 < v < 1e6
+
+
+root = get("root", "/opt/ffreports",
+           lambda v: isinstance(v, str) and re.fullmatch(r"(/[A-Za-z0-9._-]+)+", v)
+           and "/../" not in v + "/" and "/./" not in v + "/")
+host = get("host", "127.0.0.1", is_ip)
+port = get("port", 8790, lambda v: type(v) is int and 1 <= v <= 65535)
+args = []
+for key, flag in (("max_body_mb", "--max-body-mb"), ("max_file_mb", "--max-file-mb"),
+                  ("per_address_per_hour", "--per-address-per-hour"),
+                  ("per_hour", "--per-hour"), ("min_free_mb", "--min-free-mb")):
+    value = get(key, None, positive)
+    if value is not None:
+        args += [flag, repr(value)]
+proxies = get("trusted_proxies", None,
+              lambda v: isinstance(v, list) and all(is_ip(p) for p in v))
+if proxies is not None:
+    args += [x for p in (proxies or ["127.0.0.1"]) for x in ("--trusted-proxy", p)]
+print(root)
+print(host)
+print(port)
+print(" ".join(args))
+PY
+}
+
+
+# THE CRASH-REPORT DOOR'S TLS KEYS. Self-signed, because the game pins the key rather than
+# trusting a CA, so there is no domain to prove and nothing to renew: the certificates are valid
+# for a century and a pinned client does not look at the dates anyway.
+#
+# TWO PAIRS, and only the first is served. The game ships with BOTH public-key pins, so if the
+# live key is ever lost or leaked the backup can be moved into place without a game update. That
+# only helps if the backup survives what the live key did not, so move backup-key.pem OFF this
+# machine once it exists (README, "Crash and desync intake").
+#
+# NEVER OVERWRITTEN. Every shipped game build carries these pins; minting a new key here would
+# silently cut every one of them off. A half-present pair is refused rather than repaired.
+INTAKE_TLS_DIR=/etc/ffintake
+ensure_intake_tls() {
+    install -d -m 0755 -o root -g root "$INTAKE_TLS_DIR"
+    for _pair in "cert key" "backup-cert backup-key"; do
+        _c="$INTAKE_TLS_DIR/${_pair% *}.pem"
+        _k="$INTAKE_TLS_DIR/${_pair#* }.pem"
+        if [ -f "$_c" ] && [ -f "$_k" ]; then
+            did "$_c already exists (never replaced: shipped games pin it)"
+            continue
+        fi
+        if [ "${_pair#* }" = backup-key ] && [ -f "$_c" ]; then
+            did "$_c exists without its key; the key is presumably off-box, as it should be"
+            continue
+        fi
+        if [ -f "$_c" ] || [ -f "$_k" ]; then
+            say "WARNING: only half of $_c / $_k exists. Not touching it; ffintake will not start"
+            say "         until the pair is restored or both files are removed."
+            continue
+        fi
+        ( umask 077 && openssl req -x509 -newkey rsa:3072 -sha256 -days 36500 -nodes \
+            -keyout "$_k" -out "$_c" -subj "/CN=ffintake" \
+            -addext "subjectAltName=DNS:ffintake" >/dev/null 2>&1 ) \
+            || { say "WARNING: openssl could not mint $_c"; continue; }
+        chmod 0600 "$_k"
+        chmod 0644 "$_c"
+        did "minted $_c (key $_k, root-only)"
+    done
+    if [ -f "$INTAKE_TLS_DIR/cert.pem" ]; then
+        did "pins for the game (also: python3 $HERE/ffintake.py --pin $INTAKE_TLS_DIR/*cert.pem):"
+        python3 "$HERE/ffintake.py" --pin "$INTAKE_TLS_DIR"/*cert.pem 2>/dev/null \
+            | sed 's/^/[services]     /' || true
+    fi
+}
+
+
 # THE TEMPLATES IN ffbox/systemd/ ARE THE ONLY SOURCE. They are rendered into a throwaway
 # directory and installed from there; nothing rendered is ever kept beside the config, because a
 # second copy on disk is a second thing that can disagree with git. @PLACEHOLDERS@ exist because
@@ -161,6 +284,11 @@ render_units() {
     _dest=$1
     _webhost=$(web_bind | cut -d' ' -f1)
     _webport=$(web_bind | cut -d' ' -f2)
+    _intake=$(intake_settings)
+    _intakeroot=$(printf '%s\n' "$_intake" | sed -n 1p)
+    _intakehost=$(printf '%s\n' "$_intake" | sed -n 2p)
+    _intakeport=$(printf '%s\n' "$_intake" | sed -n 3p)
+    _intakeargs=$(printf '%s\n' "$_intake" | sed -n 4p)
     # The rootless daemon's socket carries the OWNER's uid, not this process's: --install runs
     # under sudo, so `id -u` here would be 0 and every unit would point at root's runtime
     # directory, which does not exist. Ask for the uid of the user the units run as.
@@ -210,6 +338,11 @@ render_units() {
             -e "s|@EGRESS@|$HERE/egress/ffbox-egress.sh|g" \
             -e "s|@REPO@|$(CDPATH= cd -- "$HERE/.." && pwd)|g" \
             -e "s|@FFWEB@|$HERE/ffweb.py|g" \
+            -e "s|@INTAKE@|$HERE/ffintake.py|g" \
+            -e "s|@INTAKEROOT@|$_intakeroot|g" \
+            -e "s|@INTAKEHOST@|$_intakehost|g" \
+            -e "s|@INTAKEPORT@|$_intakeport|g" \
+            -e "s|@INTAKEARGS@|$_intakeargs|g" \
             -e "s|@USER@|$RUN_USER|g" \
             -e "s|@GROUP@|$RUN_GROUP|g" \
             -e "s|@HOME@|$HOME|g" \
@@ -296,7 +429,7 @@ if [ "$INSTALL" = 1 ]; then
         # dependency it can resolve and would otherwise bury the answer in warnings about
         # somebody else's service.
         (cd "$TMP" && systemd-analyze verify ./ffbox.target ./*.service ./*.timer 2>&1 \
-            | grep -E 'ffbox|ffwatch|ffweb|ffdiscord' \
+            | grep -E 'ffbox|ffwatch|ffweb|ffdiscord|ffintake' \
             | sed 's/^/[discord-setup]   verify: /') || true
     fi
     # WHICH UNITS ACTUALLY CHANGED, and which were already running, decided BEFORE the files
@@ -317,6 +450,7 @@ if [ "$INSTALL" = 1 ]; then
         install -m 0644 "$TMP/$u" "$UNIT_DIR/$u"
         did "$UNIT_DIR/$u"
     done
+    ensure_intake_tls
     systemctl daemon-reload
     did "daemon-reload done"
 
@@ -328,7 +462,7 @@ if [ "$INSTALL" = 1 ]; then
         did "not enabled (--no-enable). Start it with: sudo systemctl enable --now ffbox.target"
     else
         systemctl enable --now ffbox.target
-        did "enabled and started ffbox.target (listener + ffwatch + ffweb)"
+        did "enabled and started ffbox.target (listener + ffwatch + ffweb + ffintake)"
         # SEPARATELY, and on purpose: enabling the timer through ffbox.target would tie the
         # updater's lifetime to the thing it updates. A stop of the target must leave this
         # firing, because a bad commit that stops ffwatch is exactly when the next one matters.
@@ -359,7 +493,7 @@ if [ "$INSTALL" = 1 ]; then
                     ;;
             esac
         done
-        for u in ffdiscord-listener.service ffwatch.service ffweb.service; do
+        for u in ffdiscord-listener.service ffwatch.service ffweb.service ffintake.service; do
             did "  $u: $(systemctl is-active "$u" 2>/dev/null | head -1)"
         done
         did "stop everything:  sudo systemctl stop ffbox.target"
@@ -406,7 +540,7 @@ elif [ "$STALE" = 1 ]; then
     did "sudo sh $HERE/06-services.sh --install"
 else
     did "web UI: https://$(web_bind | cut -d' ' -f1):$(web_bind | cut -d' ' -f2)  (sign in as Ben or Lothsahn)"
-    did "logs:   journalctl -u ffwatch -f   (or -u ffdiscord-listener, -u ffweb)"
+    did "logs:   journalctl -u ffwatch -f   (or -u ffdiscord-listener, -u ffweb, -u ffintake)"
     did "update: $(systemctl is-active ffbox-update.timer 2>/dev/null || echo inactive), next $(systemctl show ffbox-update.timer -p NextElapseUSecRealtime --value 2>/dev/null || echo '?')"
     did "        sudo systemctl start ffbox-update.service   (update now)"
 fi
@@ -415,7 +549,7 @@ fi
 # restart. systemd reports that as "active" and nothing else complains, so the daemon serves the
 # OLD configuration indefinitely — which is how ffweb stayed on 127.0.0.1 through two correct
 # installs. --install restarts what it changes now; this catches the hand-edited case.
-for u in ffdiscord-listener.service ffwatch.service ffweb.service; do
+for u in ffdiscord-listener.service ffwatch.service ffweb.service ffintake.service; do
     [ -f "$UNIT_DIR/$u" ] || continue
     systemctl is-active --quiet "$u" 2>/dev/null || continue
     started=$(systemctl show "$u" -p ActiveEnterTimestamp --value 2>/dev/null)

@@ -12,6 +12,8 @@
 #   <pool>/ff              mountpoint=none      container for everything ffbox owns
 #   <pool>/ff/golden       /opt/FinalFactory    the golden checkout
 #   <pool>/ff/run-<id>     /opt/ffruns/run-<id> per-run clones (created by ffbox, not here)
+#   <pool>/ff/reports      /opt/ffreports       crash and desync reports from players, written
+#                                               by ffintake (see ffbox/ffintake.py)
 #
 # WHY <pool>/ff AND NOT SOMEWHERE UNDER <pool>/ROOT
 # Ubuntu's zsys auto-snapshots the root datasets on every apt transaction. Putting an 11GB+ Unity
@@ -27,6 +29,9 @@ set -eu
 REPO_URL="https://github.com/Final-Factory/FinalFactory.git"
 GOLDEN_MNT="/opt/FinalFactory"
 RUNS_MNT="/opt/ffruns"
+REPORTS_MNT="/opt/ffreports"
+REPORTS_QUOTA="50G"
+DO_REPORTS=1
 SUDOERS_FILE="/etc/sudoers.d/ffbox"
 POOL=""
 OWNER=""
@@ -54,9 +59,14 @@ Options (alphabetical):
                     cloning. PATH is left in place afterwards for you to verify and
                     delete yourself — this script never removes a checkout.
   --no-clone        Create the datasets but leave golden empty; populate it yourself.
+  --no-reports      Skip the crash-report dataset and the ffintake account.
   --no-sudoers      Skip the sudoers rule. ffbox then prompts for a password per run.
   --owner USER      User who should own the checkout (default: the invoking user).
   --pool NAME       ZFS pool to build in (default: the pool holding /).
+  --reports PATH    Mountpoint for crash/desync reports (default: ${REPORTS_MNT}). Must
+                    match intake.root in ~/.config/ffbox/config.json.
+  --reports-quota N Quota for that dataset, set only when it is created (default:
+                    ${REPORTS_QUOTA}). Change it later with 'zfs set quota='.
   --repo URL        Repository to clone (default: ${REPO_URL}).
   --runs PATH       Mountpoint for per-run clones (default: ${RUNS_MNT}).
 
@@ -72,6 +82,9 @@ while [ $# -gt 0 ]; do
     --help|-h)    usage; exit 0 ;;
     --migrate)    MIGRATE_FROM=${2:?--migrate needs a path}; DO_CLONE=0; shift 2 ;;
     --no-clone)   DO_CLONE=0; shift ;;
+    --no-reports) DO_REPORTS=0; shift ;;
+    --reports)    REPORTS_MNT=${2:?--reports needs a path}; shift 2 ;;
+    --reports-quota) REPORTS_QUOTA=${2:?--reports-quota needs a size}; shift 2 ;;
     --no-sudoers) DO_SUDOERS=0; shift ;;
     --owner)      OWNER=${2:?--owner needs a user}; shift 2 ;;
     --pool)       POOL=${2:?--pool needs a name}; shift 2 ;;
@@ -135,6 +148,7 @@ OWNER_GROUP=$(id -gn "$OWNER")
 
 FF_DS="${POOL}/ff"
 GOLDEN_DS="${FF_DS}/golden"
+REPORTS_DS="${FF_DS}/reports"
 
 # ---------------------------------------------------------------------------------------------
 # --check
@@ -169,6 +183,8 @@ if [ "$CHECK_ONLY" -eq 1 ]; then
   printf '%-22s %s\n' "$FF_DS"     "$(have_ds "$FF_DS"     && echo present || echo MISSING)"
   printf '%-22s %s\n' "$GOLDEN_DS" "$(have_ds "$GOLDEN_DS" && echo "present -> $(zfs get -H -o value mountpoint "$GOLDEN_DS")" || echo MISSING)"
   printf '%-22s %s\n' "$RUNS_MNT"  "$([ -d "$RUNS_MNT" ] && echo present || echo MISSING)"
+  printf '%-22s %s\n' "$REPORTS_DS" "$(have_ds "$REPORTS_DS" && echo "present -> $(zfs get -H -o value mountpoint,quota "$REPORTS_DS" | paste -sd' ')" || echo MISSING)"
+  printf '%-22s %s\n' "ffintake account" "$(id ffintake >/dev/null 2>&1 && echo present || echo MISSING)"
   printf '%-22s %s\n' "checkout"   "$(git -C "$GOLDEN_MNT" rev-parse --short HEAD 2>/dev/null || echo "not a git repo")"
   # /etc/sudoers.d is 0750 root:root on a stock Debian/Ubuntu, so an unprivileged `test -f`
   # cannot tell "absent" from "unreadable" and would report a present rule as MISSING. Retry
@@ -219,6 +235,48 @@ else
   say "creating $RUNS_MNT"
   as_root mkdir -p "$RUNS_MNT"
   as_root chown "$OWNER:$OWNER_GROUP" "$RUNS_MNT"
+fi
+
+# ---------------------------------------------------------------------------------------------
+# The crash-report store
+#
+# WHERE STRANGERS' UPLOADS LAND, so it is built to hold them and nothing else. Its own dataset,
+# because the quota is the one limit on what the internet can write here that no bug in ffintake
+# can get around: a full reports dataset stops reports, and the golden checkout, the run clones
+# and the Docker data beside it never notice. exec, setuid and devices are off because nothing in
+# it is ever meant to run, and zstd because logs compress well.
+#
+# Owned by `ffintake`, an account with no home, no shell and no other file on the box, which is
+# what ffintake.service runs as. The directory is setgid to that group and the service's umask
+# is 027, so every report is readable by the group and nobody else; the owner is added to it,
+# which takes effect at their next login.
+# ---------------------------------------------------------------------------------------------
+if [ "$DO_REPORTS" -eq 1 ]; then
+  if id ffintake >/dev/null 2>&1; then
+    skip "account ffintake already exists"
+  else
+    say "creating system account ffintake"
+    as_root useradd --system --user-group --no-create-home --home-dir /nonexistent \
+      --shell /usr/sbin/nologin ffintake
+  fi
+  if id -nG "$OWNER" | tr ' ' '\n' | grep -qx ffintake; then
+    skip "$OWNER already in group ffintake"
+  else
+    say "adding $OWNER to group ffintake (read access to reports; takes effect at next login)"
+    as_root usermod -aG ffintake "$OWNER"
+  fi
+  if have_ds "$REPORTS_DS"; then
+    skip "$REPORTS_DS already exists"
+  else
+    if [ -d "$REPORTS_MNT" ] && [ -n "$(ls -A "$REPORTS_MNT" 2>/dev/null)" ]; then
+      die "$REPORTS_MNT exists and is not empty. Move it aside and re-run."
+    fi
+    say "creating $REPORTS_DS -> $REPORTS_MNT (quota $REPORTS_QUOTA)"
+    as_root zfs create -o mountpoint="$REPORTS_MNT" -o quota="$REPORTS_QUOTA" \
+      -o compression=zstd -o exec=off -o setuid=off -o devices=off -o atime=off "$REPORTS_DS"
+  fi
+  as_root chown ffintake:ffintake "$REPORTS_MNT"
+  as_root chmod 2750 "$REPORTS_MNT"
 fi
 
 # ---------------------------------------------------------------------------------------------
@@ -414,6 +472,7 @@ Layout:
   ${FF_DS}          mountpoint=none
   ${GOLDEN_DS}      ${GOLDEN_MNT}
   per-run clones    ${RUNS_MNT}/run-<id>
+  ${REPORTS_DS}     ${REPORTS_MNT}  (crash/desync reports; ffintake:ffintake 2750)
 
 Next:
   1. sh ffbox/build.sh
