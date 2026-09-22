@@ -73,6 +73,9 @@ run "test_modelproxy.py"    python3 "$HERE/test_modelproxy.py"
 # back in one process and in order when a failure wants a clean transcript.
 run "test_ffwatch.py"       python3 "$HERE/test_ffwatch.py"
 run "test_ffweb.py"         python3 "$HERE/test_ffweb.py"
+# THE ONE DOOR A STRANGER TALKS TO. Every refusal, limit and no-echo rule in ffintake is only
+# worth what this suite keeps holding.
+run "test_ffintake.py"      python3 "$HERE/test_ffintake.py"
 
 printf '\n========\n'
 if [ -n "$FAILED" ]; then

@@ -84,12 +84,16 @@ Everything ffbox owns on a machine lives in one directory:
 ~/.config/ffbox/update.config-sha  the hash config.json and secrets.env had when the running
                                    services started on them
 ~/ffbox-state/                     the database, blobs and per-conversation run directories
+/opt/ffreports/                    crash and desync reports uploaded by players (ffintake);
+                                   its own dataset with a quota, readable by group ffintake
 ```
 
 ## The services
 
 Three daemons — the gateway listener, the conversation manager, the web page — under one target,
-installed and started by `setup.sh`. The unit files live in `ffbox/systemd/` in git; nothing is
+installed and started by `setup.sh`. A fourth, `ffintake`, accepts crash and desync reports from
+the game; it is under the same target but runs as its own locked-down account, and has its own
+section below ("Crash and desync intake"). The unit files live in `ffbox/systemd/` in git; nothing is
 rendered anywhere else.
 
 `sh ffbox/setup.sh` already did this as stage 6 — installed the units and started the target,
@@ -790,7 +794,8 @@ itself is safe to re-run — stages 1 and 2 no-op once satisfied.
 ### Stage 1 — `02-zfsSetup.sh`
 
 Creates `<pool>/ff` (mountpoint=none), `<pool>/ff/golden` mounted at `/opt/FinalFactory`, the
-`/opt/ffruns` mountpoint, clones the repo, and installs the sudoers rule. The pool is detected
+`/opt/ffruns` mountpoint, `<pool>/ff/reports` at `/opt/ffreports` with the `ffintake` account
+that owns it (see "Crash and desync intake"), clones the repo, and installs the sudoers rule. The pool is detected
 from whatever dataset holds `/`, so nothing is hardcoded to `rpool`.
 
 ```bash
@@ -3020,6 +3025,316 @@ refusals, the content types, the session cookie and the mtime only exist on the 
 build their fixture by calling ffwatch's own schema, so the two cannot drift. The TLS cases
 mint a real certificate and verify it against its own file with hostname checking on, which is
 what would fail if the SAN were ever dropped.
+
+## Crash and desync intake (`ffintake`)
+
+`ffintake` accepts crash reports and multiplayer desync reports uploaded by the game and files
+them under `/opt/ffreports`. Nothing reads them yet. The plan is for agents to triage them and
+open pull requests later, and the storage layout and manifest below are shaped for that.
+
+It is the only thing on this box that anyone on the internet may talk to without an account.
+The game cannot log in when it crashes, and a key shipped inside the client is a key everyone
+has, so there is no authentication. The design assumes every request is hostile and makes that
+cheap to survive; the security section below goes through it threat by threat.
+
+**Status on 2026-09-22.** The service, its unit, the dataset and the tests are in this repo. The
+game does not send to it yet: crashes still go to Backtrace and bug reports to a Discord webhook,
+and there is no in-game desync dump to upload. Out of the box it listens on loopback only.
+Reaching it from the internet is a config edit and a router port forward (see "Putting it on the
+internet").
+
+It serves HTTPS with a **self-signed certificate that the game pins**. There is no CA and no
+domain. The game carries the SHA-256 of the server's public key and refuses any connection that
+presents a different one. That lets the game know it is talking to this box and keeps players'
+logs encrypted in transit. It does not let the box know an upload came from the game: the pin is
+public (anyone can read it out of the client), so it is not a password, and every limit below
+still applies.
+
+### Setting it up
+
+```bash
+sudo sh ffbox/02-zfsSetup.sh             # creates rpool/ff/reports and the ffintake account
+sudo sh ffbox/06-services.sh --install   # mints the TLS keys, renders and starts ffintake.service
+journalctl -u ffintake -f
+curl -s --cacert /etc/ffintake/cert.pem --resolve ffintake:8790:127.0.0.1 \
+     https://ffintake:8790/v1/health      # {"ok": true, "version": "1"}
+python3 ffbox/ffintake.py --pin /etc/ffintake/cert.pem /etc/ffintake/backup-cert.pem
+```
+
+`06-services.sh --install` creates two RSA-3072 key pairs in `/etc/ffintake/`: `cert.pem` and
+`key.pem`, which are served, and `backup-cert.pem` and `backup-key.pem`, which are not. Keys are
+`0600 root`. The service never reads them directly: systemd's `LoadCredential` hands it a
+private copy at start. The certificates are valid for 100 years and **are never regenerated**.
+Every game build that ships carries these pins, so a new key would lock all of them out. A
+half-present pair is reported and left alone.
+
+**Move `backup-key.pem` off this machine** after the first install (to a password manager or an
+offline drive) and delete it here. The game pins both keys. If the live key is ever lost or leaked,
+copy the backup pair into place as `cert.pem`/`key.pem`, restart `ffintake`, and every shipped
+build keeps working. A backup that stayed on the same disk would be lost or leaked along with the
+live key, which defeats the point.
+
+`02-zfsSetup.sh` creates `<pool>/ff/reports` mounted at `/opt/ffreports` with a 50G quota
+(`--reports-quota` changes it at creation, `zfs set quota=` afterwards), `compression=zstd`, and
+`exec`, `setuid` and `devices` off. It creates a system account `ffintake` with no home and no
+shell, gives it the directory (mode `2750`), and adds the box owner to the `ffintake` group so
+the owner can read reports. Group membership takes effect at the owner's next login.
+
+Until that dataset exists the unit is skipped with a condition unmet rather than failing, so
+a box that has not run the stage shows no red unit.
+
+Settings are the `intake` block in `config.json`, documented in `ffbox/config.md`. They are
+rendered into the unit, because `ffintake` is not allowed to read `config.json` (it holds the
+Discord token). Changing one means re-running `06-services.sh --install`.
+
+### The protocol
+
+Two endpoints accept uploads and one answers health checks. There is no other route, and in
+particular no route that reads a report back.
+
+| Method and path | What it does |
+|---|---|
+| `POST https://<host>:8790/v1/reports/crash` | store a crash report |
+| `POST /v1/reports/desync` | store a multiplayer desync report |
+| `GET /v1/health` | `200 {"ok": true, "version": "1"}` |
+
+A report is one JSON document, sent with `Content-Type: application/json` and a
+`Content-Length`. Chunked uploads are refused. The body may be gzipped with
+`Content-Encoding: gzip`, which the client should do: logs shrink about tenfold and base64
+compresses back to near its source size.
+
+```json
+{
+  "schema": 1,
+  "report_id": "3f1c2a9e-4b7d-4c1e-9a55-0d6f3b2e8c71",
+  "game_version": "0.21.0.23",
+  "platform": "WindowsPlayer",
+  "description": "crashed when I placed a mass driver",
+  "details": { "unity_version": "6000.0.23f1", "tick": 18233, "is_host": true },
+  "files": [
+    { "name": "FinalFactory_RuntimeLog.txt", "content": "<base64>" },
+    { "name": "BugReport_20260922_101500.zip", "content": "<base64>" }
+  ]
+}
+```
+
+| Field | Rule |
+|---|---|
+| `schema` | required, integer, `1` |
+| `report_id` | required. A random UUID in canonical lowercase form, minted by the client when the report is created and **reused on every retry**. A second upload with the same id is answered `200` with the first one's id and stores nothing. |
+| `game_version` | required. 1 to 64 characters from `A-Z a-z 0-9 . _ + -`, starting with a letter or digit. `FFVersion.FinalFactoryVersion.ToString()` fits. |
+| `platform` | required, same shape. `Application.platform.ToString()` fits. |
+| `description` | optional, up to 4000 characters of whatever the player typed |
+| `details` | optional. Up to 32 keys matching `[a-z][a-z0-9_]{0,39}`, each a string (at most 256 characters), an integer or a boolean. No floats, no nesting. This is where the desync tick, host/client role, lobby size, Unity version and similar belong, so adding one needs no server change. |
+| `files` | required, 1 to 8 entries of `{"name", "content"}`. `name` is 1 to 128 characters and is only a label. `content` is standard base64, at most 40 MB decoded. An empty file is allowed. |
+
+Any key not in this table is refused rather than ignored, so a typo in the client shows up in
+testing and does not silently lose data.
+
+Size limits: the body on the wire may be at most 48 MB, the whole report decoded at most 96 MB,
+and one file at most 40 MB. A 25 MB save zip is about 34 MB once base64'd, so it fits.
+
+Every response is a small JSON object:
+
+| Status | Body | Client should |
+|---|---|---|
+| `201` | `{"id": "20260922T101500Z-crash-3a9f01c2d4"}` | forget the report. The id is ours and can be shown to the player so they can quote it. |
+| `200` | `{"id": "…", "duplicate": true}` | the same: an earlier attempt already arrived |
+| `400` | `{"error": "bad_json"}` and similar | not retry. The code names the field (`bad_report_id`, `bad_game_version`, `bad_files`, `bad_file_content`, `bad_details`, `unsupported_schema`, `bad_gzip`, …). This is a client bug. |
+| `404`, `405`, `411`, `413`, `415` | `{"error": …}` | not retry; also a client bug or an oversized report |
+| `429` | `{"error": "rate_limited"}` with `Retry-After` | wait at least `Retry-After` seconds |
+| `503`, `507` | `busy`, `storage_error`, `storage_full`, with `Retry-After` | retry later |
+| connection reset or timeout | | retry later with backoff |
+
+A request that is refused before its body is read (a declared size over the limit, a rate
+limit, the wrong content type) gets its answer and then a closed connection. A client still
+sending a large body may see that as a reset instead of the status. So treat any network error
+as "retry later". Keep the report on disk, retry at the next start with exponential backoff, and
+drop it after a few days.
+
+A test upload by hand:
+
+```bash
+b64=$(base64 -w0 < Player.log)
+printf '{"schema":1,"report_id":"%s","game_version":"0.21.0.23","platform":"LinuxPlayer","files":[{"name":"Player.log","content":"%s"}]}' \
+  "$(cat /proc/sys/kernel/random/uuid)" "$b64" | gzip \
+  | curl -s -H 'Content-Type: application/json' -H 'Content-Encoding: gzip' \
+         --cacert /etc/ffintake/cert.pem --resolve ffintake:8790:127.0.0.1 \
+         --data-binary @- https://ffintake:8790/v1/reports/crash
+```
+
+From another machine, pin the key instead of trusting the file:
+`curl -k --pinnedpubkey 'sha256//<spki pin>' https://<address>:8790/v1/health`. `-k` turns off
+CA checking and `--pinnedpubkey` puts back the check that matters.
+
+### Pinning in the game
+
+`ffintake.py --pin` prints three values per certificate. The game needs `public_key` from
+**both** `cert.pem` and `backup-cert.pem`. `certificate` is the hash of the whole certificate
+and would break if the certificate were ever re-issued on the same key. `spki` is for curl.
+
+```csharp
+using System;
+using System.Linq;
+using System.Security.Cryptography;
+using System.Security.Cryptography.X509Certificates;
+using UnityEngine.Networking;
+
+// Accepts the intake server only when it presents one of our two keys. Replaces CA validation
+// entirely, so the self-signed certificate and the bare IP address are both fine.
+class IntakeCertificateHandler : CertificateHandler
+{
+    static readonly byte[][] Pins =
+    {
+        Convert.FromBase64String("<public_key pin of cert.pem>"),
+        Convert.FromBase64String("<public_key pin of backup-cert.pem>"),
+    };
+
+    protected override bool ValidateCertificate(byte[] certificateData)
+    {
+        using var sha = SHA256.Create();
+        var cert = new X509Certificate2(certificateData);
+        var hash = sha.ComputeHash(cert.GetPublicKey());
+        return Pins.Any(pin => pin.SequenceEqual(hash));
+    }
+}
+
+// request.certificateHandler = new IntakeCertificateHandler();
+```
+
+`GetPublicKey()` returns the key's raw bits, the same bytes `--pin` hashes. The suite checks
+that value against `openssl rsa -RSAPublicKey_out`. Test the handler once against the real server
+before shipping, and once against a wrong pin to see it refuse.
+
+### What lands on disk
+
+```
+/opt/ffreports/
+  crash/2026-09/20260922T101500Z-crash-3a9f01c2d4/
+    manifest.json
+    files/01-FinalFactory_RuntimeLog.txt
+    files/02-BugReport_20260922_101500.zip
+  desync/2026-09/…
+  .incoming/     reports being written; a finished one is renamed into place in one step
+  .ids/          client report_id -> our id, for deduplication
+  .salt          the key for sender hashes (0600)
+```
+
+A report appears under `crash/` or `desync/` complete or not at all, so a later watcher can act
+on any directory it sees. Every name on that path is chosen by `ffintake`. A file's stored name
+is its position plus whatever of the client's name survives `[A-Za-z0-9._-]` (so
+`../../etc/passwd` becomes `02-passwd`). The client's exact name is kept only as a string in the
+manifest:
+
+```json
+{
+  "manifest": 1,
+  "id": "20260922T101500Z-crash-3a9f01c2d4",
+  "kind": "crash",
+  "trust": "untrusted",
+  "received_at": "2026-09-22T10:15:00+00:00",
+  "sender": { "address_hash": "3ace6eea57acd768", "user_agent": "UnityPlayer/6000.0.23f1",
+              "content_encoding": "gzip", "wire_bytes": 1840233 },
+  "report": { "report_id": "…", "game_version": "0.21.0.23", "platform": "WindowsPlayer",
+              "description": "…", "details": { … }, "schema": 1 },
+  "files": [ { "stored": "files/01-FinalFactory_RuntimeLog.txt",
+               "name": "FinalFactory_RuntimeLog.txt", "bytes": 182044, "sha256": "…" } ]
+}
+```
+
+The box does not keep players' IP addresses. `address_hash` is an HMAC of the sender's address
+(or its IPv6 `/64`) under `.salt`. Reports from one sender therefore share a hash, and the
+address cannot be recovered from the hash without the salt. Deleting `.salt` breaks the link
+between old and new reports.
+
+Nothing is deleted automatically. When the quota fills, uploads get `507` and the rest of the
+box is unaffected. The `ffintake` group can read but not write, so the owner cannot prune
+directly. Delete old months as the account that wrote them:
+`sudo -u ffintake rm -r /opt/ffreports/crash/2026-09`. A triage pipeline that needs to mark or
+move reports will need its own write path, and that is a decision for when it is built.
+
+### Security
+
+What an attacker can send, and what stops it doing damage:
+
+| Threat | Defence |
+|---|---|
+| A bug in `ffintake` itself (the parser, the HTTP server) | It runs as `ffintake`, which owns nothing but the reports directory. The unit gives it no `EnvironmentFile` (so no `secrets.env`), an empty `/home` and `/opt` with only its own script (read-only) and the reports directory bound back in, no capabilities, `NoNewPrivileges`, a syscall allowlist, no `AF_UNIX` sockets (so the Docker socket is unreachable), private `/tmp` and devices. `systemd-analyze security` rates it 1.3; `ffweb` rates 9.0. It imports nothing from the rest of ffbox. |
+| Using the box as a file host, or storing a page that runs script in a reader's browser | There is no read route. A response contains only a server-minted id or a fixed error code. |
+| Path traversal through a file name or report id | Every path component is minted by `ffintake`. `report_id` must be a canonical UUID. Files are created with `O_EXCL | O_NOFOLLOW`, so nothing can be written through a planted symlink. |
+| Filling the disk | A ZFS quota on its own dataset, a free-space floor checked before the body is read, and rate limits. A full dataset stops reports and nothing else. |
+| Exhausting memory | The declared size is checked before reading. Gzip is inflated in bounded steps and stops at 96 MB, so a gzip bomb costs its compressed size. A file's size is checked from its base64 length before decoding. At most two bodies are in memory at once, and the unit's `MemoryMax=1G` is measured to hold that with room to spare (three simultaneous 45 MB uploads peaked at 447 MB). |
+| Holding connections open (slowloris) | 32 connections at most, the rest closed unserved; 20 s per read and 180 s per connection, enforced by a timer that shuts the socket. One request per connection. |
+| Flooding | A token bucket per sender (12 an hour, burst of 4, an IPv6 `/64` counts as one sender) and one for everybody (600 an hour). The per-sender table is capped at 50,000 entries, so spraying addresses cannot grow memory. `CPUQuota=100%` caps the CPU. |
+| Spoofing `X-Forwarded-For` to dodge the limit | The header is believed only from `trusted_proxies`, and then only its last entry, which is the one the proxy on this box appended. |
+| Another website making visitors' browsers post here | Only `application/json` is accepted, which a browser cannot send cross-site without a CORS preflight, and `OPTIONS` gets `405` with no CORS headers. |
+| Request smuggling through a front proxy | Chunked bodies and duplicate `Content-Length` headers are refused. |
+| Forging journal lines | The journal records server-chosen codes, the sender hash and sizes. The request line, headers and body never reach it. |
+| Reading or tampering with reports in transit, or a client being sent to an impostor | HTTPS only, TLS 1.2 or later, with the game pinning the server key. The handshake runs on the worker thread under the connection deadline, so a client that connects and says nothing holds one slot for at most 180 s and never blocks new connections. The private key is root-only on disk and reaches the service through `LoadCredential`. |
+| Malicious content (malware, a zip bomb, text written to manipulate an agent) | `ffintake` stores bytes and never opens, unpacks or runs them. The dataset is `exec=off`. Reading them safely is the consumer's job; see the rules below. |
+
+**What this does not do.** It cannot tell a real crash from a made-up one. Anyone can upload
+plausible-looking junk within the rate limits, and a determined attacker with many addresses can
+spend the global budget of 600 an hour, which blocks genuine reports until it refills. If that
+becomes a problem, the next step is to have the game attach a Steam session ticket
+(`SteamUser.GetAuthSessionTicket`) and verify it against Steam's Web API. That ties each report
+to an account that owns the game. It needs the publisher Web API key on the box and outbound
+calls from this process, so it was left out of the first version.
+
+### Putting it on the internet
+
+`ffintake` terminates TLS itself, so nothing sits in front of it. Something like Cloudflare
+Tunnel would replace our certificate with the provider's and break the pin.
+
+1. In `~/.config/ffbox/config.json`, set `"intake": {"host": "0.0.0.0", ...}` (or this box's LAN
+   address, `192.168.51.10`), then `sudo sh ffbox/06-services.sh --install`.
+2. On the router, forward a TCP port to `192.168.51.10:8790`. The external port can be anything;
+   the game just needs the matching URL.
+3. If a host firewall is on, allow 8790/tcp.
+4. From outside the LAN:
+   `curl -k --pinnedpubkey 'sha256//<spki pin>' https://<public address>:<port>/v1/health`.
+
+The game can use the bare IP address, since the pin replaces hostname checking. If the address
+changes, every shipped build points at the old one. A dynamic-DNS name costs nothing, avoids that,
+and does not affect the pin.
+
+With no proxy in front, `ffintake`'s own limits are all that stand between the internet and the
+box. That is what they were built for, and the test suite exercises each one. If someone floods
+it harder than the rate limits absorb, the damage stops at `ffintake`: its CPU is capped at one
+core, its memory at 1 GB, and its disk at the quota.
+
+### Rules for whatever reads the reports later
+
+Every byte under `/opt/ffreports` was written by a stranger. The manifest says
+`"trust": "untrusted"` so a reader does not have to remember that. When the triage pipeline is
+built:
+
+- **The description and every log line are prompt input from an anonymous user.** Treat them as
+  player-lane content: run the analysis in the `ffagent` pool behind the egress fence, never
+  `ffdev`, and never let text in a report choose a tool, a branch or a recipient.
+- **Unpack in the container, with limits.** A "save" can be a zip bomb or contain `../` entries.
+  Check total uncompressed size and every member path before extracting, and extract only
+  inside the container's workspace.
+- **Never execute anything from a report,** and never load a submitted save into an editor on
+  the host.
+- **Escape everything when displaying it.** If ffweb grows a reports page, file names,
+  descriptions and details go through `esc()` like every other stranger-written value, and file
+  contents are served as `text/plain` or as downloads, never inline.
+- **Nothing from a report goes into a public Discord post** without passing the same outbound
+  rules as any other agent reply.
+
+### Tests
+
+`python3 ffbox/test_ffintake.py` (also run by `sh ffbox/test.sh`) starts the real server on a
+loopback port and covers the envelope rules, every refusal code, the traversal and symlink cases,
+the gzip bomb, duplicate lengths and chunked bodies, rate limiting including `X-Forwarded-For`
+spoofing and IPv6 `/64` folding, the connection cap and deadline, the free-space floor, and that
+no reply or journal line ever contains client text. For TLS it mints a certificate with the same
+openssl command `06-services.sh` uses, checks all three pins against openssl's own output,
+uploads through a pinning client while a silent connection is held open, and checks that a stalled
+handshake is cut at the deadline. The sandbox in `ffintake.service` is not
+covered by those tests. After installing it, check it with
+`systemd-analyze security ffintake.service` and one upload by hand.
 
 ## Known gaps
 
