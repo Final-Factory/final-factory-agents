@@ -1,0 +1,99 @@
+---
+name: honest-coop-play
+description: Run a sitting of Final Factory's HONEST three-player co-op game — Ben's standing goal (2026-09-22) that Claude beats the game with NO cheats, in ONE continuous game, with a distinct agent playing on each of the three machines (M5 host, M3 and BEAST clients) coordinating over a shared board. Use when resuming or continuing the honest playthrough (074 T145/T146), launching the next sitting, spawning the three play agents, ending a sitting, or checking that the game is still honest and continuous.
+---
+
+# honest-coop-play
+
+**The goal (Ben, 2026-09-22):** "beat the game WITHOUT cheats … one continuous game", played as a
+real three-player networked game with **a distinct agent on each machine**, coordinating so the
+game goes faster. Binding record: `specs/074-three-peer-full-playthrough/spec.md` FR-010..FR-012 +
+SC-007, tasks T144–T150; the current position is the newest dated SESSION HANDOFF in that
+feature's `plan.md` plus the T145 line in `tasks.md`. Cheat-accelerated saves (`074-p1`..`074-p7-*`)
+are determinism test fixtures only — they can never count toward this win.
+
+## The rules that make it honest (all enforced, not trusted)
+
+1. **No cheats.** Nothing created from nothing (items, ships, research points, unlocks), no
+   teleport, no skipped cost/build-time/reach rule, no destroying outside play. Normal player
+   actions driven by an agent are play.
+2. **The guard is on every peer**: launch flag `-ffHonestPlay true` (never `-ffAgentControlDev`),
+   and `"HonestPlay": true` in every config. Armed, the player clamps every command channel to the
+   73-command honest set, holds transfers to the human reach, refuses the Quantum console, and
+   **refuses to start** with `InvulnerablePlayers`, `DisableEnemyGeneration` or `FlatMap` set
+   (status `honest-play-config-refused`). Every peer's log must show `honest-play-armed: allowed=73`.
+3. **One continuous game.** Sitting N+1 loads exactly sitting N's final host save; record the chain
+   (save name + SHA-256) in the handoff. Honest saves are named `claude_playtest_074-h<N>-<slug>`
+   (the guard confines `game.save` to that prefix). Only the host saves.
+4. **Check honesty per sitting (SC-007):** `python3 <skill>/scripts/save-meta.py <save.zip>` must
+   print `AchievementsLocked: False` for every save (the flag is live: one unguarded cheat on the
+   same build flips it to True — T149a); zero cheats executed; seed SHA == previous final SHA.
+5. A **recovery** (desync resync) keeps the game continuous — it is a bug to fix, not a restart.
+
+## Machines and lab
+
+`E=/Users/benryding/nevergames/ff-audit-artifacts/074-20260921` (override with `FF_COOP_LAB`).
+M5 = host (this Mac, batchmode headless). M3 = client, `ssh m3`, windowed, same `$E` paths.
+BEAST = Windows client, `ssh -o Hostname=10.0.0.158 beast`, Git bash `"C:\Program Files\Git\bin\bash.exe" -lc`
+(cannot carry `|` — scp a script and run it), lab `C:/Users/rydin/ff-worker`. Clients join the host's
+Tailscale address `100.80.111.95`. Matching built players on all three (Mac `.app` on M5 and M3,
+Windows build on BEAST) at the same source sha.
+
+## Sitting lifecycle
+
+1. **Players.** If code changed since the last sitting, rebuild both (editor-ops / 074 plan recipe):
+   Mac in-editor `BuildPipeline.BuildPlayer` (Development) **after force-reimporting
+   `Assets/Scenes/main/EntitySubScene.unity`** — otherwise the build "succeeds" with only
+   `scene_info.bin` under EntityScenes and the host hangs at the title menu; Windows via Git-bundle
+   sync + `build-win-<tag>.sh`. Verify: `.entityheader` + `.0.entities` present on both, and
+   `python3 <skill>/scripts/symcheck.py <FFSpaghetti.dll> <new symbol>` equal on both. Mirror the
+   Mac player to M3 with `rsync -ac --link-dest=<prev player>/ --rsync-path='ulimit -n 8192; rsync'`
+   and check file-count parity.
+2. **Configs.** `python3 <skill>/scripts/derive-sitting.py <prev-leg> <new-leg> <sha40> <mac-player-dir>
+   <beast-build-dir> <seed-save> <seed-sha256> <port>` in `$E` (refuses to overwrite and refuses a
+   non-honest config). Stage `m3-<leg>.sh`, `client-config-<leg>-m3.json`, `release-<leg>.py` on M3
+   and `beast-client-<leg>.sh`, `client-config-<leg>-beast.json`, `beast-release-<leg>.sh` on BEAST.
+   The seed save must be in the HOST's Saves folder.
+3. **Launch, in order.** Host `(nohup bash host-<leg>.sh > host-<leg>.out 2>&1 &)`, wait for
+   `status waiting-host-peers-connected`; BEAST **detached** — `(ssh -n -o Hostname=10.0.0.158 beast
+   '"C:\Program Files\Git\bin\bash.exe" -lc "bash /c/Users/rydin/ff-worker/beast-client-<leg>.sh"' > out 2>&1 &)`
+   (a foreground call can hang and block everything after it); then `ssh m3 "bash $E/m3-<leg>.sh"`.
+   Wait for `host-peers-connected: connectedClients=3` and `waiting-audit-dwell-release`
+   (dwell timeout 0 = unlimited). Check `honest-play-armed` on all three.
+4. **Bridge.** Deploy `scripts/ahttp.py` to `$E/` (M5, M3) and `C:\Users\rydin\ff-worker\ahttp.py`
+   (BEAST); copy `scripts/peer.sh` to `$E/`; write the three player pids to `$E/peer-pid-{host,m3,beast}`.
+   `peer.sh <peer> GET hello` must report `"tier":"honest"` for all three.
+5. **Board.** Start `$E/coop-board.md` from `references/coop-board-template.md`, carrying over the
+   previous board's still-valid claims, requests and team goal.
+6. **Agents — three, one per machine** (direct children, general-purpose on `opus`, background):
+   fill `references/brief-host.md`, `brief-m3.md`, `brief-beast.md` (`<LEG>`, `<HOURS>`, `$E`) and spawn
+   them together. The driver does not play; it watches, adjudicates findings and owns fixes.
+7. **Watch.** One Monitor on `$E/host-terminal-<leg>.log` for `divergedSurfaces|DesyncRecovery|kicked|status error|won the game`
+   plus a 10-minute progress line (objectives via `peer.sh host GET snapshot/objectives`); re-arm
+   every 30 minutes. A desync stops all three agents: diagnose it (determinism-audit skill; the
+   host's `desyncReports/*.txt` + a per-epoch Fingerprint diff of the checkpoints name the surface
+   and heartbeats), fix it RED→GREEN, rebuild, continue from the last save in a new sitting.
+8. **End the sitting.** Host agent writes its final save → driver copies it to `$E` with its SHA and
+   runs `save-meta.py` → checkpoint ALL THREE before stopping anything (`scripts/checkpoint.py <pid>
+   <host|client> <label>` from `$E` on M5 and on M3 — it needs `agent_http.py` beside it;
+   `python scripts/beast-checkpoint.py <pid> <label>` in `C:\Users\rydin\ff-worker` on BEAST — it needs
+   `agent_http_win.py` beside it; scp the printed report path back with forward slashes) → release
+   (`release-<leg>.py` on M5 and M3, `beast-release-<leg>.sh` on BEAST) → wait for `report-written`
+   → copy finals + SHA256SUMS → stop each player by verified pid (`ps` / `taskkill`) → remove
+   `.ff-local-automation.json` and the release gates → `python3 scripts/fingerprint-compare.py <dir>` per epoch (the strict
+   verdict script calls any report containing a desync evidence-invalid, correctly) → record
+   T145/T146 (leg, players sha, seed and final save + SHAs, honesty check, findings) and commit.
+
+## Traps already paid for
+
+- A relaunch after a failed launch needs a **new leg id**: the aborted attempt already published a
+  report under the old id and the final write fails with "Audit artifact identity collision".
+- A new-game audit needs `AuditSaveName: "seed:<seed>"` + `AuditSaveSha256 = sha256(<seed>)`.
+- `heartbeats`, `inventory.add`, `spawn.ships`, `player.setposition`, `craft.ship`, `ability.cast`,
+  `blueprint.place`, `enemy.dumpcamps` are refused under the guard — by design.
+- Holding a blueprint over the grid used to fork the census (T147, fixed in `3f3b7a4a3`); an inserter
+  could not be placed by `construction.place` until T148 (`dcdea8adf`). Players older than
+  `dcdea8adf` must not be used for honest sittings.
+- After a load, `snapshot/objectives` can report a lower `completedCount` than the live game did
+  (T150); the current objective is what matters.
+- Never print a whole audit detail line; never run local pairs with GB-scale captures beside the editor.
