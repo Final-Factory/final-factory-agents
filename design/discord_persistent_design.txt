@@ -87,7 +87,7 @@ BEHAVIOUR (keep, amend)
   plugins/ff-discord/  skills ask-claude, discord-triage, ask-dev, discord-cli, max-voice;
                        agents discord-answerer (Opus, read-only), discord-triager (Opus,
                        read-only, may post to the thread it investigates), discord-dev-agent
-                       (Fable, implements and opens PRs, never merges).
+                       (Opus 5.5, implements and opens PRs, never merges).
 
 CONSUMERS (three today, none survives as the primary path)
 

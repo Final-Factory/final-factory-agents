@@ -1,6 +1,6 @@
 ---
 name: implementor
-description: Substantive implementation legs on Opus 5 — takes ONE designed, scoped task (a tasks.md item or a driver-authored design) and implements it end-to-end - code, tests, compile-verify, fast suite - then reports a structured diff summary. The driver (Fable) designs, adjudicates, reviews the diff, and owns every commit. Hard determinism surfaces are hand-back territory; join/recovery-adjacent SHELL code is implementable only from an explicit driver design (see guardrail).
+description: Substantive implementation legs on Opus 5.5 (the driver's own model: the leg exists for context isolation and parallelism, not a cheaper tier) — takes ONE designed, scoped task (a tasks.md item or a driver-authored design) and implements it end-to-end - code, tests, compile-verify, fast suite - then reports a structured diff summary. The driver (Opus 5.5) designs, adjudicates, reviews the diff, and owns every commit. Hard determinism surfaces are hand-back territory; join/recovery-adjacent SHELL code is implementable only from an explicit driver design (see guardrail).
 model: opus
 effort: medium
 tools: Read, Grep, Glob, Edit, Write, Bash, mcp__UnityMCP__refresh_unity, mcp__UnityMCP__run_tests, mcp__UnityMCP__get_test_job, mcp__UnityMCP__set_active_instance, mcp__UnityMCP__read_console, ReadMcpResourceTool

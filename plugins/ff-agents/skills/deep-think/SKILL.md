@@ -1,6 +1,6 @@
 ---
 name: deep-think
-description: Hand a hard problem to the deep-thinker agent (Astra extra-high in Codex; Fable high in Claude Code) — spec/plan authoring, adversarial review of a plan or diagnosis, or root-causing a bug that resisted a first pass. Builds the brief so the agent is grounded but NOT anchored by the driver's assumptions.
+description: Hand a hard problem to the deep-thinker agent (Astra extra-high in Codex; Opus 5.5 xhigh in Claude Code) — spec/plan authoring, adversarial review of a plan or diagnosis, or root-causing a bug that resisted a first pass. Builds the brief so the agent is grounded but NOT anchored by the driver's assumptions.
 ---
 
 # deep-think
@@ -88,11 +88,15 @@ assumptions as facts. Re-read it before sending.
 
 ## Runtime translation
 
-- **Claude Code**: spawn the `deep-thinker` agent (`model: fable`, `effort: high`) — the role
-  ships in this plugin (`ff-agents`); no repo-local setup is needed.
+- **Claude Code**: spawn the `deep-thinker` agent (`model: opus` = Opus 5.5, `effort: xhigh`) — the role
+  ships in this plugin (`ff-agents`); no repo-local setup is needed. Its value is a fresh context
+  that has not seen your conclusions, at a deeper effort than the driver. **Escalation:** if an
+  Opus 5.5 xhigh pass comes back without settling a problem that still matters, re-run the same
+  brief once with the Agent tool's `model: "fable"` override (Fable 5.1, Anthropic's model for
+  the hardest, longest-running work) and say in the result which model answered.
 - **Codex**: spawn the repo-local `deep-thinker` adapter on `gpt-6-astra` at extra-high effort (`model_reasoning_effort: xhigh`)
   (`.codex/agents/deep-thinker.toml`). Never invoke the `claude` CLI. Record the runtime/model
-  actually used; never claim Codex ran Fable. If the active session still exposes a stale role,
+  actually used; never claim Codex ran a Claude model. If the active session still exposes a stale role,
   use a fresh bounded brief with explicit `gpt-6-astra` / `xhigh` and the full deep-thinker
   policy until the role reloads; do not silently use the old model.
 
