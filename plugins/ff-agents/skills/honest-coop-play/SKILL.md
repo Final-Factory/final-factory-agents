@@ -84,6 +84,48 @@ Windows build on BEAST) at the same source sha.
    verdict script calls any report containing a desync evidence-invalid, correctly) → record
    T145/T146 (leg, players sha, seed and final save + SHAs, honesty check, findings) and commit.
 
+## Context handoff WITHOUT ending the sitting (the default between context windows)
+
+The players are separate processes on the three machines; restarting Claude kills only the play
+AGENTS (subagents of the driver session), never the game. So a context handoff keeps the sitting
+LIVE and the next session respawns the agents into the same game:
+
+1. **Wind down** (old session): message all three agents to finish their current action, leave
+   their player idle (no chain running), post a status line on the board and update their notes
+   file; the host also writes a checkpoint save `claude_playtest_074-<leg>-<slug>`. Wait for all
+   three final reports — Ben must not restart while an agent is mid-action.
+2. **Evidence**: `save-meta.py` on the new saves (all `AchievementsLocked: False`), checkpoint all
+   three peers WITHOUT releasing (`checkpoint.py` / `beast-checkpoint.py`), `fingerprint-compare.py`
+   on them. Leave the players, configs and gates in place.
+3. **Handoff** (`/ff-agents:handoff`): the handoff header and `local-handoff.md` name the live leg,
+   the three pids (also in `$E/peer-pid-*`), the board, the notes files, the last save + SHA, and
+   the resume steps below.
+4. **Resume** (new session, after `/ff-agents:resumeFromHandoff`): `$E/sitting-health.sh <leg>`
+   (exit 0 = all three alive, tier honest, 3 clients connected, 0 verdicts). If healthy: re-read the
+   board and the three notes files, update the board's team goal, re-arm the Monitor (step 7), then
+   spawn the three agents with the role briefs (step 6) — they continue the same game. If NOT
+   healthy (a player died, a machine rebooted, a desync): end the sitting (step 8), fix if needed,
+   and start the next sitting from the last save.
+
+End the sitting (step 8) instead only when the players themselves must restart: a rebuild after a
+fix, a reboot, or a long break.
+
+## Agent hygiene learned in h2
+
+- **Each agent keeps its helper scripts in its OWN folder** (`<scratchpad>/<role>/`). In h2 the
+  beast agent overwrote the host agent's `r.py` in the shared scratchpad and one host chain ran on
+  BEAST. The briefs name the folder; the driver never shares one.
+- **A client can join DEAD** (health 0, can't move; `movement.goto` still reports success and
+  `mining.until` silently mines nothing). Every client agent's first action: `snapshot/player`; if
+  health is 0, `ffauto:combat.respawn`.
+- A client player starts with its own near-empty inventory and NO construction bots: its placed
+  ghosts stay frames ("no construction bots") until it crafts one (4 AI Controller Circuit + 2
+  Plasma Engine Parts).
+- Mass-driver targets have no verb: select the driver, click SetTarget, click the destination (UI).
+- Research: the host refuses to queue a tech whose prerequisite is only queued, not researched.
+- `ahttp.py` writes raw bytes: `peer.sh m3 GET screenshot > m3.png` works (M3 is windowed; the
+  headless peers return `no_frame_available`).
+
 ## Traps already paid for
 
 - A relaunch after a failed launch needs a **new leg id**: the aborted attempt already published a
