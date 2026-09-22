@@ -15,6 +15,8 @@ Craft (never spawn) and grow the fleet, defend the base, clear camps that threat
 No cheats: nothing created from nothing, no teleport, no skipped cost/build-time/reach rule. The guard refuses cheats with `honest_play_denied`; never work around a refusal — record it as a harness gap and find the normal-player way. Known recipes: blueprint strings via `python3 <skill>/scripts/mkbp.py "<Item>" <Length> <Width> [Dir]` (or the lab copy); `construction.place` FAILS with a reason when a spot is invalid — adjust tile/rotation; abilities stay ARMED after a cast — pointer right-click to disarm before placing buildings; headless 640x480 hotbar: y=46, x=274 afterburner, 297 plasma, 320 frenzy, 343 guardian, 366 obliterator; `ui.click` on inventory slots needs `wait|0.5` after `ui.open`.
 
 ## HARD rules
+- Keep any helper scripts you write in your OWN folder `<SCRATCH>/<ROLE-DIR>/` — never in a shared folder another agent uses.
+- First action: `snapshot/player`; if health is 0 your player is dead — run `ffauto:combat.respawn` before anything else.
 - Drive only your own peer. Never command another peer, never ssh yourself, never kill/relaunch a process, never write `.ff-audit-*` files, never edit repo files. Keep a running log in `$E/beast-play-notes.md`.
 - After each batch: `grep -c divergedSurfaces $E/host-terminal-<LEG>.log` and `grep -c "status error" $E/host-terminal-<LEG>.log`. Nonzero → STOP, post it on the board, report the lines (`grep -n ... | cut -c1-300`) and exactly what YOU did in the ~30 s before.
 - Stop after ~<HOURS> h wall time, on a desync, when truly blocked (5 honest attempts, then switch task), or
