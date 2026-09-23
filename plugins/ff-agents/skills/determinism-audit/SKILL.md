@@ -62,6 +62,10 @@ sequence through real input on both peers. A direct child or another explicitly 
 drives the second peer. The playtest skill owns input and visual evidence; this skill owns the
 fingerprint verdict.
 
+**A BEAST peer runs from an ffsb sandbox** (Ben 2026-09-23): create one with `mcp__ffsb__create_sandbox`, build
+the Windows player in it, and launch it from `F:/ffsb/<name>/Builds/<leg>/` — recipe in project-memory
+`feedback-beast-work-goes-through-a-sandbox`.
+
 Compare the complete shared heartbeat window across every fingerprint field (currently 25). Do not discard the
 first failing heartbeats or raise a window bound to hide them. Typed JSON audit records require the
 typed comparator. If `compare_determinism_reports.sh` says it found no fingerprints for a typed
