@@ -36,7 +36,7 @@ CLAUDE.md still listed them as "active".)
      reading it for plausibility): `ffbox/config.md` against the seeded template in
      `ffbox/05-discord-setup.sh`, `DEFAULTS`/`ENV_OVERRIDES`/`load_config` in `ffbox/ffwatch.py`,
      `ffbox/runners/lib/config.sh`, and the `container` reads in `ffbox/ffbox`. These live in the
-     final-factory-agents repo, not the game repo.
+     Final-Factory/ffbox repo, not the game repo or final-factory-agents.
    - **Historical / append-only** (do NOT rewrite; only touch if they present a CLOSED feature as
      current work AND are pointed to as the live handoff): `specs/*/plan.md|spec.md|tasks.md`
      session logs, `measurements.md`. These are dated records; superseding blocks are fine.

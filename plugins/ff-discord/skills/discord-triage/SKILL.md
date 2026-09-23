@@ -27,7 +27,7 @@ containers follow. See "On the build server" in `reference.md` §AUTOFIX flow.
 Running a pass by hand is the fallback, for a machine with no ffbox (BEAST, Windows) or a box
 where ffwatch is stopped. `/loop 15m /discord-triage` is the same thing on a timer, and a
 convenience rather than the design: it re-queries Discord on a fixed interval whether or not
-anything happened, and every pass starts cold. Check whether ffwatch is already running first — `python3 ffbox/ffwatch.py status`, or
+anything happened, and every pass starts cold. Check whether ffwatch is already running first — `python3 ffbox/ffwatch.py status` in the ffbox checkout, or
 `systemctl --user status ffwatch` — because two things triaging the same forum will both
 triage every report.
 
