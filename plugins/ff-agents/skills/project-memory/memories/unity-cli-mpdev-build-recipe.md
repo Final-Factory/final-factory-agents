@@ -3,6 +3,11 @@ name: unity-cli-mpdev-build-recipe
 description: "Building the multiplayer-dev players from the unity CLI shim without the bridge: the shim takes the subcommand name directly (no --json flag; run_tests filter_type is testName|assembly|category); call the private BuildAllMultiplayerDevNoUpload by reflection inside a guarded EditorApplication.update callback with a marker file (it runs the localization harvest, fonts, both platforms, the Localization copy and the cicd copy, unlike BuildWindows/OsxMultiplayerDev alone); the no-version-update path never writes PlayerSettings.bundleVersion (set it by eval first or the plist/Info stays stale); a run that triggers a platform switch can reimport every shader graph and take ~140 min instead of 24; never git rebase --autostash while a build is running with uncommitted build inputs."
 ---
 
+> **SUPERSEDED for building (2026-09-23):** `BuildAllMultiplayerDevNoUpload` and the other Multiplayer Dev
+> menu methods were removed in `6c8dc3f99` (2026-09-12); every Build menu path now strips the multiplayer
+> define. The working MP beta recipe is in the `steam-upload` skill, "Building the MP beta depots". The shim
+> syntax and duration notes below are still accurate.
+
 # Multiplayer-dev player builds from the `unity` CLI shim (2026-09-12, 069 depot rebuild)
 
 - **Shim syntax** (`~/.local/bin/unity`, `scripts/unity-cli.sh`): `unity editor_status --project-path <repo>`,
