@@ -37,6 +37,18 @@ change (e.g. rebaked CJK font atlases under `Assets/UI/Fonts/`) and push — tha
    `BuildPipeline.BuildPlayer` with the enabled scenes, `StandaloneOSX`, `BuildOptions.Development`,
    into a fresh `cicd/mp_beta_stage-<sha7>/mac_main/finalfactory.app`, appending `returned result=…` to a
    marker. The bridge times out before it ends — wait on the marker, never re-issue the call.
+   Keep the "refuse if the stage dir exists" guard at the top of call B (see the redispatch gotcha below).
+3. **Check `EntityScenes/` right after every build (§4), not only at the end.** On 2026-09-23 (0.50.0.24)
+   a build made from a SEPARATE call B, right after call A, still shipped only `scene_info.bin`. If that
+   happens, move the stage aside as `…-BAD-noentityscenes` and re-run call A. The editor log must then
+   show the subscene bake (`Baking the Entity Prefab Container`, then `Streamed scene … .entities`)
+   before you run call B again.
+4. **The bridge can RE-DISPATCH a timed-out call B.** The same day, a second `BuildPlayer` started 27 s after
+   the first returned (16:15:47 vs 16:15:20 UTC) and wrote a fresh stage dir. Never assume only one build
+   ran. The marker can hold several start/`returned` pairs, or reappear after you move the stage aside.
+   Before you stage anything, confirm that every file in the stage has an mtime from the build you trust
+   (`find <app> -newermt '<local start time>' -type f | wc -l` equals the file count; `-newermt` is LOCAL
+   time).
 
 ## 3. Windows player (on BEAST)
 `ssh -o Hostname=10.0.0.158 beast`; Git bash `"C:\Program Files\Git\bin\bash.exe" -lc` cannot carry `|`
@@ -80,6 +92,10 @@ Layout the depot vdfs expect: `cicd/mp_beta_upload/mac_main/{finalfactory.app, L
    `steamcmd +login slims20 +run_app_build <ABS repo>/cicd/ff_app_mp_beta.vdf +quit`
    — password OFF the command line; steamcmd prompts for it, then the Steam Guard code. The agent never
    types or sees credentials.
+   Swapping stages is safe while the prompt is still at `password:`, because steamcmd reads the depot
+   content only after login. You can therefore swap a newer, verified stage into `cicd/mp_beta_upload`
+   (atomic `mv`, old one aside, update `"desc"`) without a second login. Never swap once the login has
+   gone through (2026-09-23: 0.50.0.24 replaced a staged 0.50.0.23 this way).
 3. Read the tab (`read_terminal`) until `Successfully finished AppID 1383150 build (BuildID <n>)`.
    Tell Ben he can reopen Steam and update on the beta branch.
 
