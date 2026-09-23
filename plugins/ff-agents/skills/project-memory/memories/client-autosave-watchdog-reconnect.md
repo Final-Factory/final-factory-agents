@@ -17,3 +17,10 @@ pause never lifted, and `LivenessWatchdog` treated the frozen loop as a hang →
 `AutosaveController` skips non-authority peers, and `ffauto:game.save` on a client is rejected with
 `host-only` (M3 at hb 6669 on leg t1b). Unit: `SaveAuthorityPolicyTest`. Proof: leg t1b, 7-minute
 dwell, 0 `WatchdogTripped`, 7,244 compared / 0 mismatches.
+
+**Saving is host-only by design, not just to dodge this crash** (Lothsahn, 2026-09-22): a save
+has to stop the heartbeat, and only the host may stop it, so a client save desyncs whatever else
+is fixed. Do not "re-enable client saves": c36adc2b9 did it on a misread of this entry (it only
+described the crash) and e5cfa1664 reverted it the same night. The one valid client-side change
+is UX: `SaveGamePanel` opens the modal "Saving game" bar before calling `SaveGame`, and a client
+got stuck behind it, so the client branch of the guard now closes the bar and fires the callback.
