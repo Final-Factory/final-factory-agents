@@ -134,20 +134,14 @@ the namespaced skills all passed. Keep testing other Codex versions and platform
 
 ## ffbox
 
-The build-server harness lives in `ffbox/` in this repo. Its one settings file is
-`~/.config/ffbox/config.json`, and **`ffbox/config.md` is that file's documentation** — every
-key in every section, seeded or not, with defaults and examples. The JSON carries values only;
-the generated `_help` blocks it used to hold were removed on 2026-09-03 and stage 5 deletes a
-leftover one.
+The build-server harness is no longer here. It moved to its own repo,
+[Final-Factory/ffbox](https://github.com/Final-Factory/ffbox), on 2026-09-22, with its history and its `ffbox/`, `design/` and
+`docs/` paths unchanged. The config rules that used to be in this section (`ffbox/config.md` is
+the settings reference, and a config-shape change edits it in the same commit) are in that repo's
+CLAUDE.md now.
 
-Editing that file needs no restart and no sudo. `ffbox-update.timer` hashes `config.json` and
-`secrets.env` every five minutes against `~/.config/ffbox/update.config-sha` — the hashes the
-running services started on — and drains and restarts `ffbox.target` when either moved. So an
-edit is live within a tick: check `journalctl -u ffbox-update` for `changed in`, never hand
-somebody a `systemctl restart`. (`sudo` refusing one is the sudoers rule working, not a fact
-about the box.) See `plugins/ff-agents/skills/project-memory/memories/ffbox-updater-restarts-everything.md`.
-
-**Changing the config's shape means editing `ffbox/config.md` in the same commit.** The shape
-is defined in `ffbox/05-discord-setup.sh` (the seeded template), `ffbox/ffwatch.py`
-(`DEFAULTS`, `ENV_OVERRIDES`, `load_config`), `ffbox/runners/lib/config.sh`, and the
-`container` reads in `ffbox/ffbox`. Do not put help text back into the JSON.
+A box still needs this repo: the containers read their skills from `plugins/`, and ffbox's
+`setup.sh` runs `registerAgents.sh` from here. It finds this checkout through the path
+`registerAgents.sh` records in `~/.claude/final-factory-agents-checkout`, and its updater
+fast-forwards it. So a plugin version bump pushed here still reaches the box on its own.
+Durable ffbox lessons still go in `project-memory` here.
