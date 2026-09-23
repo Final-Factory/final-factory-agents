@@ -5,7 +5,7 @@ things read it:
 
 | Reader | Sections it reads |
 |---|---|
-| `ffwatch.py`, `ffweb.py` | the top level, `pools`, `container` |
+| `ffwatch.py`, `ffweb.py` | the top level, `pools`, `container`; ffweb also `intake.root` |
 | `ffwatch.py` via `ci_lane.py` (`PoolConfig`) | `githubrunner.pool` and `max_concurrent_runs`, re-read live on every daemon pass |
 | `ffgithubrunners` (`ffbox/runners/lib/config.sh`) | `githubrunner`, and `container` for the shared limits |
 | `ffdiscord` and its Gateway listener | `discord` |
@@ -1330,7 +1330,7 @@ install prints a `WARNING: intake.<key> = … is not valid` line; it never becom
 |---|---|---|
 | `host` | `127.0.0.1` | The bind address; an IP literal, IPv4 or IPv6. `ffintake` serves HTTPS itself with a pinned self-signed key (`/etc/ffintake/`), so putting it on the internet is `0.0.0.0` or the LAN address plus a router port forward. Nothing may sit in front of it that terminates TLS, or the game's pin stops matching. |
 | `port` | `8790` | |
-| `root` | `/opt/ffreports` | The storage directory: an absolute path of plain characters, no `..`. Must be the dataset `02-zfsSetup.sh --reports` created — its quota is the hard cap on what the internet can write here. The unit is skipped (condition unmet, not failed) while it does not exist. |
+| `root` | `/opt/ffreports` | The storage directory: an absolute path of plain characters, no `..`. Must be the dataset `02-zfsSetup.sh --reports` created — its quota is the hard cap on what the internet can write here. The unit is skipped (condition unmet, not failed) while it does not exist. `ffweb` reads this key too, at start, to list the reports on `/intake`. |
 | `max_body_mb` | `48` | The largest report zip accepted. Checked against `Content-Length` before any of the body is read, and the body is streamed to disk, so this costs disk, not memory. The game's bug reporter sends a save of up to 25 MB plus logs. |
 | `per_address_per_hour` | `12` | Reports one sender may make per hour, with a burst of 4. A sender is one IPv4 address or one IPv6 `/64`. |
 | `per_hour` | `600` | Reports everybody together may make per hour, with a minute's worth of burst. The flood ceiling. |

@@ -64,7 +64,7 @@ FOUR THINGS THIS FILE IS BUILT AROUND. Changing any of them changes what the pag
    nothing signed it. HSTS is deliberately not sent: it would make that warning unbypassable
    on a certificate we already know is untrusted.
 
-TWO PAGES HERE ARE NOT VIEWS OF THE DATABASE, and each reaches somewhere else for its answer.
+THREE PAGES HERE ARE NOT VIEWS OF THE DATABASE, and each reaches somewhere else for its answer.
 
 `/status` reports on the MACHINE — the containers holding a workspace and the pool sizes behind
 them — and it gets that by running ffbox/ffstatus.sh, the same script an operator runs in a
@@ -86,11 +86,16 @@ instead, one token of Haiku against /v1/messages, and the same two windows are r
 reply's headers. See ClaudeKeys for the rest of the argument, including why a failure renders as
 a sentence rather than a 500 and why no token is ever put on the page.
 
-Both are reads. `/status` has since grown exactly one action — it can stop a container, through
-ffwatch, the way every other write on this site goes. `/claude` has none and needs none: which
-account pays for a given turn is chosen by ffwatch when it launches it, on these same numbers
-through the shared claude_keys module, and what is left to decide here — which accounts exist,
-how big each plan is — is an edit to secrets.env.
+`/intake` reports on the CRASH AND DESYNC REPORTS ffintake has filed under its storage root,
+and reads them off disk rather than out of ffwatch.db, because that directory is the only
+record ffintake keeps. It lists manifests only — the report zips are a stranger's bytes and
+this page never opens or serves them. See IntakeReports.
+
+All three are reads. `/status` has since grown exactly one action — it can stop a container,
+through ffwatch, the way every other write on this site goes. `/claude` has none and needs
+none: which account pays for a given turn is chosen by ffwatch when it launches it, on these
+same numbers through the shared claude_keys module, and what is left to decide here — which
+accounts exist, how big each plan is — is an edit to secrets.env. `/intake` has none yet.
 
 Standard library only — http.server, sqlite3, ssl and urllib, no Flask, no CDN, no fonts. The
 only foreign binary is `openssl`, run once to mint the self-signed certificate, because the
@@ -143,11 +148,17 @@ DEFAULT_PORT = 8787
 # reading a config that never mentions GitHub still links to the right repository rather than
 # rendering plain text.
 DEFAULT_GITHUB_REPO = "Final-Factory/FinalFactory"
+# Where ffintake files crash and desync reports when the config does not say. Matches the
+# default in 06-services.sh (`intake_settings`) and the dataset 02-zfsSetup.sh mounts.
+DEFAULT_INTAKE_ROOT = "/opt/ffreports"
+# The most reports /intake renders at once, newest first. Counting them is a directory walk and
+# cheap; each row shown costs a manifest read, and nothing deletes reports automatically.
+MAX_INTAKE_ROWS = 500
 
 # Shown in the header so a person reading a page knows which build wrote it. The HTTP
 # server_version below is the protocol banner and moves for its own reasons; this is the
 # one a human is meant to read.
-VERSION = "0.9.9"
+VERSION = "0.9.10"
 
 # A turn in one of these has stopped; anything else is still on its way. Kept in step with
 # ffwatch's own list by hand, because this process deliberately imports nothing from it — it
@@ -386,7 +397,8 @@ TLS_DAYS = 3650
 # changes, so the list has no "filter" button to press. It is scoped to that one form's
 # selects and touches nothing else, and the CSP admits it BY HASH (below) rather than by
 # 'unsafe-inline', so this exact text is the only script a browser will run here.
-FILTER_SCRIPT = ("for (const s of document.querySelectorAll('#conversation-filters select'))"
+FILTER_SCRIPT = ("for (const s of document.querySelectorAll("
+                 "'#conversation-filters select, #intake-filters select'))"
                  " s.addEventListener('change', () => s.form.submit());")
 
 # Every page that shows live pipeline state reloads itself on a timer, because the rows on it
@@ -1295,6 +1307,10 @@ form.stop button:hover { background: #241c1c; }
 .pill.tight { border-color: #a83; color: #eb8; }
 .pill.exhausted, .pill.locked, .pill.unreachable { border-color: #a55; color: #e99; }
 .pill.active { border-color: #468; color: #9bd; }
+/* The intake page. A report nothing has looked at yet is the amber one: it is not an error, but
+   it is the state a report should not stay in. Processed is the settled blue a sent reply is. */
+.pill.unprocessed { border-color: #a83; color: #eb8; }
+.pill.processed { border-color: #468; color: #9bd; }
 /* The usage bar. A fixed track, so four keys line up down the column and the eye compares
    lengths rather than reading four numbers. inline-block because it sits inside a table cell
    beside its own percentage. */
@@ -1393,7 +1409,7 @@ def page(title, body_parts, banner="", refresh=False):
         "<header><span class=\"brand\">ffweb</span>"
         "<a href=\"/\">conversations</a><a href=\"/lanes\">tiers</a>"
         "<a href=\"/outbound\">outbound</a><a href=\"/status\">box</a>"
-        "<a href=\"/claude\">claude</a>" + banner +
+        "<a href=\"/claude\">claude</a><a href=\"/intake\">intake</a>" + banner +
         "<span class=\"version\">v" + VERSION + "</span>" +
         # POST, not a link: a GET that ends a session is a logout any page on the internet can
         # trigger with an <img>. The same Origin check the action routes use covers this one.
@@ -1759,6 +1775,118 @@ class BoxStatus:
         return doc, ""
 
 
+class IntakeReports:
+    """The crash and desync reports ffintake has filed under its storage root, read off disk.
+
+    A READER OF ANOTHER PROCESS'S DIRECTORY, the way BoxStatus is a reader of another process's
+    script, and for the same reason it imports nothing: ffintake.py is the one writer, and its
+    Store docstring is the definition of the layout this walks —
+
+        <root>/<kind>/<YYYY-MM>/<id>/manifest.json    written by ffintake, so it can be believed
+        <root>/<kind>/<YYYY-MM>/<id>/report.zip       exactly the bytes a stranger sent
+
+    ffweb runs as the box owner, whom 02-zfsSetup.sh puts in group `ffintake`; the tree is 2750,
+    so the owner can read it and cannot write it. That suits this page, which only lists.
+
+    THE ZIP IS NEVER OPENED OR SERVED. The door is write-only on purpose (point 2 of ffintake's
+    header): a route here that handed report.zip to a browser would turn this login into the
+    file host and the XSS vector the door was built not to be. The page shows the manifest, the
+    one file on that path the server wrote rather than the sender.
+
+    AND THE MANIFEST STILL GOES THROUGH esc(). Its report fields were checked against narrow
+    patterns before ffintake wrote them, so they cannot hold markup today; they are still values
+    a stranger chose, and this page does not depend on another file's validation staying tight.
+    Every directory name is matched against the shape ffintake mints before it becomes a path,
+    symlinks are not followed, and a manifest over MAX_MANIFEST_BYTES is not read.
+
+    PROCESSED is a question about ffbox, not about the report, and today the answer is always
+    no: nothing on the box triages these yet. `processed()` is the one place that will read the
+    answer when something does — see its docstring. Until then every report renders
+    `unprocessed`, which is the truth.
+    """
+
+    KINDS = ("crash", "desync")  # mirrors KINDS in ffintake.py
+    STATES = ("unprocessed", "processed")
+    MONTH_RE = re.compile(r"^\d{4}-\d{2}$")
+    ID_RE = re.compile(r"^(\d{8}T\d{6}Z)-(crash|desync)-[0-9a-f]{10}$")
+    MAX_MANIFEST_BYTES = 64 * 1024
+
+    def __init__(self, root):
+        self.root = root
+
+    def ids(self):
+        """([(id, kind, month)], error). Newest first — an id starts with its UTC receive time,
+        so a string sort is a time sort. `error` is a sentence for the page, or ""."""
+        if not os.path.isdir(self.root):
+            return [], (f"no report directory at {self.root}. `sudo sh ffbox/02-zfsSetup.sh` "
+                        "creates it along with the ffintake account.")
+        if not os.access(self.root, os.R_OK | os.X_OK):
+            return [], (f"ffweb (uid {os.getuid()}) cannot read {self.root}. The box owner "
+                        "reads reports through group ffintake, which 02-zfsSetup.sh adds it to; "
+                        "a process started before that — this one — does not have it until "
+                        "it restarts.")
+        found = []
+        for kind in self.KINDS:
+            for month in self._dirs(os.path.join(self.root, kind), self.MONTH_RE):
+                for rid in self._dirs(os.path.join(self.root, kind, month), self.ID_RE):
+                    # The kind inside the id and the directory it sits in are both minted by
+                    # ffintake and always agree; one that did not was not put there by it.
+                    if self.ID_RE.match(rid).group(2) == kind:
+                        found.append((rid, kind, month))
+        found.sort(reverse=True)
+        return found, ""
+
+    @staticmethod
+    def _dirs(path, pattern):
+        try:
+            with os.scandir(path) as it:
+                return [e.name for e in it
+                        if pattern.match(e.name) and e.is_dir(follow_symlinks=False)]
+        except OSError:
+            return []
+
+    def manifest(self, rid, kind, month):
+        """The manifest as a dict, or None when it is missing, too big, a symlink or not JSON."""
+        path = os.path.join(self.root, kind, month, rid, "manifest.json")
+        try:
+            fd = os.open(path, os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0))
+        except OSError:
+            return None
+        try:
+            with os.fdopen(fd, "rb") as fh:
+                raw = fh.read(self.MAX_MANIFEST_BYTES + 1)
+        except OSError:
+            return None
+        if len(raw) > self.MAX_MANIFEST_BYTES:
+            return None
+        try:
+            doc = json.loads(raw.decode("utf-8"))
+        except (UnicodeDecodeError, ValueError):
+            return None
+        return doc if isinstance(doc, dict) else None
+
+    def processed(self, ids):
+        """The subset of `ids` that ffbox has processed. Always empty today.
+
+        Nothing on this box triages reports yet, so there is nothing to read and no answer but
+        "none of them". When a pipeline does, it records that it has — ffwatch.db is the natural
+        home, since ffwatch is the sole writer of state and this page already reads it — and this
+        method is the one thing to change: every count, filter and pill on /intake is derived
+        from what it returns.
+        """
+        return set()
+
+
+def fmt_bytes(n):
+    """A file size the way `ls -h` would print it."""
+    if not isinstance(n, int) or n < 0:
+        return "—"
+    for unit, size in (("G", 1 << 30), ("M", 1 << 20), ("K", 1 << 10)):
+        if n >= size:
+            return f"{n / size:.1f}{unit}"
+    return f"{n}B"
+
+
 # ------------------------------------------------------------------------------------------
 # request handling
 # ------------------------------------------------------------------------------------------
@@ -1968,6 +2096,8 @@ class FFWebHandler(BaseHTTPRequestHandler):
             return self._send(200, app.page_stop((query.get("name") or [""])[0]))
         if path == "/claude":
             return self._send(200, app.page_claude())
+        if path == "/intake":
+            return self._send(200, app.page_intake(query))
         m = re.fullmatch(r"/conversation/(\d+)", path)
         if m:
             body = app.page_conversation(int(m.group(1)), query)
@@ -2355,7 +2485,7 @@ def blob_content_type(filename, declared):
 class App:
     def __init__(self, db_path, blobs_dir, state_dir, ffwatch_py, enable_actions=False,
                  quiet=False, origins=(), scheme="https", sessions=None, ffstatus=None,
-                 claude_keys=None, login_throttle=None):
+                 claude_keys=None, login_throttle=None, intake_root=None):
         self.db = ReadOnlyDb(db_path)
         self.blobs_dir = os.path.realpath(blobs_dir)
         self.state_dir = state_dir
@@ -2363,6 +2493,8 @@ class App:
         # Beside this file unless a caller says otherwise. The box page reports on the machine
         # ffweb is running on, so the script it runs is the one shipped in this checkout.
         self.box = BoxStatus(ffstatus or os.path.join(HERE, "ffstatus.sh"))
+        # ffintake's storage root. Read off disk on every load of /intake and never written.
+        self.intake = IntakeReports(intake_root or configured_intake_root())
         # The Claude subscription pool. Constructed unconditionally and harmless when the box
         # has no keys — it reads the environment when asked and opens no socket until somebody
         # actually loads /claude. The parameter exists so the offline tests can hand it a
@@ -3193,6 +3325,74 @@ class App:
         return page("Claude", head + body, refresh=True)
 
     # -- one conversation -------------------------------------------------------------------
+
+    # -- crash and desync intake ----------------------------------------------------------
+
+    def page_intake(self, query):
+        """Every report ffintake has filed, and whether ffbox has processed it.
+
+        NOT A VIEW OF THE DATABASE, like /status and /claude: the reports are files under
+        ffintake's root, and see IntakeReports for how they are read. The counts cover every
+        report on disk; the table is the newest MAX_INTAKE_ROWS of those the filters keep.
+        """
+        kind = (query.get("kind") or [""])[0].strip()
+        state = (query.get("state") or [""])[0].strip()
+        if kind not in IntakeReports.KINDS:
+            kind = ""
+        if state not in IntakeReports.STATES:
+            state = ""
+
+        found, error = self.intake.ids()
+        done = self.intake.processed([rid for rid, _k, _m in found])
+        by_kind = {k: sum(1 for _r, fk, _m in found if fk == k) for k in IntakeReports.KINDS}
+        waiting = sum(1 for rid, _k, _m in found if rid not in done)
+
+        head = [f"<h1>intake ({len(found)})</h1>"]
+        if error:
+            head.append("<p class=\"alert\">" + esc(error) + "</p>")
+        head.append("<p class=\"note\">" + esc(
+            ", ".join(f"{k}={n}" for k, n in by_kind.items())
+            + f" · unprocessed={waiting}, processed={len(found) - waiting}") + "</p>")
+        head.append("<form class=\"filters\" id=\"intake-filters\" method=\"get\" "
+                    "action=\"/intake\">" +
+                    select("kind", kind, IntakeReports.KINDS) +
+                    select("state", state, IntakeReports.STATES) +
+                    "<noscript><button type=\"submit\">filter</button></noscript>"
+                    "<a href=\"/intake\">clear</a></form>")
+
+        shown = [(rid, k, m) for rid, k, m in found
+                 if (not kind or k == kind)
+                 and (not state or (rid in done) == (state == "processed"))]
+        rows = []
+        for rid, k, month in shown[:MAX_INTAKE_ROWS]:
+            doc = self.intake.manifest(rid, k, month) or {}
+            report = doc.get("report") if isinstance(doc.get("report"), dict) else {}
+            sender = doc.get("sender") if isinstance(doc.get("sender"), dict) else {}
+            stored = doc.get("file") if isinstance(doc.get("file"), dict) else {}
+            # The receive time is in the id itself, so a row whose manifest could not be read
+            # still says when it came in.
+            stamp = IntakeReports.ID_RE.match(rid).group(1)
+            received = f"{stamp[0:4]}-{stamp[4:6]}-{stamp[6:8]} {stamp[9:11]}:{stamp[11:13]}Z"
+            rows.append([
+                received, k, pill("processed" if rid in done else "unprocessed"),
+                report.get("game_version") or "—", report.get("platform") or "—",
+                fmt_bytes(stored.get("bytes")), sender.get("address_hash") or "—",
+                rid if doc else rid + " (manifest unreadable)"])
+        body = [table(["received (UTC)", "kind", "state", "game version", "platform", "size",
+                       "sender", "report"], rows)]
+        if len(shown) > MAX_INTAKE_ROWS:
+            body.append("<p class=\"note\">" + esc(
+                f"showing the newest {MAX_INTAKE_ROWS} of {len(shown)}") + "</p>")
+        body.append(
+            "<p class=\"note\">" + esc(
+                f"Read from {self.intake.root}. Each report is <kind>/<month>/<report>/ with "
+                "manifest.json (written by ffintake) and report.zip (exactly what the player "
+                "sent, never opened here and never served by this page — treat it as hostile). "
+                "Sender is a keyed hash of the address, so one sender's reports share it. "
+                "Nothing on this box processes reports yet, so every one is unprocessed.")
+            + "</p>")
+        body.append("<script>" + FILTER_SCRIPT + "</script>")
+        return page("Intake", head + body, refresh=True)
 
     def page_conversation(self, conv_id, query=None):
         conv = self.db.one("SELECT * FROM conversation WHERE id = ?", (conv_id,))
@@ -4483,6 +4683,18 @@ def configured_bind():
     return str(host), port
 
 
+def configured_intake_root():
+    """ffintake's storage root: `intake.root` from config.json, else the default.
+
+    The same key 06-services.sh renders into ffintake.service, read here so the page lists the
+    directory the door actually writes to. Taken as given rather than re-validated: this process
+    only lists what is under it, and a wrong value renders as a sentence on /intake.
+    """
+    intake = _config_block().get("intake")
+    root = intake.get("root") if isinstance(intake, dict) else None
+    return root if isinstance(root, str) and root.strip() else DEFAULT_INTAKE_ROOT
+
+
 def build_parser():
     host, port = configured_bind()
     p = argparse.ArgumentParser(prog="ffweb", description=__doc__.split("\n")[0])
@@ -4512,6 +4724,9 @@ def build_parser():
                                       "self-signed and generated on first start)")
     p.add_argument("--tls-key", help="private key for --tls-cert "
                                      "(default <state-dir>/tls/key.pem)")
+    p.add_argument("--intake-root", default=configured_intake_root(),
+                   help="ffintake's report directory, listed read-only on /intake (default: "
+                        "intake.root from the config, else " + DEFAULT_INTAKE_ROOT + ")")
     p.add_argument("--quiet", action="store_true", help="do not log every request")
     return p
 
@@ -4546,7 +4761,8 @@ def main(argv=None):
                f"{scheme}://127.0.0.1:{args.port}"}
     app = App(db_path, blobs, state_dir, os.path.abspath(args.ffwatch),
               enable_actions=args.enable_actions, quiet=args.quiet, origins=origins,
-              scheme=scheme, ffstatus=os.path.abspath(args.ffstatus))
+              scheme=scheme, ffstatus=os.path.abspath(args.ffstatus),
+              intake_root=args.intake_root)
     gaps = missing_columns(app.db)
     if gaps:
         sys.stderr.write(

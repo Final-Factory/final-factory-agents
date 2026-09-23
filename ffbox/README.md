@@ -2750,7 +2750,7 @@ from this directory as the sign-in backdrop; swap the file and the next login fo
 new one, with no restart. The one external program is `openssl`, run once to mint
 the certificate, because the standard library can serve TLS but cannot create an X.509.
 
-`/status` and `/claude` are the exceptions to "a page over the same database, and nothing else".
+`/status`, `/claude` and `/intake` are the exceptions to "a page over the same database, and nothing else".
 
 `/claude` is the only page here that leaves the machine. It lists every Claude account whose
 token is in `secrets.env` with the share of its five-hour and weekly windows already spent — the
@@ -2817,6 +2817,7 @@ somebody is looking at it.
 | `/claude` | **the subscriptions**: every Claude account in the `secrets.env` pool, which one is actually spent, which plan its slot declares, and how much of each account's five-hour and weekly windows is gone, with the per-model weekly cap beside them where the token's scope allows it. Read from Anthropic over the network and cached for 15 minutes; no token appears on it |
 | `/status` | **the box**, and one of two pages here that read no database: whether it is `running`, `checking`, `updating`, `drained` or `misconfigured` and why, when it last took new code and how long until it looks again, the load average and memory (with the share held by container workspaces, which are tmpfs), every container holding a workspace — agent runs, staged spares and CI jobs in one table, with each spare's slot, branch, tier (`warm` or `warm-evictable`) and remaining TTL — and what each pool was asked to hold. It runs `ffbox/ffstatus.sh --json` and renders what comes back. A `running` state is a link to `/stop?name=…`, which confirms and then stops that container; a **`below target`** pool is a link to `/pool?class=…`, which says why |
 | `/pool?class=<class>` | why one pool is short: the keeper's own sentence, how long it has been saying it, and how long ago it last looked — with a pool that has filled in the meantime, a class this box does not have, and a reason nobody has refreshed each answered in words rather than by a 404 |
+| `/intake` | **the crash and desync reports** `ffintake` has filed, newest first, filterable by kind and by whether ffbox has processed them: when each came in, game version, platform, size and the sender hash, read from each report's `manifest.json` under `intake.root`. Nothing processes reports yet, so every one is `unprocessed`. It reads the directory through the owner's `ffintake` group membership and never opens or serves `report.zip` |
 | `/blob/<sha256>` | one content-addressed attachment |
 | `/login` | served without a session, along with `/steam_background.jpg` behind it; `POST /logout` ends one |
 
@@ -3029,7 +3030,8 @@ what would fail if the SAN were ever dropped.
 ## Crash and desync intake (`ffintake`)
 
 `ffintake` accepts crash reports and multiplayer desync reports uploaded by the game and files
-them under `/opt/ffreports`. Nothing reads them yet. The plan is for agents to triage them and
+them under `/opt/ffreports`. Nothing processes them yet; ffweb's `/intake` tab lists them, all
+marked unprocessed. The plan is for agents to triage them and
 open pull requests later, and the storage layout and manifest below are shaped for that.
 
 It is the only thing on this box that anyone on the internet may talk to without an account.

@@ -315,7 +315,7 @@ class Server:
 
     def __init__(self, state, db_path, blobs, ffwatch_py, enable_actions=False, tls=False,
                  login=True, session_path=None, ttl=ffweb.SESSION_TTL_SECS, ffstatus=None,
-                 claude_keys=None):
+                 claude_keys=None, intake_root=None):
         scheme = "https" if tls else "http"
         # The port has to be known BEFORE App is built: App copies the set it is given, so an
         # allowlist filled in afterwards would silently stay empty and every case here would
@@ -343,7 +343,10 @@ class Server:
                              # secrets.env and calls api.anthropic.com, and a test suite that
                              # spends a subscription -- or fails on a laptop in a tunnel -- is
                              # not an offline test suite.
-                             claude_keys=claude_keys or claude_keys_stub())
+                             claude_keys=claude_keys or claude_keys_stub(),
+                             # NEVER the real /opt/ffreports: a fixture tree, see
+                             # build_intake_fixture.
+                             intake_root=intake_root or INTAKE_ROOT)
         ctx = None
         self.client_ctx = None
         if tls:
@@ -500,6 +503,50 @@ def ancestor_classes(html_text, needle):
 
 ROOT = tempfile.mkdtemp(prefix="ffweb-fixture-", dir=TMPROOT)
 STATE, DB_PATH, BLOBS, BLOB_IDS = build_fixture(ROOT)
+
+
+def intake_manifest(rid, kind, **report):
+    fields = {"report_id": "3f1c2a9e-0000-4000-8000-000000000000", "game_version": "0.21.0.23",
+              "platform": "WindowsPlayer"}
+    fields.update(report)
+    return {"manifest": 2, "id": rid, "kind": kind, "trust": "untrusted",
+            "received_at": "2026-09-22T10:15:00+00:00",
+            "sender": {"address_hash": "3ace6eea57acd768", "user_agent": "UnityPlayer",
+                       "wire_bytes": 2048},
+            "report": fields, "file": {"stored": "report.zip", "bytes": 2048, "sha256": "0" * 64}}
+
+
+def build_intake_fixture(root):
+    """ffintake's storage layout, as its Store writes it, plus the things it never writes: a
+    directory whose name is not an id, an id filed under the wrong kind, a symlinked report, and a
+    manifest that is not JSON. The report.zip files hold a marker the page must never show."""
+    os.makedirs(os.path.join(root, ".incoming", "20260922T120000Z-crash-ffffffffff"))
+    os.makedirs(os.path.join(root, ".ids"))
+    reports = [
+        ("20260921T080000Z-crash-aaaaaaaaaa", "crash", "2026-09", {}),
+        ("20260922T101500Z-desync-bbbbbbbbbb", "desync", "2026-09", {"platform": "OSXPlayer"}),
+        ("20260830T235959Z-crash-cccccccccc", "crash", "2026-08",
+         {"game_version": XSS}),
+    ]
+    for rid, kind, month, fields in reports:
+        d = os.path.join(root, kind, month, rid)
+        os.makedirs(d)
+        with open(os.path.join(d, "manifest.json"), "w", encoding="utf-8") as fh:
+            json.dump(intake_manifest(rid, kind, **fields), fh)
+        with open(os.path.join(d, "report.zip"), "wb") as fh:
+            fh.write(b"PK\x03\x04 ZIP-PAYLOAD-MARKER")
+    broken = os.path.join(root, "crash", "2026-09", "20260922T090000Z-crash-dddddddddd")
+    os.makedirs(broken)
+    with open(os.path.join(broken, "manifest.json"), "w", encoding="utf-8") as fh:
+        fh.write("{not json")
+    os.makedirs(os.path.join(root, "crash", "2026-09", "not-an-id"))
+    os.makedirs(os.path.join(root, "crash", "2026-09", "20260922T090000Z-desync-eeeeeeeeee"))
+    os.symlink(os.path.join(root, "desync", "2026-09", "20260922T101500Z-desync-bbbbbbbbbb"),
+               os.path.join(root, "desync", "2026-09", "20260922T110000Z-desync-9999999999"))
+    return root
+
+
+INTAKE_ROOT = build_intake_fixture(os.path.join(TMPROOT, "ffreports"))
 
 STUB_DIR = os.path.join(TMPROOT, "bin")
 os.makedirs(STUB_DIR, exist_ok=True)
@@ -754,6 +801,7 @@ REAL_FFWATCH = os.path.join(HERE, "ffwatch.py")
 # Every GET route, for the crawl tests. Kept in one place so a new route joins them by being
 # added here rather than by being remembered.
 ROUTES = ["/", "/lanes", "/outbound", "/status", "/claude", "/outbound?status=pending",
+          "/intake", "/intake?kind=desync&state=unprocessed", "/intake?kind=bogus&state=x",
           # The stop confirmation, for a container the stub document has running and for one
           # nothing has ever heard of. Both are pages, which is the point of putting them here.
           "/stop?name=ffbox-dev-t1-99aa", "/stop?name=nothing-by-that-name", "/stop",
@@ -818,6 +866,54 @@ def test_every_route_serves():
         check("an unknown conversation is 404", code == 404)
     finally:
         srv.stop()
+
+
+def test_the_intake_page_lists_reports_and_none_are_processed():
+    srv = serve()
+    try:
+        code, _h, body = srv.get("/intake")
+        page = text_of(body)
+        check("/intake serves", code == 200, code)
+        check("the nav links to the intake tab", "<a href=\"/intake\">intake</a>" in page)
+        ids = ("20260921T080000Z-crash-aaaaaaaaaa", "20260922T101500Z-desync-bbbbbbbbbb",
+               "20260830T235959Z-crash-cccccccccc", "20260922T090000Z-crash-dddddddddd")
+        check("every report ffintake filed is listed, across kinds and months",
+              all(r in page for r in ids), page[:600])
+        check("newest first", page.index(ids[1]) < page.index(ids[3]) < page.index(ids[0])
+              < page.index(ids[2]))
+        check("the manifest's fields are on the row",
+              "OSXPlayer" in page and "0.21.0.23" in page and "3ace6eea57acd768" in page)
+        check("a report whose manifest will not parse is still listed, and says so",
+              "20260922T090000Z-crash-dddddddddd (manifest unreadable)" in page)
+        check("names ffintake would never mint are not listed",
+              "not-an-id" not in page and "eeeeeeeeee" not in page
+              and "ffffffffff" not in page, page)
+        check("a symlinked report directory is not followed", "9999999999" not in page)
+        check("every report is unprocessed, because nothing processes them yet",
+              page.count("pill unprocessed") == 4 and "pill processed" not in page
+              and "unprocessed=4, processed=0" in page and "crash=3, desync=1" in page)
+        check("a manifest value is escaped like every other stranger's string",
+              XSS not in page and ffweb.esc(XSS) in page)
+        check("the report zip never reaches the page", "ZIP-PAYLOAD-MARKER" not in page)
+
+        _c, _h, body = srv.get("/intake?kind=desync")
+        page = text_of(body)
+        check("the kind filter filters",
+              ids[1] in page and not any(r in page for r in (ids[0], ids[2], ids[3])))
+        _c, _h, body = srv.get("/intake?state=processed")
+        page = text_of(body)
+        check("the processed filter is empty today", not any(r in page for r in ids))
+    finally:
+        srv.stop()
+
+    missing = Server(STATE, DB_PATH, BLOBS, STUB_FFWATCH,
+                     intake_root=os.path.join(TMPROOT, "no-such-reports"))
+    try:
+        code, _h, body = missing.get("/intake")
+        check("a missing report directory is a sentence on the page, not a 500",
+              code == 200 and "no report directory at" in text_of(body), code)
+    finally:
+        missing.stop()
 
 
 def test_the_page_shows_how_clustering_decided():
@@ -4316,6 +4412,7 @@ def main():
     tests = [
         test_only_agent_runs_are_stoppable,
         test_every_route_serves,
+        test_the_intake_page_lists_reports_and_none_are_processed,
         test_the_page_shows_how_clustering_decided,
         test_the_branch_is_shown_as_the_conversations_own,
         test_a_run_that_published_nothing_does_not_claim_a_branch,
