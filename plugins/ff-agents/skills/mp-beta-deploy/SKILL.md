@@ -38,7 +38,12 @@ change (e.g. rebaked CJK font atlases under `Assets/UI/Fonts/`) and push — tha
    into a fresh `cicd/mp_beta_stage-<sha7>/mac_main/finalfactory.app`, appending `returned result=…` to a
    marker. The bridge times out before it ends — wait on the marker, never re-issue the call.
    Keep the "refuse if the stage dir exists" guard at the top of call B (see the redispatch gotcha below).
-3. **Check `EntityScenes/` right after every build (§4), not only at the end.** On 2026-09-23 (0.50.0.24)
+3. **Expect the FIRST build after call A to be bad, then plan on two builds.** This reproduced twice on 2026-09-23
+   (0.50.0.24 and the t89 test player). The worker bakes the subscene DURING that first build (the log shows
+   `Baking the Entity Prefab Container` after it starts), so it ships only `scene_info.bin` (~2617 MB against a
+   good ~2775 MB). An immediate second build is good. Either run a throwaway first build, or let the bridge
+   re-dispatch (item 4) and verify.
+   **Check `EntityScenes/` right after every build (§4), not only at the end.** On 2026-09-23 (0.50.0.24)
    a build made from a SEPARATE call B, right after call A, still shipped only `scene_info.bin`. If that
    happens, move the stage aside as `…-BAD-noentityscenes` and re-run call A. The editor log must then
    show the subscene bake (`Baking the Entity Prefab Container`, then `Streamed scene … .entities`)

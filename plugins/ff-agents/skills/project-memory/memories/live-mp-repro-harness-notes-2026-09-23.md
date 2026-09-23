@@ -37,3 +37,14 @@ description: "Operational facts from the overnight three-peer live-MP repro lane
   `probe_census_A` (2026-09-22) held scrambled connection ids (310/555 stations pointing at
   wrong same-type stations, 1 grid vs 58) and produced a false "58 vs 1 grids across reload" lead.
   Check the probe save itself by reloading it and counting connected components.
+- **Unity Relay legs (`44cffffbe`, 2026-09-23).** Live players connect through Unity Relay, and harness legs
+  can too, with no Steam involved (Relay sign-in is anonymous).
+  - Host config: `UseRelay: true`. It logs `status relay-join-code: joinCode=XXXXXX`.
+  - Put that code in each client config's `RelayJoinCode`. Rejoin with `net.rejoin|relay|<code>`.
+  - Leg r1 (three machines, e2 scenario over real Relay) was clean.
+- **Ben, 2026-09-23: testing never goes through Steam.** Copy local builds to the three machines; upload to the
+  beta branch only when Ben asks for a beta. A Steam upload costs him a manual login.
+- **Bystander watchdog trips during another peer's load (T158) — fixed `925e005f2`.**
+  - Tell: a bystander logs `[Reconnect] WatchdogTripped appliedAgeSeconds=5.1` about 5 s after
+    `NotifyFlowControlWaitingRpc waiting=True,peers=<other peer>`, typically 60-90 hb after that peer was served.
+  - The host then sees `SessionEnded:Superseded` and a reclaim. Watch for it as a regression.
