@@ -1,15 +1,13 @@
 ---
 name: mp-beta-deploy
-# Only Ben starts this (it publishes a build to Steam). Claude Code: never auto-invoke.
-disable-model-invocation: true
-description: Build the multiplayer-enabled Mac + Windows players from develop and deploy them to the password-protected Steam `multiplayer-closed-beta` branch for Ben and his testers — the full verified procedure (pre-steps, both builds, verification, depot staging, Steam upload, record). Run ONLY when Ben explicitly asks to build/deploy/push/upload the MP beta; never on your own initiative, never as part of other work.
+description: Build the multiplayer-enabled Mac + Windows players from develop and deploy them to the password-protected Steam `multiplayer-closed-beta` branch for Ben and his testers — the full verified procedure (pre-steps, both builds, verification, depot staging, Steam upload, record). Use when Ben asks for it in any words — "push a new beta build", "deploy to the MP beta", "make a build Kyle and I can test", "upload to the beta branch". Never start it on your own initiative or as a side step of other work.
 ---
 
 # Deploy a build to the MP beta branch
 
-**Ben's word only.** This publishes a build that other people download. Start it only when Ben
-explicitly asks for an MP beta build/deploy in the current conversation; if you think one is needed,
-say so and wait. Proven end to end on 2026-09-23 (0.50.0.21, develop `f594db63d`, BuildID 25471784).
+**Only when Ben asks** (plain English is enough — he never has to type the skill name). This publishes
+a build that other people download, so never start it on your own initiative; if you think one is
+needed, say so and wait for him to ask. Proven end to end on 2026-09-23 (0.50.0.21, develop `f594db63d`, BuildID 25471784).
 
 **Why this is not the Build menu:** every `Build` menu path strips `FF_ENABLE_MULTIPLAYER_BUILD`
 (`BuildCommand2.StripMultiplayerBuildDefine`, since `6c8dc3f99`), so "Build and Upload All" produces a
