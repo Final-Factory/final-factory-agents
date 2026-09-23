@@ -5,7 +5,7 @@ description: "Building the multiplayer-dev players from the unity CLI shim witho
 
 > **SUPERSEDED for building (2026-09-23):** `BuildAllMultiplayerDevNoUpload` and the other Multiplayer Dev
 > menu methods were removed in `6c8dc3f99` (2026-09-12); every Build menu path now strips the multiplayer
-> define. The working MP beta recipe is in the `steam-upload` skill, "Building the MP beta depots". The shim
+> define. The working MP beta build + deploy is the `mp-beta-deploy` skill (Ben's word only). The shim
 > syntax and duration notes below are still accurate.
 
 # Multiplayer-dev player builds from the `unity` CLI shim (2026-09-12, 069 depot rebuild)
