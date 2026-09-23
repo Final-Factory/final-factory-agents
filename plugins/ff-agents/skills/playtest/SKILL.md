@@ -90,7 +90,7 @@ harness is on **develop, not master**, so a master-based run gets exit 3 and a m
 and there is **no GPU** in that container (software GL under Xvfb), so functional repro is sound
 and frame timings are meaningless. `unity-editor` is also directly runnable there — the allow list
 is bare `Bash` — but prefer the wrapper, which owns the cleanup, the licence seat and the
-per-invocation paths. See `ffbox/README.md` in the final-factory-agents repo.
+per-invocation paths. See `ffbox/README.md` in the [Final-Factory/ffbox](https://github.com/Final-Factory/ffbox) repo.
 
 ## Attach to a BUILT PLAYER instead — no pumping at all (feature 068)
 
