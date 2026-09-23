@@ -211,7 +211,7 @@ root = get("root", "/opt/ffreports",
 host = get("host", "127.0.0.1", is_ip)
 port = get("port", 8790, lambda v: type(v) is int and 1 <= v <= 65535)
 args = []
-for key, flag in (("max_body_mb", "--max-body-mb"), ("max_file_mb", "--max-file-mb"),
+for key, flag in (("max_body_mb", "--max-body-mb"),
                   ("per_address_per_hour", "--per-address-per-hour"),
                   ("per_hour", "--per-hour"), ("min_free_mb", "--min-free-mb")):
     value = get(key, None, positive)

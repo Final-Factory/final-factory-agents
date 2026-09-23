@@ -4,16 +4,19 @@
 Run: python3 ffbox/test_ffintake.py
 
 Every case talks to the REAL server over a real loopback socket, because nearly everything this
-file checks — the refusals before the body is read, the connection cap, the deadline, the replies
-that must not echo input — only exists on the wire. Storage is a scratch directory; nothing here
-needs root, ZFS, systemd or the network.
+file checks — the refusals before the body is read, the connection caps, the deadlines, the
+replies that must not echo input — only exists on the wire. Storage is a scratch directory;
+nothing here needs root, ZFS, systemd or the network.
+
+Loopback is a trusted proxy by default, which exempts it from the per-address connection caps and
+lets X-Forwarded-For stand in for many senders. Cases about the connection caps therefore run a
+server that trusts nobody, so 127.0.0.1 is an ordinary sender.
 """
 
 from __future__ import annotations
 
 import base64
 import contextlib
-import gzip
 import hashlib
 import http.client
 import io
@@ -30,6 +33,7 @@ import tempfile
 import threading
 import time
 import uuid
+import zipfile
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, HERE)
@@ -37,6 +41,7 @@ import ffintake  # noqa: E402
 
 COUNTS = {"pass": 0, "fail": 0}
 MARKER = "zz-marker-7f3a-do-not-echo"
+MIB = ffintake.MIB
 
 
 def check(name, ok, detail=""):
@@ -65,42 +70,40 @@ def serving(root, trusted=("127.0.0.1", "::1"), ssl_context=None, **limit_kw):
         server.server_close()
 
 
-def envelope(**over):
-    doc = {
-        "schema": 1,
-        "report_id": str(uuid.uuid4()),
-        "game_version": "0.21.0.23",
-        "platform": "WindowsPlayer",
-        "description": "it crashed when I placed a mass driver",
-        "details": {"unity_version": "6000.0.23f1", "tick": 18233, "is_host": True},
-        "files": [{"name": "FinalFactory_RuntimeLog.txt",
-                   "content": base64.b64encode(b"log line 1\nlog line 2\n").decode()}],
-    }
-    doc.update(over)
-    return doc
+def make_zip(files=None):
+    buf = io.BytesIO()
+    with zipfile.ZipFile(buf, "w", zipfile.ZIP_DEFLATED) as z:
+        for name, data in (files or {"Player.log": b"log line\n",
+                                     "description.txt": b"it crashed"}).items():
+            z.writestr(name, data)
+    return buf.getvalue()
 
 
-def post(server, path, body, headers=None, raw_headers=None):
-    """POST and return (status, parsed json or raw bytes, headers)."""
-    port = server.server_address[1]
-    conn = http.client.HTTPConnection("127.0.0.1", port, timeout=10)
-    h = {"Content-Type": "application/json"}
-    h.update(headers or {})
-    if raw_headers is not None:
-        h = raw_headers
-    if isinstance(body, (dict, list)):
-        body = json.dumps(body).encode()
+def headers(**over):
+    h = {"Content-Type": "application/zip",
+         "X-FF-Report-Id": str(uuid.uuid4()),
+         "X-FF-Game-Version": "0.21.0.23",
+         "X-FF-Platform": "WindowsPlayer"}
+    for k, v in over.items():
+        k = k.replace("_", "-")
+        if v is None:
+            h.pop(k, None)
+        else:
+            h[k] = v
+    return h
+
+
+def post(server, path="/v1/reports/crash", body=None, hdrs=None):
+    """POST and return (status, body text, response)."""
+    conn = http.client.HTTPConnection("127.0.0.1", server.server_address[1], timeout=10)
     try:
-        conn.request("POST", path, body=body, headers=h)
+        conn.request("POST", path, body=make_zip() if body is None else body,
+                     headers=headers() if hdrs is None else hdrs)
         resp = conn.getresponse()
         data = resp.read()
     finally:
         conn.close()
-    try:
-        parsed = json.loads(data)
-    except ValueError:
-        parsed = data
-    return resp.status, parsed, resp
+    return resp.status, data.decode("ascii", "replace").strip(), resp
 
 
 def raw_exchange(server, payload, read_timeout=5):
@@ -131,69 +134,62 @@ def reports_under(root, kind):
     return out
 
 
+ID_RE = r"\d{8}T\d{6}Z-(crash|desync)-[0-9a-f]{10}"
+
+
 # ----------------------------------------------------------------------------------------------
 
 def test_happy_path(tmp):
-    print("\na report is stored whole, under names we chose")
+    print("\na report is stored whole, untouched, under names we chose")
     root = os.path.join(tmp, "happy")
     os.mkdir(root)
     with serving(root) as srv:
-        save = os.urandom(300_000)
-        doc = envelope(files=[
-            {"name": "FinalFactory_RuntimeLog.txt", "content": base64.b64encode(b"hello\n").decode()},
-            {"name": "../../../etc/passwd", "content": base64.b64encode(b"x").decode()},
-            {"name": "C:\\Users\\bob\\AppData\\..\\BugReport.zip",
-             "content": base64.b64encode(save).decode()},
-            {"name": ".bashrc", "content": base64.b64encode(b"y").decode()},
-            {"name": "<script>alert(1)</script>\u0000.txt", "content": ""},
-        ])
-        status, body, _ = post(srv, "/v1/reports/crash", doc)
-        check("201 Created", status == 201, (status, body))
-        check("the reply is only our id", isinstance(body, dict) and set(body) == {"id"}, body)
-        rid = body.get("id", "") if isinstance(body, dict) else ""
-        check("the id is ours: timestamp, kind, random", re.fullmatch(r"\d{8}T\d{6}Z-crash-[0-9a-f]{10}", rid), rid)
+        body = make_zip({"Player.log": os.urandom(300_000), "../../etc/passwd": b"x"})
+        h = headers()
+        status, text, resp = post(srv, body=body, hdrs=h)
+        check("201 Created", status == 201, (status, text))
+        check("the reply is one line: our id", re.fullmatch(ID_RE, text), text)
+        check("the reply is plain text", resp.getheader("Content-Type", "").startswith("text/plain"))
 
         dirs = reports_under(root, "crash")
-        check("exactly one report directory", len(dirs) == 1, dirs)
+        check("exactly one report directory, named by our id",
+              len(dirs) == 1 and os.path.basename(dirs[0]) == text, dirs)
         d = dirs[0] if dirs else root
-        check("named by our id", os.path.basename(d) == rid, d)
-        names = sorted(os.listdir(os.path.join(d, "files")))
-        check("files are index-prefixed and sanitised",
-              names == ["01-FinalFactory_RuntimeLog.txt", "02-passwd", "03-BugReport.zip",
-                        "04-bashrc", "05-script__.txt"], names)
-        with open(os.path.join(d, "files", "03-BugReport.zip"), "rb") as fh:
-            check("binary content round-trips byte for byte", fh.read() == save)
+        check("it holds exactly manifest.json and report.zip",
+              sorted(os.listdir(d)) == ["manifest.json", "report.zip"], os.listdir(d))
+        with open(os.path.join(d, "report.zip"), "rb") as fh:
+            check("the zip is stored byte for byte, never opened", fh.read() == body)
 
         m = json.load(open(os.path.join(d, "manifest.json")))
-        check("manifest says untrusted", m.get("trust") == "untrusted", m.get("trust"))
-        check("manifest keeps the client's names as data",
-              [f["name"] for f in m["files"]][1] == "../../../etc/passwd", m["files"])
-        check("manifest records sha256",
-              m["files"][2]["sha256"] == hashlib.sha256(save).hexdigest())
-        check("manifest carries the report fields",
-              m["report"]["game_version"] == "0.21.0.23" and m["report"]["details"]["tick"] == 18233,
-              m["report"])
+        check("manifest says untrusted", m.get("trust") == "untrusted")
+        check("manifest carries the three headers",
+              m["report"] == {"report_id": h["X-FF-Report-Id"], "game_version": "0.21.0.23",
+                              "platform": "WindowsPlayer"}, m["report"])
+        check("manifest records size and sha256",
+              m["file"] == {"stored": "report.zip", "bytes": len(body),
+                            "sha256": hashlib.sha256(body).hexdigest()}, m["file"])
         blob = open(os.path.join(d, "manifest.json"), "rb").read()
         check("manifest does not hold the raw address", b"127.0.0.1" not in blob)
-        check("manifest is ASCII (escaped), so no control byte reaches a terminal",
-              all(b < 128 for b in blob) and b"\x00" not in blob)
-        mode = stat.S_IMODE(os.stat(os.path.join(d, "manifest.json")).st_mode)
+        mode = stat.S_IMODE(os.stat(os.path.join(d, "report.zip")).st_mode)
         check("files are not world-readable", mode & 0o007 == 0, oct(mode))
         check("nothing left in .incoming", os.listdir(os.path.join(root, ".incoming")) == [])
 
-        # gzip on the wire
-        doc2 = envelope()
-        status, body, _ = post(srv, "/v1/reports/desync", gzip.compress(json.dumps(doc2).encode()),
-                               {"Content-Encoding": "gzip"})
-        check("a gzip body is accepted", status == 201, (status, body))
-        check("and filed under desync", len(reports_under(root, "desync")) == 1)
+        status, text2, _ = post(srv, "/v1/reports/desync")
+        check("a desync report is filed under desync",
+              status == 201 and "-desync-" in text2 and len(reports_under(root, "desync")) == 1)
 
-        # a retry of the same report
-        status, body2, _ = post(srv, "/v1/reports/desync", doc2)
-        check("a retried report_id is 200, not a second report",
-              status == 200 and body2.get("duplicate") is True and body2.get("id") == body.get("id"),
-              (status, body2))
-        check("still one desync report", len(reports_under(root, "desync")) == 1)
+        status, text3, _ = post(srv, body=body, hdrs=h)
+        check("a retried report id is 200 with the first id, not a second report",
+              status == 200 and text3 == text, (status, text3))
+        check("still one crash report", len(reports_under(root, "crash")) == 1)
+        check("and the retry's copy was cleaned up",
+              os.listdir(os.path.join(root, ".incoming")) == [])
+
+        conn = http.client.HTTPConnection("127.0.0.1", srv.server_address[1], timeout=5)
+        conn.request("GET", "/v1/health")
+        r = conn.getresponse()
+        check("GET /v1/health is 200 'ok 2'", r.status == 200 and r.read() == b"ok 2\n")
+        conn.close()
 
 
 def test_refusals(tmp):
@@ -202,99 +198,79 @@ def test_refusals(tmp):
     os.mkdir(root)
     buf = io.StringIO()
     with contextlib.redirect_stdout(buf):
-        with serving(root, max_file_mb=1, max_decoded_mb=2, max_body_mb=4, max_files=3,
-                     per_address_burst=1000, per_address_per_hour=100000,
+        with serving(root, max_body_mb=1, per_address_burst=1000, per_address_per_hour=100000,
                      per_hour=1000000) as srv:
             cases = []
 
-            def expect(name, status, code, path="/v1/reports/crash", body=None, headers=None,
-                       raw_headers=None):
-                s, b, _ = post(srv, path, body if body is not None else envelope(),
-                               headers, raw_headers)
-                cases.append((name, s, b, status, code))
+            def expect(name, status, code, path="/v1/reports/crash", body=None, hdrs=None):
+                s, text, _ = post(srv, path, body, hdrs)
+                cases.append((name, s, text, status, code))
 
             expect("unknown kind", 404, "not_found", path="/v1/reports/" + MARKER)
             expect("path with traversal", 404, "not_found", path="/v1/reports/../crash")
+            expect("query string", 404, "not_found", path="/v1/reports/crash?x=1")
+            expect("application/json", 415, "unsupported_media_type",
+                   hdrs=headers(Content_Type="application/json"))
             expect("text/plain (a browser's simple request)", 415, "unsupported_media_type",
-                   headers={"Content-Type": "text/plain"})
-            expect("brotli encoding", 415, "unsupported_encoding",
-                   headers={"Content-Encoding": "br"})
-            expect("unknown top-level key", 400, "bad_envelope", body=envelope(**{MARKER: 1}))
-            expect("missing files", 400, "bad_envelope",
-                   body={k: v for k, v in envelope().items() if k != "files"})
-            expect("future schema", 400, "unsupported_schema", body=envelope(schema=2))
-            expect("schema as bool", 400, "bad_schema", body=envelope(schema=True))
+                   hdrs=headers(Content_Type="text/plain"))
+            expect("gzip encoding", 415, "unsupported_encoding",
+                   hdrs=headers(Content_Encoding="gzip"))
+            expect("missing report id", 400, "bad_report_id", hdrs=headers(X_FF_Report_Id=None))
             expect("uppercase uuid", 400, "bad_report_id",
-                   body=envelope(report_id=str(uuid.uuid4()).upper()))
+                   hdrs=headers(X_FF_Report_Id=str(uuid.uuid4()).upper()))
             expect("braced uuid", 400, "bad_report_id",
-                   body=envelope(report_id="{" + str(uuid.uuid4()) + "}"))
-            expect("uuid with a path in it", 400, "bad_report_id",
-                   body=envelope(report_id="../../" + MARKER))
+                   hdrs=headers(X_FF_Report_Id="{" + str(uuid.uuid4()) + "}"))
+            expect("report id with a path in it", 400, "bad_report_id",
+                   hdrs=headers(X_FF_Report_Id="../../" + MARKER))
             expect("version with a space", 400, "bad_game_version",
-                   body=envelope(game_version="1.0 " + MARKER))
+                   hdrs=headers(X_FF_Game_Version="1.0 " + MARKER))
+            expect("missing version", 400, "bad_game_version",
+                   hdrs=headers(X_FF_Game_Version=None))
             expect("platform with markup", 400, "bad_platform",
-                   body=envelope(platform="<b>x</b>"))
-            expect("description too long", 400, "bad_description",
-                   body=envelope(description="a" * 4001))
-            expect("float in details", 400, "bad_details", body=envelope(details={"x": 1.5}))
-            expect("nested details", 400, "bad_details", body=envelope(details={"x": {"y": 1}}))
-            expect("bad detail key", 400, "bad_details", body=envelope(details={"X-Y": 1}))
-            expect("NaN", 400, "bad_json",
-                   body=json.dumps(envelope()).replace('"tick": 18233', '"tick": NaN').encode())
-            expect("not JSON", 400, "bad_json", body=b"\xff\xfe" + MARKER.encode())
-            expect("deeply nested", 400, "bad_json", body=b"[" * 100000 + b"]" * 100000)
-            expect("too many files", 400, "bad_files",
-                   body=envelope(files=[{"name": "a", "content": ""}] * 4))
-            expect("no files", 400, "bad_files", body=envelope(files=[]))
-            expect("file entry with extra key", 400, "bad_files",
-                   body=envelope(files=[{"name": "a", "content": "", "path": "/etc"}]))
-            expect("bad base64", 400, "bad_file_content",
-                   body=envelope(files=[{"name": "a", "content": "!!!!" + MARKER}]))
-            expect("file over max_file", 413, "file_too_large",
-                   body=envelope(files=[{"name": "a",
-                                         "content": base64.b64encode(b"\0" * (MIB + 10)).decode()}]))
-            expect("empty file name", 400, "bad_file_name",
-                   body=envelope(files=[{"name": "", "content": ""}]))
+                   hdrs=headers(X_FF_Platform="<b>x</b>"))
+            expect("not a zip", 400, "not_zip", body=b"GIF89a" + MARKER.encode())
+            expect("JSON posing as a zip", 400, "not_zip", body=b'{"a":[' + b"[]," * 1000 + b"]}")
+            expect("shorter than a zip header", 400, "not_zip", body=b"PK")
+            expect("empty", 400, "not_zip", body=b"")
+            expect("over max_body", 413, "body_too_large", body=b"PK\x03\x04" + b"\0" * MIB)
 
-            # A gzip bomb: 64 MB of zeros is ~64 KB compressed. max_decoded is 2 MB.
-            bomb = gzip.compress(b"{" + b" " * (64 * MIB) + b"}", compresslevel=9)
-            expect("gzip bomb stops at the decoded limit", 413, "decoded_too_large",
-                   body=bomb, headers={"Content-Encoding": "gzip"})
-            expect("truncated gzip", 400, "bad_gzip",
-                   body=gzip.compress(json.dumps(envelope()).encode())[:-9],
-                   headers={"Content-Encoding": "gzip"})
-            expect("two gzip members", 400, "bad_gzip",
-                   body=gzip.compress(b"{}") + gzip.compress(b"{}"),
-                   headers={"Content-Encoding": "gzip"})
+            for name, s, text, want_s, want_code in cases:
+                check(f"{name}: {want_s} {want_code}", s == want_s and text == want_code,
+                      (s, text))
 
-            for name, s, b, want_s, want_code in cases:
-                check(f"{name}: {want_s} {want_code}",
-                      s == want_s and isinstance(b, dict) and b.get("error") == want_code,
-                      (s, b))
+            def raw(extra, body=b"PK\x03\x04"):
+                h = (b"POST /v1/reports/crash HTTP/1.1\r\nHost: x\r\n"
+                     b"Content-Type: application/zip\r\n"
+                     b"X-FF-Report-Id: " + str(uuid.uuid4()).encode() + b"\r\n"
+                     b"X-FF-Game-Version: 1\r\nX-FF-Platform: x\r\n")
+                return raw_exchange(srv, h + extra + b"\r\n" + body)
 
-            # Declared too large: refused from the header, before a byte of body is sent.
-            resp = raw_exchange(srv, b"POST /v1/reports/crash HTTP/1.1\r\nHost: x\r\n"
-                                     b"Content-Type: application/json\r\n"
-                                     b"Content-Length: 999999999\r\n\r\n")
+            resp = raw(b"Content-Length: 999999999\r\n", b"")
             check("declared length over max_body is 413 without reading it",
                   resp.startswith(b"HTTP/1.0 413") and b"body_too_large" in resp, resp[:120])
-            resp = raw_exchange(srv, b"POST /v1/reports/crash HTTP/1.1\r\nHost: x\r\n"
-                                     b"Content-Type: application/json\r\n"
-                                     b"Transfer-Encoding: chunked\r\n\r\n5\r\nhello\r\n0\r\n\r\n")
+            resp = raw(b"Transfer-Encoding: chunked\r\n", b"4\r\nPK\x03\x04\r\n0\r\n\r\n")
             check("chunked is 411", resp.startswith(b"HTTP/1.0 411"), resp[:120])
-            resp = raw_exchange(srv, b"POST /v1/reports/crash HTTP/1.1\r\nHost: x\r\n"
-                                     b"Content-Type: application/json\r\n"
-                                     b"Content-Length: 2\r\nContent-Length: 2\r\n\r\n{}")
+            resp = raw(b"Content-Length: 4\r\nContent-Length: 4\r\n")
             check("two Content-Lengths is 411 (smuggling shape)", resp.startswith(b"HTTP/1.0 411"),
                   resp[:120])
-            resp = raw_exchange(srv, b"POST /v1/reports/crash HTTP/1.1\r\nHost: x\r\n"
-                                     b"Content-Type: application/json\r\n"
-                                     b"Content-Length: \xc2\xb2\r\n\r\n{}")
+            resp = raw(b"Content-Length: \xc2\xb2\r\n")
             check("non-ASCII digit length is 411", resp.startswith(b"HTTP/1.0 411"), resp[:120])
+            resp = raw(b"Content-Length: 4\r\nX-FF-Platform: y\r\n")
+            check("a repeated X-FF header is refused, not guessed",
+                  resp.startswith(b"HTTP/1.0 400") and b"bad_platform" in resp, resp[:120])
+            resp = raw(b"Content-Length: 100\r\n", b"PK\x03\x04short")
+            check("a body shorter than declared is not stored",
+                  b"201" not in resp.split(b"\r\n")[0], resp[:120])
             resp = raw_exchange(srv, b"GARBAGE " + MARKER.encode() + b" \x00\r\n\r\n")
-            check("a malformed request line gets our JSON, not an HTML echo",
+            check("a malformed request line gets our one-line code, not an HTML echo",
                   b"bad_request" in resp and MARKER.encode() not in resp and b"<" not in resp,
                   resp[:200])
+            resp = raw_exchange(srv, b"GET /v1/health HTTP/1.0\r\nX-Big: " + b"a" * 9000
+                                + b"\r\n\r\n")
+            check("a header line over 8 KB is refused", b"200" not in resp[:20], resp[:80])
+            many = b"".join(b"X-H%d: 1\r\n" % i for i in range(40))
+            resp = raw_exchange(srv, b"GET /v1/health HTTP/1.0\r\n" + many + b"\r\n")
+            check("more than 32 headers is refused", b"200" not in resp[:20], resp[:80])
             resp = raw_exchange(srv, b"OPTIONS /v1/reports/crash HTTP/1.1\r\nHost: x\r\n"
                                      b"Origin: https://evil.example\r\n\r\n")
             check("OPTIONS is 405 with no CORS grant",
@@ -304,112 +280,150 @@ def test_refusals(tmp):
             r = conn.getresponse()
             check("GET /v1/reports/crash is 404: this door never hands anything back",
                   r.status == 404, r.status)
-            conn.close()
-            conn = http.client.HTTPConnection("127.0.0.1", srv.server_address[1], timeout=5)
-            conn.request("GET", "/v1/health")
-            r = conn.getresponse()
-            body = json.loads(r.read())
-            check("GET /v1/health is 200", r.status == 200 and body.get("ok") is True, body)
             check("no Server version banner beyond the name",
                   (r.getheader("Server") or "") in ("", "ffintake"), r.getheader("Server"))
             conn.close()
 
-            every = b"".join(c[2] if isinstance(c[2], bytes) else json.dumps(c[2]).encode()
-                             for c in cases)
-            check("no reply echoed the marker", MARKER.encode() not in every)
+            every = " ".join(c[2] for c in cases)
+            check("no reply echoed the marker", MARKER not in every)
             check("nothing was stored", reports_under(root, "crash") == [])
+            check("and nothing was left half-written",
+                  os.listdir(os.path.join(root, ".incoming")) == [])
     logged = buf.getvalue()
     check("the journal never saw the marker", MARKER not in logged, logged[-400:])
     check("the journal never saw the request path or a header", "evil.example" not in logged)
-    check("the journal did record the refusals", "413 decoded_too_large" in logged)
+    check("the journal did record the refusals", "400 not_zip" in logged)
 
 
 def test_rate_limits(tmp):
-    print("\nrate limits")
+    print("\nreport rate limits")
     root = os.path.join(tmp, "rate")
     os.mkdir(root)
     with serving(root, per_address_burst=3, per_address_per_hour=1, per_hour=100000) as srv:
-        results = [post(srv, "/v1/reports/crash", envelope(),
-                        {"X-Forwarded-For": "203.0.113.7"})[0] for _ in range(4)]
+        xff = lambda a: headers(X_Forwarded_For=a)  # noqa: E731
+        results = [post(srv, hdrs=xff("203.0.113.7"))[0] for _ in range(4)]
         check("burst of 3 from one address, then 429", results == [201, 201, 201, 429], results)
-        s, b, resp = post(srv, "/v1/reports/crash", envelope(), {"X-Forwarded-For": "203.0.113.7"})
-        check("429 carries Retry-After", s == 429 and int(resp.getheader("Retry-After", "0")) > 0,
-              resp.getheader("Retry-After"))
-        s, _, _ = post(srv, "/v1/reports/crash", envelope(), {"X-Forwarded-For": "203.0.113.8"})
-        check("another address is unaffected", s == 201, s)
-        s, _, _ = post(srv, "/v1/reports/crash", envelope(),
-                       {"X-Forwarded-For": "198.51.100.1, 203.0.113.7"})
+        s, _, resp = post(srv, hdrs=xff("203.0.113.7"))
+        check("429 carries Retry-After", s == 429 and int(resp.getheader("Retry-After", "0")) > 0)
+        check("another address is unaffected", post(srv, hdrs=xff("203.0.113.8"))[0] == 201)
+        s, _, _ = post(srv, hdrs=xff("198.51.100.1, 203.0.113.7"))
         check("a client-written XFF entry before the proxy's is ignored", s == 429, s)
-        results = [post(srv, "/v1/reports/crash", envelope(),
-                        {"X-Forwarded-For": f"2001:db8:1:2::{i:x}"})[0] for i in range(4)]
+        results = [post(srv, hdrs=xff(f"2001:db8:1:2::{i:x}"))[0] for i in range(4)]
         check("IPv6 addresses in one /64 share a budget", results == [201, 201, 201, 429], results)
 
     root2 = os.path.join(tmp, "rate2")
     os.mkdir(root2)
     with serving(root2, trusted=(), per_address_burst=2, per_address_per_hour=1,
                  per_hour=100000) as srv:
-        results = [post(srv, "/v1/reports/crash", envelope(),
-                        {"X-Forwarded-For": f"203.0.113.{i}"})[0] for i in range(3)]
+        results = [post(srv, hdrs=headers(X_Forwarded_For=f"203.0.113.{i}"))[0] for i in range(3)]
         check("an untrusted peer cannot dodge the limit with X-Forwarded-For",
               results == [201, 201, 429], results)
 
     root3 = os.path.join(tmp, "rate3")
     os.mkdir(root3)
     with serving(root3, per_address_burst=100, per_address_per_hour=100, per_hour=120) as srv:
-        results = [post(srv, "/v1/reports/crash", envelope(),
-                        {"X-Forwarded-For": f"203.0.113.{i}"})[0] for i in range(4)]
+        results = [post(srv, hdrs=headers(X_Forwarded_For=f"203.0.113.{i}"))[0]
+                   for i in range(4)]
         check("the global bucket caps everybody together", results == [201, 201, 429, 429],
               results)
 
-    lim = ffintake.Limits(per_address_burst=1, per_address_per_hour=1, per_hour=1e9,
-                          rate_table_size=10)
     now = [0.0]
-    rl = ffintake.RateLimiter(lim, clock=lambda: now[0])
+    rl = ffintake.RateLimiter(1, 1, 1e9, 10, clock=lambda: now[0])
     for i in range(10):
         rl.take(f"a{i}")
-    check("a full address table refuses a new address rather than growing",
+    check("a full table refuses a new key rather than growing",
           rl.take("new") is not None and len(rl.buckets) == 10, len(rl.buckets))
     now[0] = 7200.0
-    check("and forgets refilled buckets to make room", rl.take("new") is None and
-          len(rl.buckets) <= 10, len(rl.buckets))
+    check("and forgets refilled buckets to make room",
+          rl.take("new") is None and len(rl.buckets) <= 10, len(rl.buckets))
 
 
-def test_capacity(tmp):
-    print("\ncapacity: disk, connections, slow clients")
-    root = os.path.join(tmp, "cap")
+def test_connections(tmp):
+    print("\nconnection caps and deadlines (the audit's slot-exhaustion finding)")
+    root = os.path.join(tmp, "conn")
     os.mkdir(root)
     with serving(root, min_free_mb=1e12) as srv:
-        s, b, _ = post(srv, "/v1/reports/crash", envelope())
-        check("below the free-space floor is 507", s == 507 and b.get("error") == "storage_full",
-              (s, b))
-        check("and nothing was written", reports_under(root, "crash") == [])
+        s, text, _ = post(srv)
+        check("below the free-space floor is 507", s == 507 and text == "storage_full", (s, text))
 
-    with serving(root, max_connections=2, connection_secs=2, socket_secs=30) as srv:
-        idle = [socket.create_connection(srv.server_address) for _ in range(2)]
-        time.sleep(0.3)
-        third = socket.create_connection(srv.server_address, timeout=3)
+    # One sender, trusted by nobody, tries to take every slot.
+    with serving(root, trusted=(), max_connections=32, connections_per_address=4,
+                 header_secs=1, connection_secs=30, socket_secs=30) as srv:
+        held = [socket.create_connection(srv.server_address) for _ in range(4)]
+        time.sleep(0.2)
+        fifth = socket.create_connection(srv.server_address, timeout=3)
         try:
-            third.sendall(b"GET /v1/health HTTP/1.0\r\n\r\n")
-            got = third.recv(100)
+            fifth.sendall(b"GET /v1/health HTTP/1.0\r\n\r\n")
+            got = fifth.recv(100)
         except (ConnectionResetError, BrokenPipeError, socket.timeout):
             got = b""
-        check("past max_connections a connection is closed unserved", got == b"", got)
-        third.close()
-        # The two idle ones are dropped by the wall-clock deadline, not by their socket timeout.
+        fifth.close()
+        check("a fifth connection from the same sender is closed unserved", got == b"", got)
+        check("that sender holds 4 slots, not 32", srv.per_address.get("127.0.0.1") == 4,
+              srv.per_address)
+
         t0 = time.monotonic()
-        for s_ in idle:
+        for s_ in held:
             s_.settimeout(10)
             try:
                 s_.recv(100)
             except (ConnectionResetError, socket.timeout):
                 pass
         waited = time.monotonic() - t0
-        check("a slow client is cut off at connection_secs", waited < 5, round(waited, 2))
-        for s_ in idle:
+        check("idle connections are cut at header_secs, not connection_secs", waited < 4,
+              round(waited, 2))
+        for s_ in held:
             s_.close()
         time.sleep(0.3)
-        s, _, _ = post(srv, "/v1/reports/crash", envelope())
-        check("and the slots come back", s == 201, s)
+        check("the sender's count returns to zero", not srv.per_address, srv.per_address)
+        s, _, _ = post(srv)
+        check("and it can upload again", s == 201, s)
+
+    # A request whose headers are in gets the longer clock for its body.
+    with serving(root, trusted=(), header_secs=1, connection_secs=3, socket_secs=30) as srv:
+        s_ = socket.create_connection(srv.server_address, timeout=10)
+        h = headers()
+        s_.sendall(("POST /v1/reports/crash HTTP/1.0\r\nContent-Length: 1000\r\n"
+                    + "".join(f"{k}: {v}\r\n" for k, v in h.items()) + "\r\n").encode()
+                   + b"PK\x03\x04")
+        time.sleep(1.8)          # past header_secs, inside connection_secs
+        try:
+            s_.sendall(b"\0" * 10)
+            alive = True
+        except OSError:
+            alive = False
+        t0 = time.monotonic()
+        try:
+            s_.recv(100)
+        except (ConnectionResetError, socket.timeout):
+            pass
+        check("a body in progress outlives header_secs", alive)
+        check("and is still cut at connection_secs", time.monotonic() - t0 < 3)
+        s_.close()
+
+    with serving(root, trusted=(), connects_per_address_per_hour=1, connect_burst=3,
+                 header_secs=2) as srv:
+        codes = []
+        for _ in range(5):
+            try:
+                codes.append(post(srv)[0])
+            except (ConnectionError, http.client.HTTPException, OSError):
+                codes.append("closed")
+        check("past its connection burst a sender is closed at accept",
+              codes[:3] == [201, 201, 201] and codes[3:] == ["closed", "closed"], codes)
+
+    j = ffintake.Journal(per_minute=3, clock=lambda: 0.0)
+    out = io.StringIO()
+    with contextlib.redirect_stdout(out):
+        for i in range(10):
+            j(f"refused {i}")
+        j("stored x", always=True)
+    lines = out.getvalue().splitlines()
+    check("the journal drops refusals past its budget", sum("refused" in x for x in lines) == 3,
+          lines)
+    check("but never a stored report, and it says how many it dropped",
+          any("stored x" in x for x in lines) and any("log_suppressed count=7" in x for x in lines),
+          lines)
 
 
 def test_storage(tmp):
@@ -435,25 +449,32 @@ def test_storage(tmp):
     check("address hash is keyed and short",
           again.address_hash("1.2.3.4") != hashlib.sha256(b"1.2.3.4").hexdigest()[:16]
           and len(again.address_hash("1.2.3.4")) == 16)
-    # _write_new must not follow a planted symlink.
     target = os.path.join(tmp, "victim")
     open(target, "w").write("keep")
     link = os.path.join(root, "planted")
     os.symlink(target, link)
     try:
-        ffintake._write_new(link, b"overwrite")
+        os.close(ffintake._create(link))
         wrote = True
     except OSError:
         wrote = False
-    check("writing never follows a symlink", not wrote and open(target).read() == "keep")
-    check("stored_name keeps nothing unsafe",
-          ffintake.stored_name(1, "..") == "01-file"
-          and ffintake.stored_name(2, "a/b\\c") == "02-c"
-          and ffintake.stored_name(3, "x" * 500) == "03-" + "x" * 80)
+    check("creating a file never follows a symlink", not wrote and open(target).read() == "keep")
     check("address_key folds IPv6 to /64 and unmaps v4",
           ffintake.address_key("2001:db8::1") == ffintake.address_key("2001:db8::ffff")
           and ffintake.address_key("::ffff:10.0.0.1") == "10.0.0.1"
           and ffintake.address_key("junk") == "invalid")
+
+    # A report that fails mid-body leaves nothing behind.
+    def broken():
+        yield b"PK\x03\x04"
+        raise ffintake.Refused(400, "truncated_body")
+    try:
+        store.receive("crash", {"report_id": str(uuid.uuid4())}, {}, broken())
+        raised = False
+    except ffintake.Refused:
+        raised = True
+    check("a body that fails partway is refused and its stage removed",
+          raised and os.listdir(store.incoming) == ["fresh"], os.listdir(store.incoming))
 
 
 def openssl(*args, data=None):
@@ -487,9 +508,8 @@ def test_tls(tmp):
     root = os.path.join(tmp, "tls")
     os.mkdir(root)
     ctx = ffintake.make_ssl_context(cert, key)
-    with serving(root, ssl_context=ctx, connection_secs=2, socket_secs=30) as srv:
+    with serving(root, ssl_context=ctx, header_secs=2, socket_secs=30) as srv:
         port = srv.server_address[1]
-        # A client that pins, the way the game will: no CA, no hostname, compare the key.
         client = ssl.SSLContext(ssl.PROTOCOL_TLS_CLIENT)
         client.check_hostname = False
         client.verify_mode = ssl.CERT_NONE
@@ -497,11 +517,9 @@ def test_tls(tmp):
         # after this would wait for it.
         silent = socket.create_connection(("127.0.0.1", port))
         conn = http.client.HTTPSConnection("127.0.0.1", port, context=client, timeout=5)
-        body = json.dumps(envelope()).encode()
         conn.connect()
         peer = conn.sock.getpeercert(binary_form=True)
-        conn.request("POST", "/v1/reports/crash", body=body,
-                     headers={"Content-Type": "application/json"})
+        conn.request("POST", "/v1/reports/crash", body=make_zip(), headers=headers())
         r = conn.getresponse()
         check("an upload over TLS is stored, with a silent connection open alongside",
               r.status == 201, r.status)
@@ -525,11 +543,8 @@ def test_tls(tmp):
             silent.recv(10)
         except (ConnectionResetError, socket.timeout):
             pass
-        check("a stalled handshake is cut at connection_secs", time.monotonic() - t0 < 5)
+        check("a stalled handshake is cut at header_secs", time.monotonic() - t0 < 4)
         silent.close()
-
-
-MIB = ffintake.MIB
 
 
 def main():
@@ -538,7 +553,7 @@ def main():
         test_happy_path(tmp)
         test_refusals(tmp)
         test_rate_limits(tmp)
-        test_capacity(tmp)
+        test_connections(tmp)
         test_storage(tmp)
         test_tls(tmp)
     finally:
