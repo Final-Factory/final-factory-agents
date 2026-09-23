@@ -52,7 +52,9 @@ Windows build on BEAST) at the same source sha.
 1. **Players.** If code changed since the last sitting, rebuild both (editor-ops / 074 plan recipe):
    Mac in-editor `BuildPipeline.BuildPlayer` (Development) **after force-reimporting
    `Assets/Scenes/main/EntitySubScene.unity`** — otherwise the build "succeeds" with only
-   `scene_info.bin` under EntityScenes and the host hangs at the title menu; Windows via Git-bundle
+   `scene_info.bin` under EntityScenes and the host hangs at the title menu. Do the reimport and the
+   `BuildPlayer` in SEPARATE editor calls: in ONE `execute_code` call the build races the entity bake and
+   still ships only `scene_info.bin` (2026-09-23 MP beta build, first attempt); Windows via Git-bundle
    sync + `build-win-<tag>.sh`. Verify: `.entityheader` + `.0.entities` present on both, and
    `python3 <skill>/scripts/symcheck.py <FFSpaghetti.dll> <new symbol>` equal on both. Mirror the
    Mac player to M3 with `rsync -ac --link-dest=<prev player>/ --rsync-path='ulimit -n 8192; rsync'`
