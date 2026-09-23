@@ -43,7 +43,9 @@ Agents also SEE the game: every peer runs windowed and screenshots regularly (st
 `E=/Users/benryding/nevergames/ff-audit-artifacts/074-20260921` (override with `FF_COOP_LAB`).
 M5 = host (this Mac, windowed since h4). M3 = client, `ssh m3`, windowed, same `$E` paths.
 BEAST = Windows client, `ssh -o Hostname=10.0.0.158 beast`, Git bash `"C:\Program Files\Git\bin\bash.exe" -lc`
-(cannot carry `|` — scp a script and run it), lab `C:/Users/rydin/ff-worker`. Clients join the host's
+(cannot carry `|` — scp a script and run it). **BEAST work runs inside an ffsb sandbox** (Ben 2026-09-23;
+project-memory `feedback-beast-work-goes-through-a-sandbox`): `mcp__ffsb__create_sandbox`, then build and run the
+player from `F:/ffsb/<name>/Builds/<leg>/`. `C:/Users/rydin/ff-worker` is the legacy lab — don't add to it. Clients join the host's
 Tailscale address `100.80.111.95`. Matching built players on all three (Mac `.app` on M5 and M3,
 Windows build on BEAST) at the same source sha.
 

@@ -56,6 +56,10 @@ change (e.g. rebaked CJK font atlases under `Assets/UI/Fonts/`) and push — tha
    time).
 
 ## 3. Windows player (on BEAST)
+**Build inside an ffsb sandbox** (Ben 2026-09-23; project-memory `feedback-beast-work-goes-through-a-sandbox`):
+`mcp__ffsb__create_sandbox(base=<the sha's branch>, start_unity=false)`, wait until ready, then run the two
+batchmode steps below with `-projectPath F:\ffsb\<name>` and output under its gitignored `Builds/`. The
+checkout/lab paths below are the pre-sandbox layout, kept only as reference for the step order.
 `ssh -o Hostname=10.0.0.158 beast`; Git bash `"C:\Program Files\Git\bin\bash.exe" -lc` cannot carry `|`
 — scp a script and run it. Checkout `/c/Users/rydin/nevergames/FinalFactory`, lab
 `C:/Users/rydin/ff-worker`.

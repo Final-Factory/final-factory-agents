@@ -11,6 +11,7 @@ worktrees and apply to ALL branches.
 
 ## Standing user feedback (always applies)
 
+- [BEAST work goes through an ffsb sandbox](memories/feedback-beast-work-goes-through-a-sandbox.md) — Ben 2026-09-23: builds, test-leg clients, play clients, editors on BEAST run inside a sandbox from the `ffsb` MCP (`create_sandbox`, root `F:\ffsb\<name>`), never in BEAST's own checkout or `C:/Users/rydin/ff-worker`; proven recipe = leg r2's sandbox build + client
 - [Playtest health, arrival and construction gates](memories/playtest-arrival-and-alive-gates.md) — movement chain completion is estimated pacing, not arrival; verify health, authoritative position, bots and actual construction before dependent actions.
 
 - [Context relay at ~65% and the network-tutorial goal](memories/feedback-context-relay-and-network-tutorial-goal.md) — Ben 2026-09-11/12: at ~65% context run /ff-agents:handoff then open a FRESH Claude Code instance on the same Mac via osascript Terminal + `claude --remote-control "M5 FF<n>" "/ff-agents:resumeFromHandoff"` (numbered in relay order, never compact); standing goal = the Hand-Hold tutorial across the network (M5 windowed HOST, BEAST headless CLIENT) with two agents as real players, zero desyncs, fix as you go; no Lothsahn FYI needed
