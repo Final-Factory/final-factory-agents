@@ -41,7 +41,7 @@ Agents also SEE the game: every peer runs windowed and screenshots regularly (st
 ## Machines and lab
 
 `E=/Users/benryding/nevergames/ff-audit-artifacts/074-20260921` (override with `FF_COOP_LAB`).
-M5 = host (this Mac, batchmode headless). M3 = client, `ssh m3`, windowed, same `$E` paths.
+M5 = host (this Mac, windowed since h4). M3 = client, `ssh m3`, windowed, same `$E` paths.
 BEAST = Windows client, `ssh -o Hostname=10.0.0.158 beast`, Git bash `"C:\Program Files\Git\bin\bash.exe" -lc`
 (cannot carry `|` — scp a script and run it), lab `C:/Users/rydin/ff-worker`. Clients join the host's
 Tailscale address `100.80.111.95`. Matching built players on all three (Mac `.app` on M5 and M3,
