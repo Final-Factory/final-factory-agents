@@ -28,8 +28,11 @@ PartOf=ffbox.target
 After=network.target
 ConditionPathIsDirectory=@INTAKEROOT@
 
-StartLimitIntervalSec=300
-StartLimitBurst=5
+# NO START LIMIT. Anybody on the internet can talk to this process, so a crash they can trigger is
+# a crash they can repeat, and systemd's usual give-up-after-five turned exactly that into an
+# outage that lasted until somebody noticed (the 2026-09-22 audit). It keeps restarting instead,
+# backing off from 2 s to a minute; a start costs a few milliseconds of Python.
+StartLimitIntervalSec=0
 
 [Service]
 Type=simple
@@ -39,7 +42,9 @@ LoadCredential=cert.pem:/etc/ffintake/cert.pem
 LoadCredential=key.pem:/etc/ffintake/key.pem
 ExecStart=/usr/bin/python3 -I -B @INTAKE@ --root @INTAKEROOT@ --host @INTAKEHOST@ --port @INTAKEPORT@ --tls-cert %d/cert.pem --tls-key %d/key.pem @INTAKEARGS@
 Restart=always
-RestartSec=5
+RestartSec=2
+RestartSteps=5
+RestartMaxDelaySec=60
 # Files 0640 and directories 0750, group ffintake, so the owner (a member of that group) can read
 # reports and nobody else on the box can.
 UMask=0027
@@ -80,10 +85,11 @@ SystemCallFilter=@system-service
 SystemCallFilter=~@privileged @resources @mount @debug @cpu-emulation @obsolete @raw-io @reboot @swap @module
 
 # --- what it can cost --------------------------------------------------------------------------
-# Two bodies in memory at once (ffintake's max_bodies), each at most ~48 MB on the wire and a few
-# decoded copies of that, fits well inside this. Past it the kernel kills the process and systemd
-# restarts it, which costs the uploads in flight and nothing else on the box.
-MemoryMax=1G
+# Bodies are streamed to disk through a 1 MB buffer, so memory does not grow with upload size:
+# eight concurrent 45 MB uploads peaked at 26 MB. 32 connections with the 8 KB x 32 header limit
+# add at most 8 MB more. Past this the kernel kills the process and systemd restarts it, which
+# costs the uploads in flight and nothing else on the box.
+MemoryMax=256M
 TasksMax=128
 CPUQuota=100%
 LimitNOFILE=1024

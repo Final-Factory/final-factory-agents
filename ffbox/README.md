@@ -3057,7 +3057,7 @@ sudo sh ffbox/02-zfsSetup.sh             # creates rpool/ff/reports and the ffin
 sudo sh ffbox/06-services.sh --install   # mints the TLS keys, renders and starts ffintake.service
 journalctl -u ffintake -f
 curl -s --cacert /etc/ffintake/cert.pem --resolve ffintake:8790:127.0.0.1 \
-     https://ffintake:8790/v1/health      # {"ok": true, "version": "1"}
+     https://ffintake:8790/v1/health      # ok 2
 python3 ffbox/ffintake.py --pin /etc/ffintake/cert.pem /etc/ffintake/backup-cert.pem
 ```
 
@@ -3095,72 +3095,91 @@ particular no route that reads a report back.
 | Method and path | What it does |
 |---|---|
 | `POST https://<host>:8790/v1/reports/crash` | store a crash report |
-| `POST /v1/reports/desync` | store a multiplayer desync report |
-| `GET /v1/health` | `200 {"ok": true, "version": "1"}` |
+| `POST https://<host>:8790/v1/reports/desync` | store a multiplayer desync report |
+| `GET https://<host>:8790/v1/health` | `200`, body `ok 2` (the protocol version) |
 
-A report is one JSON document, sent with `Content-Type: application/json` and a
-`Content-Length`. Chunked uploads are refused. The body may be gzipped with
-`Content-Encoding: gzip`, which the client should do: logs shrink about tenfold and base64
-compresses back to near its source size.
+**A report is one zip file, sent as the raw request body.** The server never opens it. It checks
+that the first four bytes are a zip header (`PK\x03\x04`), streams the rest to disk, and records
+its size and SHA-256. Everything about the report other than the three headers below goes
+**inside** the zip, for the triage side to read later:
 
-```json
-{
-  "schema": 1,
-  "report_id": "3f1c2a9e-4b7d-4c1e-9a55-0d6f3b2e8c71",
-  "game_version": "0.21.0.23",
-  "platform": "WindowsPlayer",
-  "description": "crashed when I placed a mass driver",
-  "details": { "unity_version": "6000.0.23f1", "tick": 18233, "is_host": true },
-  "files": [
-    { "name": "FinalFactory_RuntimeLog.txt", "content": "<base64>" },
-    { "name": "BugReport_20260922_101500.zip", "content": "<base64>" }
-  ]
-}
+| In the zip | What it is |
+|---|---|
+| `description.txt` | what the player typed, if anything |
+| `details.json` | whatever the game knows: Unity version, desync tick, host or client, lobby size, … |
+| logs, saves, dumps | any files, any names |
+
+That split is the security design, not a convenience. The first version of this protocol put the
+files inside a JSON document, so every byte went through a parser, and an audit showed a 96 KB
+request could make that parser allocate 2.3 GB. Now the only thing a stranger's bytes go through
+is the HTTP header parser. The zip's contents are read later, in a sandboxed container.
+
+```
+POST /v1/reports/crash HTTP/1.1
+Host: <host>:8790
+Content-Type: application/zip
+Content-Length: 25318112
+X-FF-Report-Id: 3f1c2a9e-4b7d-4c1e-9a55-0d6f3b2e8c71
+X-FF-Game-Version: 0.21.0.23
+X-FF-Platform: WindowsPlayer
+
+<the zip, byte for byte>
 ```
 
-| Field | Rule |
+| Header | Rule |
 |---|---|
-| `schema` | required, integer, `1` |
-| `report_id` | required. A random UUID in canonical lowercase form, minted by the client when the report is created and **reused on every retry**. A second upload with the same id is answered `200` with the first one's id and stores nothing. |
-| `game_version` | required. 1 to 64 characters from `A-Z a-z 0-9 . _ + -`, starting with a letter or digit. `FFVersion.FinalFactoryVersion.ToString()` fits. |
-| `platform` | required, same shape. `Application.platform.ToString()` fits. |
-| `description` | optional, up to 4000 characters of whatever the player typed |
-| `details` | optional. Up to 32 keys matching `[a-z][a-z0-9_]{0,39}`, each a string (at most 256 characters), an integer or a boolean. No floats, no nesting. This is where the desync tick, host/client role, lobby size, Unity version and similar belong, so adding one needs no server change. |
-| `files` | required, 1 to 8 entries of `{"name", "content"}`. `name` is 1 to 128 characters and is only a label. `content` is standard base64, at most 40 MB decoded. An empty file is allowed. |
+| `Content-Type` | exactly `application/zip` |
+| `Content-Length` | required, at most 48 MB. Chunked uploads and `Content-Encoding` are refused; a zip is already compressed. |
+| `X-FF-Report-Id` | a random UUID in canonical lowercase form, minted when the report is created and **reused on every retry**. A second upload with the same id stores nothing and answers `200` with the first one's id. |
+| `X-FF-Game-Version` | 1 to 64 characters from `A-Z a-z 0-9 . _ + -`, starting with a letter or digit. `FFVersion.FinalFactoryVersion.ToString()` fits. |
+| `X-FF-Platform` | the same shape. `Application.platform.ToString()` fits. |
 
-Any key not in this table is refused rather than ignored, so a typo in the client shows up in
-testing and does not silently lose data.
+Each `X-FF-` header must appear exactly once. Header lines are capped at 8 KB and there may be at
+most 32 of them.
 
-Size limits: the body on the wire may be at most 48 MB, the whole report decoded at most 96 MB,
-and one file at most 40 MB. A 25 MB save zip is about 34 MB once base64'd, so it fits.
-
-Every response is a small JSON object:
+**The response is one line of plain text**: our id on success, a fixed code on failure. The
+status code is what the game acts on.
 
 | Status | Body | Client should |
 |---|---|---|
-| `201` | `{"id": "20260922T101500Z-crash-3a9f01c2d4"}` | forget the report. The id is ours and can be shown to the player so they can quote it. |
-| `200` | `{"id": "…", "duplicate": true}` | the same: an earlier attempt already arrived |
-| `400` | `{"error": "bad_json"}` and similar | not retry. The code names the field (`bad_report_id`, `bad_game_version`, `bad_files`, `bad_file_content`, `bad_details`, `unsupported_schema`, `bad_gzip`, …). This is a client bug. |
-| `404`, `405`, `411`, `413`, `415` | `{"error": …}` | not retry; also a client bug or an oversized report |
-| `429` | `{"error": "rate_limited"}` with `Retry-After` | wait at least `Retry-After` seconds |
-| `503`, `507` | `busy`, `storage_error`, `storage_full`, with `Retry-After` | retry later |
+| `201` | `20260922T101500Z-crash-3a9f01c2d4` | delete its copy. The id is ours and can be shown to the player so they can quote it. |
+| `200` | the same id | the same: an earlier attempt already arrived |
+| `400` | `bad_report_id`, `bad_game_version`, `bad_platform`, `not_zip`, `truncated_body`, `bad_request` | not retry; this is a client bug |
+| `404`, `405`, `411`, `413`, `415` | `not_found`, `method_not_allowed`, `length_required`, `body_too_large`, `unsupported_media_type`, `unsupported_encoding` | not retry; a client bug or a report too large to send |
+| `429` | `rate_limited`, with `Retry-After` | wait at least `Retry-After` seconds |
+| `503`, `507` | `storage_error`, `storage_full`, with `Retry-After` | retry later |
 | connection reset or timeout | | retry later with backoff |
 
-A request that is refused before its body is read (a declared size over the limit, a rate
-limit, the wrong content type) gets its answer and then a closed connection. A client still
-sending a large body may see that as a reset instead of the status. So treat any network error
-as "retry later". Keep the report on disk, retry at the next start with exponential backoff, and
-drop it after a few days.
+A request refused before its body is read (the size, the rate limit, the headers) gets its answer
+and then a closed connection, and a client still sending a large body may see only the reset. So
+treat any network error as "retry later". Keep the zip on disk, retry at the next start with
+exponential backoff, and drop it after a few days.
+
+In Unity:
+
+```csharp
+var request = new UnityWebRequest(url + "/v1/reports/crash", "POST")
+{
+    uploadHandler = new UploadHandlerRaw(File.ReadAllBytes(zipPath)) { contentType = "application/zip" },
+    downloadHandler = new DownloadHandlerBuffer(),
+    certificateHandler = new IntakeCertificateHandler(),     // see "Pinning in the game"
+};
+request.SetRequestHeader("X-FF-Report-Id", reportId);        // Guid.NewGuid().ToString(), saved with the zip
+request.SetRequestHeader("X-FF-Game-Version", FFVersion.FinalFactoryVersion.ToString());
+request.SetRequestHeader("X-FF-Platform", Application.platform.ToString());
+```
+
+`Guid.ToString()` gives exactly the canonical lowercase form the server wants.
 
 A test upload by hand:
 
 ```bash
-b64=$(base64 -w0 < Player.log)
-printf '{"schema":1,"report_id":"%s","game_version":"0.21.0.23","platform":"LinuxPlayer","files":[{"name":"Player.log","content":"%s"}]}' \
-  "$(cat /proc/sys/kernel/random/uuid)" "$b64" | gzip \
-  | curl -s -H 'Content-Type: application/json' -H 'Content-Encoding: gzip' \
-         --cacert /etc/ffintake/cert.pem --resolve ffintake:8790:127.0.0.1 \
-         --data-binary @- https://ffintake:8790/v1/reports/crash
+zip -j /tmp/report.zip Player.log
+curl -s --cacert /etc/ffintake/cert.pem --resolve ffintake:8790:127.0.0.1 \
+     -H 'Content-Type: application/zip' \
+     -H "X-FF-Report-Id: $(cat /proc/sys/kernel/random/uuid)" \
+     -H 'X-FF-Game-Version: 0.21.0.23' -H 'X-FF-Platform: LinuxPlayer' \
+     --data-binary @/tmp/report.zip https://ffintake:8790/v1/reports/crash
 ```
 
 From another machine, pin the key instead of trusting the file:
@@ -3211,34 +3230,29 @@ before shipping, and once against a wrong pin to see it refuse.
 ```
 /opt/ffreports/
   crash/2026-09/20260922T101500Z-crash-3a9f01c2d4/
-    manifest.json
-    files/01-FinalFactory_RuntimeLog.txt
-    files/02-BugReport_20260922_101500.zip
+    manifest.json      written by ffintake
+    report.zip         exactly the bytes the client sent, never opened
   desync/2026-09/…
   .incoming/     reports being written; a finished one is renamed into place in one step
-  .ids/          client report_id -> our id, for deduplication
+  .ids/          client report id -> our id, for deduplication
   .salt          the key for sender hashes (0600)
 ```
 
 A report appears under `crash/` or `desync/` complete or not at all, so a later watcher can act
-on any directory it sees. Every name on that path is chosen by `ffintake`. A file's stored name
-is its position plus whatever of the client's name survives `[A-Za-z0-9._-]` (so
-`../../etc/passwd` becomes `02-passwd`). The client's exact name is kept only as a string in the
-manifest:
+on any directory it sees. Every name on that path is chosen by `ffintake`. The manifest holds
+nothing but values the server checked or computed itself:
 
 ```json
 {
-  "manifest": 1,
+  "manifest": 2,
   "id": "20260922T101500Z-crash-3a9f01c2d4",
   "kind": "crash",
   "trust": "untrusted",
   "received_at": "2026-09-22T10:15:00+00:00",
   "sender": { "address_hash": "3ace6eea57acd768", "user_agent": "UnityPlayer/6000.0.23f1",
-              "content_encoding": "gzip", "wire_bytes": 1840233 },
-  "report": { "report_id": "…", "game_version": "0.21.0.23", "platform": "WindowsPlayer",
-              "description": "…", "details": { … }, "schema": 1 },
-  "files": [ { "stored": "files/01-FinalFactory_RuntimeLog.txt",
-               "name": "FinalFactory_RuntimeLog.txt", "bytes": 182044, "sha256": "…" } ]
+              "wire_bytes": 25318112 },
+  "report": { "report_id": "3f1c2a9e-…", "game_version": "0.21.0.23", "platform": "WindowsPlayer" },
+  "file": { "stored": "report.zip", "bytes": 25318112, "sha256": "…" }
 }
 ```
 
@@ -3259,19 +3273,20 @@ What an attacker can send, and what stops it doing damage:
 
 | Threat | Defence |
 |---|---|
-| A bug in `ffintake` itself (the parser, the HTTP server) | It runs as `ffintake`, which owns nothing but the reports directory. The unit gives it no `EnvironmentFile` (so no `secrets.env`), an empty `/home` and `/opt` with only its own script (read-only) and the reports directory bound back in, no capabilities, `NoNewPrivileges`, a syscall allowlist, no `AF_UNIX` sockets (so the Docker socket is unreachable), private `/tmp` and devices. `systemd-analyze security` rates it 1.3; `ffweb` rates 9.0. It imports nothing from the rest of ffbox. |
+| A bug in `ffintake` itself (the HTTP server, the header checks) | It runs as `ffintake`, which owns nothing but the reports directory. The unit gives it no `EnvironmentFile` (so no `secrets.env`), an empty `/home` and `/opt` with only its own script (read-only) and the reports directory bound back in, no capabilities, `NoNewPrivileges`, a syscall allowlist, no `AF_UNIX` sockets (so the Docker socket is unreachable), private `/tmp` and devices. `systemd-analyze security` rates it 1.3; `ffweb` rates 9.0. It imports nothing from the rest of ffbox. |
 | Using the box as a file host, or storing a page that runs script in a reader's browser | There is no read route. A response contains only a server-minted id or a fixed error code. |
-| Path traversal through a file name or report id | Every path component is minted by `ffintake`. `report_id` must be a canonical UUID. Files are created with `O_EXCL | O_NOFOLLOW`, so nothing can be written through a planted symlink. |
+| Path traversal through a report id or a name inside the zip | Every path component is minted by `ffintake`. `X-FF-Report-Id` must be a canonical UUID. Names inside the zip are never looked at. Files are created with `O_EXCL | O_NOFOLLOW`, so nothing can be written through a planted symlink. |
 | Filling the disk | A ZFS quota on its own dataset, a free-space floor checked before the body is read, and rate limits. A full dataset stops reports and nothing else. |
-| Exhausting memory | The declared size is checked before reading. Gzip is inflated in bounded steps and stops at 96 MB, so a gzip bomb costs its compressed size. A file's size is checked from its base64 length before decoding. At most two bodies are in memory at once, and the unit's `MemoryMax=1G` is measured to hold that with room to spare (three simultaneous 45 MB uploads peaked at 447 MB). |
-| Holding connections open (slowloris) | 32 connections at most, the rest closed unserved; 20 s per read and 180 s per connection, enforced by a timer that shuts the socket. One request per connection. |
-| Flooding | A token bucket per sender (12 an hour, burst of 4, an IPv6 `/64` counts as one sender) and one for everybody (600 an hour). The per-sender table is capped at 50,000 entries, so spraying addresses cannot grow memory. `CPUQuota=100%` caps the CPU. |
+| Exhausting memory, including by parser amplification | Nothing but the headers is parsed. No JSON, no base64, no decompression. The body is streamed to disk through a 1 MB buffer, so memory does not grow with upload size: eight simultaneous 45 MB uploads peaked at 26 MB. Headers are capped at 32 lines of 8 KB. The unit's `MemoryMax=256M` is the backstop. |
+| Holding connections open (slowloris), or one sender taking every slot | At most 4 connections per sender and 32 in total, the rest closed at accept without a thread. A connection must finish its TLS handshake and headers within 15 s; only then does it get 180 s for the body. 20 s per read. All enforced by a timer that shuts the socket. One request per connection. |
+| Flooding | Reports: a token bucket per sender (12 an hour, burst of 4, an IPv6 `/64` counts as one sender) and one for everybody (600 an hour). Connections: 10 new ones a minute per sender (burst 10) and 10 a second overall, charged at accept, before the RSA handshake. The per-sender tables are capped at 50,000 entries, so spraying addresses cannot grow memory. `CPUQuota=100%` caps the CPU. |
 | Spoofing `X-Forwarded-For` to dodge the limit | The header is believed only from `trusted_proxies`, and then only its last entry, which is the one the proxy on this box appended. |
-| Another website making visitors' browsers post here | Only `application/json` is accepted, which a browser cannot send cross-site without a CORS preflight, and `OPTIONS` gets `405` with no CORS headers. |
+| Another website making visitors' browsers post here | Only `application/zip` is accepted, which a browser cannot send cross-site without a CORS preflight, and `OPTIONS` gets `405` with no CORS headers. |
 | Request smuggling through a front proxy | Chunked bodies and duplicate `Content-Length` headers are refused. |
-| Forging journal lines | The journal records server-chosen codes, the sender hash and sizes. The request line, headers and body never reach it. |
-| Reading or tampering with reports in transit, or a client being sent to an impostor | HTTPS only, TLS 1.2 or later, with the game pinning the server key. The handshake runs on the worker thread under the connection deadline, so a client that connects and says nothing holds one slot for at most 180 s and never blocks new connections. The private key is root-only on disk and reaches the service through `LoadCredential`. |
-| Malicious content (malware, a zip bomb, text written to manipulate an agent) | `ffintake` stores bytes and never opens, unpacks or runs them. The dataset is `exec=off`. Reading them safely is the consumer's job; see the rules below. |
+| Forging or flooding journal lines | The journal records server-chosen codes, the sender hash and sizes; the request line, headers and body never reach it. Refusals share a budget of 120 lines a minute and the overflow is counted in one line, so a flood cannot bury the lines worth reading. Stored reports are always logged. |
+| Crashing it repeatedly to keep it down | Nothing in a request is parsed but headers, so there is no known crash to repeat. If one turns up, the unit has no start limit: it restarts with backoff from 2 s to a minute, forever, rather than giving up after five as it did before the audit. |
+| Reading or tampering with reports in transit, or a client being sent to an impostor | HTTPS only, TLS 1.2 or later, with the game pinning the server key. The handshake runs on the worker thread under the 15 s header deadline, so a client that connects and says nothing holds one of its sender's four slots briefly and never blocks new connections. The private key is root-only on disk and reaches the service through `LoadCredential`. |
+| Malicious content (malware, a zip bomb, `../` entries, text written to manipulate an agent) | `ffintake` stores the zip and never opens, unpacks or runs it. The dataset is `exec=off`. Reading them safely is the consumer's job; see the rules below. |
 
 **What this does not do.** It cannot tell a real crash from a made-up one. Anyone can upload
 plausible-looking junk within the rate limits, and a determined attacker with many addresses can
@@ -3326,13 +3341,15 @@ built:
 ### Tests
 
 `python3 ffbox/test_ffintake.py` (also run by `sh ffbox/test.sh`) starts the real server on a
-loopback port and covers the envelope rules, every refusal code, the traversal and symlink cases,
-the gzip bomb, duplicate lengths and chunked bodies, rate limiting including `X-Forwarded-For`
-spoofing and IPv6 `/64` folding, the connection cap and deadline, the free-space floor, and that
-no reply or journal line ever contains client text. For TLS it mints a certificate with the same
+loopback port and covers the header rules, every refusal code, byte-for-byte storage, the
+symlink case, duplicate lengths and chunked bodies, the header size caps, rate limiting including
+`X-Forwarded-For` spoofing and IPv6 `/64` folding, the connection caps and deadlines, the journal
+budget, the free-space floor, and that no reply or journal line ever contains client text. For TLS it mints a certificate with the same
 openssl command `06-services.sh` uses, checks all three pins against openssl's own output,
 uploads through a pinning client while a silent connection is held open, and checks that a stalled
-handshake is cut at the deadline. The sandbox in `ffintake.service` is not
+handshake is cut at the deadline. The audit's two findings each have cases: JSON posing as a zip is
+refused as `not_zip`, one sender cannot hold more than four slots, and an idle connection is cut
+at the header deadline while a body in progress is not. The sandbox in `ffintake.service` is not
 covered by those tests. After installing it, check it with
 `systemd-analyze security ffintake.service` and one upload by hand.
 
