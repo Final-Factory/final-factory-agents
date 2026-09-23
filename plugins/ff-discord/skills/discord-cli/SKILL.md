@@ -131,7 +131,7 @@ the bot being down to the person who sent it.
 The `discord` section of `~/.config/ffbox/config.json`, mode 0600, never in a repo.
 `FFBOX_CONFIG_DIR` relocates the file, which is how a container gets its own copy.
 
-**`ffbox/config.md` is the reference for the whole file** — every section, every key, seeded
+**`ffbox/config.md` (in the Final-Factory/ffbox repo) is the reference for the whole file** — every section, every key, seeded
 or not, with defaults and examples. The file itself carries values only: there is no generated
 `_help` block in it, and `05-discord-setup.sh` deletes one it finds left over. What follows
 here is the part this CLI reads.

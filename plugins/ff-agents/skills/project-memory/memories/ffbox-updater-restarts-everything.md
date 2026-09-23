@@ -13,8 +13,11 @@ escapes this rule — it is the second trigger, described below.**
 
 **What the updater actually does**, from `ffbox/update_ffbox.sh`:
 
-- Fetches and fast-forwards the checkout it runs from — on the build server that is
-  `/opt/final-factory-agents`, which is NOT wherever you have been editing.
+- Fetches and fast-forwards the checkout it runs from, which is NOT wherever you have been
+  editing. Since 2026-09-22 ffbox is its own repo (Final-Factory/ffbox), so that is the ffbox
+  checkout, AND it fetches and fast-forwards the final-factory-agents checkout the box reads its
+  skills from (`agents_fetch`/`agents_merge`). On a box not yet moved over, both are still the one
+  combined checkout at `/opt/final-factory-agents`.
 - Runs `sh ffbox/setup.sh --non-interactive`, whose stage 5 is `registerAgents.sh`. **That is
   how a plugin version bump reaches the box.** setup.sh's own comment says so. There is no
   separate "install the plugins" step to remember, and deliberately so: the updater used to

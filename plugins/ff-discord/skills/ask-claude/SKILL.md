@@ -11,7 +11,7 @@ the rest to a human. One pass per invocation, idempotent.
 ## Who normally runs this
 
 On a machine with ffbox, **ffwatch does** — the host daemon in
-`ffbox/ffwatch.py` (final-factory-agents repo). It tails the same
+`ffbox/ffwatch.py` (Final-Factory/ffbox repo). It tails the same
 `events.jsonl` doorbell, keys a conversation on the thread or reply chain, and runs each turn
 in a disposable container whose capabilities are named on the command line by the host. What
 it gives you that a standing Claude session cannot: a thread becomes one multi-turn
@@ -28,7 +28,7 @@ Nothing in this file changes for that. ffwatch loads these same skills and agent
 
 The two modes below are the fallbacks, for a machine with no ffbox (BEAST, Windows) or a box
 where ffwatch is stopped. Before starting one, check whether ffwatch is already running —
-`python3 ffbox/ffwatch.py status`, or `systemctl --user status ffwatch` — because two things
+`python3 ffbox/ffwatch.py status` in the ffbox checkout, or `systemctl --user status ffwatch` — because two things
 answering the same channel will both answer every question.
 
 ## Fallback A — standing watch, on a machine without ffbox
