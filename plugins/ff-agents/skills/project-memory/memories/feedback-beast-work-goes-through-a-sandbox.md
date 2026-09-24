@@ -81,6 +81,18 @@ Ad-hoc work in the old checkout collides with it and is invisible to it.
      (headless `-batchmode -nographics`, config copied beside the exe); pid from `tasklist`.
   A windowed honest-coop client still has to start in rydin's desktop session (see honest-coop-play);
   only the build/run location changes.
+- **Moving an existing sandbox to a newer commit: bundle it, never `git fetch` over ssh.** An
+  ssh-run `git fetch origin` in the sandbox has no GitHub credentials (session 0: "Unable to persist
+  credentials with the 'wincredman' credential store") and then hangs forever at a `git-askpass`
+  username prompt. On M5: `git branch -f tmp <sha>; git bundle create x.bundle <sandbox-HEAD>..tmp`,
+  scp it into `Builds/`, then in the sandbox `git fetch <bundle> refs/heads/tmp:refs/remotes/origin/x
+  && git merge --ff-only refs/remotes/origin/x`. Kill only YOUR hung fetch, identified by its
+  command line (`Get-CimInstance Win32_Process` from a scp'd .ps1 — inline quoting breaks over ssh).
+  A rebuild in an already-built sandbox is fast: prepare ~40 s + build ~2.5 min (r3, 2026-09-24).
+- **Counting lines in a multi-GB BEAST player log:** never `find /c` or `findstr` over ssh. `findstr`
+  aborts on long lines ("Line N is too long"), and `find /c` stalled for 10+ minutes AND kept the
+  log locked after the M5 side was stopped, so the delete failed. Run `LC_ALL=C grep -E … | cut`
+  from a scp'd Git-bash script instead (seconds), and kill any leftover `find.exe` by command line.
 - Sandbox worker agents (`start_agent`) did not have the Unity MCP tools as of 2026-09-23, so the
   M5 driver runs BEAST builds and players itself over ssh inside the sandbox folder.
 

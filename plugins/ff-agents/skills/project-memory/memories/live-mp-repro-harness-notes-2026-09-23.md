@@ -48,3 +48,14 @@ description: "Operational facts from the overnight three-peer live-MP repro lane
   - Tell: a bystander logs `[Reconnect] WatchdogTripped appliedAgeSeconds=5.1` about 5 s after
     `NotifyFlowControlWaitingRpc waiting=True,peers=<other peer>`, typically 60-90 hb after that peer was served.
   - The host then sees `SessionEnded:Superseded` and a reclaim. Watch for it as a regression.
+- **Relay + send shaping together (legs r2/r3, 2026-09-24) — clean.** All three peers log
+  `network-shaping-applied` after the Relay join. Before `3938c0cb1` a `net.rejoin` silently dropped the
+  rejoiner's shaping (Shutdown disposes the transport driver); the fix re-applies it, and each rejoin now logs a
+  SECOND `network-shaping-applied` — count them per client to confirm.
+- **A rejoin gives the client a NEW clientId.** A `desync.forceresync|<id>` aimed at its old id is a silent
+  no-op: r1-r3's post-rejoin serves did nothing. Read the new id first (the rejoiner's `status client-ready:
+  localClientId=N`, or the host's connect lines), and check a `DesyncRecoveryBegin … clientId=N` follows every
+  forced serve.
+- **Leg monitor pipelines: every stage must flush per line.** `grep --line-buffered | sed -u | cut -c…`
+  delivered NOTHING for a whole leg because `cut` block-buffers. Drop `cut` (or use `awk '{print
+  substr($0,1,200); fflush()}'`), and prove the monitor emits one known line before trusting its silence.
