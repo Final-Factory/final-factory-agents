@@ -52,10 +52,14 @@ description: "Operational facts from the overnight three-peer live-MP repro lane
   `network-shaping-applied` after the Relay join. Before `3938c0cb1` a `net.rejoin` silently dropped the
   rejoiner's shaping (Shutdown disposes the transport driver); the fix re-applies it, and each rejoin now logs a
   SECOND `network-shaping-applied` — count them per client to confirm.
-- **A rejoin gives the client a NEW clientId.** A `desync.forceresync|<id>` aimed at its old id is a silent
-  no-op: r1-r3's post-rejoin serves did nothing. Read the new id first (the rejoiner's `status client-ready:
-  localClientId=N`, or the host's connect lines), and check a `DesyncRecoveryBegin … clientId=N` follows every
-  forced serve.
+- **A rejoin gives the client a NEW clientId.** A `desync.forceresync|<id>` aimed at its old id was a silent
+  no-op in players before `2a3645f4e` (r1-r3's post-rejoin serves did nothing); from `2a3645f4e` on the command
+  throws and names the connected ids. `status client-ready` does NOT help: it is logged once per process
+  (`LocalMultiplayerAutomationBootstrap.cs:803-804`), never after `net.rejoin`. Read the rejoiner's id from its
+  own `GET snapshot/session` (the `data.peers` row with `isLocal: true`), polling until it differs from the old
+  id, and check that a new host `DesyncRecoveryBegin … clientId=N` follows every forced serve. Helpers
+  `localid`/`newid`/`serve` in the 074 lab `$E/r4-drive.sh`; leg r4 (2026-09-24) confirmed 8/8 serves, 4 of them
+  after a rejoin, with 0 verdicts and 0 watchdog trips.
 - **Leg monitor pipelines: every stage must flush per line.** `grep --line-buffered | sed -u | cut -c…`
   delivered NOTHING for a whole leg because `cut` block-buffers. Drop `cut` (or use `awk '{print
   substr($0,1,200); fflush()}'`), and prove the monitor emits one known line before trusting its silence.
