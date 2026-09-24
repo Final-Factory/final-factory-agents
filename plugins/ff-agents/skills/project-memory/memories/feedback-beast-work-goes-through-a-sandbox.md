@@ -1,6 +1,6 @@
 ---
 name: feedback-beast-work-goes-through-a-sandbox
-description: Ben 2026-09-23 — any work on BEAST (builds, test-leg clients, play agents, editors) runs inside an ffsb sandbox created through the ffsb MCP, never in BEAST's own checkout or C:/Users/rydin/ff-worker
+description: Ben 2026-09-23 — any work on BEAST (builds, test-leg clients, play agents, editors) runs inside an ffsb sandbox, never in BEAST's own checkout or C:/Users/rydin/ff-worker; sandboxes are a standing pool of 4 that new work REUSES by switching branch (never create per feature, never tear down)
 metadata:
   type: feedback
 ---
@@ -15,10 +15,33 @@ editors and agents: it gives each job its own git worktree + branch + warm Libra
 editor/agent caps (`system_status`: 3 editors, 6 agents), and shows everything on one dashboard.
 Ad-hoc work in the old checkout collides with it and is invisible to it.
 
+**Standing pool — reuse, don't churn (Ben, 2026-09-23, binding):**
+- Keep **4 sandboxes up at all times** (as of 2026-09-23: `mp-r2`, `shader-blackhole`, `agent-mcp`,
+  `blackhole-master`). Names are historical; any idle one can take any work.
+- Never create a sandbox per feature and never tear one down when work finishes. **Never
+  `delete_sandbox` unless Ben explicitly asked** (the tool itself requires `ben_asked: true`).
+- New work (feature, fix, playtest, anything) goes to a pool sandbox with **no running agent**
+  (`list_sandboxes`), preferring one whose editor is already up if the task needs Unity (cap: 3
+  editors, 6 agents). Only if all are busy, **ask Ben first**, then create one.
+- **Why:** a fresh sandbox's first Unity import takes very long; an existing one's Library and editor
+  are warm, and a branch switch reimports only what differs.
+- **Switching a sandbox is the worker's first step:**
+  1. `git status` must be clean. If not, STOP and ask Ben — never stash or discard earlier work.
+  2. Push the old branch if it has unpushed commits.
+  3. `git fetch`, then `git switch <existing-branch>` or `git switch -c NNN-short-name origin/develop`.
+     A branch can be checked out in only one worktree at a time.
+  4. Wait for the editor to finish reimport + compile before using it.
+- The dashboard's branch/purpose label can go stale after a switch; `git` in the worktree is the truth.
+- **Waiting inside a worker:** ONE foreground Bash polling loop (up to ~10 min) on a real condition,
+  e.g. `for i in $(seq 1 30); do grep -q "Reloading assemblies after successful compilation"
+  Logs/sandbox-editor.log && break; sleep 20; done`, or poll `mcp__sandbox__unity` status. A
+  standalone `sleep` is blocked, and Monitor/background tasks never wake a worker whose turn ended.
+
 **How to apply:**
-- Tools: `mcp__ffsb__*` (load via ToolSearch `select:`). `list_sandboxes` first — reuse one whose
-  purpose matches; else `create_sandbox(name, purpose, base=origin/develop or the exact sha's
-  branch, seed_library=true, start_unity=<only if an editor is needed>)`. It returns at once;
+- Tools: `mcp__ffsb__*` (load via ToolSearch `select:`). `list_sandboxes` first and reuse an idle
+  pool sandbox (above). Creating one (only with Ben's OK): `create_sandbox(name, purpose,
+  base=origin/develop or the exact sha's branch, seed_library=true, start_unity=<only if an editor
+  is needed>)`. It returns at once;
   provisioning (checkout, then a ~60+ GB warm Library copy, several minutes) runs in the
   background — wait for `list_sandboxes` to show it ready before a batchmode build.
 - **Sandbox root is `F:\ffsb\<name>`** (bash `/f/ffsb/<name>`), NOT `C:\ffsb` as the orchestrator
@@ -48,7 +71,6 @@ Ad-hoc work in the old checkout collides with it and is invisible to it.
   only the build/run location changes.
 - Sandbox worker agents (`start_agent`) did not have the Unity MCP tools as of 2026-09-23, so the
   M5 driver runs BEAST builds and players itself over ssh inside the sandbox folder.
-- Never `delete_sandbox` unless Ben asked; the tool itself requires `ben_asked: true`.
 
 Related: [[headless-windows-player-over-ssh-and-placement-route]],
 [[live-mp-repro-harness-notes-2026-09-23]], [[three-peer-lane-recipe-and-traps]].
