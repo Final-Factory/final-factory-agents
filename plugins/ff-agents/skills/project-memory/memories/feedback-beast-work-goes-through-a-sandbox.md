@@ -1,6 +1,6 @@
 ---
 name: feedback-beast-work-goes-through-a-sandbox
-description: Ben 2026-09-23 — any work on BEAST (builds, test-leg clients, play agents, editors) runs inside an ffsb sandbox, never in BEAST's own checkout or C:/Users/rydin/ff-worker; sandboxes are a standing pool of 4 that new work REUSES by switching branch (never create per feature, never tear down)
+description: Ben 2026-09-23 — any work on BEAST (builds, test-leg clients, play agents, editors) runs inside an ffsb sandbox, never in BEAST's own checkout or C:/Users/rydin/ff-worker; sandboxes are a standing pool of 4 that new work REUSES by switching branch (never create per feature, never tear down); mp-r2 is reserved for MP tests; label a sandbox with set_label when taking it, `unused` when done
 metadata:
   type: feedback
 ---
@@ -17,11 +17,18 @@ Ad-hoc work in the old checkout collides with it and is invisible to it.
 
 **Standing pool — reuse, don't churn (Ben, 2026-09-23, binding):**
 - Keep **4 sandboxes up at all times** (as of 2026-09-23: `mp-r2`, `shader-blackhole`, `agent-mcp`,
-  `blackhole-master`). Names are historical; any idle one can take any work.
+  `blackhole-master`).
+- **`mp-r2` is Ben's permanent multiplayer-test sandbox**: reserved for MP testing, never repurposed
+  for other work. The **general pool** is the others (currently `shader-blackhole`, `agent-mcp`,
+  `blackhole-master`); their names are historical and any idle one can take any work.
+- **Labels show Ben what each sandbox is for.** Idle means labelled exactly `unused` AND no running
+  agent. A worker relabels its OWN sandbox with `mcp__sandbox__set_label {purpose}`; the orchestrator
+  (and `mcp__ffsb__*` remote clients) use `set_sandbox_label {sandbox, purpose}`. Either changes the
+  label only, never the folder, worktree, branch or Unity project name.
 - Never create a sandbox per feature and never tear one down when work finishes. **Never
   `delete_sandbox` unless Ben explicitly asked** (the tool itself requires `ben_asked: true`).
-- New work (feature, fix, playtest, anything) goes to a pool sandbox with **no running agent**
-  (`list_sandboxes`), preferring one whose editor is already up if the task needs Unity (cap: 3
+- New work (feature, fix, playtest, anything) goes to a general-pool sandbox with **no running
+  agent** (`list_sandboxes`), preferring ones labelled `unused`, then one whose editor is already up if the task needs Unity (cap: 3
   editors, 6 agents). Only if all are busy, **ask Ben first**, then create one.
 - **Why:** a fresh sandbox's first Unity import takes very long; an existing one's Library and editor
   are warm, and a branch switch reimports only what differs.
@@ -29,9 +36,14 @@ Ad-hoc work in the old checkout collides with it and is invisible to it.
   1. `git status` must be clean. If not, STOP and ask Ben — never stash or discard earlier work.
   2. Push the old branch if it has unpushed commits.
   3. `git fetch`, then `git switch <existing-branch>` or `git switch -c NNN-short-name origin/develop`.
-     A branch can be checked out in only one worktree at a time.
+     A branch can be checked out in only one worktree at a time. **In the same step, set the label**
+     to a short description of the task: `mcp__sandbox__set_label {purpose: "074 T160 Relay join fix"}`.
   4. Wait for the editor to finish reimport + compile before using it.
-- The dashboard's branch/purpose label can go stale after a switch; `git` in the worktree is the truth.
+- **When done with the sandbox** (work pushed, nothing left running), set the label to exactly
+  `unused`: `mcp__sandbox__set_label {purpose: "unused"}`. That is what returns it to the pool.
+- The dashboard's *branch* field can go stale after a switch; `git` in the worktree is the truth.
+- The label tools came with ff-sandboxes commit `dc230a0` (branch `sandbox-labels`, 2026-09-23); a server not yet updated
+  and restarted lacks them. If `set_label` is missing, say so in your report rather than skipping.
 - **Waiting inside a worker:** ONE foreground Bash polling loop (up to ~10 min) on a real condition,
   e.g. `for i in $(seq 1 30); do grep -q "Reloading assemblies after successful compilation"
   Logs/sandbox-editor.log && break; sleep 20; done`, or poll `mcp__sandbox__unity` status. A
