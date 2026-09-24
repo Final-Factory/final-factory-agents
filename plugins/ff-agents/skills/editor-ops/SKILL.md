@@ -165,8 +165,15 @@ ff-merge, not in the worktree.
 
 ## Editor readiness and recovery are the agent's job
 
-Never ask the user to babysit imports, compiles, bridge recovery, or editor restarts. Verify,
-recover, and monitor readiness yourself:
+**Unity crashes and freezes constantly, and agents have full authority to restart their own
+editor whenever it's hung, crashed, frozen, stuck in a bad state (domain-reload loop,
+unresponsive bridge, wedged play mode, stuck compile), or otherwise misbehaving — no need to
+ask Ben first** (Ben, 2026-09-24, emphatic;
+[[feedback-restart-unity-on-your-own-authority]] carries the full rule, the startup-dialog
+quick reference, and the ~5-minute-unresponsive heuristic). In an ffsb sandbox, restart via the
+sandbox's own `mcp__sandbox__unity` tool (`restart`, `force` if needed) rather than killing
+processes by hand. Never ask the user to babysit imports, compiles, bridge recovery, or editor
+restarts. Verify, recover, and monitor readiness yourself:
 
 1. **Bridge up?** Read `mcpforunity://instances`. Non-empty → pin the instance and go.
 2. **Editor busy importing/compiling?** Watch through the bridge, don't ask: poll the
