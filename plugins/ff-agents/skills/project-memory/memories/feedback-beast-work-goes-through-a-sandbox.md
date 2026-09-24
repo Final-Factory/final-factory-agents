@@ -101,5 +101,6 @@ Ad-hoc work in the old checkout collides with it and is invisible to it.
 - Sandbox worker agents (`start_agent`) did not have the Unity MCP tools as of 2026-09-23, so the
   M5 driver runs BEAST builds and players itself over ssh inside the sandbox folder.
 
-Related: [[headless-windows-player-over-ssh-and-placement-route]],
+Related: [[beast-sandbox-editor-driven-from-m5]] (driving a sandbox editor without MCP; the FMOD
+modal freeze), [[headless-windows-player-over-ssh-and-placement-route]],
 [[live-mp-repro-harness-notes-2026-09-23]], [[three-peer-lane-recipe-and-traps]].
