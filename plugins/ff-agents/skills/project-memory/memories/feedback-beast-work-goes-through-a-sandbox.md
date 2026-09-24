@@ -48,6 +48,11 @@ Ad-hoc work in the old checkout collides with it and is invisible to it.
   e.g. `for i in $(seq 1 30); do grep -q "Reloading assemblies after successful compilation"
   Logs/sandbox-editor.log && break; sleep 20; done`, or poll `mcp__sandbox__unity` status. A
   standalone `sleep` is blocked, and Monitor/background tasks never wake a worker whose turn ended.
+- **Pushing from a sandbox (Ben, 2026-09-23):** only the **Final Factory game repo's** master/main is
+  off-limits (no push, no PR into it). Other repos' master/main (final-factory-agents via
+  publish-skills, ff-sandboxes) are fine when that is their normal flow. Force pushes, remote-branch
+  deletion and `--mirror`/`--all` stay blocked in every repo. The worker guard enforces this from
+  ff-sandboxes commit `f598184`; it reads the target from the remote URL and blocks when unsure.
 
 **How to apply:**
 - Tools: `mcp__ffsb__*` (load via ToolSearch `select:`). `list_sandboxes` first and reuse an idle
