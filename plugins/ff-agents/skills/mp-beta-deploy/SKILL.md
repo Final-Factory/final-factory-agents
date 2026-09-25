@@ -10,8 +10,9 @@ a build that other people download, so never start it on your own initiative; if
 needed, say so and wait for him to ask. Proven end to end on 2026-09-23 (0.50.0.21, develop `f594db63d`, BuildID 25471784).
 
 **Both players are built on the M5, never on BEAST** (Ben, 2026-09-25, standing rule): the M5
-builds both the PC and the Mac versions, so every release or upload build (this beta branch, the
-default branch, any Steam branch) comes from it. Do not build an upload player on BEAST or in an
+builds both the PC and the Mac versions, so every beta build comes from it. (Releases to the
+default app are not built here or by hand at all: CI builds and uploads them on ffbox, via
+`ci-release`.) Do not build an upload player on BEAST or in an
 ffsb sandbox, even when the M5 is busy: wait for it, or ask Ben. BEAST sandboxes still build
 test-leg and play-client players (`honest-coop-play`), which are never uploaded.
 

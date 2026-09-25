@@ -10,10 +10,10 @@ multiplayer test-leg client, an honest-coop play client, an editor, a worker age
 **ffsb sandbox** and work inside it. Do not build in `C:/Users/rydin/nevergames/FinalFactory` or
 run players from `C:/Users/rydin/ff-worker` any more; those are the pre-sandbox lab and are legacy.
 
-**Exception, release builds (Ben, 2026-09-25):** a build that goes to Steam (MP beta, default, any
-branch) is never made on BEAST, sandbox or not: it is made on the M5, which builds both the PC and the
-Mac versions (`mp-beta-deploy`, `steam-upload`). Sandbox Windows builds are for test legs and play
-clients only.
+**Exception, builds that go to Steam (Ben, 2026-09-25):** never made on BEAST, sandbox or not.
+Releases (main and demo) are built and uploaded by CI on ffbox (`ci-release`); MP beta builds are made
+on the M5, which builds both the PC and the Mac versions (`mp-beta-deploy`, `steam-upload`). Sandbox
+Windows builds are for test legs and play clients only.
 
 **Why:** the sandbox system (the `ffsb` MCP server, orchestrator on BEAST) owns BEAST's disk,
 editors and agents: it gives each job its own git worktree + branch + warm Library, enforces the

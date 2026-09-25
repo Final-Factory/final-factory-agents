@@ -652,7 +652,9 @@ rebuild into a fresh output, then repeat the file check and a real startup. Neve
 new player by copying baked scene data from an older build. Give every startup retry a fresh
 audit identity, including retries that never loaded a world.
 
-Unity Editor menu `Build > Build and Upload All` (requires Steamworks SDK).
+Release builds and Steam uploads are NOT made from an editor: they go through CI on the ffbox build
+server, via the `ci-release` skill. Never make a release with `Build > Build and Upload All` or
+steamcmd. The MP closed-beta branch has its own skill, `mp-beta-deploy`.
 
 ## Capturing editor memory
 
