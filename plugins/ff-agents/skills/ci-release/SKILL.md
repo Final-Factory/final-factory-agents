@@ -11,8 +11,9 @@ the team then promotes by hand, so never start one yourself; if you think one is
 ## How it works (so you can tell what went wrong)
 
 **The version bump IS the release.** A commit on master or develop whose `FFVersion.cs` version differs
-from its first parent's is built; nothing else is. After the tests pass, `main.yml`'s `release` job runs
-four jobs on the ffbox runners (Windows + Mac × main + demo). Each asks the ffbox host, and the host
+from its first parent's is built; nothing else is. `main.yml`'s `versionBump` job (ubuntu-latest) checks
+that first; on any other push the four `Release …` jobs show as **skipped**, which is normal. On a bump,
+after the tests pass, the `release` job runs four jobs on the ffbox runners (Windows + Mac × main + demo). Each asks the ffbox host, and the host
 grants only when:
 - GitHub confirms the job is a push of that branch at that exact commit,
 - the commit is on the branch's first-parent history and changes the version,
@@ -120,6 +121,7 @@ release"), in `release.decided`, and in the ffbox journal (`journalctl -u ffwatc
 | What you see | Meaning, and what to do |
 |---|---|
 | declined: `release.enabled is false` | Releases are switched off in `~/.config/ffbox/config.json` on the ffbox host. Ask; do not flip it yourself. |
+| `Release …` jobs skipped | `versionBump` saw no version change in the pushed commit (or the tests failed). Normal for an ordinary push; for a bump, check that the pushed head IS the bump commit and that `testRunner` passed. |
 | declined: `does not change the version` | The pushed commit is not a bump. Bump and push again. |
 | declined: `not on <branch>'s first-parent history` | The bump arrived only through a merge's second parent. Bump directly on the branch. |
 | declined: `already built at <sha>` / `already built` | That version exists already. Bump again; a version is built once. |
