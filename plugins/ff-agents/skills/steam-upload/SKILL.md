@@ -5,6 +5,15 @@ description: Build and upload a Final Factory build to Steam from this Mac (the 
 
 # Uploading a Final Factory build to Steam (from the Mac)
 
+**Branch and sign-in (Ben, 2026-09-25, supersedes older notes below where they differ):** the MP beta
+branch is **`multiplayer-closed-beta`**, never `development` (another branch on the same app). Uploads use
+steamcmd on the M5, and Ben signs in through the Steam app on the M5 when steamcmd prompts, so agents
+need no Steam password and never ask for one: when steamcmd wants a sign-in or approval, stop and ask
+Ben to sign in or approve it, then carry on. The branch's tester password (for
+`app_update 1383150 -beta multiplayer-closed-beta -betapassword <pw>` to install or verify the build as
+a tester) is deliberately NOT in this public repo: it is in the private game repo, 068 `tasks.md` T041,
+or ask Ben.
+
 ## The login model that actually works — read this FIRST
 
 The recurring "why does it keep needing my login, I keep logging in!" is NOT a bad password and

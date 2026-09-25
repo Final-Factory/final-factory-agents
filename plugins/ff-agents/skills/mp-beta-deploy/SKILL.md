@@ -15,6 +15,15 @@ default branch, any Steam branch) comes from it. Do not build an upload player o
 ffsb sandbox, even when the M5 is busy: wait for it, or ask Ben. BEAST sandboxes still build
 test-leg and play-client players (`honest-coop-play`), which are never uploaded.
 
+**Branch and sign-in (Ben, 2026-09-25, supersedes older notes below where they differ):** the MP beta
+branch is **`multiplayer-closed-beta`**, never `development` (another branch on the same app). Uploads use
+steamcmd on the M5, and Ben signs in through the Steam app on the M5 when steamcmd prompts, so agents
+need no Steam password and never ask for one: when steamcmd wants a sign-in or approval, stop and ask
+Ben to sign in or approve it, then carry on. The branch's tester password (for
+`app_update 1383150 -beta multiplayer-closed-beta -betapassword <pw>` to install or verify the build as
+a tester) is deliberately NOT in this public repo: it is in the private game repo, 068 `tasks.md` T041,
+or ask Ben.
+
 **Why this is not the Build menu:** every `Build` menu path strips `FF_ENABLE_MULTIPLAYER_BUILD`
 (`BuildCommand2.StripMultiplayerBuildDefine`, since `6c8dc3f99`), so "Build and Upload All" produces a
 build with multiplayer HIDDEN — and its upload goes to the DEFAULT branch. Never use it for this. The
@@ -92,7 +101,7 @@ Layout the depot vdfs expect: `cicd/mp_beta_upload/mac_main/{finalfactory.app, L
 - Update `"desc"` in `cicd/ff_app_mp_beta.vdf` (untracked) with version + sha + a few-word change list.
   Keep `"setlive" "multiplayer-closed-beta"`.
 
-## 6. Upload (Ben types the credentials)
+## 6. Upload (Ben signs in; see "Branch and sign-in" above)
 1. Quit the Steam desktop app: `osascript -e 'quit app "Steam"'`; if it returns `User canceled (-128)`,
    `pkill -f 'MacOS/steam_osx'` (standing authorization). Verify no `steam_osx` / `Steam Helper` remains.
    Why: steamcmd and the desktop app evict each other's session (`steam-upload` skill).
