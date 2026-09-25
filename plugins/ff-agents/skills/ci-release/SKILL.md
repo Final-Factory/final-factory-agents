@@ -1,6 +1,6 @@
 ---
 name: ci-release
-description: Make a new Final Factory release build on master or develop through the ffbox build server — bump the version (FFVersion.cs + bundleVersion), commit and push it, then follow CI as it builds Windows and Mac, main and demo, checks them and uploads both apps to Steam with nothing set live. Use when Lothsahn or Ben asks for it in any words — "make a new build on master", "cut a develop build", "trigger a release", "push a new version to Steam", "do a CI release". Never start one on your own initiative or as a side step of other work. Not for the password-protected MP beta branch (that is mp-beta-deploy).
+description: Make a new Final Factory release build on master or develop through the ffbox build server — bump the version (FFVersion.cs + bundleVersion), commit and push it, then follow CI as it builds Windows and Mac, main and demo, checks them and, once the tests pass, uploads each app to Steam (main first) with nothing set live. Use when Lothsahn or Ben asks for it in any words — "make a new build on master", "cut a develop build", "trigger a release", "push a new version to Steam", "do a CI release". Never start one on your own initiative or as a side step of other work. Not for the password-protected MP beta branch (that is mp-beta-deploy).
 ---
 
 # Trigger a CI release on master or develop
@@ -12,23 +12,31 @@ the team then promotes by hand, so never start one yourself; if you think one is
 
 **The version bump IS the release.** A commit on master or develop whose `FFVersion.cs` version differs
 from its first parent's is built; nothing else is. `main.yml`'s `versionBump` job (ubuntu-latest) checks
-that first; on any other push the four `Release …` jobs show as **skipped**, which is normal. On a bump,
-after the tests pass, the `release` job runs four jobs on the ffbox runners (Windows + Mac × main + demo). Each asks the ffbox host, and the host
-grants only when:
+that first; on any other push the `Release` and `Release demo` jobs show as **skipped**, which is
+normal. On a bump they run on the ffbox runners **beside the tests, not after them**:
+`Release (win64, main)` and `Release (osx, main)` start as soon as `versionBump` says yes, and
+`Release demo (win64, demo)` and `Release demo (osx, demo)` start once both main jobs have finished.
+`Warm release cache` is skipped on a bump, because the main release builds write the target caches.
+Each release job asks the ffbox host, and the host grants only when:
 - GitHub confirms the job is a push of that branch at that exact commit,
 - the commit is on the branch's first-parent history and changes the version,
 - and that version has not been built on that branch before.
 
 Each granted job builds one player with `Editor.ReleaseBuild`, starting warm from CI's per-target
-cache (about 5–15 min after the tests). The host then checks it: the exe, the entity scenes, the
+cache (about 5–15 min for a main player). The host then checks it: the exe, the entity scenes, the
 Addressables, no symbols left in, the version, and **no asset import error**. It files the symbols by
 version.
 
-When all four players are GOOD, the host uploads both apps to Steam as `Lothsahn_FFBox`, exactly as
-Build and Upload All did: `desc` is the version and **nothing is set live**. Lothsahn and Ben promote
-builds to Steam branches by hand. The host also posts notices to #agent-testing (`release.channel`) and
-opens a PR `ffbox/release-<version>-regenerated` for any tracked files the build regenerated
-(localization harvest, font atlases, bundleVersion).
+**Each app uploads on its own, and only after the tests pass.** Once an app's two players (Windows and
+Mac) are GOOD, the host waits until every `Test in …` job of the same CI run has succeeded, then
+uploads that app to Steam as `Lothsahn_FFBox`, exactly as Build and Upload All did: `desc` is the
+version and **nothing is set live**. So main (app 1383150) goes up as soon as its players and the tests
+are done, without waiting for the demo, and the demo (app 2387320) follows. If a test job fails, both
+uploads are skipped with a notice; the players are still built and their symbols filed. Lothsahn and
+Ben promote builds to Steam branches by hand. The host also posts notices to #agent-testing
+(`release.channel`) and, once all four players are GOOD, opens a PR
+`ffbox/release-<version>-regenerated` for any tracked files the build regenerated (localization
+harvest, font atlases).
 
 Design and code: ffbox repo `design/ffbuild_release_design.txt`, `scripts/release_lane.py`,
 `scripts/ffsteam.py`; README "Release players and the Steam upload"; config.md "release".
@@ -40,40 +48,55 @@ Design and code: ffbox repo `design/ffbuild_release_design.txt`, `scripts/releas
   `0.21.0.30` → `0.22.0.0`). Say the version before you push.
 - Nothing already in flight for that branch: check that the latest version bump's release has finished
   (section 3) before starting another.
-- You need push rights to master/develop. An ffbox container cannot push there (the harness refuses
-  protected branches). On a Mac or Windows dev machine the person can instead use the Unity editor:
-  **Build → Trigger CI Release** does steps 1–2 with a confirmation dialog. If you cannot push, hand
-  them that menu item rather than working around it.
+- You need push rights to master/develop. A session on the ffbox host itself or on a dev machine
+  usually has them (`gh auth status`); an ffbox container does not (the harness refuses protected
+  branches). If you cannot push, hand the person the Unity editor's **Build → Trigger CI Release**
+  (`Assets/Editor/BuildCommand2.cs`, `TriggerCiRelease`), which does steps 1–2 with a confirmation
+  dialog, rather than working around it.
+
+Steps 1–2 do exactly what that menu item does: refuse if either version file has uncommitted
+changes or the branch is not master/develop, bump the RC in `FFVersion.cs` and set `bundleVersion` to
+the same string, commit only those two files with the version as the message, and push. The menu
+item also refuses when origin has a newer `FFVersion.cs` than the checkout; bumping in a fresh
+worktree at `origin/<branch>` makes that impossible here.
 
 ## 1. Bump, in a clean checkout of the branch
 
-Never bump in a working tree that has unrelated edits. Use a worktree at the branch tip:
+Never bump in a working tree that has unrelated edits. From any FinalFactory clone, make a worktree at
+the branch tip holding only the two version files (a full checkout of the game is many GB of LFS
+content and is not needed):
 
 ```sh
-git fetch origin
-git worktree add /tmp/ffrelease-<branch> origin/<branch>
-cd /tmp/ffrelease-<branch> && git switch -c ffrelease-bump
+git fetch origin <branch>
+git worktree add --no-checkout -b ffrelease-bump /tmp/ffrelease-<branch> origin/<branch>
+cd /tmp/ffrelease-<branch>
+git sparse-checkout set --no-cone Assets/Scripts/FFCore/Version/FFVersion.cs ProjectSettings/ProjectSettings.asset
+git checkout
 git status --porcelain -- Assets/Scripts/FFCore/Version/FFVersion.cs ProjectSettings/ProjectSettings.asset
 ```
 
-The status must be empty. Then bump **both** files, the same two the editor's bump writes. Keep the
-exact spacing of the version line: master writes `new(0, 21, 0,29)`, develop `new(0, 50, 0, 24)`.
+The status must be empty. Then bump **both** files, the same two the editor's bump writes, the way
+`UpdateMinorVersion` writes them: it finds the line `public static FFVersion FinalFactoryVersion = new(`
+(never a comment that mentions it), adds 1 to the fourth number and writes it straight after its comma
+(`new(0, 21, 0,31)` becomes `new(0, 21, 0,32)`), and sets `bundleVersion` to `<major>.<minor>.<patch>.<rc>`.
+Line endings and the rest of each file are left as they are.
 
 ```sh
 python3 - <<'EOF'
 import re
 v = "Assets/Scripts/FFCore/Version/FFVersion.cs"
 p = "ProjectSettings/ProjectSettings.asset"
-s = open(v).read()
-m = re.search(r"(FinalFactoryVersion\s*=\s*new\(\s*)(\d+)(\s*,\s*)(\d+)(\s*,\s*)(\d+)(\s*,\s*)(\d+)(\s*\))", s)
+s = open(v, encoding="utf-8", newline="").read()
+m = re.search(r"(?m)^(\s*public static FFVersion FinalFactoryVersion = new\((\d+),\s*(\d+),\s*(\d+),)\s*(\d+)\)", s)
 assert m, "no FFVersion line"
-new = f"{m[2]}.{m[4]}.{m[6]}.{int(m[8]) + 1}"
-s = s[:m.start(8)] + str(int(m[8]) + 1) + s[m.end(8):]
-open(v, "w").write(s)
-ps = open(p).read()
-ps, n = re.subn(r"(?m)^(\s*bundleVersion:\s*).*$", lambda x: x[1] + new, ps, count=1)
+rc = int(m[5]) + 1
+new = f"{m[2]}.{m[3]}.{m[4]}.{rc}"
+s = s[:m.end(1)] + str(rc) + s[m.end(5):]
+open(v, "w", encoding="utf-8", newline="").write(s)
+ps = open(p, encoding="utf-8", newline="").read()
+ps, n = re.subn(r"(?m)^(\s*bundleVersion:)[^\r\n]*", lambda x: x[1] + " " + new, ps, count=1)
 assert n == 1, "no bundleVersion line"
-open(p, "w").write(ps)
+open(p, "w", encoding="utf-8", newline="").write(ps)
 print(new)
 EOF
 git diff --stat   # exactly two files, one line each
@@ -87,11 +110,11 @@ files, then push to the branch:
 ```sh
 git commit -m "<version>" -- Assets/Scripts/FFCore/Version/FFVersion.cs ProjectSettings/ProjectSettings.asset
 git push origin HEAD:<branch>
-cd - && git worktree remove /tmp/ffrelease-<branch>
+cd - && git worktree remove --force /tmp/ffrelease-<branch> && git branch -D ffrelease-bump
 ```
 
-If the push is rejected because the branch moved, remove the worktree and start again from step 1 on
-the new tip. Never force-push master or develop.
+If the push is rejected because the branch moved, remove the worktree and the branch the same way and
+start again from step 1 on the new tip. Never force-push master or develop.
 
 **Never use Build → Build and Upload All for this.** It builds and uploads on your machine and commits
 `cicd/depot_build_*.vdf`. The host treats that mark as "already uploaded by hand", so it builds that
@@ -105,13 +128,15 @@ gh run view <run id> -R Final-Factory/FinalFactory --json jobs -q '.jobs[] | "\(
 ```
 
 - **In #agent-testing:** notices for "building", each player GOOD or FAILED (with the failed check), and
-  "uploaded to Steam … BuildID …" (read with `ffdiscord`, see the ff-discord `discord-cli` skill).
+  one "<app> uploaded to Steam … BuildID …" per app, main first (read with `ffdiscord`, see the
+  ff-discord `discord-cli` skill).
 - **On the ffbox host:** the ledger `~/ffbox-state/builds/<branch>/<version>/release.json` holds every
-  state: the workers, the upload's BuildIDs and the regenerated-files PR.
+  state: `workers`, the CI `run` whose tests gate the upload, `uploads.main` / `uploads.demo` with
+  their BuildIDs, and the regenerated-files PR.
 
-Report to the requester: the version, the commit, the four results, the two BuildIDs (main 1383150,
-demo 2387320), and the regenerated-files PR if there is one. Remind them that nothing is live: they
-promote the build on the partner site.
+Report main as soon as it is uploaded, then the demo when it follows: the version, the commit, the
+four results, the two BuildIDs (main app 1383150, demo app 2387320), and the regenerated-files PR if
+there is one. Remind them that nothing is live: they promote the build on the partner site.
 
 ## When it goes wrong
 
@@ -121,7 +146,9 @@ release"), in `release.decided`, and in the ffbox journal (`journalctl -u ffwatc
 | What you see | Meaning, and what to do |
 |---|---|
 | declined: `release.enabled is false` | Releases are switched off in `~/.config/ffbox/config.json` on the ffbox host. Ask; do not flip it yourself. |
-| `Release …` jobs skipped | `versionBump` saw no version change in the pushed commit (or the tests failed). Normal for an ordinary push; for a bump, check that the pushed head IS the bump commit and that `testRunner` passed. |
+| `Release …` jobs skipped | `versionBump` saw no version change in the pushed commit. Normal for an ordinary push; for a bump, check that the pushed head IS the bump commit. |
+| upload skipped: `the tests did not pass: …` | A `Test in …` job of the release's run failed. The players were built but not uploaded. Fix the test, then bump again. |
+| upload waiting, players GOOD | The run's tests have not finished yet; the host asks GitHub once a minute. Normal. |
 | declined: `does not change the version` | The pushed commit is not a bump. Bump and push again. |
 | declined: `not on <branch>'s first-parent history` | The bump arrived only through a merge's second parent. Bump directly on the branch. |
 | declined: `already built at <sha>` / `already built` | That version exists already. Bump again; a version is built once. |
