@@ -9,6 +9,12 @@ description: Build the multiplayer-enabled Mac + Windows players from develop an
 a build that other people download, so never start it on your own initiative; if you think one is
 needed, say so and wait for him to ask. Proven end to end on 2026-09-23 (0.50.0.21, develop `f594db63d`, BuildID 25471784).
 
+**Both players are built on the M5, never on BEAST** (Ben, 2026-09-25, standing rule): the M5
+builds both the PC and the Mac versions, so every release or upload build (this beta branch, the
+default branch, any Steam branch) comes from it. Do not build an upload player on BEAST or in an
+ffsb sandbox, even when the M5 is busy: wait for it, or ask Ben. BEAST sandboxes still build
+test-leg and play-client players (`honest-coop-play`), which are never uploaded.
+
 **Why this is not the Build menu:** every `Build` menu path strips `FF_ENABLE_MULTIPLAYER_BUILD`
 (`BuildCommand2.StripMultiplayerBuildDefine`, since `6c8dc3f99`), so "Build and Upload All" produces a
 build with multiplayer HIDDEN — and its upload goes to the DEFAULT branch. Never use it for this. The
@@ -17,6 +23,7 @@ repo's documented multiplayer build path is `Editor.LocalMultiplayerVerification
 match `BuildCommand2.BuildAndUploadAllInternal`. No other shortcuts ("no hacks" — Ben).
 
 ## 0. Preconditions
+- You are on the M5 (rule above).
 - develop is pushed and in sync (`git fetch && git status -sb`). The build source is a pushed commit.
   Never commit Ben's unrelated local edits (the two `.mat` files, `ProjectSettings.asset`).
 - Pin the Unity MCP instance whose `path` is this repo (`ff-agents:editor-ops`). Editor not playing,
@@ -55,23 +62,15 @@ change (e.g. rebaked CJK font atlases under `Assets/UI/Fonts/`) and push — tha
    (`find <app> -newermt '<local start time>' -type f | wc -l` equals the file count; `-newermt` is LOCAL
    time).
 
-## 3. Windows player (on BEAST)
-**Build inside an ffsb sandbox** (Ben 2026-09-23; project-memory `feedback-beast-work-goes-through-a-sandbox`):
-`mcp__ffsb__create_sandbox(base=<the sha's branch>, start_unity=false)`, wait until ready, then run the two
-batchmode steps below with `-projectPath F:\ffsb\<name>` and output under its gitignored `Builds/`. The
-checkout/lab paths below are the pre-sandbox layout, kept only as reference for the step order.
-`ssh -o Hostname=10.0.0.158 beast`; Git bash `"C:\Program Files\Git\bin\bash.exe" -lc` cannot carry `|`
-— scp a script and run it. Checkout `/c/Users/rydin/nevergames/FinalFactory`, lab
-`C:/Users/rydin/ff-worker`.
-1. `git bundle create <lab>/t<N>-source.bundle <beast-HEAD>..<temp-branch-at-sha>` (a bundle needs a
-   named ref; delete the temp branch after) and `git bundle verify`.
-2. Copy the newest `$E/sync-build-t<N>-beast.sh` + `build-win-t<N>.sh` (honest-coop-play lab
-   `E=/Users/benryding/nevergames/ff-audit-artifacts/074-20260921`) to the next tag with `sed`; they
-   fast-forward the checkout to the sha, refuse an existing output, check free space, then run
-   `PrepareWindowsMultiplayerBuild` and `BuildWindowsMultiplayerDev` in two batchmode sessions.
-3. scp bundle + scripts to the lab; launch DETACHED:
-   `(ssh -n … '"…bash.exe" -lc "bash …/sync-build-t<N>-beast.sh …/t<N>-source.bundle <sha40>"' > out 2>&1 &)`.
-   Wait for the ssh process to exit, then read `build-t<N>/build-status.txt` (`prepare rc=0`, `build rc=0`, `done`).
+## 3. Windows player (on the M5)
+Build it on the M5 from the same source sha as the Mac player (rule above). The repo's entry points are
+`Editor.LocalMultiplayerVerificationBuild.PrepareWindowsMultiplayerBuild` and then
+`BuildWindowsMultiplayerDev` with `-ffVerificationBuildOutput <stage>/windows_FinalFactory/finalfactory.exe`
+(`Assets/Editor/LocalMultiplayerVerificationBuild.cs`), as two SEPARATE batchmode sessions with the editor
+closed. The prepare pass switches the active target and adds `FF_ENABLE_MULTIPLAYER_BUILD` to
+`ProjectSettings.asset`; never commit that edit. Wait on a status file (`prepare rc=`, `build rc=`, `done`),
+never on the bridge. The Windows leg has not yet been run on the M5 (before 2026-09-25 it ran on BEAST,
+which is retired for upload builds): record its first run's gotchas here.
 
 ## 4. Verify both players
 - `EntityScenes/` has `<hash>.entityheader` + `<hash>.0.entities` — not just `scene_info.bin`.
@@ -85,8 +84,9 @@ Layout the depot vdfs expect: `cicd/mp_beta_upload/mac_main/{finalfactory.app, L
 `cicd/mp_beta_upload/windows_FinalFactory/{finalfactory.exe, finalfactory_Data, …, Localization}`.
 - `Localization/` = the `*.csv` files + `README.md` from repo `Localization/` — NOT
   `MissingTranslations.txt` or `FontCoverageReport.txt` (`BuildCommand2.CopyLocalizationToBuilds`).
-- No folder whose name contains `DoNotShip` (`BuildCommand2.CopyDirectory`). For Windows: on BEAST
-  `tar cf … --exclude='*DoNotShip*' --exclude='.ff*' .` inside `build-t<N>/player`, scp, unpack.
+- No folder whose name contains `DoNotShip` (`BuildCommand2.CopyDirectory`), e.g. the Windows
+  player's `finalfactory_BurstDebugInformation_DoNotShip`: copy with
+  `tar cf - --exclude='*DoNotShip*' --exclude='.ff*' .` from inside the player folder.
 - Move the previous `cicd/mp_beta_upload` aside as `mp_beta_upload-<version>-<sha7>`; then rename the
   stage to `cicd/mp_beta_upload`.
 - Update `"desc"` in `cicd/ff_app_mp_beta.vdf` (untracked) with version + sha + a few-word change list.
