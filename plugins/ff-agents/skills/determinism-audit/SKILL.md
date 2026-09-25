@@ -16,6 +16,10 @@ and collect each job's result. Local tests and local subagents do not substitute
 > 🪤 **Dated traps and hard-won triage recipes** live in **`gotchas.md`** next to this file —
 > read its TOC before diagnosing any divergence, "missing report", flaky gate, or clone
 > weirdness. The recipes there are load-bearing, not history.
+> 🚫 **Never hunt desyncs in a player launched with only plain `-ffAgentControl`** — that is a
+> player session, and its desync reports upload to ffintake on ffbox, so the fork would be triaged
+> twice. The harness (`-ffAutomationRole`), the editor, `-ffAgentControlDev true` and honest play
+> never upload. See project-memory `feedback-no-desync-hunts-on-plain-agent-control`.
 
 > 📋 **Persistent determinism testcases (feature 009)**: the standing, version-controlled
 > regression suite lives under `Assets/Resources/TestRunner/<Subject>/*.playtest` (folders name

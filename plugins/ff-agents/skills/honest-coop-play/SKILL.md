@@ -22,6 +22,8 @@ are determinism test fixtures only — they can never count toward this win.
    73-command honest set, holds transfers to the human reach, refuses the Quantum console, and
    **refuses to start** with `InvulnerablePlayers`, `DisableEnemyGeneration` or `FlatMap` set
    (status `honest-play-config-refused`). Every peer's log must show `honest-play-armed: allowed=73`.
+   The flag also keeps the sitting's desync and crash reports off ffintake (game `c6f88fa99`): a
+   peer missing it counts as a person playing and uploads them.
 3. **One continuous game.** Sitting N+1 loads exactly sitting N's final host save; record the chain
    (save name + SHA-256) in the handoff. Honest saves are named `claude_playtest_074-h<N>-<slug>`
    (the guard confines `game.save` to that prefix). Only the host saves.
