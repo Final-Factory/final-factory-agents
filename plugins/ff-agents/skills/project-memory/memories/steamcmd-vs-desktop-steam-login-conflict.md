@@ -34,6 +34,10 @@ password + Guard code at that moment:
 Do NOT rely on a cached login carrying over between runs on the Mac. The agent cannot type the
 password/Guard, so the credentialed `+login` is Ben's to run — hand him the exact command.
 
+**Current flow (Ben, 2026-09-25):** Ben signs in through the Steam app on the M5 when steamcmd prompts;
+agents need no Steam password and ask Ben to sign in or approve. The beta branch is
+`multiplayer-closed-beta`, not `development`; its tester password is kept out of this public repo.
+
 **Not BEAST:** builds and uploads are always made on the M5 (Ben, 2026-09-25, standing rule: the M5
 builds both the PC and the Mac versions). An older note here suggested uploading from BEAST; that is
 retired. BEAST's desktop Steam is logged into slims20 too, so it has the same session conflict. For
