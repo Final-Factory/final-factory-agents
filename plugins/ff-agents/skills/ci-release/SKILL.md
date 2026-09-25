@@ -1,12 +1,27 @@
 ---
 name: ci-release
-description: Make a new Final Factory release build on master or develop through the ffbox build server — bump the version (FFVersion.cs + bundleVersion), commit and push it, then follow CI as it builds Windows and Mac, main and demo, checks them and, once the tests pass, uploads each app to Steam (main first) with nothing set live. Use when Lothsahn or Ben asks for it in any words — "make a new build on master", "cut a develop build", "trigger a release", "push a new version to Steam", "do a CI release". Never start one on your own initiative or as a side step of other work. Not for the password-protected MP beta branch (that is mp-beta-deploy).
+description: Cut an explicit PUBLIC release on master or develop through the ffbox build server — bump the version (FFVersion.cs + bundleVersion), commit and push it, then follow CI as it builds Windows and Mac, main and demo, checks them and, once the tests pass, uploads each app to the PUBLIC/default Steam app (main first) with nothing set live. Use ONLY when Lothsahn or Ben explicitly asks for a public/live release in those terms — "cut a release on master", "cut a develop release", "trigger a public release", "push a new version live to Steam". Do NOT use for "a build to test with friends/testers", "a multiplayer build", or any build someone outside the team will play before it's promoted — that is always mp-beta-deploy, never this. Never start it on your own initiative or as a side step of other work.
 ---
 
 # Trigger a CI release on master or develop
 
-**Only when Lothsahn or Ben asks** (plain English is enough). A release uploads builds to Steam that
-the team then promotes by hand, so never start one yourself; if you think one is due, say so and wait.
+> ⚠️ **NOT for multiplayer or tester builds, and NOT a way to get a test/preview build.** This
+> publishes to the PUBLIC/default Steam app that any player can install — production settings
+> strip `FF_ENABLE_MULTIPLAYER_BUILD`, so multiplayer is HIDDEN for everyone who gets this build.
+> If someone wants "a build we can play multiplayer", it's "for my brother/friends/testers", or
+> it's "the closed beta", use **`mp-beta-deploy`** instead — never this skill.
+>
+> **A develop release through this skill is ALSO public on Steam** — same public/default app and
+> branch as a master release, just develop's code instead of master's. There is no "quiet" or
+> "internal" mode here: every release this skill makes, on master OR develop, goes live to the
+> public update channel. (Ben, emphatic, 2026-09-25.) **Run this ONLY when Lothsahn or Ben
+> explicitly asks for a public/live release in those terms** — never as a stand-in for getting
+> someone "a build" to try.
+
+**Only when Lothsahn or Ben asks, explicitly, for a public release** (plain English is enough, but it
+must actually be a request to release publicly — not a generic "get me a build"). A release uploads
+builds to Steam that the team then promotes by hand, so never start one yourself; if you think one is
+due, say so and wait.
 
 ## How it works (so you can tell what went wrong)
 

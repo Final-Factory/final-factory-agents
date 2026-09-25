@@ -10,6 +10,11 @@ and uploaded by CI on the ffbox build server: use the `ci-release` skill. Nobody
 a release by hand any more (no `Build and Upload All`, no steamcmd, no ZIP upload). This skill
 covers only the MP closed-beta upload (`mp-beta-deploy`).
 
+**Which build skill, in one line:** a multiplayer/tester/friends build is always `mp-beta-deploy`
+(this skill's upload mechanics); an explicit PUBLIC release on master/develop is `ci-release`, which
+publishes to the public/default Steam app and must never be used as a stand-in for a test build. Full
+decision table: project-memory `which-build-skill`.
+
 **Branch and sign-in (Ben, 2026-09-25, supersedes older notes below where they differ):** the MP beta
 branch is **`multiplayer-closed-beta`**, never `development` (another branch on the same app). Uploads use
 steamcmd on the M5, and Ben signs in through the Steam app on the M5 when steamcmd prompts, so agents

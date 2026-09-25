@@ -1,6 +1,6 @@
 ---
 name: mp-beta-deploy
-description: Build the multiplayer-enabled Mac + Windows players from develop and deploy them to the password-protected Steam `multiplayer-closed-beta` branch for Ben and his testers — the full verified procedure (pre-steps, both builds, verification, depot staging, Steam upload, record). Use when Ben asks for it in any words — "push a new beta build", "deploy to the MP beta", "make a build Kyle and I can test", "upload to the beta branch". Never start it on your own initiative or as a side step of other work.
+description: Build the multiplayer-enabled Mac + Windows players from develop and deploy them to the password-protected Steam `multiplayer-closed-beta` branch for Ben and his testers — the full verified procedure (pre-steps, both builds, verification, depot staging, Steam upload, record). Use when Ben asks for it in any words — "push a new beta build", "deploy to the MP beta", "make a build Kyle and I can test", "upload to the beta branch", "a build to playtest with friends", "a multiplayer build", "release a build we can play together", "build on ffbox for testing" (Ben sometimes says "ffbox" loosely for this even though it actually builds on the M5). This is the ONLY route to a build with multiplayer enabled: CI (ci-release) cannot produce one at all — its production settings strip FF_ENABLE_MULTIPLAYER_BUILD — so it is never a substitute, no matter how the request is worded. Never start this on your own initiative or as a side step of other work.
 ---
 
 # Deploy a build to the MP beta branch
@@ -8,6 +8,12 @@ description: Build the multiplayer-enabled Mac + Windows players from develop an
 **Only when Ben asks** (plain English is enough — he never has to type the skill name). This publishes
 a build that other people download, so never start it on your own initiative; if you think one is
 needed, say so and wait for him to ask. Proven end to end on 2026-09-23 (0.50.0.21, develop `f594db63d`, BuildID 25471784).
+
+**CI cannot substitute for this, ever.** `ci-release` builds through production settings that strip
+`FF_ENABLE_MULTIPLAYER_BUILD`, so a CI release build has multiplayer HIDDEN — there is no flag or
+argument that makes CI produce a multiplayer-capable player. Any request for a build someone outside
+the team will play with others — "for my brother", "for testers", "so we can play together", "the
+beta" — routes here, never to `ci-release`, regardless of the exact words used.
 
 **Both players are built on the M5, never on BEAST** (Ben, 2026-09-25, standing rule): the M5
 builds both the PC and the Mac versions, so every beta build comes from it. (Releases to the
