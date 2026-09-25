@@ -114,7 +114,9 @@ with the overlay UI in it. **127.0.0.1, never `localhost`** — Mono's `HttpList
 
 The recipe, the tier difference (a shipped player is `player-safe`; dev fixtures answer
 `capability_denied`) and the cleanup rules live in the **playtest** skill, "Attach to a BUILT
-PLAYER". Come back here when the question genuinely needs editor internals — inspecting ECS state
+PLAYER". A player launched with only plain `-ffAgentControl` counts as a person playing, so its
+desync reports upload to ffintake: never hunt desyncs that way (project-memory
+`feedback-no-desync-hunts-on-plain-agent-control`). Come back here when the question genuinely needs editor internals — inspecting ECS state
 that no `ffauto` scope exposes, driving uGUI by reflection, or reproducing something that only
 happens in the editor.
 

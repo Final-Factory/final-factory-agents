@@ -135,6 +135,11 @@ fixtures (`inventory.add`, `spawn.*`, `desync.inject`, `visualepisode.*`) come b
 over memory. Pass `-ffAgentControlDev true` for the full set when a playtest genuinely needs a
 fixture.
 
+**Desyncs upload from a plain `-ffAgentControl` session.** Without `-ffAutomationRole` (the recipe
+above has it), `-ffAgentControlDev` or `-ffHonestPlay`, the game treats the session as a player and
+sends its desync and crash reports to ffintake. Never hunt desyncs that way; see project-memory
+`feedback-no-desync-hunts-on-plain-agent-control`.
+
 **Cleanup (SC-006) is different too, and simpler**: `DELETE /v1/session` detaches without ending
 the game (the player keeps playing; other peers see the agent-driven marker clear), and stopping
 the player removes its discovery file. There is no `.ff-local-automation.json` to delete unless you
