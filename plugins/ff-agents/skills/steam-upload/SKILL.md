@@ -1,9 +1,14 @@
 ---
 name: steam-upload
-description: Build and upload a Final Factory build to Steam from this Mac (the password-protected multiplayer-closed-beta branch, or a normal depot) with steamcmd. Use when asked to upload to Steam, push a depot, or ship a build to the beta branch. Carries the login recipe that actually works — the "it keeps asking me to log in" problem is a desktop-Steam-vs-steamcmd session conflict, not a bad password.
+description: Upload a multiplayer build to the password-protected Steam multiplayer-closed-beta branch from the M5 Mac with steamcmd — the Steam login/upload mechanics that mp-beta-deploy relies on. NOT for releases: a release (main or demo, any version on master/develop) goes through CI on ffbox via ci-release, never a manual upload. Carries the login recipe that actually works — the "it keeps asking me to log in" problem is a desktop-Steam-vs-steamcmd session conflict, not a bad password.
 ---
 
 # Uploading a Final Factory build to Steam (from the Mac)
+
+**Releases never come through here.** Every release build of the main game and the demo is built
+and uploaded by CI on the ffbox build server: use the `ci-release` skill. Nobody builds or uploads
+a release by hand any more (no `Build and Upload All`, no steamcmd, no ZIP upload). This skill
+covers only the MP closed-beta upload (`mp-beta-deploy`).
 
 **Branch and sign-in (Ben, 2026-09-25, supersedes older notes below where they differ):** the MP beta
 branch is **`multiplayer-closed-beta`**, never `development` (another branch on the same app). Uploads use
@@ -79,10 +84,10 @@ password and the Steam Guard code at that moment. Do not rely on caching.
 - The **branch and its password are created by Ben in the Steam partner UI** — there is no API for
   branch creation or passwords.
 
-## Builds and uploads come from the M5, never BEAST
+## Beta builds and uploads come from the M5, never BEAST
 
-Standing rule (Ben, 2026-09-25): every build that goes to Steam is made on the M5, because it builds
-both the PC and the Mac versions, and the upload runs there too. Do not build or upload from BEAST,
+Standing rule (Ben, 2026-09-25): every MP beta build is made on the M5, because it builds both the
+PC and the Mac versions, and the upload runs there too. (Releases are built on ffbox: `ci-release`.) Do not build or upload from BEAST,
 even though BEAST has a steamcmd (`C:\steamworks\sdk	ools\ContentBuilderuilder`) with a cached
 `slims20` entry: its desktop Steam is logged into the same account and the live play clients there use
 that session, so a steamcmd login on BEAST can knock them off. A Windows-only upload would also leave
