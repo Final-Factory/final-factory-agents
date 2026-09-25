@@ -76,7 +76,7 @@ Codex plugins cannot carry subagent roles, so Codex still loads those from the g
 |---|---|
 | `ff-agents` | 8 delegation roles (`implementor`, `mech-executor`, `scout`, `Explore`, `code-analyst`, `build-verifier`, `deep-thinker`, `game-driver`) + 11 skills: `deep-think`, `determinism-audit`, `drive-game`, `handoff`, `learnToPlay`, `massdriver-visual-e2e`, `playtest`, `project-memory`, `publish-skills`, `resumeFromHandoff`, `update-docs` |
 | `ff-speckit` | 10 `speckit-*` skills. Operates on the `.specify/` machinery in whichever project you invoke it from — that stays in the game repo. |
-| `ff-discord` | 3 roles (`discord-answerer`, `discord-dev-agent`, `discord-triager`) + 4 skills: `ask-claude`, `ask-dev`, `discord-triage`, `discord-cli`. `discord-cli` carries the `ffdiscord` CLI and Gateway listener themselves. Requires the bot token in the `discord` section of `~/.config/ffbox/config.json`. |
+| `ff-discord` | 5 roles (`discord-answerer`, `discord-dev-agent`, `discord-triager`, and the read-only subagents `scout` and `code-analyst` for the player lane) + 4 skills: `ask-claude`, `ask-dev`, `discord-triage`, `discord-cli`. `discord-cli` carries the `ffdiscord` CLI and Gateway listener themselves. Requires the bot token in the `discord` section of `~/.config/ffbox/config.json`. |
 
 ## Authoring
 
