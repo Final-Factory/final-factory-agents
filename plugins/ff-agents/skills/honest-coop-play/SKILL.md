@@ -40,6 +40,21 @@ steal assembler output). The briefs carry this rule; the driver corrects any age
 mass hand-crafting (h2–h3 hand-crafted several hundred research bots — the mistake this section exists for).
 Agents also SEE the game: every peer runs windowed and screenshots regularly (step 3, briefs).
 
+## Defence, fog and dialogs (Ben, h6, 2026-09-25)
+
+- **Defence scales with the base.** Attacks scale with Global Signal AND base size/stability, so
+  defence must grow as the base grows — every new production module gets Defense Platform cover.
+  Watch the HUD attack/damage warnings every batch (`AttackWarningData` is NOT in `observe.state`
+  alerts — screenshot instead). Full mechanics (signal formula, the Defense Platform
+  blueprint-range trap, Exploration Center radius/slots/power) live in `docs/HowToPlay.md`
+  "Defence and vision (074 h6)" (internal, code-traced) and the PUBLIC kit skills `defend-base`,
+  `reveal-map`, `manage-stability-power` (`finalfactory-agent-kit` v0.1.1+, player-framed) — read
+  those before re-deriving; don't duplicate their content here or in the briefs.
+- **Dismiss dialogs like a player.** After every research completion, screenshot and dismiss any
+  "Technology Unlocked" dialog through a real click, never a debug/skip channel —
+  [[built-player-screenshot-coordinate-scale]] has the exact Mac Retina recipe (2x scale + Y-origin
+  flip + a non-zero click hold).
+
 ## Machines and lab
 
 `E=/Users/benryding/nevergames/ff-audit-artifacts/074-20260921` (override with `FF_COOP_LAB`).

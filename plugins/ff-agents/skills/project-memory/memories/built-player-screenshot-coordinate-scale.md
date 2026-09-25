@@ -34,3 +34,22 @@ showed the held two-structure preview and its disappearance after `blueprint.dro
 screenshots inspected. The regression also verifies foreign-owner and unstamped markers survive.
 The earlier open-defect warning applies to older builds. Use actual right-click when the test
 concerns player input, and use the fixed command for harness cleanup.
+
+## Mac Retina dialog-dismiss recipe (2x scale + Y-origin flip, 074 h6/h7, T171)
+
+On the Mac player the general rule above has an exact, reusable form: a native view 2560×1289
+returns a `GET screenshot` of 1280×644 — exactly HALF each axis — with a TOP-LEFT origin (image
+convention), while the pointer command's `screen` space is native-resolution with a BOTTOM-LEFT
+origin (`Input.mousePosition`). Convert a screenshot pixel `(x, y)` to a pointer coordinate with
+
+```
+screenX = 2 * x
+screenY = nativeHeight - 2 * y   # 1289 - 2*y at this resolution
+```
+
+then `ffauto:pointer.moveto|<screenX>|<screenY>|screen` followed by `ffauto:pointer.click|0|6` (a
+non-zero hold-frame count — `0|0` did not register). This is the recipe that dismisses the
+"Technology Unlocked" dialog (`TechnologyUnlockedNotificationPanel.cs:56` has no key shortcut,
+and dialogs queue one per completed tech) — do it after EVERY research completion, like a real
+player would, never through a debug/skip channel. Re-derive the native size per machine/window
+before converting; it is not a fixed constant across builds or windows.
