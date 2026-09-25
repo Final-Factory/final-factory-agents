@@ -1,6 +1,6 @@
 ---
 name: steamcmd-vs-desktop-steam-login-conflict
-description: "'Why does it keep needing my login, I keep logging in!' on the Mac Steam upload — it is NOT a bad password: the Steam DESKTOP app and brew steamcmd share one account (slims20) and one data folder, Steam allows one live session per account so they evict each other, AND a fresh steamcmd login reports 'Cached credentials not found' regardless of desktop state. Logging into the desktop app never helps steamcmd. Fix: quit the desktop app, then log in AND upload in ONE steamcmd command; or upload from BEAST (Windows) where there is no desktop client."
+description: "'Why does it keep needing my login, I keep logging in!' on the Mac Steam upload — it is NOT a bad password: the Steam DESKTOP app and brew steamcmd share one account (slims20) and one data folder, Steam allows one live session per account so they evict each other, AND a fresh steamcmd login reports 'Cached credentials not found' regardless of desktop state. Logging into the desktop app never helps steamcmd. Fix: quit the desktop app, then log in AND upload in ONE steamcmd command; on the M5 only (Ben 2026-09-25: all builds and uploads come from the M5, never BEAST)."
 metadata:
   type: reference
 ---
@@ -34,9 +34,11 @@ password + Guard code at that moment:
 Do NOT rely on a cached login carrying over between runs on the Mac. The agent cannot type the
 password/Guard, so the credentialed `+login` is Ben's to run — hand him the exact command.
 
-**Better alternatives:** upload from BEAST (Windows), which has no competing desktop Steam client;
-or, for unattended agents, give steamcmd its OWN writable Steam dir and verify a persisted machine
-token (`ssfn*`) actually gets written before trusting a cached login.
+**Not BEAST:** builds and uploads are always made on the M5 (Ben, 2026-09-25, standing rule: the M5
+builds both the PC and the Mac versions). An older note here suggested uploading from BEAST; that is
+retired. BEAST's desktop Steam is logged into slims20 too, so it has the same session conflict. For
+unattended agents, the only open idea is giving steamcmd on the M5 its OWN writable Steam dir and
+verifying that a persisted machine token (`ssfn*`) gets written before trusting a cached login.
 
 The full build+upload recipe is the [[steam-upload]] skill. Supersedes the "Ben logs in once, then
 cached" mental model in the machine-local `reference-steam-beta-branch-upload-from-mac` memory,

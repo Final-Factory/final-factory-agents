@@ -70,11 +70,14 @@ password and the Steam Guard code at that moment. Do not rely on caching.
 - The **branch and its password are created by Ben in the Steam partner UI** — there is no API for
   branch creation or passwords.
 
-## The reliable alternative: upload from BEAST (Windows)
+## Builds and uploads come from the M5, never BEAST
 
-BEAST has no competing desktop Steam client, so the session conflict does not arise there. The
-notes say uploads "normally" live on the Windows box for exactly this reason. If the Mac login
-keeps fighting, build + upload from BEAST instead.
+Standing rule (Ben, 2026-09-25): every build that goes to Steam is made on the M5, because it builds
+both the PC and the Mac versions, and the upload runs there too. Do not build or upload from BEAST,
+even though BEAST has a steamcmd (`C:\steamworks\sdk	ools\ContentBuilderuilder`) with a cached
+`slims20` entry: its desktop Steam is logged into the same account and the live play clients there use
+that session, so a steamcmd login on BEAST can knock them off. A Windows-only upload would also leave
+the branch's Mac depot out of step with the Windows one.
 
 ## If you want unattended agent uploads
 
