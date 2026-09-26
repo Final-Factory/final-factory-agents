@@ -1,27 +1,25 @@
 ---
 name: ci-release
-description: Cut an explicit PUBLIC release on master or develop through the ffbox build server — bump the version (FFVersion.cs + bundleVersion), commit and push it, then follow CI as it builds Windows and Mac, main and demo, checks them and, once the tests pass, uploads each app to the PUBLIC/default Steam app (main first) with nothing set live. Use ONLY when Lothsahn or Ben explicitly asks for a public/live release in those terms — "cut a release on master", "cut a develop release", "trigger a public release", "push a new version live to Steam". Do NOT use for "a build to test with friends/testers", "a multiplayer build", or any build someone outside the team will play before it's promoted — that is always mp-beta-deploy, never this. Never start it on your own initiative or as a side step of other work.
+description: Cut a release through the ffbox build server — bump the version (FFVersion.cs + bundleVersion), commit and push it, then follow CI as it builds Windows and Mac, main and demo, checks them and, once the tests pass, uploads each app to Steam (main first). A DEVELOP release is the multiplayer closed-beta build — develop's players have multiplayer (FF_ENABLE_MULTIPLAYER_BUILD in ProjectSettings, #613/#614) and ffbox sets the main app live on the `multiplayer-closed-beta` branch by itself (ffbox a7809f9e1). A MASTER release is the public release — uploaded with nothing set live, promoted by hand. Use when Ben or Lothsahn asks for either in any words — "push a new beta build", "deploy to the MP beta", "a multiplayer build for the testers", "cut a develop release" (develop); "cut a release on master", "a public release" (master). Never start it on your own initiative or as a side step of other work. The manual M5 procedure (mp-beta-deploy) is only a fallback for when ffbox is down or for a special build.
 ---
 
 # Trigger a CI release on master or develop
 
-> ⚠️ **NOT for multiplayer or tester builds, and NOT a way to get a test/preview build.** This
-> publishes to the PUBLIC/default Steam app that any player can install — production settings
-> strip `FF_ENABLE_MULTIPLAYER_BUILD`, so multiplayer is HIDDEN for everyone who gets this build.
-> If someone wants "a build we can play multiplayer", it's "for my brother/friends/testers", or
-> it's "the closed beta", use **`mp-beta-deploy`** instead — never this skill.
+> **Which branch is which (Lothsahn, 2026-09-26):**
+> - **develop = the multiplayer closed beta.** develop's players ship multiplayer
+>   (`FF_ENABLE_MULTIPLAYER_BUILD` is in develop's `ProjectSettings.asset` Standalone defines, #614;
+>   the Build menu no longer strips it, #613/#614), and ffbox sets a develop release's **main** app
+>   live on the password-protected **`multiplayer-closed-beta`** branch as it uploads
+>   (`release_lane.SETLIVE`, ffbox `a7809f9e1`). The demo app sets nothing live. So "a new beta
+>   build", "a multiplayer build for the testers" or "the closed beta" is a develop release here.
+> - **master = the public release.** Uploaded with nothing set live; Lothsahn or Ben promotes it to
+>   the default branch by hand. master has multiplayer once develop's ProjectSettings are merged up.
 >
-> **A develop release through this skill is ALSO public on Steam** — same public/default app and
-> branch as a master release, just develop's code instead of master's. There is no "quiet" or
-> "internal" mode here: every release this skill makes, on master OR develop, goes live to the
-> public update channel. (Ben, emphatic, 2026-09-25.) **Run this ONLY when Lothsahn or Ben
-> explicitly asks for a public/live release in those terms** — never as a stand-in for getting
-> someone "a build" to try.
+> The manual M5 procedure, `mp-beta-deploy`, is now only a fallback: ffbox down, or a special build
+> that must not come from develop's tip.
 
-**Only when Lothsahn or Ben asks, explicitly, for a public release** (plain English is enough, but it
-must actually be a request to release publicly — not a generic "get me a build"). A release uploads
-builds to Steam that the team then promotes by hand, so never start one yourself; if you think one is
-due, say so and wait.
+**Only when Ben or Lothsahn asks** (plain English is enough). A release uploads builds other people
+download, so never start one yourself; if you think one is due, say so and wait.
 
 ## How it works (so you can tell what went wrong)
 
@@ -45,10 +43,11 @@ version.
 **Each app uploads on its own, and only after the tests pass.** Once an app's two players (Windows and
 Mac) are GOOD, the host waits until every `Test in …` job of the same CI run has succeeded, then
 uploads that app to Steam as `Lothsahn_FFBox`, exactly as Build and Upload All did: `desc` is the
-version and **nothing is set live**. So main (app 1383150) goes up as soon as its players and the tests
+version and **nothing is set live, except a develop release's main app, which goes live on
+`multiplayer-closed-beta`** (the notice says "set live on multiplayer-closed-beta"). So main (app 1383150) goes up as soon as its players and the tests
 are done, without waiting for the demo, and the demo (app 2387320) follows. If a test job fails, both
-uploads are skipped with a notice; the players are still built and their symbols filed. Lothsahn and
-Ben promote builds to Steam branches by hand. The host also posts notices to #agent-testing
+uploads are skipped with a notice; the players are still built and their symbols filed. Every other build
+Lothsahn and Ben promote to Steam branches by hand. The host also posts notices to #agent-testing
 (`release.channel`) and, once all four players are GOOD, opens a PR
 `ffbox/release-<version>-regenerated` for any tracked files the build regenerated (localization
 harvest, font atlases).
@@ -119,7 +118,9 @@ gh run view <run id> -R Final-Factory/FinalFactory --json jobs -q '.jobs[] | "\(
 
 Report main as soon as it is uploaded, then the demo when it follows: the version, the commit, the
 four results, the two BuildIDs (main app 1383150, demo app 2387320), and the regenerated-files PR if
-there is one. Remind them that nothing is live: they promote the build on the partner site.
+there is one. For develop, confirm the main
+notice says "set live on multiplayer-closed-beta" (and `uploads.main.setlive` in the ledger); for
+master, remind them that nothing is live and they promote the build on the partner site.
 
 ## When it goes wrong
 

@@ -1,6 +1,6 @@
 ---
 name: steam-upload
-description: Upload a multiplayer build to the password-protected Steam multiplayer-closed-beta branch from the M5 Mac with steamcmd — the Steam login/upload mechanics that mp-beta-deploy relies on. NOT for releases: a release (main or demo, any version on master/develop) goes through CI on ffbox via ci-release, never a manual upload. Carries the login recipe that actually works — the "it keeps asking me to log in" problem is a desktop-Steam-vs-steamcmd session conflict, not a bad password.
+description: Upload a multiplayer build to the password-protected Steam multiplayer-closed-beta branch from the M5 Mac with steamcmd — the Steam login/upload mechanics that mp-beta-deploy (the fallback when ffbox cannot make the beta build) relies on. NOT for releases: a release (main or demo, any version on master/develop) goes through CI on ffbox via ci-release, never a manual upload. Carries the login recipe that actually works — the "it keeps asking me to log in" problem is a desktop-Steam-vs-steamcmd session conflict, not a bad password.
 ---
 
 # Uploading a Final Factory build to Steam (from the Mac)
@@ -10,10 +10,10 @@ and uploaded by CI on the ffbox build server: use the `ci-release` skill. Nobody
 a release by hand any more (no `Build and Upload All`, no steamcmd, no ZIP upload). This skill
 covers only the MP closed-beta upload (`mp-beta-deploy`).
 
-**Which build skill, in one line:** a multiplayer/tester/friends build is always `mp-beta-deploy`
-(this skill's upload mechanics); an explicit PUBLIC release on master/develop is `ci-release`, which
-publishes to the public/default Steam app and must never be used as a stand-in for a test build. Full
-decision table: project-memory `which-build-skill`.
+**Which build skill, in one line:** a new closed-beta build is a develop `ci-release` (ffbox sets its
+main app live on `multiplayer-closed-beta`, 2026-09-26); a public release is a master `ci-release`;
+`mp-beta-deploy` (this skill's upload mechanics) is only the fallback when ffbox is down or for a
+special build. Full decision table: project-memory `which-build-skill`.
 
 **Branch and sign-in (Ben, 2026-09-25, supersedes older notes below where they differ):** the MP beta
 branch is **`multiplayer-closed-beta`**, never `development` (another branch on the same app). Uploads use
