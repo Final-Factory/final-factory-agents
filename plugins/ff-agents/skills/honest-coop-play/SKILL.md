@@ -88,13 +88,18 @@ Windows build on BEAST) at the same source sha.
    non-honest config). Stage `m3-<leg>.sh`, `client-config-<leg>-m3.json`, `release-<leg>.py` on M3
    and `beast-client-<leg>.sh`, `client-config-<leg>-beast.json`, `beast-release-<leg>.sh` on BEAST.
    The seed save must be in the HOST's Saves folder.
-3. **Launch, in order — every peer WINDOWED** so agents can screenshot (from h4). `derive-sitting.py`
+3. **Launch, in order — every peer WINDOWED** so agents can screenshot (from h4). Exception: when M5's session is
+   LOCKED (nights), a windowed host gets no frames and hangs at `waiting-title-menu` — run it `-batchmode -nographics`
+   instead, and plan for ~3 h: a headless player leaks FMOD `Ambience.bank` handles until its agent channel dies
+   (074 T176; the sim and autosaves keep going, so end the sitting from an autosave). `derive-sitting.py`
    copies the previous launch lines, so check `host-<leg>.sh` and `beast-client-<leg>.sh` use
    `-screen-fullscreen 0 -screen-width 1280 -screen-height 720`, not `-batchmode -nographics` (M3 always has).
    Host `(nohup bash host-<leg>.sh > host-<leg>.out 2>&1 &)`, wait for `status waiting-host-peers-connected`.
    BEAST must start in its logged-in DESKTOP session (an ssh-started process lands in session 0, "Services",
    with no desktop): copy `$E/beast-launch-h4-desktop.cmd` to `beast-launch-<leg>-desktop.cmd` with the
-   leg renamed (it runs `schtasks /create … /it /f` + `schtasks /run` on `beast-client-<leg>.sh`), scp it to
+   leg renamed (it runs `schtasks /create … /it /f` + `schtasks /run` on `beast-client-<leg>.sh`, then
+   `schtasks /delete /tn <task> /f` — a `/sc once /st 23:59` task left behind RE-FIRES at 23:59 BEAST time and
+   launches a second client that reclaims the slot, h8 2026-09-26), scp it to
    `C:\Users\rydin\ff-worker\`, run it over ssh, and confirm `tasklist /V` shows the player in session
    `Console` (needs rydin logged in on BEAST: `query user`). Then `ssh m3 "bash $E/m3-<leg>.sh"`.
    Wait for `host-peers-connected: connectedClients=3` and `waiting-audit-dwell-release`
