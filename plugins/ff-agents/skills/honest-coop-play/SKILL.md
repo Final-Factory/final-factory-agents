@@ -54,6 +54,11 @@ Agents also SEE the game: every peer runs windowed and screenshots regularly (st
   "Technology Unlocked" dialog through a real click, never a debug/skip channel —
   [[built-player-screenshot-coordinate-scale]] has the exact Mac Retina recipe (2x scale + Y-origin
   flip + a non-zero click hold).
+- **`scripts/mkbp.py` blueprints place ranged structures at their MAXIMUM range** (074 T173, fixed
+  2026-09-26): the sample item is a Dark Star Gate with range 0/0, which made every Defense Platform
+  placed from an mkbp blueprint 0 m (it never fought). It now writes `AttackRange`/`AlertRange` 1e6 and the
+  game clamps to each structure's config ceiling (`StructureRangeResolver.Clamp`). A platform placed
+  from an OLD mkbp blueprint still needs its range set in its panel.
 
 ## Machines and lab
 
