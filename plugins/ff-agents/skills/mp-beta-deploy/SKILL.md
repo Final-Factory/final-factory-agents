@@ -7,7 +7,7 @@ description: Build the multiplayer-enabled Mac + Windows players from develop an
 
 **Only when Ben asks** (plain English is enough — he never has to type the skill name). This publishes
 a build that other people download, so never start it on your own initiative; if you think one is
-needed, say so and wait for him to ask. Proven end to end on 2026-09-23 (0.50.0.21, develop `f594db63d`, BuildID 25471784).
+needed, say so and wait for him to ask. Proven end to end on 2026-09-23 (0.50.0.21, develop `f594db63d`, BuildID 25471784); both players built on the M5 on 2026-09-25 (0.50.0.28, `75afa459d`, BuildID 25540837).
 
 **CI cannot substitute for this, ever.** `ci-release` builds through production settings that strip
 `FF_ENABLE_MULTIPLAYER_BUILD`, so a CI release build has multiplayer HIDDEN — there is no flag or
@@ -45,6 +45,12 @@ match `BuildCommand2.BuildAndUploadAllInternal`. No other shortcuts ("no hacks" 
 - Pin the Unity MCP instance whose `path` is this repo (`ff-agents:editor-ops`). Editor not playing,
   not compiling; standalone define includes `FF_ENABLE_MULTIPLAYER_BUILD`, active target StandaloneOSX
   (else run `LocalMultiplayerVerificationBuild.PrepareMacMultiplayerBuild` in a batchmode pass first).
+- **Pulling develop drops the define, and a running editor keeps stale settings.** Resetting
+  `ProjectSettings.asset` so the fast-forward can go through removes the local
+  `FF_ENABLE_MULTIPLAYER_BUILD`. An editor that was open during the pull still holds the OLD
+  ProjectSettings (e.g. a stale `bundleVersion`) in memory and can write them back. So after the pull:
+  stop the editor, run the batchmode `PrepareMacMultiplayerBuild` pass (~1 min), start the editor, then
+  check that `PlayerSettings.bundleVersion` equals `FFVersion` (2026-09-25).
 - No honest-coop sitting mid-build on the same editor.
 
 ## 1. Pre-steps (in the editor)
@@ -71,12 +77,18 @@ change (e.g. rebaked CJK font atlases under `Assets/UI/Fonts/`) and push — tha
    happens, move the stage aside as `…-BAD-noentityscenes` and re-run call A. The editor log must then
    show the subscene bake (`Baking the Entity Prefab Container`, then `Streamed scene … .entities`)
    before you run call B again.
+   On 2026-09-25 (0.50.0.28) the FIRST build after call A was already good (entity scenes present,
+   15 min), and the second build was incremental (15 s) with an identical file list. So the first build is
+   not always bad: check each build, and keep the good one.
 4. **The bridge can RE-DISPATCH a timed-out call B.** The same day, a second `BuildPlayer` started 27 s after
    the first returned (16:15:47 vs 16:15:20 UTC) and wrote a fresh stage dir. Never assume only one build
    ran. The marker can hold several start/`returned` pairs, or reappear after you move the stage aside.
    Before you stage anything, confirm that every file in the stage has an mtime from the build you trust
    (`find <app> -newermt '<local start time>' -type f | wc -l` equals the file count; `-newermt` is LOCAL
    time).
+   The re-dispatch is routine: 0.50.0.28 saw 5 refused re-dispatches after build 1 and 3 after build 2.
+   The reply you actually get back can be one of those refusals ("refused: stage exists") even though the
+   real build succeeded, so read the verdict from the marker, never from the reply.
 
 ## 3. Windows player (on the M5)
 Build it on the M5 from the same source sha as the Mac player (rule above). The repo's entry points are
@@ -85,8 +97,19 @@ Build it on the M5 from the same source sha as the Mac player (rule above). The 
 (`Assets/Editor/LocalMultiplayerVerificationBuild.cs`), as two SEPARATE batchmode sessions with the editor
 closed. The prepare pass switches the active target and adds `FF_ENABLE_MULTIPLAYER_BUILD` to
 `ProjectSettings.asset`; never commit that edit. Wait on a status file (`prepare rc=`, `build rc=`, `done`),
-never on the bridge. The Windows leg has not yet been run on the M5 (before 2026-09-25 it ran on BEAST,
-which is retired for upload builds): record its first run's gotchas here.
+never on the bridge. Run the two passes from one detached script (`nohup … &`) that refuses if the
+output dir exists or the editor is open (`Temp/UnityLockfile`).
+First M5 run (2026-09-25, 0.50.0.28): the prepare pass took 2m44s and the build 17m39s, both rc=0, with
+0 `error CS`. The build ships the Mono player, and Unity 6000.3.19f1 on the M5 has
+`WindowsStandaloneSupport` (Mono variations only). That is enough because Standalone scripting is Mono
+(`ProjectSettings.asset` `scriptingBackend: Standalone: 0`). Gotchas:
+- `BuildPlayer` DELETES the output file's parent directory before building
+  (`LocalMultiplayerVerificationBuild.cs` `BuildPlayer`). Point it at its own `windows_FinalFactory/`,
+  never at a directory that holds anything else.
+- The output includes `finalfactory_BurstDebugInformation_DoNotShip`. Move the raw folder aside and
+  tar-copy it into the stage without that folder (§5).
+- The prepare pass leaves the project on the **Win64** target. Before you restart the editor, run
+  `PrepareMacMultiplayerBuild` again in batchmode (~1 min) so Ben's editor opens on StandaloneOSX.
 
 ## 4. Verify both players
 - `EntityScenes/` has `<hash>.entityheader` + `<hash>.0.entities` — not just `scene_info.bin`.
@@ -94,6 +117,10 @@ which is retired for upload builds): record its first run's gotchas here.
 - A symbol added since the previous upload is present in both `FFSpaghetti.dll`
   (`honest-coop-play/scripts/symcheck.py <dll> <Symbol>`).
 - File counts comparable to the previous build (diff the lists if not — a missing `_DoNotShip` file is fine).
+  Diff the sizes too, and explain any big change from git before you trust it. 0.50.0.28 came out ~260 MB
+  smaller (Mac 2390 MB / 537 files, Windows 2211 MB incl. DoNotShip). `25b35251f` turned off tutorial
+  video transcoding (`resources.resource`), and the procedural VFX prefab rewrite shrank
+  `resources.assets.resS` and the content archive. The ~2775 MB "good" reference in §2 is older.
 
 ## 5. Stage the depots like the main script
 Layout the depot vdfs expect: `cicd/mp_beta_upload/mac_main/{finalfactory.app, Localization}` and
@@ -109,6 +136,9 @@ Layout the depot vdfs expect: `cicd/mp_beta_upload/mac_main/{finalfactory.app, L
   Keep `"setlive" "multiplayer-closed-beta"`.
 
 ## 6. Upload (Ben signs in; see "Branch and sign-in" above)
+0. **steamcmd may log in with CACHED credentials** (2026-09-25: `Logging in using cached credentials`)
+   and upload at once, with no password prompt. So the stage and `"desc"` must be FINAL before you launch
+   it: there may be no `password:` pause in which to swap (item 2). It then needs no sign-in from Ben.
 1. Quit the Steam desktop app: `osascript -e 'quit app "Steam"'`; if it returns `User canceled (-128)`,
    `pkill -f 'MacOS/steam_osx'` (standing authorization). Verify no `steam_osx` / `Steam Helper` remains.
    Why: steamcmd and the desktop app evict each other's session (`steam-upload` skill).
@@ -121,7 +151,17 @@ Layout the depot vdfs expect: `cicd/mp_beta_upload/mac_main/{finalfactory.app, L
    content only after login. You can therefore swap a newer, verified stage into `cicd/mp_beta_upload`
    (atomic `mv`, old one aside, update `"desc"`) without a second login. Never swap once the login has
    gone through (2026-09-23: 0.50.0.24 replaced a staged 0.50.0.23 this way).
-3. Read the tab (`read_terminal`) until `Successfully finished AppID 1383150 build (BuildID <n>)`.
+   **Without `run_in_terminal`:** `osascript … tell application "Terminal" to do script` from an agent
+   timed out (`AppleEvent timed out (-1712)`, an unanswered Automation prompt). Instead write a
+   `.command` file that runs `script -q <repo>/cicd/mp_beta_upload.log steamcmd +login slims20
+   +run_app_build … +quit`, `chmod +x` it, and `open -a Terminal <file>`. `script` keeps the tty (so the
+   password prompt still works) and writes a log you can read.
+3. Read the tab (`read_terminal`), or the `script` log, until
+   `Successfully finished AppID 1383150 build (BuildID <n>)`. With chunk dedupe, the upload took ~26 s.
+   Confirm it is live: `steamcmd +login slims20 +app_info_update 1 +app_info_print 1383150 +quit` (works
+   with cached credentials). `branches` → `multiplayer-closed-beta` → `buildid` must be the new BuildID,
+   and each depot's `multiplayer-closed-beta` `gid` must match the `New manifestID` in
+   `cicd/output_mp_beta/depot_build_*.log`.
    Tell Ben he can reopen Steam and update on the beta branch.
 
 ## 7. Record
