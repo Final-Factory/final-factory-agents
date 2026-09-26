@@ -26,6 +26,17 @@ beam, comet and hover-field VFX all do).
 6. **To measure GPU cost, separate fixed cost from fill.** Push the quads off screen through the material (e.g. a
    huge vertical offset) and rerun the interleaved A/B. The hover field was about 0.25 ms fixed; the rest was
    fill, which grows with the screen area covered, not with the loop count per pixel.
+7. **`UNITY_MATRIX_P[1][1]` is negative when URP renders the camera into an intermediate texture** (the
+   projection is Y-flipped). A "world units per pixel" helper built on it returns a negative number: take
+   `abs(UNITY_MATRIX_P[1][1])`. Found building the comet (2026-09-26, develop `6c5d9a594`): every comet fell
+   into its far LOD because its pixel size was negative. `VfxBeam.shader`'s `WorldPerPixel` still has it
+   latent: its `_MinPixels` floor never applies, because `max()` swallows the negative.
+8. **Tuning with `execute_code` in play mode also lives only in memory until something saves.** Point 2's
+   writes reach the `.mat` only on the next `AssetDatabase.SaveAssets`; an editor restart or a reimport in
+   between drops them silently. The comet look Ben approved existed only in memory after a restart-heavy
+   session. Once tuned, write the values explicitly, `SetDirty` + `SaveAssets`, and grep the `.mat` on disk
+   before committing. That `SaveAssets` also flushes the probes' editor noise (`QualitySettings.vSyncCount`,
+   `EditorSettings.asyncShaderCompilation`, `TimeManager`, the minimap render texture): revert those files.
 
 **Getting a real multi-structure mobile station into a test game.** Hand-built blueprints rarely connect into one
 station grid, because Standard structures need connector or strut bridges. Player blueprints do connect:

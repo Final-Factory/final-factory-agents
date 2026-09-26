@@ -33,3 +33,8 @@ and the call ran again. The side effects added up:
   camera by name. `Graphics.RenderPrimitives` on layer 0 draws only in that overlay camera, and both
   `ZTest LEqual` and `_CameraDepthTexture` work there (`Assets/Art/Shaders/Vfx/VfxBeam.shader`
   relies on both).
+- **A retried `StartGame` starts two games** (2026-09-26, BEAST sandbox): the bridge re-ran a timed-out
+  `ProjectileVfxGallery.StartGame` and the world got two `MePlayer` entities, so every
+  `PlayersManager.Me` / `GetSingleton` threw. Guard one-shot calls with a flag that survives the retry:
+  `if (AppDomain.CurrentDomain.GetData("started") != null) return; AppDomain.CurrentDomain.SetData("started", true);`
+  before the call, and clear it before the next play session.
