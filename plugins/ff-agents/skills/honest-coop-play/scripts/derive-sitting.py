@@ -23,6 +23,9 @@ for src, dst, label in [(f'host-config-{prev}.json', f'host-config-{new}.json', 
     out(dst, json.dumps(c, indent=2))
 def sub(text):
     text = re.sub(r'player-t\w+', macp, text); text = re.sub(r'build-t\w+', beastb, text)
+    # ffsb-sandbox layout (h6+): the BEAST script names its player as Builds/tNN/player; <beast-build-dir> may be 'tNN'.
+    if re.fullmatch(r't\w+', beastb):
+        text = re.sub(r'Builds/t\w+/player', f'Builds/{beastb}/player', text)
     return text.replace(prev, new)
 for s in ('host', 'm3'):
     out(f'{s}-{new}.sh', sub(open(f'{s}-{prev}.sh').read()))
