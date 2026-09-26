@@ -168,4 +168,12 @@ the source branch, don't hunt a source bug first — clear the cache and re-run.
   `Filter.HasSelection` in FFComponents, added by `0b9941e83`, inlined into an FFSystems job
   whose own struct was unchanged), so a job can silently keep running pre-merge logic.
 
+- **It also hides a deliberate RED mutation** (2026-09-26, spec 081, sandbox mp-r2): after a
+  `PowerConfig` layout change the editor crashed natively in a Burst `ISystem` update until restarted;
+  later a mutation that zeroed a reserve and a pool rebuilt `FFSystems.dll` and reloaded, yet 36/36
+  tests stayed green. The same two tests failed as expected on a re-run with Burst off. When proving
+  RED by mutation, re-run the named tests with details and see them fail before trusting any green;
+  for the final GREEN run Burst on with `EnableBurstCompileSynchronously = true` (toggling it through
+  `execute_code` blocks the bridge for minutes while everything recompiles).
+
 See [[feedback_test_command]].
