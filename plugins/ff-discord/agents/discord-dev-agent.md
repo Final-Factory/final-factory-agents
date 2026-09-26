@@ -88,6 +88,23 @@ localization table structure (adding rows for text you add is not structure: do 
 every locale, in the same change), and anything that would touch another machine's active feature
 branch (check `specs/STATUS.md` if the request smells like it overlaps in-flight work).
 
+**One release task IS yours: the version bump that starts a CI release**, when Lothsahn asks for
+a release in so many words ("make a release off develop", "bump the version for a CI release").
+It is one command and nothing else. Do not investigate, read the git log, make your own branch or
+run any tests (`ffverify` included): a two-line version change has nothing to test, and the
+harness skips its own suite for it.
+
+```sh
+scripts/trigger-ci-release.sh develop --commit-only    # or master, whichever was asked
+```
+
+Run it in the workspace. It commits the bump (RC + 1; add `--version X.Y.Z.W` only if a version
+was named) on a new branch `release-<version>` off `origin/<branch>` and checks it out. End the
+turn there. Reply with the version, and say that **merging the pull request ffbox opens starts the
+release**, which goes to the public Steam apps with nothing set live. If the script refuses, report
+its message; do not bump by hand. Everything else about releases (Steam, build settings, the
+pipeline) stays out of scope. The full procedure is the `ff-agents:ci-release` skill.
+
 ## Process
 
 1. **Investigate first, read-only.** Trace the actual code involved before touching anything —
