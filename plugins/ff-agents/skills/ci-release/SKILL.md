@@ -59,83 +59,51 @@ Design and code: ffbox repo `design/ffbuild_release_design.txt`, `scripts/releas
 ## 0. Preconditions
 
 - Which branch: master or develop only, as asked. Never bump a feature branch: that is not a release.
-- Which version: add 1 to the RC (the fourth number) unless you were told otherwise (e.g. a minor bump
-  `0.21.0.30` → `0.22.0.0`). Say the version before you push.
+- Which version: the RC (the fourth number) plus one, unless you were told otherwise (e.g. a minor
+  bump `0.21.0.30` → `0.22.0.0`, which is `--version 0.22.0.0` below). Say the version before you push.
 - Nothing already in flight for that branch: check that the latest version bump's release has finished
-  (section 3) before starting another.
-- You need push rights to master/develop. A session on the ffbox host itself or on a dev machine
-  usually has them (`gh auth status`); an ffbox container does not (the harness refuses protected
-  branches). If you cannot push, hand the person the Unity editor's **Build → Trigger CI Release**
-  (`Assets/Editor/BuildCommand2.cs`, `TriggerCiRelease`), which does steps 1–2 with a confirmation
-  dialog, rather than working around it.
+  (section 2) before starting another.
 
-Steps 1–2 do exactly what that menu item does: refuse if either version file has uncommitted
-changes or the branch is not master/develop, bump the RC in `FFVersion.cs` and set `bundleVersion` to
-the same string, commit only those two files with the version as the message, and push. The menu
-item also refuses when origin has a newer `FFVersion.cs` than the checkout; bumping in a fresh
-worktree at `origin/<branch>` makes that impossible here.
+**Do not run tests, open the editor, or read the git log to work out the bump.** The script below is
+the whole of it, and a change to two version lines has nothing to test.
 
-## 1. Bump, in a clean checkout of the branch
+## 1. Start it: one command
 
-Never bump in a working tree that has unrelated edits. From any FinalFactory clone, make a worktree at
-the branch tip holding only the two version files (a full checkout of the game is many GB of LFS
-content and is not needed):
+The game repo's `scripts/trigger-ci-release.sh` makes the bump: the `FinalFactoryVersion` line in
+`FFVersion.cs` and `bundleVersion` in `ProjectSettings.asset`, committed alone with the version as the
+message. The Unity editor's **Build → Trigger CI Release** runs the same script.
+
+**Where you can push** (a session on a dev machine, or on the ffbox host itself; `gh auth status`),
+from any FinalFactory clone, on any branch, with any uncommitted work. The script builds the commit
+on origin's tip of the branch without touching your checkout, pushes it, and retries if the branch
+moved:
 
 ```sh
-git fetch origin <branch>
-git worktree add --no-checkout -b ffrelease-bump /tmp/ffrelease-<branch> origin/<branch>
-cd /tmp/ffrelease-<branch>
-git sparse-checkout set --no-cone Assets/Scripts/FFCore/Version/FFVersion.cs ProjectSettings/ProjectSettings.asset
-git checkout
-git status --porcelain -- Assets/Scripts/FFCore/Version/FFVersion.cs ProjectSettings/ProjectSettings.asset
+scripts/trigger-ci-release.sh develop --dry-run    # shows the two-line bump, changes nothing
+scripts/trigger-ci-release.sh develop              # bumps origin/develop's tip and pushes it
+scripts/trigger-ci-release.sh master --version 0.22.0.0
 ```
 
-The status must be empty. Then bump **both** files, the same two the editor's bump writes, the way
-`UpdateMinorVersion` writes them: it finds the line `public static FFVersion FinalFactoryVersion = new(`
-(never a comment that mentions it), adds 1 to the fourth number and writes it straight after its comma
-(`new(0, 21, 0,31)` becomes `new(0, 21, 0,32)`), and sets `bundleVersion` to `<major>.<minor>.<patch>.<rc>`.
-Line endings and the rest of each file are left as they are.
+**In an ffbox container** (a Discord or web turn on the build server), which cannot push to master
+or develop:
 
 ```sh
-python3 - <<'EOF'
-import re
-v = "Assets/Scripts/FFCore/Version/FFVersion.cs"
-p = "ProjectSettings/ProjectSettings.asset"
-s = open(v, encoding="utf-8", newline="").read()
-m = re.search(r"(?m)^(\s*public static FFVersion FinalFactoryVersion = new\((\d+),\s*(\d+),\s*(\d+),)\s*(\d+)\)", s)
-assert m, "no FFVersion line"
-rc = int(m[5]) + 1
-new = f"{m[2]}.{m[3]}.{m[4]}.{rc}"
-s = s[:m.end(1)] + str(rc) + s[m.end(5):]
-open(v, "w", encoding="utf-8", newline="").write(s)
-ps = open(p, encoding="utf-8", newline="").read()
-ps, n = re.subn(r"(?m)^(\s*bundleVersion:)[^\r\n]*", lambda x: x[1] + " " + new, ps, count=1)
-assert n == 1, "no bundleVersion line"
-open(p, "w", encoding="utf-8", newline="").write(ps)
-print(new)
-EOF
-git diff --stat   # exactly two files, one line each
+scripts/trigger-ci-release.sh develop --commit-only
 ```
 
-## 2. Commit and push
+That commits the bump on a new branch `release-<version>` off `origin/develop` and checks it out.
+Then end your turn, leaving HEAD there. The harness skips the test run for a version-only change and
+opens a pull request against develop; **merging that PR is what starts the release**, so say so in
+your reply with the version. Do not run `ffverify` for it.
 
-The message is the version alone, as the Build menu has always written it. Commit only those two
-files, then push to the branch:
-
-```sh
-git commit -m "<version>" -- Assets/Scripts/FFCore/Version/FFVersion.cs ProjectSettings/ProjectSettings.asset
-git push origin HEAD:<branch>
-cd - && git worktree remove --force /tmp/ffrelease-<branch> && git branch -D ffrelease-bump
-```
-
-If the push is rejected because the branch moved, remove the worktree and the branch the same way and
-start again from step 1 on the new tip. Never force-push master or develop.
+If the checkout you are in predates the script, run the branch's copy:
+`git show origin/develop:scripts/trigger-ci-release.sh | bash -s -- develop` (same arguments).
 
 **Never use Build → Build and Upload All for this.** It builds and uploads on your machine and commits
 `cicd/depot_build_*.vdf`. The host treats that mark as "already uploaded by hand", so it builds that
 version for its symbols but does not upload it.
 
-## 3. Follow it and report
+## 2. Follow it and report
 
 ```sh
 gh run list -R Final-Factory/FinalFactory -b <branch> -L 3        # the run for your commit
