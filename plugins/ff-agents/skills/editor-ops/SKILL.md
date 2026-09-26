@@ -654,7 +654,8 @@ audit identity, including retries that never loaded a world.
 
 Release builds and Steam uploads are NOT made from an editor: they go through CI on the ffbox build
 server, via the `ci-release` skill. Never make a release with `Build > Build and Upload All` or
-steamcmd. The MP closed-beta branch has its own skill, `mp-beta-deploy`.
+steamcmd. A develop release is the MP closed-beta build (ffbox sets it live on
+`multiplayer-closed-beta`); `mp-beta-deploy` is only the M5 fallback when ffbox cannot make it.
 
 ## Capturing editor memory
 
