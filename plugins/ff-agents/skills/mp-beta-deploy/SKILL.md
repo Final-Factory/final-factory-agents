@@ -25,9 +25,8 @@ test-leg and play-client players (`honest-coop-play`), which are never uploaded.
 
 **Branch and sign-in (Ben, 2026-09-25, supersedes older notes below where they differ):** the MP beta
 branch is **`multiplayer-closed-beta`**, never `development` (another branch on the same app). Uploads use
-steamcmd on the M5, and Ben signs in through the Steam app on the M5 when steamcmd prompts, so agents
-need no Steam password and never ask for one: when steamcmd wants a sign-in or approval, stop and ask
-Ben to sign in or approve it, then carry on. The branch's tester password (for
+steamcmd on the M5 with its own home and a cached token (§6), so normally nobody signs in. When the token
+is rejected, steamcmd prompts and Ben signs in; agents need no Steam password and never ask for one. The branch's tester password (for
 `app_update 1383150 -beta multiplayer-closed-beta -betapassword <pw>` to install or verify the build as
 a tester) is deliberately NOT in this public repo: it is in the private game repo, 068 `tasks.md` T041,
 or ask Ben.
@@ -136,34 +135,43 @@ Layout the depot vdfs expect: `cicd/mp_beta_upload/mac_main/{finalfactory.app, L
 - Update `"desc"` in `cicd/ff_app_mp_beta.vdf` (untracked) with version + sha + a few-word change list.
   Keep `"setlive" "multiplayer-closed-beta"`.
 
-## 6. Upload (Ben signs in; see "Branch and sign-in" above)
-0. **steamcmd may log in with CACHED credentials** (2026-09-25: `Logging in using cached credentials`)
-   and upload at once, with no password prompt. So the stage and `"desc"` must be FINAL before you launch
-   it: there may be no `password:` pause in which to swap (item 2). It then needs no sign-in from Ben.
-1. Quit the Steam desktop app: `osascript -e 'quit app "Steam"'`; if it returns `User canceled (-128)`,
-   `pkill -f 'MacOS/steam_osx'` (standing authorization). Verify no `steam_osx` / `Steam Helper` remains.
-   Why: steamcmd and the desktop app evict each other's session (`steam-upload` skill).
-2. Put the command in Ben's Terminal panel with `run_in_terminal` and open it with
-   `show_pane terminal` (he may not see it otherwise):
-   `steamcmd +login slims20 +run_app_build <ABS repo>/cicd/ff_app_mp_beta.vdf +quit`
-   — password OFF the command line; steamcmd prompts for it, then the Steam Guard code. The agent never
-   types or sees credentials.
+## 6. Upload (cached steamcmd token; Ben signs in only when it is rejected)
+**steamcmd has its own home on the M5: `HOME=/Users/benryding/.steamcmd-home`** (set up and proven
+2026-09-27). Every steamcmd call in this skill runs with that `HOME`. Why: with the default home,
+steamcmd and the Steam desktop app share `~/Library/Application Support/Steam`, and each desktop
+sign-in wiped steamcmd's cached token ("Cached credentials not found" right after the desktop app
+logged on). With its own home, the token Ben's last sign-in cached is reused, with no password and no
+Steam Guard.
+0. **Test the token first:** `HOME=/Users/benryding/.steamcmd-home steamcmd +login slims20 +quit < /dev/null`.
+   `Logging in using cached credentials` then `...OK` means the upload needs no sign-in. `Cached credentials
+   not found` means Ben must sign in once (item 2 gives him the prompt). Never pass a password argument.
+   Never store the password in a file, script, env var or keychain. The `< /dev/null` matters: without a tty
+   a missing token turns into one failed login (`Invalid Password`) instead of a hanging prompt.
+   Because a cached login uploads at once, the stage and `"desc"` must be FINAL before you launch item 2.
+1. **Do NOT quit the Steam desktop app** (the old step 1 is retired). Its only harm left: any steamcmd login
+   REPLACES the desktop session (`connection_log.txt`: `RecvMsgClientLoggedOff('Session Replaced')`, then
+   "not auto reconnecting"). The desktop app goes offline, and a game running from it loses Steam, until Ben
+   restarts Steam. So warn Ben before the upload if he is playing, and tell him to restart Steam after it.
+2. Launch the upload in a Terminal window, so the tty can still show a `password:` prompt if the token was
+   rejected. Write a `.command` file with
+   `export HOME=/Users/benryding/.steamcmd-home` and then
+   `script -q <repo>/cicd/mp_beta_upload.log steamcmd +login slims20 +run_app_build <ABS repo>/cicd/ff_app_mp_beta.vdf +quit`.
+   `chmod +x` it and `open -a Terminal <file>` (`osascript … do script` timed out with -1712 from an agent).
+   In the Claude desktop app, `run_in_terminal` + `show_pane terminal` works too.
+   If it stops at `password:`, stop and ask Ben to type the password and approve Steam Guard in that window.
+   The agent never types or sees credentials. A wrong password makes steamcmd exit
+   (`ERROR (Invalid Password)`): move the log aside and relaunch the same `.command`, with no rebuild.
    Swapping stages is safe while the prompt is still at `password:`, because steamcmd reads the depot
-   content only after login. You can therefore swap a newer, verified stage into `cicd/mp_beta_upload`
-   (atomic `mv`, old one aside, update `"desc"`) without a second login. Never swap once the login has
-   gone through (2026-09-23: 0.50.0.24 replaced a staged 0.50.0.23 this way).
-   **Without `run_in_terminal`:** `osascript … tell application "Terminal" to do script` from an agent
-   timed out (`AppleEvent timed out (-1712)`, an unanswered Automation prompt). Instead write a
-   `.command` file that runs `script -q <repo>/cicd/mp_beta_upload.log steamcmd +login slims20
-   +run_app_build … +quit`, `chmod +x` it, and `open -a Terminal <file>`. `script` keeps the tty (so the
-   password prompt still works) and writes a log you can read.
-3. Read the tab (`read_terminal`), or the `script` log, until
-   `Successfully finished AppID 1383150 build (BuildID <n>)`. With chunk dedupe, the upload took ~26 s.
-   Confirm it is live: `steamcmd +login slims20 +app_info_update 1 +app_info_print 1383150 +quit` (works
-   with cached credentials). `branches` → `multiplayer-closed-beta` → `buildid` must be the new BuildID,
-   and each depot's `multiplayer-closed-beta` `gid` must match the `New manifestID` in
+   content only after login. Never swap once the login has gone through.
+   Keystrokes Ben types while a window opens can land in it (2026-09-27: a stray `r` turned the command into
+   `r/tmp/...`, and the window exited). Read the window (`tell application "Terminal" to get contents of
+   selected tab of front window`) if no log appears.
+3. Read the `script` log until `Successfully finished AppID 1383150 build (BuildID <n>)`. With chunk dedupe,
+   the upload takes ~30 s. Confirm it is live: `HOME=/Users/benryding/.steamcmd-home steamcmd +login slims20
+   +app_info_update 1 +app_info_print 1383150 +quit`. `branches` → `multiplayer-closed-beta` → `buildid` must be
+   the new BuildID, and each depot's `multiplayer-closed-beta` `gid` must match the `New manifestID` in
    `cicd/output_mp_beta/depot_build_*.log`.
-   Tell Ben he can reopen Steam and update on the beta branch.
+   Tell Ben the build is live, and that he may need to restart Steam (item 1) before he updates on the beta branch.
 
 ## 7. Record
 Commit a one-line note with version, source sha and BuildID where the active work is tracked (e.g. the
