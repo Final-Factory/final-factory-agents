@@ -111,6 +111,17 @@ First M5 run (2026-09-25, 0.50.0.28): the prepare pass took 2m44s and the build 
 - The prepare pass leaves the project on the **Win64** target. Before you restart the editor, run
   `PrepareMacMultiplayerBuild` again in batchmode (~1 min) so Ben's editor opens on StandaloneOSX.
 
+**A RELEASE (non-Development) build** (Ben asked for one for the 0.50.0.40 open playtest): the batchmode
+`BuildWindowsMultiplayerDev` hardcodes `BuildOptions.Development` (`LocalMultiplayerVerificationBuild.cs`
+`BuildPlayer`), so build Windows IN THE EDITOR like the Mac player. Run the batchmode
+`PrepareWindowsMultiplayerBuild` pass, start the editor (it opens on StandaloneWindows64 with the define), then
+call A, then call B with `target = StandaloneWindows64`, `options = BuildOptions.None`, into
+`<stage>/windows_raw/windows_FinalFactory/finalfactory.exe`. Use the Mac call B with `BuildOptions.None` too.
+Then stop the editor and run `PrepareMacMultiplayerBuild` in batchmode. Proof that Development is off: no
+`player-connection-*` lines in `boot.config`, no `*.pdb`, FMOD `fmodstudio` (not `fmodstudioL`), and the
+Windows `UnityPlayer.dll` is byte-identical to `PlaybackEngines/WindowsStandaloneSupport/Variations/
+win64_player_nondevelopment_mono/UnityPlayer.dll`. A release build is ~220 MB smaller (Mac 2260 MB / 342 files).
+
 ## 4. Verify both players
 - `EntityScenes/` has `<hash>.entityheader` + `<hash>.0.entities` — not just `scene_info.bin`.
 - 0 `error CS` in the Windows `build.log`; the Mac marker says `result=Succeeded errors=0`.
@@ -167,10 +178,14 @@ Steam Guard.
    `r/tmp/...`, and the window exited). Read the window (`tell application "Terminal" to get contents of
    selected tab of front window`) if no log appears.
 3. Read the `script` log until `Successfully finished AppID 1383150 build (BuildID <n>)`. With chunk dedupe,
-   the upload takes ~30 s. Confirm it is live: `HOME=/Users/benryding/.steamcmd-home steamcmd +login slims20
-   +app_info_update 1 +app_info_print 1383150 +quit`. `branches` → `multiplayer-closed-beta` → `buildid` must be
-   the new BuildID, and each depot's `multiplayer-closed-beta` `gid` must match the `New manifestID` in
-   `cicd/output_mp_beta/depot_build_*.log`.
+   the upload takes ~30 s; `"setlive"` in the app vdf sets it live on `multiplayer-closed-beta` in the same run.
+   **Confirming the branch from the M5 is currently unsolved** (2026-09-27, 0.50.0.40): from the separate
+   steamcmd home, `app_info_print 1383150` lists only the PUBLIC branches (no `multiplayer-closed-beta`, even
+   after deleting `appcache/appinfo.vdf` to force a fresh fetch), and a tester install with the 068 T041 beta
+   password returned `Password check ... returned error Failure`. The 0.50.0.39 check that did show the branch
+   ran in the DEFAULT home. So report the BuildID from the log, say the branch was not independently confirmed,
+   and ask Ben to glance at the partner Builds page (or Steam → Properties → Betas). When a check works again,
+   compare `buildid` and each depot's `gid` with the `New manifestID` in `cicd/output_mp_beta/depot_build_*.log`.
    Tell Ben the build is live, and that he may need to restart Steam (item 1) before he updates on the beta branch.
 
 ## 7. Record
