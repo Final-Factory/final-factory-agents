@@ -9,6 +9,7 @@ load-bearing for future runs even where the original defect is fixed.
 - [Inventory hash roles: retain the raw field, gate the contracted surfaces](#inventory-hash-roles)
 - [A built player pair is the proof instrument for presentation leaks](#built-pair-proof) (055 R25)
 - ["Missing report(s)" is NOT a stuck editor](#missing-reports) (045)
+- [`run_build_multiplayer_audit.sh` on Windows: `--graphics`, a fresh `--label` per attempt](#build-audit-windows) (perf pass C)
 - [Divergence triage: check command TIMING first](#command-timing) (042)
 - [TestcaseFilter: targeted mode-3 investigation](#testcasefilter)
 - [Throttling the editor needs a holder](#fps-holder)
@@ -115,6 +116,27 @@ direct `Exit(0)` or SIGTERM to the verified PID works, then relaunch with
 `open -na .../Unity.app --args -projectPath <checkout>`). Do NOT keep re-running the audit —
 the second attempt fails identically and "back-to-back flake, re-run" is the WRONG diagnosis
 for this signature.
+
+## `run_build_multiplayer_audit.sh` on Windows: `--graphics`, a fresh `--label` per attempt {#build-audit-windows}
+
+(BEAST ffsb sandbox, 2026-09-27, perf pass C.) Two ways the build-driven paired audit fails on Windows
+without any divergence:
+
+- **Headless players cannot render DOTS.** The default `-batchmode -nographics` players throw
+  "Attempting to create a graphics buffer that requires compute shader support" every frame (a 42 MB
+  host log), the client times out joining, and only one report is written (`missing report(s)`, exit 3).
+  Pass `--graphics`.
+- **A failed run poisons its label.** It leaves `network-determinism-audit-legacy-<label>-<role>.partial`
+  in `LocalLow/.../DeterminismAudit`; the next run with the SAME `--label` fails publication with
+  `Audit artifact identity collision` (exit 3, that role's report missing). Use a fresh `--label`.
+
+Any dev player works: `FF_BUILD_DIR=<dir holding finalfactory.exe> ... --skip-build` (e.g. an
+`Editor.ShaderBenchBuild` bench build), `--host-extra "-ffAutomationSave <name>"` runs it on a real save,
+`--port N` avoids a busy one. A pass prints `NO DIVERGENCE` and `PASS [playerSimPos]`.
+
+The shared audit folder bites the fast suite too: `NetworkDeterminismAuditReportTest` fails with an
+IOException (`...partial` "being used by another process") while any automation player writes there.
+Re-run it with no players running.
 
 ## Divergence triage: check command TIMING first {#command-timing}
 
