@@ -1,6 +1,6 @@
 ---
 name: steam-upload
-description: Upload a multiplayer build to the password-protected Steam multiplayer-closed-beta branch from the M5 Mac with steamcmd — the Steam login/upload mechanics that mp-beta-deploy (the fallback when ffbox cannot make the beta build) relies on. NOT for releases: a release (main or demo, any version on master/develop) goes through CI on ffbox via ci-release, never a manual upload. Carries the login recipe that actually works — the "it keeps asking me to log in" problem is a desktop-Steam-vs-steamcmd session conflict, not a bad password.
+description: Upload a multiplayer build to the password-protected Steam multiplayer-closed-beta branch from the M5 Mac with steamcmd — the Steam login/upload mechanics that mp-beta-deploy (the fallback when ffbox cannot make the beta build) relies on. NOT for releases: a release (main or demo, any version on master/develop) goes through CI on ffbox via ci-release, never a manual upload. Carries the login recipe that actually works — steamcmd runs with its own HOME and reuses a cached token; the "it keeps asking me to log in" problem was the desktop app wiping steamcmd's token in the shared Steam folder, not a bad password.
 ---
 
 # Uploading a Final Factory build to Steam (from the Mac)
@@ -17,34 +17,32 @@ special build. Full decision table: project-memory `which-build-skill`.
 
 **Branch and sign-in (Ben, 2026-09-25, supersedes older notes below where they differ):** the MP beta
 branch is **`multiplayer-closed-beta`**, never `development` (another branch on the same app). Uploads use
-steamcmd on the M5, and Ben signs in through the Steam app on the M5 when steamcmd prompts, so agents
-need no Steam password and never ask for one: when steamcmd wants a sign-in or approval, stop and ask
-Ben to sign in or approve it, then carry on. The branch's tester password (for
+steamcmd on the M5 with its own home and a cached token (below), so normally nobody signs in. When the
+token is rejected, steamcmd prompts and Ben signs in; agents need no Steam password and never ask for one. The branch's tester password (for
 `app_update 1383150 -beta multiplayer-closed-beta -betapassword <pw>` to install or verify the build as
 a tester) is deliberately NOT in this public repo: it is in the private game repo, 068 `tasks.md` T041,
 or ask Ben.
 
-## The login model that actually works — read this FIRST
+## The login model that actually works — read this FIRST (proven 2026-09-27)
 
-The recurring "why does it keep needing my login, I keep logging in!" is NOT a bad password and
-NOT a login that fails to save. It is TWO different Steam programs fighting over one account:
+**steamcmd on the M5 runs with its own home: `HOME=/Users/benryding/.steamcmd-home`.** It then keeps its
+own Steam folder (`$HOME/Library/Application Support/Steam`), and the token from Ben's last sign-in is
+reused: `Logging in using cached credentials` → `OK`, with no password and no Steam Guard.
 
-- the **Steam desktop app** (`~/Library/Application Support/Steam/.../steam_osx`), and
-- **`steamcmd`** (brew: `/opt/homebrew/bin/steamcmd` → a Caskroom root), which is what uploads.
+Why the own home: with the default home, steamcmd and the Steam **desktop app** share
+`~/Library/Application Support/Steam`. steamcmd did cache a token (a login right after Ben's sign-in
+used it), but the next time the desktop app signed in, steamcmd said **"Cached credentials not found"**.
+That is the "it keeps asking me to log in" problem, and it is not a bad password.
 
-Both use the same account (`slims20`) and, on the Mac, the same data folder. Steam allows only one
-live session per account, so they evict each other. Worse (proven 2026-09-14): a fresh
-`steamcmd +login slims20 +quit` reports **"Cached credentials not found"** even with the desktop
-app closed — steamcmd does NOT read the desktop app's login, and its own token does not persist
-between runs on this Mac. So:
+What still conflicts: Steam allows one session per account. **Any steamcmd login replaces the desktop
+app's session** (`connection_log.txt`: `RecvMsgClientLoggedOff('Session Replaced')`, then "not auto
+reconnecting"). The desktop app goes offline, and a game running from it loses Steam, until Ben restarts
+Steam. Quitting the desktop app first no longer buys anything, so **do not quit it**; warn Ben if he is
+playing, and tell him to restart Steam afterwards.
 
-- **Logging into the Steam desktop app never helps steamcmd.** Stop expecting a cached login to
-  carry over.
-- **A non-interactive `steamcmd +login slims20 +quit` cannot succeed** — no cached token, and
-  Steam Guard has no way to supply a 2FA code. It fails and looks like "needs login again."
-
-**Therefore: quit the desktop app, then log in AND upload in ONE steamcmd command**, supplying the
-password and the Steam Guard code at that moment. Do not rely on caching.
+Rules: always `+login slims20` with **no password argument**. Never store the password in a file,
+script, env var or keychain. Only when steamcmd prints `Cached credentials not found` (token rejected
+or expired) does Ben type the password and approve Steam Guard, at steamcmd's own prompt.
 
 ## Recipe
 
@@ -52,24 +50,21 @@ password and the Steam Guard code at that moment. Do not rely on caching.
    It carries the full verified procedure. This skill is the Steam login/upload mechanics it relies on.
    Never use the Build menu for the beta: every Build path strips the multiplayer define (`6c8dc3f99`).
 
-2. **Quit the Steam desktop app.** `osascript -e 'quit app "Steam"'` may return
-   `User canceled (-128)` and leave it running; if so, terminate it:
-   `pkill -f 'MacOS/steam_osx'` (Ben has standing authorization to kill the project's own Steam
-   desktop process to free the session — confirmed 2026-09-14). Verify nothing named `steam_osx`
-   or `Steam Helper` remains. The agent CANNOT type the password or Guard code, so the actual
-   `+login` with credentials is Ben's to run — hand him the exact command.
+2. **Test the token:** `HOME=/Users/benryding/.steamcmd-home steamcmd +login slims20 +quit < /dev/null`.
+   `...OK` means no sign-in is needed. Without a tty a missing token fails once (`Invalid Password`)
+   instead of hanging.
 
-3. **Log in and upload in one command** (Ben runs this; it prompts for the password, then the
-   Guard code, then uploads on that same fresh session):
-   ```
-   steamcmd +login slims20 +run_app_build <ABS>/cicd/ff_app_mp_beta.vdf +quit
-   ```
-   Leave the password OFF the command line — steamcmd prompts for it (and then the Guard code), so it
-   never lands in shell history. In the Claude desktop app, type the command into Ben's Terminal panel
-   with `run_in_terminal` and open the panel (`show_pane terminal`) so he sees the `password:` prompt.
-   Use an ABSOLUTE path to the vdf. Do NOT reopen the desktop app until it prints the BuildID.
+3. **Upload from a Terminal window** (so a `password:` prompt can still reach Ben if the token was rejected):
+   a `.command` file with `export HOME=/Users/benryding/.steamcmd-home` and
+   `script -q <repo>/cicd/mp_beta_upload.log steamcmd +login slims20 +run_app_build <ABS>/cicd/ff_app_mp_beta.vdf +quit`,
+   then `open -a Terminal <file>`. Use an ABSOLUTE path to the vdf. If it stops at `password:`, ask Ben
+   to sign in there. A wrong password makes steamcmd exit: relaunch the same file.
 
-4. **Verify** the BuildID in the output and confirm on the Steam partner site.
+4. **Verify** the BuildID in the output, then `app_info_print 1383150` with the same `HOME` (see
+   `mp-beta-deploy` §6).
+
+**First-time setup on a new home** (done on the M5 2026-09-27): `mkdir -p ~/.steamcmd-home`, then run
+`HOME=~/.steamcmd-home steamcmd +login slims20 +quit` in a Terminal window for Ben to sign in once.
 
 ## Facts and gotchas
 
@@ -97,14 +92,6 @@ even though BEAST has a steamcmd (`C:\steamworks\sdk	ools\ContentBuilderuilder`
 `slims20` entry: its desktop Steam is logged into the same account and the live play clients there use
 that session, so a steamcmd login on BEAST can knock them off. A Windows-only upload would also leave
 the branch's Mac depot out of step with the Windows one.
-
-## If you want unattended agent uploads
-
-The "log in once, cache, agents upload later" model does NOT hold on the Mac (see above). To make
-it work you must give steamcmd its OWN writable Steam dir (dedicated install/HOME), log in there
-once, and VERIFY it actually wrote a persisted machine token (`ssfn*` / `config/config.vdf`) —
-then always upload from that dir with the desktop app never using the same account. Until that is
-set up and verified, treat every upload as an interactive login+upload in one command.
 
 Related project-memory: `steamcmd-vs-desktop-steam-login-conflict`,
 `steam-desync-triage-from-the-client-side-only`, `unity-cli-mpdev-build-recipe`.

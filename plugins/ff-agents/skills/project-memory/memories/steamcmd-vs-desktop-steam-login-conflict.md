@@ -1,9 +1,11 @@
 ---
 name: steamcmd-vs-desktop-steam-login-conflict
-description: "'Why does it keep needing my login, I keep logging in!' on the Mac Steam upload — it is NOT a bad password: the Steam DESKTOP app and brew steamcmd share one account (slims20) and one data folder, Steam allows one live session per account so they evict each other, AND a fresh steamcmd login reports 'Cached credentials not found' regardless of desktop state. Logging into the desktop app never helps steamcmd. Fix: quit the desktop app, then log in AND upload in ONE steamcmd command; on the M5 only (Ben 2026-09-25: all builds and uploads come from the M5, never BEAST)."
+description: "'Why does it keep needing my login?' on the Mac Steam upload: the Steam DESKTOP app and brew steamcmd shared ~/Library/Application Support/Steam, and each desktop sign-in wiped steamcmd's cached token. FIXED 2026-09-27: steamcmd runs with HOME=/Users/benryding/.steamcmd-home, so its cached token survives and uploads need no password. Any steamcmd login still Session-Replaces the desktop app (it goes offline until Steam restarts), so do not bother quitting it first. Never store the password. M5 only."
 metadata:
   type: reference
 ---
+
+**Resolved 2026-09-27 (see the end of this file); the 2026-09-14 diagnosis below is history.**
 
 Diagnosed 2026-09-14 (Ben, frustrated that repeated logins never stuck).
 
@@ -48,3 +50,11 @@ The full build+upload recipe is the [[steam-upload]] skill. Supersedes the "Ben 
 cached" mental model in the machine-local `reference-steam-beta-branch-upload-from-mac` memory,
 which was wrong about caching. Related: [[steam-desync-triage-from-the-client-side-only]],
 [[unity-cli-mpdev-build-recipe]].
+
+**Resolution (2026-09-27, tested on the M5).** The 2026-09-14 "steamcmd never caches" claim was wrong:
+steamcmd DID cache a token (`Logging in using cached credentials` → OK right after Ben's sign-in), but
+the next desktop-app sign-in wiped it (`Cached credentials not found`), because both used the same Steam
+folder. Fix: run steamcmd with `HOME=/Users/benryding/.steamcmd-home`. Ben signed in there once, and the
+cached login then worked twice with the desktop app running (offline after being replaced). Not yet observed: the token surviving a fresh desktop sign-in; expected, since the folders are now separate. Separately, every
+steamcmd login makes the desktop app log off (`Session Replaced`, "not auto reconnecting") until Steam is
+restarted. That is why quitting the desktop app first no longer helps. Recipe: [[steam-upload]], [[mp-beta-deploy]] §6.
