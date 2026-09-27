@@ -60,8 +60,8 @@ or expired) does Ben type the password and approve Steam Guard, at steamcmd's ow
    then `open -a Terminal <file>`. Use an ABSOLUTE path to the vdf. If it stops at `password:`, ask Ben
    to sign in there. A wrong password makes steamcmd exit: relaunch the same file.
 
-4. **Verify** the BuildID in the output, then `app_info_print 1383150` with the same `HOME` (see
-   `mp-beta-deploy` §6).
+4. **Verify** the BuildID in the output. `app_info_print 1383150` from the separate home does NOT list the
+   private `multiplayer-closed-beta` branch (2026-09-27), so it cannot confirm the branch; see `mp-beta-deploy` §6.
 
 **First-time setup on a new home** (done on the M5 2026-09-27): `mkdir -p ~/.steamcmd-home`, then run
 `HOME=~/.steamcmd-home steamcmd +login slims20 +quit` in a Terminal window for Ben to sign in once.
