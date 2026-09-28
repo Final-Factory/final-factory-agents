@@ -1,6 +1,6 @@
 ---
 name: ci-release
-description: Cut a release through the ffbox build server — bump the version (FFVersion.cs + bundleVersion), commit and push it, then follow CI as it builds Windows and Mac, main and demo, checks them and, once the tests pass, uploads each app to Steam (main first), and once it is live post player-facing patch notes as Max in #dev-patch-notes. A DEVELOP release is the multiplayer closed-beta build — develop's players have multiplayer (FF_ENABLE_MULTIPLAYER_BUILD in ProjectSettings, #613/#614) and ffbox sets the main app live on the `multiplayer-closed-beta` branch by itself (ffbox a7809f9e1). A MASTER release is the public release — uploaded with nothing set live, promoted by hand. Use when Ben or Lothsahn asks for either in any words — "push a new beta build", "deploy to the MP beta", "a multiplayer build for the testers", "cut a develop release" (develop); "cut a release on master", "a public release" (master). Never start it on your own initiative or as a side step of other work. ffbox CI is THE way to build releases and is expected to work; the manual M5 procedure (mp-beta-deploy) is a last resort, only when ffbox CI is actually down and only with Ben's OK.
+description: Cut a release through the ffbox build server — bump the version (FFVersion.cs + bundleVersion), commit and push it, then follow CI as it builds Windows and Mac, main and demo, checks them and, once the tests pass, uploads each app to Steam (main first), writing the release notes first so they ride in the bump (cicd/release-notes/<version>.md: the Steam build description ffbox uploads with, and the player-facing post), then once it is live posting those notes as Max in #dev-patch-notes. A DEVELOP release is the multiplayer closed-beta build — develop's players have multiplayer (FF_ENABLE_MULTIPLAYER_BUILD in ProjectSettings, #613/#614) and ffbox sets the main app live on the `multiplayer-closed-beta` branch by itself (ffbox a7809f9e1). A MASTER release is the public release — uploaded with nothing set live, promoted by hand. Use when Ben or Lothsahn asks for either in any words — "push a new beta build", "deploy to the MP beta", "a multiplayer build for the testers", "cut a develop release" (develop); "cut a release on master", "a public release" (master). Never start it on your own initiative or as a side step of other work. ffbox CI is THE way to build releases and is expected to work; the manual M5 procedure (mp-beta-deploy) is a last resort, only when ffbox CI is actually down and only with Ben's OK.
 ---
 
 # Trigger a CI release on master or develop
@@ -69,14 +69,26 @@ Design and code: ffbox repo `design/ffbuild_release_design.txt`, `scripts/releas
 - Nothing already in flight for that branch: check that the latest version bump's release has finished
   (section 2) before starting another.
 
-**Do not run tests, open the editor, or read the git log to work out the bump.** The script below is
-the whole of it, and a change to two version lines has nothing to test.
+**Do not run tests or open the editor for the bump.** The script below is the whole of it, and a
+change to two version lines (plus its notes) has nothing to test.
+
+## 0.5. Write the release notes first (they ride in the bump)
+
+**Every release carries its notes** (Ben, 2026-09-28). Before triggering, write
+`Temp/release-notes-<version>.md` in your checkout from `git log <previous release>..origin/<branch>`,
+exactly as **`patch-notes.md`** beside this file says: line 1 is `steam_description: <short change
+list>` (ffbox makes it the Steam build's description, `<version> (<sha9>): <that line>`), line 2 is
+blank, and the rest is the player-facing #dev-patch-notes post. Then pass it to the script with
+`--notes`, which commits it with the bump as `cicd/release-notes/<version>.md`. The script refuses a
+file without the `steam_description:` line.
 
 ## 1. Start it: one command
 
 The game repo's `scripts/trigger-ci-release.sh` makes the bump: the `FinalFactoryVersion` line in
 `FFVersion.cs` and `bundleVersion` in `ProjectSettings.asset`, committed alone with the version as the
-message. The Unity editor's **Build → Trigger CI Release** runs the same script.
+message. With `--notes FILE` it adds that file as `cicd/release-notes/<version>.md` in the same
+commit. The Unity editor's **Build → Trigger CI Release** runs the same script (without notes, so its
+Steam description is only the version: prefer the command line).
 
 **Where you can push** (a session on a dev machine, or on the ffbox host itself; `gh auth status`),
 from any FinalFactory clone, on any branch, with any uncommitted work. The script builds the commit
@@ -84,20 +96,21 @@ on origin's tip of the branch without touching your checkout, pushes it, and ret
 moved:
 
 ```sh
-scripts/trigger-ci-release.sh develop --dry-run    # shows the two-line bump, changes nothing
-scripts/trigger-ci-release.sh develop              # bumps origin/develop's tip and pushes it
-scripts/trigger-ci-release.sh master --version 0.22.0.0
+scripts/trigger-ci-release.sh develop --dry-run --notes Temp/release-notes-0.50.0.43.md   # shows it, changes nothing
+scripts/trigger-ci-release.sh develop --notes Temp/release-notes-0.50.0.43.md             # bumps origin/develop's tip and pushes it
+scripts/trigger-ci-release.sh master --version 0.22.0.0 --notes Temp/release-notes-0.22.0.0.md
 ```
 
 **In an ffbox container** (a Discord or web turn on the build server), which cannot push to master
 or develop:
 
 ```sh
-scripts/trigger-ci-release.sh develop --commit-only
+scripts/trigger-ci-release.sh develop --commit-only --notes Temp/release-notes-<version>.md
 ```
 
 That commits the bump on a new branch `release-<version>` off `origin/develop` and checks it out.
-Then end your turn, leaving HEAD there. The harness skips the test run for a version-only change and
+Then end your turn, leaving HEAD there. The harness skips the test run for a version-only change (the
+notes file counts as part of it once ffbox PR #3 is merged; until then it runs the suite) and
 opens a pull request against develop; **merging that PR is what starts the release**, so say so in
 your reply with the version. Do not run `ffverify` for it.
 
@@ -131,11 +144,13 @@ master, remind them that nothing is live and they promote the build on the partn
 
 ## 3. Patch notes, once it is live
 
-**Every release ends with patch notes** (Ben, 2026-09-28): once the build is confirmed live, write
-player-facing notes for everything since the previous release, every bullet taken from the commits,
-and post them as Max in #dev-patch-notes (channel `1072387196927094845`), never with @everyone. The
-procedure, the exact format with a template, and the 403 rule are in **`patch-notes.md`** beside this
-file; follow it as written. Put the message link in the release report.
+**Every release ends with patch notes** (Ben, 2026-09-28): once the build is confirmed live, post the
+body of the release's `cicd/release-notes/<version>.md` (everything after its first two lines) as Max
+in #dev-patch-notes (channel `1072387196927094845`), never with @everyone. Check the main upload
+notice's desc too if you can see it (the ledger's `desc`). The procedure, the exact format with a
+template, and the 403 rule are in **`patch-notes.md`** beside this file; follow it as written. Put the
+message link in the release report. A release bumped without notes (the Build menu) still gets them:
+write them from the commits then, and add the file to develop afterwards for the record.
 
 ## When it goes wrong
 

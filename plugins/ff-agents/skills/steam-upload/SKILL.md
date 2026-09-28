@@ -11,7 +11,8 @@ a release by hand any more (no `Build and Upload All`, no steamcmd, no ZIP uploa
 covers only the MP closed-beta upload (`mp-beta-deploy`).
 
 An upload made here is still a release to the testers, so it ends with the patch notes step of
-`mp-beta-deploy` (§8: the `ci-release` skill's `patch-notes.md`, posted as Max in #dev-patch-notes).
+`mp-beta-deploy` (§8: the `ci-release` skill's `patch-notes.md`, posted as Max in #dev-patch-notes), and
+its vdf `"desc"` comes from the same notes file (`mp-beta-deploy` §5).
 
 **Which build skill, in one line:** a new closed-beta build is a develop `ci-release` (ffbox sets its
 main app live on `multiplayer-closed-beta`, 2026-09-26); a public release is a master `ci-release`;

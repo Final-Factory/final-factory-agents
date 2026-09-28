@@ -61,6 +61,9 @@ Run, in order, via `execute_code` (reflection on `Editor.*`), writing a marker f
 `Editor.Localizer.HarvestAndExport()` → `Editor.FontCoverage.RebuildFontAtlases()` →
 `Editor.FontCoverage.ValidateFontCoverageOrThrow()`. A failure aborts the deploy. Commit whatever they
 change (e.g. rebaked CJK font atlases under `Assets/UI/Fonts/`) and push — that commit is the source.
+Commit the release notes in the same push: `cicd/release-notes/<version>.md`, written exactly as the
+`ci-release` skill's `patch-notes.md` says (line 1 `steam_description: …`, blank, then the
+#dev-patch-notes post), from the commits since the previous release. §5 and §8 read it.
 
 ## 2. Mac player (in the editor)
 1. Call A: `AssetDatabase.ImportAsset("Assets/Scenes/main/EntitySubScene.unity", ForceUpdate |
@@ -146,8 +149,9 @@ Layout the depot vdfs expect: `cicd/mp_beta_upload/mac_main/{finalfactory.app, L
   `tar cf - --exclude='*DoNotShip*' --exclude='.ff*' .` from inside the player folder.
 - Move the previous `cicd/mp_beta_upload` aside as `mp_beta_upload-<version>-<sha7>`; then rename the
   stage to `cicd/mp_beta_upload`.
-- Update `"desc"` in `cicd/ff_app_mp_beta.vdf` (untracked) with version + sha + a few-word change list.
-  Keep `"setlive" "multiplayer-closed-beta"`.
+- Set `"desc"` in `cicd/ff_app_mp_beta.vdf` (untracked) to the same string ffbox builds for a CI
+  release: `<version> (<sha9>): <steam_description line of cicd/release-notes/<version>.md>`, with no
+  `"` or `\` in it, 200 characters at most. Keep `"setlive" "multiplayer-closed-beta"`.
 
 ## 6. Upload (cached steamcmd token; Ben signs in only when it is rejected)
 **steamcmd has its own home on the M5: `HOME=/Users/benryding/.steamcmd-home`** (set up and proven
@@ -197,8 +201,8 @@ active spec's `tasks.md`). Report to Ben: TL;DR (version, sha, BuildID, branch),
 verified and staged. Any new gotcha goes through `ff-agents:publish-skills` into THIS skill.
 
 ## 8. Patch notes
-Once the upload's BuildID is in the log (§6), write player-facing notes for everything since the previous
-release, every bullet taken from the commits, and post them as Max in #dev-patch-notes (channel
+Once the upload's BuildID is in the log (§6), post the body of `cicd/release-notes/<version>.md` (the file
+§1 committed, everything after its first two lines) as Max in #dev-patch-notes (channel
 `1072387196927094845`), never with @everyone (Ben, 2026-09-28). The procedure, the exact format with a
-template, and the 403 rule are in the `ci-release` skill's `patch-notes.md`; follow it as written, and put the
-message link in the report to Ben.
+template, and the 403 rule are in the `ci-release` skill's `patch-notes.md` §4; follow it as written, and
+put the message link in the report to Ben.
