@@ -120,9 +120,9 @@ grep -c '[—–]' Temp/release-notes-<version>.md             # 0
 ## 4. Post it as Max, once the build is live
 
 "Confirmed live" means:
-- **develop** (the closed beta): the main notice says "set live on multiplayer-closed-beta … and
-  multiplayer-beta …" with a BuildID for each (`ci-release` §2), or the `mp-beta-deploy` §6 log shows
-  both BuildIDs.
+- **develop** (the multiplayer beta): the main notice says "set live on multiplayer-beta (BuildID
+  …)" (`ci-release` §2), or the `mp-beta-deploy` §6 log shows its BuildID. The closed beta is retired
+  (ffbox `f9174b61d`, 2026-09-28), so no closed-beta BuildID is expected.
 - **master** (public): nothing is live at upload. Hand the notes over with the report; post them only
   once Ben or Lothsahn says the build is on the default branch.
 

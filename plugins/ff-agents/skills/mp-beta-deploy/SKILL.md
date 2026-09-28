@@ -19,6 +19,11 @@ that fails on ffbox is reported with the job log's reason and fixed there (re-ru
 quietly replaced by an M5 build. (History: the 2026-09-27 ffbox Mac "Disk full" failures that sent
 0.50.0.41 through here are fixed in ffbox, per Lothsahn 2026-09-28.)
 
+**The closed beta is retired (owner, 2026-09-28, ffbox `f9174b61d`).** ffbox now sets a develop
+release live on `multiplayer-beta` only (0.50.0.45: BuildID 25587352) and refuses an upload asking for
+`multiplayer-closed-beta`. The steps below that still set or verify `multiplayer-closed-beta` predate
+that: in a manual build, set `multiplayer-beta` live and ask Ben before touching the closed beta.
+
 **Both players are built on the M5, never on BEAST** (Ben, 2026-09-25, standing rule): the M5
 builds both the PC and the Mac versions, so every beta build comes from it. (Releases to the
 default app are not built here or by hand at all: CI builds and uploads them on ffbox, via
