@@ -1,6 +1,6 @@
 ---
 name: mp-beta-deploy
-description: LAST-RESORT FALLBACK — the manual M5 procedure that builds the multiplayer Mac + Windows players from develop and uploads them to the password-protected Steam `multiplayer-closed-beta` branch (pre-steps, both builds, verification, depot staging, steamcmd upload, record). The NORMAL route to a new closed-beta build is a develop release through ci-release: develop's players have multiplayer (#613/#614) and ffbox sets the main app live on multiplayer-closed-beta by itself (ffbox a7809f9e1). ffbox CI is THE way to build releases and is expected to work. Use this skill only when ffbox CI is actually down AND Ben has OK'd a manual build, or Ben explicitly asks for a special build that must not come from a develop release (a branch other than develop, a build with local-only changes). A failed player on ffbox is not "ffbox down": report it and fix it through ci-release. Never start it on your own initiative or as a side step of other work.
+description: LAST-RESORT FALLBACK — the manual M5 procedure that builds the multiplayer Mac + Windows players from develop and uploads them to the Steam `multiplayer-closed-beta` (password-protected) and `multiplayer-beta` branches (pre-steps, both builds, verification, depot staging, steamcmd upload, record). The NORMAL route to a new closed-beta build is a develop release through ci-release: develop's players have multiplayer (#613/#614) and ffbox sets the main app live on multiplayer-closed-beta and multiplayer-beta by itself (ffbox a7809f9e1, d46d438d5). ffbox CI is THE way to build releases and is expected to work. Use this skill only when ffbox CI is actually down AND Ben has OK'd a manual build, or Ben explicitly asks for a special build that must not come from a develop release (a branch other than develop, a build with local-only changes). A failed player on ffbox is not "ffbox down": report it and fix it through ci-release. Never start it on your own initiative or as a side step of other work.
 ---
 
 # Deploy a build to the MP beta branch
@@ -11,8 +11,8 @@ needed, say so and wait for him to ask. Proven end to end on 2026-09-23 (0.50.0.
 
 **Last-resort fallback (Lothsahn, 2026-09-26; tightened 2026-09-28).** A develop release through
 `ci-release` IS the closed-beta build, and ffbox CI is THE way to build it: develop's players have multiplayer (`FF_ENABLE_MULTIPLAYER_BUILD` in develop's
-ProjectSettings, #613/#614) and ffbox sets the main app live on `multiplayer-closed-beta` as it uploads
-(ffbox `a7809f9e1`, `release_lane.SETLIVE`). Asked for "a new beta build", use `ci-release` on
+ProjectSettings, #613/#614) and ffbox sets the main app live on `multiplayer-closed-beta` and
+`multiplayer-beta` as it uploads (ffbox `a7809f9e1`, `d46d438d5`, `release_lane.SETLIVE`). Asked for "a new beta build", use `ci-release` on
 develop. Come here only when ffbox CI is actually down AND Ben OKs the manual build, or for a special
 build Ben explicitly asks for that must not be a develop release; say which in your report. A player
 that fails on ffbox is reported with the job log's reason and fixed there (re-run or bump), never
@@ -27,7 +27,7 @@ ffsb sandbox, even when the M5 is busy: wait for it, or ask Ben. BEAST sandboxes
 test-leg and play-client players (`honest-coop-play`), which are never uploaded.
 
 **Branch and sign-in (Ben, 2026-09-25, supersedes older notes below where they differ):** the MP beta
-branch is **`multiplayer-closed-beta`**, never `development` (another branch on the same app). Uploads use
+branches are **`multiplayer-closed-beta`** and, since 2026-09-28, **`multiplayer-beta`** (a beta build goes live on both), never `development` (another branch on the same app). Uploads use
 steamcmd on the M5 with its own home and a cached token (§6), so normally nobody signs in. When the token
 is rejected, steamcmd prompts and Ben signs in; agents need no Steam password and never ask for one. The branch's tester password (for
 `app_update 1383150 -beta multiplayer-closed-beta -betapassword <pw>` to install or verify the build as
@@ -152,6 +152,10 @@ Layout the depot vdfs expect: `cicd/mp_beta_upload/mac_main/{finalfactory.app, L
 - Set `"desc"` in `cicd/ff_app_mp_beta.vdf` (untracked) to the same string ffbox builds for a CI
   release: `<version> (<sha9>): <steam_description line of cicd/release-notes/<version>.md>`, with no
   `"` or `\` in it, 200 characters at most. Keep `"setlive" "multiplayer-closed-beta"`.
+- **A develop beta build goes live on `multiplayer-beta` too** (2026-09-28, as ffbox `d46d438d5` does).
+  An app build sets one branch live, so copy `cicd/ff_app_mp_beta.vdf` to `cicd/ff_app_mp_beta_open.vdf`
+  (untracked) with the same `desc` and `"setlive" "multiplayer-beta"`. It uploads no new chunks but
+  gets its own BuildID. Nobody moves either branch by hand; never ask Ben to.
 
 ## 6. Upload (cached steamcmd token; Ben signs in only when it is rejected)
 **steamcmd has its own home on the M5: `HOME=/Users/benryding/.steamcmd-home`** (set up and proven
@@ -173,7 +177,8 @@ Steam Guard.
 2. Launch the upload in a Terminal window, so the tty can still show a `password:` prompt if the token was
    rejected. Write a `.command` file with
    `export HOME=/Users/benryding/.steamcmd-home` and then
-   `script -q <repo>/cicd/mp_beta_upload.log steamcmd +login slims20 +run_app_build <ABS repo>/cicd/ff_app_mp_beta.vdf +quit`.
+   `script -q <repo>/cicd/mp_beta_upload.log steamcmd +login slims20 +run_app_build <ABS repo>/cicd/ff_app_mp_beta.vdf +run_app_build <ABS repo>/cicd/ff_app_mp_beta_open.vdf +quit`
+   (both branches in one session, §5).
    `chmod +x` it and `open -a Terminal <file>` (`osascript … do script` timed out with -1712 from an agent).
    In the Claude desktop app, `run_in_terminal` + `show_pane terminal` works too.
    If it stops at `password:`, stop and ask Ben to type the password and approve Steam Guard in that window.
@@ -184,8 +189,9 @@ Steam Guard.
    Keystrokes Ben types while a window opens can land in it (2026-09-27: a stray `r` turned the command into
    `r/tmp/...`, and the window exited). Read the window (`tell application "Terminal" to get contents of
    selected tab of front window`) if no log appears.
-3. Read the `script` log until `Successfully finished AppID 1383150 build (BuildID <n>)`. With chunk dedupe,
-   the upload takes ~30 s; `"setlive"` in the app vdf sets it live on `multiplayer-closed-beta` in the same run.
+3. Read the `script` log until it shows `Successfully finished AppID 1383150 build (BuildID <n>)` TWICE, one
+   per branch. With chunk dedupe, each takes ~30 s; `"setlive"` in each app vdf sets its branch live
+   (`multiplayer-closed-beta`, then `multiplayer-beta`) in the same run. Report both BuildIDs.
    **Confirming the branch from the M5 is currently unsolved** (2026-09-27, 0.50.0.40): from the separate
    steamcmd home, `app_info_print 1383150` lists only the PUBLIC branches (no `multiplayer-closed-beta`, even
    after deleting `appcache/appinfo.vdf` to force a fresh fetch), and a tester install with the 068 T041 beta
