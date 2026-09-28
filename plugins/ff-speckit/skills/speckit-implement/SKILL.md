@@ -142,6 +142,16 @@ You **MUST** consider the user input before proceeding (if not empty).
    - **Terraform**: `.terraform/`, `*.tfstate*`, `*.tfvars`, `.terraform.lock.hcl`
    - **Kubernetes/k8s**: `*.secret.yaml`, `secrets/`, `.kube/`, `kubeconfig*`, `*.key`, `*.crt`
 
+4.5. **Save-compatibility gate (Final Factory hard rule, project-memory `save-compatibility-hard-rule`)**:
+   - plan.md MUST contain a filled `## Save compatibility` section. If it is missing or still holds
+     template placeholders, **STOP**: the review fails. Add the section (per `speckit-plan` Phase 1
+     step 5) before implementing anything.
+   - Any task that changes saved state must ship, in the same change, an `UpgradeStep` (or the
+     plan's proven no-op) and a golden-fixture load test. `SaveLayoutSnapshotTest`,
+     `GoldenSaveFixtureTests` (fast suite) and `SaveCompatibilityLiveLoadTest` (PlayMode) must be
+     green before the work is called done; regenerate `SaveLayoutSnapshot.json` only through its menu
+     item, after the step exists.
+
 5. Parse tasks.md structure and extract:
    - **Task phases**: Setup, Tests, Core, Integration, Polish
    - **Task dependencies**: Sequential vs parallel execution rules
@@ -175,6 +185,10 @@ You **MUST** consider the user input before proceeding (if not empty).
    - Check that implemented features match the original specification
    - Validate that tests pass and coverage meets requirements
    - Confirm the implementation follows the technical plan
+   - **Review FAILS** if plan.md has no filled `## Save compatibility` section, or if the diff
+     touches saved state (`git diff` over `[Save]` structs, `SaveState`, `ISerializableSystem`
+     payloads, persisting ops) without an `UpgradeStep` (or the plan's proven no-op) and a green
+     golden-fixture load test. Do not report the feature complete in that state.
 
 Note: This command assumes a complete task breakdown exists in tasks.md. If tasks are incomplete or missing, suggest running `/speckit-tasks` first to regenerate the task list.
 
