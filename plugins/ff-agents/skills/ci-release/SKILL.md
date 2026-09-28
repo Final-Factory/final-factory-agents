@@ -32,18 +32,22 @@ download, so never start one yourself; if you think one is due, say so and wait.
 
 **The version bump IS the release.** A commit on master or develop whose `FFVersion.cs` version differs
 from its first parent's is built; nothing else is. `main.yml`'s `versionBump` job (ubuntu-latest) checks
-that first; on any other push the `Release` and `Release demo` jobs show as **skipped**, which is
-normal. On a bump they run on the ffbox runners **beside the tests, not after them**:
-`Release (win64, main)` and `Release (osx, main)` start as soon as `versionBump` says yes, and
-`Release demo (win64, demo)` and `Release demo (osx, demo)` start once both main jobs have finished.
-`Warm release cache` is skipped on a bump, because the main release builds write the target caches.
-Each release job asks the ffbox host, and the host grants only when:
+that first; on any other push the `Release` jobs show as **skipped**, which is normal. On a bump
+they run on the ffbox runners **beside the tests, not after them**: `Release (win64)` and
+`Release (osx)` start as soon as `versionBump` says yes. **Each job builds its target's main player,
+hands it to the host, then builds the demo in the same workspace** (since 2026-09-28; before that
+there were four jobs, `Release (win64, main)` … `Release demo (osx, demo)`). The demo reuses the
+Burst code main just compiled, because demo mode is a scene flag, not a define. Each job asks the
+ffbox host for both editions (`main,demo`), and the host grants each edition only when:
 - GitHub confirms the job is a push of that branch at that exact commit,
 - the commit is on the branch's first-parent history and changes the version,
 - and that version has not been built on that branch before.
 
-Each granted job builds one player with `Editor.ReleaseBuild`, starting warm from CI's per-target
-cache (about 5–15 min for a main player). The host then checks it: the exe, the entity scenes, the
+Each granted edition is one `Editor.ReleaseBuild` session. The job starts from the target cache the
+nightly "Rebuild caches" workflow wrote (releases write no cache), so a main player pays Burst for
+everything pushed since that night: about 10–20 min, more on a busy box or after a big day. The demo
+after it should be much shorter. The host grants each edition on its own, so a re-run of a job whose
+main player is already GOOD builds only the demo. The host then checks it: the exe, the entity scenes, the
 Addressables, no symbols left in, the version, and **no asset import error**. It files the symbols by
 version.
 
@@ -179,6 +183,6 @@ release"), in `release.decided`, and in the ffbox journal (`journalctl -u ffwatc
 | upload FAILED: `Steam login is gone` | On the ffbox host, a person runs `scripts/ffsteam.py login` (password + Steam Guard). |
 | upload skipped: `uploaded it by hand` | The bump commit also changed `cicd/depot_build_*.vdf` (Build and Upload All). Expected. |
 | upload skipped: `release.upload is off` / `no release.steam.account` | Host configuration. Ask. |
-| a `Release …` job is green after about 10 minutes with no build step run and no GOOD/FAILED notice, and its log ends `the host did not answer in 600s; the checkout will likely fail` | The host never answered the job's mirror request, so the job skipped its build and still passed (0.50.0.42 win64-main, 2026-09-28). The version is NOT used up for that player. Once the whole run has finished, re-run only that job: `gh run rerun <run id> -R Final-Factory/FinalFactory --job <job id>`. The host granted the re-run, built it GOOD, and uploaded main. Tell the ffbox owner it happened. |
+| a `Release …` job is green after about 10 minutes with no build step run and no GOOD/FAILED notice, and its log ends `the host did not answer in 600s; the checkout will likely fail` | The host never answered the job's mirror request, so the job skipped its build and still passed (0.50.0.42 win64-main, 2026-09-28). The version is NOT used up for that player. Once the whole run has finished, re-run only that job: `gh run rerun <run id> -R Final-Factory/FinalFactory --job <job id>`. The host granted the re-run, built it GOOD, and uploaded main. A re-run is granted only the editions not already built, so it never rebuilds a GOOD player. Tell the ffbox owner it happened. |
 
 A failed worker does not retry by itself. After fixing the cause, bump again: each version is built once.
