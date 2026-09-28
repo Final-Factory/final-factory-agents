@@ -19,6 +19,9 @@ and every save written afterwards is back on the fast path. The trigger was #529
 `ColumnarFastPathLoader.ValidateComponentLayouts` refused them ("was 80 bytes at save time but is
 104 bytes now") and every pre-0.50.0.17 save with research bots failed to load.
 
+The same failure shipped again in 0.50.0.45 (`Player.SimulationVelocity`, no step at all), which
+made it a hard rule: [[save-compatibility-hard-rule]].
+
 **How to apply:**
 - A step that only does `PostLoadUpgrade` work on unchanged layouts keeps `=> false`. A step for a
   changed layout needs `=> true`. Getting that wrong means refused loads, not slow ones.

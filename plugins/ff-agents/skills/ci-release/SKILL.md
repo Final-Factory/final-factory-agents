@@ -86,6 +86,16 @@ Design and code: ffbox repo `design/ffbuild_release_design.txt`, `scripts/releas
   exists, say so and ask before triggering. (The upload itself stays gated on the release run's own
   `Test in …` jobs, which do run the suite: 0.50.0.45's ran 5541, 5520 passed, 0 failed.)
 
+- **Saves from master's version and every beta since still load** (hard rule, project-memory
+  `save-compatibility-hard-rule`; 0.50.0.45 shipped unable to load any 0.50.0.35..44 save). On the
+  HEAD you release: the EditMode result above must include `Tests.Serialization.GoldenSaveFixtureTests`
+  and `Tests.Serialization.SaveLayoutSnapshotTest` green, and run
+  `PlayModeTests.Serialization.SaveCompatibilityLiveLoadTest` (PlayMode, about a minute) locally and
+  see it pass. If `git diff <previous release>..HEAD` touches a `[Save]` struct, `SaveState` or an
+  `ISerializableSystem` payload, find the matching `UpgradeStep` before bumping; if there is none,
+  stop and say so. After a develop release, mint a golden fixture from a save that release writes when
+  it starts a new layout generation, so the next beta is tested against it.
+
 **Do not run tests for the bump commit itself.** The script below is the whole of it, and a
 change to two version lines (plus its notes) has nothing to test beyond the HEAD it sits on.
 

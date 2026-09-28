@@ -166,7 +166,20 @@ Command ends after Phase 2 planning. Report branch, IMPL_PLAN path, and generate
    - Keep feature selection in the machine-local `.specify/feature.json` and current work state in
      the dated handoff at the top of that feature's plan.
 
-**Output**: data-model.md, /contracts/*, quickstart.md; shared agent context remains unchanged
+5. **Fill the `## Save compatibility` section of plan.md (MANDATORY, Final Factory hard rule)**:
+   - List every piece of saved state the feature touches: a `[Save]` component or buffer whose
+     fields change (including a field moved into padding, which changes the StableTypeHash), a new
+     `[Save]` type, `SaveState`/`SaveMetaState` fields, an `ISerializableSystem` payload, config
+     names or ids a save refers to, entity layouts, network operations whose effect persists. If
+     none, write "none" and the search that proves it.
+   - Name the `UpgradeStep` (next release version, `RequiresEntityDictionary => true` for a layout
+     change, idempotent or flag-guarded), or state "proven no-op" and the evidence.
+   - Name the loads to prove: golden fixtures from master's current version and every beta since,
+     plus a new fixture if the feature starts a new layout generation.
+   - The rule and why: project-memory `save-compatibility-hard-rule`. If the plan template lacks the
+     section, add it. `speckit-implement` refuses to finish without it.
+
+**Output**: data-model.md, /contracts/*, quickstart.md, plan.md with its Save compatibility section; shared agent context remains unchanged
 
 ## Key rules
 
@@ -176,5 +189,6 @@ Command ends after Phase 2 planning. Report branch, IMPL_PLAN path, and generate
 ## Done When
 
 - [ ] Plan workflow executed and design artifacts generated
+- [ ] plan.md has a filled `## Save compatibility` section (saved state touched or "none" with proof, upgrade step or proven no-op, loads to prove)
 - [ ] Extension hooks dispatched or skipped according to the rules in Mandatory Post-Execution Hooks above
 - [ ] Completion reported to user with branch, plan path, and generated artifacts
