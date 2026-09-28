@@ -31,6 +31,7 @@ Bound surfaces, all of them in this plugin beside this file:
 | `skills/ask-claude/SKILL.md` | players |
 | `skills/ask-dev/SKILL.md` | Ben and Lothsahn |
 | `skills/discord-triage/SKILL.md` | players, in bug threads |
+| `ff-agents` plugin: `skills/ci-release/patch-notes.md` (also used by `mp-beta-deploy`) | players, release notes in #dev-patch-notes |
 
 `discord-triager` is read-only towards the repo, not towards Discord: it posts its own
 explanation into a bug thread when a report turns out to be a misunderstanding, so it is bound

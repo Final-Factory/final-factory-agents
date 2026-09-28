@@ -1,6 +1,6 @@
 ---
 name: ci-release
-description: Cut a release through the ffbox build server — bump the version (FFVersion.cs + bundleVersion), commit and push it, then follow CI as it builds Windows and Mac, main and demo, checks them and, once the tests pass, uploads each app to Steam (main first). A DEVELOP release is the multiplayer closed-beta build — develop's players have multiplayer (FF_ENABLE_MULTIPLAYER_BUILD in ProjectSettings, #613/#614) and ffbox sets the main app live on the `multiplayer-closed-beta` branch by itself (ffbox a7809f9e1). A MASTER release is the public release — uploaded with nothing set live, promoted by hand. Use when Ben or Lothsahn asks for either in any words — "push a new beta build", "deploy to the MP beta", "a multiplayer build for the testers", "cut a develop release" (develop); "cut a release on master", "a public release" (master). Never start it on your own initiative or as a side step of other work. The manual M5 procedure (mp-beta-deploy) is only a fallback for when ffbox is down or for a special build.
+description: Cut a release through the ffbox build server — bump the version (FFVersion.cs + bundleVersion), commit and push it, then follow CI as it builds Windows and Mac, main and demo, checks them and, once the tests pass, uploads each app to Steam (main first), and once it is live post player-facing patch notes as Max in #dev-patch-notes. A DEVELOP release is the multiplayer closed-beta build — develop's players have multiplayer (FF_ENABLE_MULTIPLAYER_BUILD in ProjectSettings, #613/#614) and ffbox sets the main app live on the `multiplayer-closed-beta` branch by itself (ffbox a7809f9e1). A MASTER release is the public release — uploaded with nothing set live, promoted by hand. Use when Ben or Lothsahn asks for either in any words — "push a new beta build", "deploy to the MP beta", "a multiplayer build for the testers", "cut a develop release" (develop); "cut a release on master", "a public release" (master). Never start it on your own initiative or as a side step of other work. The manual M5 procedure (mp-beta-deploy) is only a fallback for when ffbox is down or for a special build.
 ---
 
 # Trigger a CI release on master or develop
@@ -47,8 +47,8 @@ version and **nothing is set live, except a develop release's main app, which go
 `multiplayer-closed-beta`** (the notice says "set live on multiplayer-closed-beta"). So main (app 1383150) goes up as soon as its players and the tests
 are done, without waiting for the demo, and the demo (app 2387320) follows. If a test job fails, both
 uploads are skipped with a notice; the players are still built and their symbols filed. Every other build
-Lothsahn and Ben promote to Steam branches by hand. The host also posts notices to #agent-testing
-(`release.channel`) and, once all four players are GOOD, opens a PR
+Lothsahn and Ben promote to Steam branches by hand. The host also posts notices to #release-build-announce
+(`release.channel`; 0.50.0.42's all landed there, none in #agent-testing) and, once all four players are GOOD, opens a PR
 `ffbox/release-<version>-regenerated` for any tracked files the build regenerated (localization
 harvest, font atlases).
 
@@ -109,9 +109,10 @@ gh run list -R Final-Factory/FinalFactory -b <branch> -L 3        # the run for 
 gh run view <run id> -R Final-Factory/FinalFactory --json jobs -q '.jobs[] | "\(.name): \(.status) \(.conclusion)"'
 ```
 
-- **In #agent-testing:** notices for "building", each player GOOD or FAILED (with the failed check), and
-  one "<app> uploaded to Steam … BuildID …" per app, main first (read with `ffdiscord`, see the
-  ff-discord `discord-cli` skill).
+- **In #release-build-announce:** notices for "building", each player GOOD or FAILED (with the failed check), and
+  one "<app> uploaded to Steam … BuildID …" per app, main first (read with `ffdiscord read '#release-build-announce' --limit 10`, see
+  the ff-discord `discord-cli` skill). A player with no GOOD/FAILED notice while its CI job shows
+  success was never granted: see the "host did not answer" row below.
 - **On the ffbox host:** the ledger `~/ffbox-state/builds/<branch>/<version>/release.json` holds every
   state: `workers`, the CI `run` whose tests gate the upload, `uploads.main` / `uploads.demo` with
   their BuildIDs, and the regenerated-files PR.
@@ -121,6 +122,14 @@ four results, the two BuildIDs (main app 1383150, demo app 2387320), and the reg
 there is one. For develop, confirm the main
 notice says "set live on multiplayer-closed-beta" (and `uploads.main.setlive` in the ledger); for
 master, remind them that nothing is live and they promote the build on the partner site.
+
+## 3. Patch notes, once it is live
+
+**Every release ends with patch notes** (Ben, 2026-09-28): once the build is confirmed live, write
+player-facing notes for everything since the previous release, every bullet taken from the commits,
+and post them as Max in #dev-patch-notes (channel `1072387196927094845`), never with @everyone. The
+procedure, the exact format with a template, and the 403 rule are in **`patch-notes.md`** beside this
+file; follow it as written. Put the message link in the release report.
 
 ## When it goes wrong
 
@@ -142,5 +151,6 @@ release"), in `release.decided`, and in the ffbox journal (`journalctl -u ffwatc
 | upload FAILED: `Steam login is gone` | On the ffbox host, a person runs `scripts/ffsteam.py login` (password + Steam Guard). |
 | upload skipped: `uploaded it by hand` | The bump commit also changed `cicd/depot_build_*.vdf` (Build and Upload All). Expected. |
 | upload skipped: `release.upload is off` / `no release.steam.account` | Host configuration. Ask. |
+| a `Release …` job is green after about 10 minutes with no build step run and no GOOD/FAILED notice, and its log ends `the host did not answer in 600s; the checkout will likely fail` | The host never answered the job's mirror request, so the job skipped its build and still passed (0.50.0.42 win64-main, 2026-09-28). The version is NOT used up for that player. Once the whole run has finished, re-run only that job: `gh run rerun <run id> -R Final-Factory/FinalFactory --job <job id>`. The host granted the re-run, built it GOOD, and uploaded main. Tell the ffbox owner it happened. |
 
 A failed worker does not retry by itself. After fixing the cause, bump again: each version is built once.
