@@ -192,3 +192,10 @@ Steam Guard.
 Commit a one-line note with version, source sha and BuildID where the active work is tracked (e.g. the
 active spec's `tasks.md`). Report to Ben: TL;DR (version, sha, BuildID, branch), then what was built,
 verified and staged. Any new gotcha goes through `ff-agents:publish-skills` into THIS skill.
+
+## 8. Patch notes
+Once the upload's BuildID is in the log (§6), write player-facing notes for everything since the previous
+release, every bullet taken from the commits, and post them as Max in #dev-patch-notes (channel
+`1072387196927094845`), never with @everyone (Ben, 2026-09-28). The procedure, the exact format with a
+template, and the 403 rule are in the `ci-release` skill's `patch-notes.md`; follow it as written, and put the
+message link in the report to Ben.

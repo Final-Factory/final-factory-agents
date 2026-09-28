@@ -10,6 +10,9 @@ and uploaded by CI on the ffbox build server: use the `ci-release` skill. Nobody
 a release by hand any more (no `Build and Upload All`, no steamcmd, no ZIP upload). This skill
 covers only the MP closed-beta upload (`mp-beta-deploy`).
 
+An upload made here is still a release to the testers, so it ends with the patch notes step of
+`mp-beta-deploy` (§8: the `ci-release` skill's `patch-notes.md`, posted as Max in #dev-patch-notes).
+
 **Which build skill, in one line:** a new closed-beta build is a develop `ci-release` (ffbox sets its
 main app live on `multiplayer-closed-beta`, 2026-09-26); a public release is a master `ci-release`;
 `mp-beta-deploy` (this skill's upload mechanics) is only the fallback when ffbox is down or for a
