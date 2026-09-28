@@ -1,6 +1,6 @@
 ---
 name: mp-beta-deploy
-description: FALLBACK ONLY — the manual M5 procedure that builds the multiplayer Mac + Windows players from develop and uploads them to the password-protected Steam `multiplayer-closed-beta` branch (pre-steps, both builds, verification, depot staging, steamcmd upload, record). The NORMAL route to a new closed-beta build is a develop release through ci-release: develop's players have multiplayer (#613/#614) and ffbox sets the main app live on multiplayer-closed-beta by itself (ffbox a7809f9e1). Use this skill only when Ben asks for a beta build AND ffbox cannot make it (ffbox down, its release lane broken, the Steam set-live failing), or Ben asks for a special build that must not come from a develop release (a branch other than develop, a build with local-only changes). Never start it on your own initiative or as a side step of other work.
+description: LAST-RESORT FALLBACK — the manual M5 procedure that builds the multiplayer Mac + Windows players from develop and uploads them to the password-protected Steam `multiplayer-closed-beta` branch (pre-steps, both builds, verification, depot staging, steamcmd upload, record). The NORMAL route to a new closed-beta build is a develop release through ci-release: develop's players have multiplayer (#613/#614) and ffbox sets the main app live on multiplayer-closed-beta by itself (ffbox a7809f9e1). ffbox CI is THE way to build releases and is expected to work. Use this skill only when ffbox CI is actually down AND Ben has OK'd a manual build, or Ben explicitly asks for a special build that must not come from a develop release (a branch other than develop, a build with local-only changes). A failed player on ffbox is not "ffbox down": report it and fix it through ci-release. Never start it on your own initiative or as a side step of other work.
 ---
 
 # Deploy a build to the MP beta branch
@@ -9,12 +9,15 @@ description: FALLBACK ONLY — the manual M5 procedure that builds the multiplay
 a build that other people download, so never start it on your own initiative; if you think one is
 needed, say so and wait for him to ask. Proven end to end on 2026-09-23 (0.50.0.21, develop `f594db63d`, BuildID 25471784); both players built on the M5 on 2026-09-25 (0.50.0.28, `75afa459d`, BuildID 25540837).
 
-**Fallback only (Lothsahn, 2026-09-26).** A develop release through `ci-release` IS the closed-beta
-build now: develop's players have multiplayer (`FF_ENABLE_MULTIPLAYER_BUILD` in develop's
+**Last-resort fallback (Lothsahn, 2026-09-26; tightened 2026-09-28).** A develop release through
+`ci-release` IS the closed-beta build, and ffbox CI is THE way to build it: develop's players have multiplayer (`FF_ENABLE_MULTIPLAYER_BUILD` in develop's
 ProjectSettings, #613/#614) and ffbox sets the main app live on `multiplayer-closed-beta` as it uploads
 (ffbox `a7809f9e1`, `release_lane.SETLIVE`). Asked for "a new beta build", use `ci-release` on
-develop. Come here only when ffbox cannot do it (host down, release lane or the Steam set-live
-failing) or for a special build that must not be a develop release; say which in your report.
+develop. Come here only when ffbox CI is actually down AND Ben OKs the manual build, or for a special
+build Ben explicitly asks for that must not be a develop release; say which in your report. A player
+that fails on ffbox is reported with the job log's reason and fixed there (re-run or bump), never
+quietly replaced by an M5 build. (History: the 2026-09-27 ffbox Mac "Disk full" failures that sent
+0.50.0.41 through here are fixed in ffbox, per Lothsahn 2026-09-28.)
 
 **Both players are built on the M5, never on BEAST** (Ben, 2026-09-25, standing rule): the M5
 builds both the PC and the Mac versions, so every beta build comes from it. (Releases to the

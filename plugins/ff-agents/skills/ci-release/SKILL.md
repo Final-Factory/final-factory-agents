@@ -1,6 +1,6 @@
 ---
 name: ci-release
-description: Cut a release through the ffbox build server — bump the version (FFVersion.cs + bundleVersion), commit and push it, then follow CI as it builds Windows and Mac, main and demo, checks them and, once the tests pass, uploads each app to Steam (main first), and once it is live post player-facing patch notes as Max in #dev-patch-notes. A DEVELOP release is the multiplayer closed-beta build — develop's players have multiplayer (FF_ENABLE_MULTIPLAYER_BUILD in ProjectSettings, #613/#614) and ffbox sets the main app live on the `multiplayer-closed-beta` branch by itself (ffbox a7809f9e1). A MASTER release is the public release — uploaded with nothing set live, promoted by hand. Use when Ben or Lothsahn asks for either in any words — "push a new beta build", "deploy to the MP beta", "a multiplayer build for the testers", "cut a develop release" (develop); "cut a release on master", "a public release" (master). Never start it on your own initiative or as a side step of other work. The manual M5 procedure (mp-beta-deploy) is only a fallback for when ffbox is down or for a special build.
+description: Cut a release through the ffbox build server — bump the version (FFVersion.cs + bundleVersion), commit and push it, then follow CI as it builds Windows and Mac, main and demo, checks them and, once the tests pass, uploads each app to Steam (main first), and once it is live post player-facing patch notes as Max in #dev-patch-notes. A DEVELOP release is the multiplayer closed-beta build — develop's players have multiplayer (FF_ENABLE_MULTIPLAYER_BUILD in ProjectSettings, #613/#614) and ffbox sets the main app live on the `multiplayer-closed-beta` branch by itself (ffbox a7809f9e1). A MASTER release is the public release — uploaded with nothing set live, promoted by hand. Use when Ben or Lothsahn asks for either in any words — "push a new beta build", "deploy to the MP beta", "a multiplayer build for the testers", "cut a develop release" (develop); "cut a release on master", "a public release" (master). Never start it on your own initiative or as a side step of other work. ffbox CI is THE way to build releases and is expected to work; the manual M5 procedure (mp-beta-deploy) is a last resort, only when ffbox CI is actually down and only with Ben's OK.
 ---
 
 # Trigger a CI release on master or develop
@@ -15,8 +15,14 @@ description: Cut a release through the ffbox build server — bump the version (
 > - **master = the public release.** Uploaded with nothing set live; Lothsahn or Ben promotes it to
 >   the default branch by hand. master has multiplayer once develop's ProjectSettings are merged up.
 >
-> The manual M5 procedure, `mp-beta-deploy`, is now only a fallback: ffbox down, or a special build
-> that must not come from develop's tip.
+> **ffbox CI is THE way to build releases, and it is expected to work** (Lothsahn, 2026-09-28). The
+> manual M5 procedure, `mp-beta-deploy`, is a last-resort fallback: only when ffbox CI is actually
+> down, and only with Ben's OK. A failed player is not "ffbox down": get the reason from the job log,
+> report it, and fix it here (re-run the job or bump again); never switch to `mp-beta-deploy` on your own.
+>
+> History: the 0.50.0.36/.37/.39 Mac players failed with "Disk full" on the `ffghr-loth2400-*`
+> runners (2026-09-27). Lothsahn fixed it in ffbox (the nightly cache rebuild, FinalFactory #651, and
+> more); it is resolved, not a risk to watch for (0.50.0.42's Mac players built GOOD).
 
 **Only when Ben or Lothsahn asks** (plain English is enough). A release uploads builds other people
 download, so never start one yourself; if you think one is due, say so and wait.
