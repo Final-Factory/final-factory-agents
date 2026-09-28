@@ -1,6 +1,6 @@
 ---
 name: steam-upload
-description: Upload a multiplayer build to the password-protected Steam multiplayer-closed-beta branch from the M5 Mac with steamcmd — the Steam login/upload mechanics that mp-beta-deploy (the fallback when ffbox cannot make the beta build) relies on. NOT for releases: a release (main or demo, any version on master/develop) goes through CI on ffbox via ci-release, never a manual upload. Carries the login recipe that actually works — steamcmd runs with its own HOME and reuses a cached token; the "it keeps asking me to log in" problem was the desktop app wiping steamcmd's token in the shared Steam folder, not a bad password.
+description: Upload a multiplayer build to the Steam multiplayer-closed-beta (password-protected) and multiplayer-beta branches from the M5 Mac with steamcmd — the Steam login/upload mechanics that mp-beta-deploy (the fallback when ffbox cannot make the beta build) relies on. NOT for releases: a release (main or demo, any version on master/develop) goes through CI on ffbox via ci-release, never a manual upload. Carries the login recipe that actually works — steamcmd runs with its own HOME and reuses a cached token; the "it keeps asking me to log in" problem was the desktop app wiping steamcmd's token in the shared Steam folder, not a bad password.
 ---
 
 # Uploading a Final Factory build to Steam (from the Mac)
@@ -15,12 +15,12 @@ An upload made here is still a release to the testers, so it ends with the patch
 its vdf `"desc"` comes from the same notes file (`mp-beta-deploy` §5).
 
 **Which build skill, in one line:** a new closed-beta build is a develop `ci-release` (ffbox sets its
-main app live on `multiplayer-closed-beta`, 2026-09-26); a public release is a master `ci-release`;
+main app live on `multiplayer-closed-beta` and `multiplayer-beta`, 2026-09-26/28); a public release is a master `ci-release`;
 `mp-beta-deploy` (this skill's upload mechanics) is only the fallback when ffbox is down or for a
 special build. Full decision table: project-memory `which-build-skill`.
 
 **Branch and sign-in (Ben, 2026-09-25, supersedes older notes below where they differ):** the MP beta
-branch is **`multiplayer-closed-beta`**, never `development` (another branch on the same app). Uploads use
+branches are **`multiplayer-closed-beta`** and, since 2026-09-28, **`multiplayer-beta`** (a beta build goes live on both), never `development` (another branch on the same app). Uploads use
 steamcmd on the M5 with its own home and a cached token (below), so normally nobody signs in. When the
 token is rejected, steamcmd prompts and Ben signs in; agents need no Steam password and never ask for one. The branch's tester password (for
 `app_update 1383150 -beta multiplayer-closed-beta -betapassword <pw>` to install or verify the build as
@@ -73,6 +73,7 @@ or expired) does Ben type the password and approve Steam Guard, at steamcmd's ow
 ## Facts and gotchas
 
 - The three `*_mp_beta.vdf` in `cicd/` are UNTRACKED and carry `setlive multiplayer-closed-beta`
+  (the fallback also sets `multiplayer-beta` with a second app build: `mp-beta-deploy` §5/§6)
   with forward-slash contentroots pointing at the `cicd/mp_beta_upload/` snapshot. The canonical
   depot vdfs are left untouched.
 - The **in-editor uploader is Windows-only** (`FindSteamCmdPath` wants `steamcmd.exe`,
