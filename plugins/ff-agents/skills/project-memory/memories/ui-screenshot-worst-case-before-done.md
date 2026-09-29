@@ -41,3 +41,6 @@ Edit prefabs and scenes through the editor API (`PrefabUtility.LoadPrefabContent
 `SaveAsPrefabAsset`; `EditorSceneManager.SaveScene` in edit mode), never with text edits on an
 open asset ([[no-external-edits-to-open-unity-scenes]]). Expect TMP's field-format upgrade lines
 in the diff; they are harmless.
+
+Multiplayer UI that only draws for other players (name tags, peer status, chat notices): the
+editor-host + headless-client recipe is [[editor-host-mp-ui-worst-case-screenshots]].
