@@ -693,6 +693,76 @@ def check_length(text, what="message"):
     return text
 
 
+
+# --------------------------------------------------------------------------------------
+# FF Factory's Max page: one line per write
+# --------------------------------------------------------------------------------------
+
+# Every agent FF Factory starts has FF_MAX_EVENTS (a file) and FF_SESSION_ID in its environment.
+# Each write this CLI makes (post, reply, ask, edit, thread-create, close, rename), and each one
+# Discord refuses, appends ONE JSON line there, which FF Factory tails to show what its agents
+# did as Max (ff-factory docs/max.md, version 1). Anywhere else the variable is unset and nothing
+# is written. It never carries the token, and it can never fail the command: the post already
+# happened, and losing the record of it is better than reporting a sent message as an error.
+MAX_EVENT_ACTIONS = {
+    "post": "post", "ask": "ask", "edit": "edit", "thread-create": "thread_create",
+    "close": "close", "rename": "rename",
+}
+
+
+def first_line(text, limit=200):
+    for line in (text or "").splitlines():
+        if line.strip():
+            return line.strip()[:limit]
+    return None
+
+
+def report_max_event(args, client, ok, channel_id=None, message_id=None, thread_id=None,
+                     text=None, error=None):
+    path = os.environ.get("FF_MAX_EVENTS")
+    action = MAX_EVENT_ACTIONS.get(getattr(args, "cmd", None) or "")
+    if not path or not action:
+        return
+    if action == "post" and getattr(args, "reply_to", None):
+        action = "reply"
+    ref = getattr(args, "channel", None) or getattr(args, "thread", None)
+    ref = str(ref) if ref is not None else None
+    if channel_id is None and ref and ref.isdigit():
+        channel_id = ref
+    guild = (client.cfg.get("server_id") if client else None) or None
+    event = {
+        "v": 1,
+        "at": datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
+        "action": action,
+        "ok": bool(ok),
+        "channel_id": str(channel_id) if channel_id else None,
+        "channel": ref if ref and not ref.isdigit() else None,
+        "guild_id": str(guild) if guild and str(guild).isdigit() else None,
+        "message_id": str(message_id) if message_id else None,
+        "thread_id": str(thread_id) if thread_id else None,
+        "text": first_line(text),
+        "error": (error or None) and str(error)[:500],
+        "session": os.environ.get("FF_SESSION_ID") or None,
+    }
+    try:
+        os.makedirs(os.path.dirname(os.path.abspath(path)), exist_ok=True)
+        # One write of one line in append mode: concurrent agents' lines do not interleave.
+        with open(path, "a", encoding="utf-8") as fh:
+            fh.write(json.dumps(event, ensure_ascii=False) + "\n")
+    except Exception:  # noqa: BLE001 - the record is a nicety, never a failure
+        pass
+
+
+def discord_error_text(exc):
+    """'HTTP 403: Missing Permissions', from Discord's JSON error body when there is one."""
+    message = ""
+    try:
+        message = str(json.loads(exc.body).get("message") or "")
+    except Exception:  # noqa: BLE001
+        message = str(exc.body or "")[:200]
+    return f"HTTP {exc.status}: {message}".rstrip(": ")
+
+
 def emit(args, data, human):
     if getattr(args, "json", False):
         print(json.dumps(data, indent=2, ensure_ascii=False))
@@ -1178,6 +1248,7 @@ def cmd_post(client, args):
     if args.dry_run:
         print("DRY RUN — would post to channel %s:\n%s" % (channel, json.dumps(payload, indent=2)))
         return
+    args._max_text, args._max_channel = content, channel
     if args.file:
         payload["attachments"] = [
             {"id": i, "filename": os.path.basename(f)} for i, f in enumerate(args.file)
@@ -1185,6 +1256,8 @@ def cmd_post(client, args):
         msg = client.post_multipart(f"/channels/{channel}/messages", payload, args.file)
     else:
         msg = client.post(f"/channels/{channel}/messages", payload)
+    report_max_event(args, client, True, channel_id=msg.get("channel_id") or channel, message_id=msg.get("id"),
+                     text=content or ", ".join(os.path.basename(f) for f in args.file or []))
     emit(args, msg, f"posted {msg['id']} to channel {channel}")
 
 
@@ -1232,10 +1305,12 @@ def cmd_ask(client, args):
     if args.dry_run:
         print(f"DRY RUN — would post to channel {channel}:\n\n{body}")
         return
+    args._max_text, args._max_channel = text, channel
     msg = client.post(
         f"/channels/{channel}/messages",
         {"content": body, "allowed_mentions": {"parse": ["users"]}},
     )
+    report_max_event(args, client, True, channel_id=channel, message_id=msg.get("id"), text=text)
     emit(
         args,
         msg,
@@ -1255,11 +1330,13 @@ def cmd_edit(client, args):
     if args.dry_run:
         print(f"DRY RUN — would edit {args.message} to:\n\n{text}")
         return
+    args._max_text, args._max_channel, args._max_message = text, channel, args.message
     msg = client.request(
         "PATCH",
         f"/channels/{channel}/messages/{args.message}",
         body={"content": text, "allowed_mentions": {"parse": []}},
     )
+    report_max_event(args, client, True, channel_id=channel, message_id=args.message, text=text)
     emit(args, msg, f"edited {args.message}")
 
 
@@ -1303,7 +1380,9 @@ def cmd_thread_create(client, args):
     # Discord truncates silently at 100; do it here so the caller sees what it got.
     name = name[:100]
     body = {"name": name, "auto_archive_duration": args.auto_archive}
+    args._max_text, args._max_channel, args._max_message = name, channel, args.message
     thread = client.post(f"/channels/{channel}/messages/{args.message}/threads", body)
+    report_max_event(args, client, True, channel_id=channel, message_id=args.message, thread_id=thread.get("id"), text=name)
     emit(args, thread, f"created thread {thread['id']} ({name})")
 
 
@@ -1324,7 +1403,9 @@ def cmd_close(client, args):
     if args.dry_run:
         print(f"DRY RUN — would archive thread {thread}")
         return
+    args._max_channel, args._max_thread = thread, thread
     ch = client.request("PATCH", f"/channels/{thread}", body={"archived": True})
+    report_max_event(args, client, True, channel_id=thread, thread_id=thread, text=(ch or {}).get("name"))
     emit(args, ch, f"archived thread {thread}")
 
 
@@ -1350,9 +1431,11 @@ def cmd_rename(client, args):
               f"{name!r}{' and archive it again' if archived else ''}")
         return
     body = {"name": name, "archived": False} if archived else {"name": name}
+    args._max_text, args._max_channel, args._max_thread = name, thread, thread
     ch = client.request("PATCH", f"/channels/{thread}", body=body)
     if archived:
         ch = client.request("PATCH", f"/channels/{thread}", body={"archived": True})
+    report_max_event(args, client, True, channel_id=thread, thread_id=thread, text=name)
     emit(args, ch, f"renamed thread {thread} to {name!r}"
                    + (" (still archived)" if archived else ""))
 
@@ -1691,6 +1774,11 @@ def main(argv=None):
     try:
         args.fn(client, args)
     except DiscordError as exc:
+        # A refused write still goes on FF Factory's Max page, with Discord's reason.
+        report_max_event(args, client, False, channel_id=getattr(args, "_max_channel", None),
+                         message_id=getattr(args, "_max_message", None),
+                         thread_id=getattr(args, "_max_thread", None),
+                         text=getattr(args, "_max_text", None), error=discord_error_text(exc))
         hint = ""
         if exc.status == 401:
             hint = "  (bad or revoked bot token)"

@@ -38,6 +38,7 @@ ASKCLAUDE = "900000000000000012"
 AGENTTEST = "900000000000000013"
 VOICEDUP = "900000000000000014"
 BOT_ID = "900000000000000099"
+NOPERM = "900000000000000666"
 BEN = "900000000000000100"
 LOTH = "900000000000000101"
 
@@ -210,6 +211,9 @@ class MockDiscord(BaseHTTPRequestHandler):
         else:
             body = json.loads(raw)
         POSTED.append({"path": self.path, "body": body})
+        # A channel the bot may not post in, like #dev-patch-notes once was.
+        if self.path.startswith(f"/channels/{NOPERM}/"):
+            return self._send(403, {"code": 50013, "message": "Missing Permissions"})
         nonce = body.get("nonce") if isinstance(body, dict) else None
         if nonce and body.get("enforce_nonce"):
             if nonce in NONCED:
@@ -284,8 +288,12 @@ def read_cfg(home, whole=False):
     return doc if whole else doc["discord"]
 
 
-def run(home, *argv, expect_code=0, stdin_text=None):
+def run(home, *argv, expect_code=0, stdin_text=None, extra_env=None):
     env = dict(os.environ)
+    # Only the FF_MAX_EVENTS case reports; a test run inside an FF Factory agent must not.
+    env.pop("FF_MAX_EVENTS", None)
+    env.pop("FF_SESSION_ID", None)
+    env.update(extra_env or {})
     env["FFDISCORD_API"] = f"http://127.0.0.1:{PORT[0]}"
     env["FFDISCORD_HOME"] = home
     env["FFBOX_CONFIG_DIR"] = home
@@ -802,6 +810,53 @@ def main():
                         capture_output=True, text=True, encoding="utf-8", errors="replace", env=env)
     check("emoji channel names survive a cp1252 console",
           pr.returncode == 0 and "UnicodeEncodeError" not in pr.stderr, pr.stderr[-300:])
+
+    print("FF_MAX_EVENTS (FF Factory's Max page)")
+    events = os.path.join(tmp, "ff", "max-events.jsonl")
+    fenv = {"FF_MAX_EVENTS": events, "FF_SESSION_ID": "sess-1"}
+    run(tmp, "post", "dev_chat", "--text", "first line\nsecond line", extra_env=fenv)
+    run(tmp, "post", "ask_claude", "--text", "an answer", "--reply-to", "123", extra_env=fenv)
+    run(tmp, "thread-create", "ask_claude", "123", "--name", "How do mass drivers aim?", extra_env=fenv)
+    run(tmp, "close", "70001", extra_env=fenv)
+    run(tmp, "rename", THREAD_NEW, "Belts stop", extra_env=fenv)
+    run(tmp, "edit", "dev_chat", "555", "--text", "fixed wording", extra_env=fenv)
+    run(tmp, "post", "dev_chat", "--text", "nope", "--dry-run", extra_env=fenv)
+    p = run(tmp, "post", NOPERM, "--text", "0.50.0.46 is live", extra_env=fenv, expect_code=1)
+    check("a refused post still fails the command", "403" in p.stderr, p.stderr)
+    run(tmp, "react", "dev_chat", "555", "👀", extra_env=fenv)
+    with open(events, encoding="utf-8") as fh:
+        lines = [json.loads(line) for line in fh]
+    check("one line per write, none for a dry run or a reaction",
+          [e["action"] for e in lines] == ["post", "reply", "thread_create", "close", "rename", "edit", "post"],
+          [e["action"] for e in lines])
+    first = lines[0]
+    check("a post: channel, alias, server, message, first line, session",
+          first["v"] == 1 and first["ok"] is True and first["channel_id"] == DEVCHAT
+          and first["channel"] == "dev_chat" and first["guild_id"] == GUILD
+          and first["message_id"] == "900000000000009999" and first["text"] == "first line"
+          and first["session"] == "sess-1" and first["error"] is None, first)
+    check("the time is UTC ISO", first["at"].endswith("Z") and "T" in first["at"], first["at"])
+    tc = lines[2]
+    check("thread-create: the parent channel, the starter message, the new thread, its name",
+          tc["channel_id"] == ASKCLAUDE and tc["message_id"] == "123"
+          and tc["thread_id"] == "900000000000009999" and tc["text"] == "How do mass drivers aim?", tc)
+    check("close names the thread", lines[3]["thread_id"] == "70001" and lines[3]["channel_id"] == "70001", lines[3])
+    check("rename: the thread and its new name, done",
+          lines[4]["ok"] is True and lines[4]["thread_id"] == THREAD_NEW and lines[4]["text"] == "Belts stop", lines[4])
+    bad = lines[-1]
+    check("a refused post is recorded with Discord's reason",
+          bad["ok"] is False and bad["error"] == "HTTP 403: Missing Permissions"
+          and bad["channel_id"] == NOPERM and bad["text"] == "0.50.0.46 is live", bad)
+    check("no line carries the token", all("TESTTOKEN" not in json.dumps(e) for e in lines))
+    n_lines = len(lines)
+    run(tmp, "post", "dev_chat", "--text", "outside FF Factory")
+    with open(events, encoding="utf-8") as fh:
+        check("without FF_MAX_EVENTS nothing is written", len(fh.readlines()) == n_lines)
+    blocked = os.path.join(tmp, "not-a-dir")
+    with open(blocked, "w") as fh:
+        fh.write("x")
+    p = run(tmp, "post", "dev_chat", "--text", "still posts", extra_env={"FF_MAX_EVENTS": os.path.join(blocked, "e.jsonl")})
+    check("an unwritable events file never fails the command", p.returncode == 0, p.stderr)
 
     print("config redaction")
     p = run(tmp, "config")

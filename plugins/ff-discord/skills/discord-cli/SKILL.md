@@ -47,6 +47,14 @@ straight out of the file. Only an unambiguous single match is remembered.
 | `mark-seen <key> <id>`, `cursors` | Advance a cursor to a specific id; list all cursors. |
 | `config`, `set` | Show the config with the token redacted; set one field. |
 
+## FF Factory's Max page
+
+When `FF_MAX_EVENTS` names a file (FF Factory sets it, with `FF_SESSION_ID`, for every agent it
+starts), each write (`post`, `ask`, `edit`, `thread-create`, `close`, `rename`) appends one JSON line
+there: action, channel, message or thread id, the first line, the session, and Discord's reason when it
+refused. FF Factory tails it for its Max page (ff-factory `docs/max.md`). Unset anywhere else; it never
+holds the token and never fails a command. Dry runs and reactions write nothing.
+
 ## The two things that bite
 
 **Advance cursors with `mark-seen`, never a second `unseen --mark`.** `unseen` prints a
