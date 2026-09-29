@@ -53,7 +53,9 @@ Fixed in 0.50.0.46 by `Step0_50_0_45PlayerSimulationVelocity`.
   fast path, mint one from a project-owned save written at or above it (README Rule 4: no player
   saves without consent; confirm every SteamId in it). Add it to the slate and to
   `SaveCompatibilityLiveLoadTest.Fixtures`.
-- **Release**: the `ci-release` precheck includes these tests on the HEAD being released.
+- **Release**: the release run's own `Test in editmode` gate runs `GoldenSaveFixtureTests` and
+  `SaveLayoutSnapshotTest` and blocks the upload if they fail; `ci-release` runs no local precheck
+  (Lothsahn, 2026-09-28). CI runs EditMode only, so `SaveCompatibilityLiveLoadTest` is not in it.
 - **Load failures**: any exception in a load must end at the main menu with the localized "Could
   Not Load Save" dialog naming the reason (`SaveGameManager.HandleLoadFailure`,
   `SaveLoadFailureReturnsToMenuTest`). Never start a load child with `StartCoroutine`: step it

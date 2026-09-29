@@ -77,24 +77,27 @@ Design and code: ffbox repo `design/ffbuild_release_design.txt`, `scripts/releas
   bump `0.21.0.30` → `0.22.0.0`, which is `--version 0.22.0.0` below). Say the version before you push.
 - Nothing already in flight for that branch: check that the latest version bump's release has finished
   (section 2) before starting another.
-- **The HEAD you release has a real, passing EditMode result.** A plain push to develop or master
-  runs `Test Runner` in about 12 s with `Test in ${{ matrix.testMode }}` **skipped** (runs
-  36455035694, 36470194544): its green tests nothing, so it is never the precheck. Accept only one
-  of these, on that exact HEAD sha: a PR run's or a release run's `Test in editmode` job that ran
-  (`gh run view <id> --json jobs`: conclusion `success`, several minutes long, and its check run
-  "editmode Test Results: success <N> passed"), or a local `FFEditorTests` run on that sha. If none
-  exists, say so and ask before triggering. (The upload itself stays gated on the release run's own
-  `Test in …` jobs, which do run the suite: 0.50.0.45's ran 5541, 5520 passed, 0 failed.)
+- **Tests: the release run's own `Test in editmode` job is the gate; run none yourself**
+  (Lothsahn, 2026-09-28, replacing the local-precheck rule of 1.16.3). The bump push runs the full
+  EditMode suite on ffbox beside the builds, and the host uploads nothing until every `Test in …`
+  job of that run has succeeded (upload skipped otherwise, see the table below). Do not start a
+  local `FFEditorTests` run or look for an earlier PR result before triggering. In the report,
+  confirm that job ran and passed, with its counts from the check run "editmode Test Results:
+  success <N> passed" (`gh run view <id> --json jobs`: conclusion `success`, several minutes long;
+  0.50.0.45's ran 5541, 5520 passed, 0 failed). If it failed, report the failing tests; do not
+  fall back to anything.
 
 - **Saves from master's version and every beta since still load** (hard rule, project-memory
-  `save-compatibility-hard-rule`; 0.50.0.45 shipped unable to load any 0.50.0.35..44 save). On the
-  HEAD you release: the EditMode result above must include `Tests.Serialization.GoldenSaveFixtureTests`
-  and `Tests.Serialization.SaveLayoutSnapshotTest` green, and run
-  `PlayModeTests.Serialization.SaveCompatibilityLiveLoadTest` (PlayMode, about a minute) locally and
-  see it pass. If `git diff <previous release>..HEAD` touches a `[Save]` struct, `SaveState` or an
-  `ISerializableSystem` payload, find the matching `UpgradeStep` before bumping; if there is none,
-  stop and say so. After a develop release, mint a golden fixture from a save that release writes when
-  it starts a new layout generation, so the next beta is tested against it.
+  `save-compatibility-hard-rule`; 0.50.0.45 shipped unable to load any 0.50.0.35..44 save).
+  `Tests.Serialization.GoldenSaveFixtureTests` and `Tests.Serialization.SaveLayoutSnapshotTest` are
+  EditMode tests, so the release run's gate runs them; name them as passed in the report. (CI runs
+  EditMode only, `main.yml` `testMode: editmode`, so the PlayMode `SaveCompatibilityLiveLoadTest` is
+  not a release precondition.) Before bumping, if `git diff <previous release>..HEAD` touches a
+  `[Save]` struct, `SaveState` or an `ISerializableSystem` payload, find the matching `UpgradeStep`;
+  if there is none, stop and say so. A step versioned at the release version runs for older saves
+  and never again once the bump stamps saves with it (`UpgradeChain.Applicable`: `from <
+  step.Version`). After a develop release, mint a golden fixture from a save that release writes
+  when it starts a new layout generation, so the next beta is tested against it.
 
 **Do not run tests for the bump commit itself.** The script below is the whole of it, and a
 change to two version lines (plus its notes) has nothing to test beyond the HEAD it sits on.
@@ -164,6 +167,7 @@ gh run view <run id> -R Final-Factory/FinalFactory --json jobs -q '.jobs[] | "\(
   their BuildIDs, and the regenerated-files PR.
 
 Report main as soon as it is uploaded, then the demo when it follows: the version, the commit, the
+release run's `Test in editmode` result (ran, passed, its counts), the
 four results, the two BuildIDs (main app 1383150, demo app 2387320), and the regenerated-files PR if
 there is one. For develop, **verify `multiplayer-beta` got the new build**: the main notice says "set
 live on multiplayer-beta (BuildID …)", and the ledger's `uploads.main.setlive` lists it with its
