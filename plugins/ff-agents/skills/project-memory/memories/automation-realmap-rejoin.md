@@ -20,5 +20,9 @@ before returning to the menu and joining (`:2642-2669`). When `forceFlatMap` rem
 The rejoin is fire-and-forget (`ExecuteNetRejoin` calls `RejoinAsync(...).Forget()` at `:2638`), so
 an HTTP chain can report cancellation while the rejoin keeps running. Check the restored session
 before drawing a verdict. The t12 replay built from `e0cfce3` omitted `realmap`; M3 first diverged
-in census at epoch 3 heartbeat 1379. The command is wrong for the fixture; its causal link to the census fork is not yet proven.
-Repeat with the correct mode and exact first-divergent CensusDetail before classifying or fixing a game defect.
+in census at epoch 3 heartbeat 1379. **Proven 2026-09-29 (3-peer soak, sandbox mp-r2):** without `realmap` the rejoined peer runs with
+`MapGenState.Off`, so `CometSpawnerSystem` returns early there (`CometSpawnerSystem.cs:55`) while the
+host keeps rolling ambient comets. Every roll after the rejoin forks `census` alone, host +N of sig
+`[LinearMotion,Comet]` (one or two per roll), and it recurs after every desync recovery because the
+peer stays Off. A harness artifact, not a game desync: rerun with `realmap` before reading anything
+into a comet-only census fork.

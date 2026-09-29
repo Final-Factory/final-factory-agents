@@ -12,6 +12,8 @@ description: "074 T136/t72b (2026-09-21): a two-peer session's post-join epoch i
   an early `audit.write` checkpoint on EVERY peer before spending the window.
 - **`EditorApplication.delayCall` from execute_code never fires while the editor is unfocused.**
   A scheduled `BuildPipeline.BuildPlayer` sat for 5+ minutes with the editor idle at ~1% CPU.
+  (Superseded 2026-09-29: a synchronous body that timed out was REPLAYED 6x; use a one-shot
+  `EditorApplication.update` handler, see built-pair-lab-traps-2026-09-29.) Previously:
   Run the build synchronously inside the execute_code body, let the bridge time out
   (`Timeout receiving Unity response` — the main thread keeps building), and poll the
   started/result marker files the body writes (t72: 310 s, 0 errors, 109 warnings). Clearing the
