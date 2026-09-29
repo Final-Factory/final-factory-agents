@@ -1,6 +1,6 @@
 ---
 name: mp-beta-deploy
-description: LAST-RESORT FALLBACK — the manual M5 procedure that builds the multiplayer Mac + Windows players from develop and uploads them to the Steam `multiplayer-closed-beta` (password-protected) and `multiplayer-beta` branches (pre-steps, both builds, verification, depot staging, steamcmd upload, record). The NORMAL route to a new closed-beta build is a develop release through ci-release: develop's players have multiplayer (#613/#614) and ffbox sets the main app live on multiplayer-closed-beta and multiplayer-beta by itself (ffbox a7809f9e1, d46d438d5). ffbox CI is THE way to build releases and is expected to work. Use this skill only when ffbox CI is actually down AND Ben has OK'd a manual build, or Ben explicitly asks for a special build that must not come from a develop release (a branch other than develop, a build with local-only changes). A failed player on ffbox is not "ffbox down": report it and fix it through ci-release. Never start it on your own initiative or as a side step of other work.
+description: LAST-RESORT FALLBACK — the manual M5 build and Steam upload of the multiplayer Mac + Windows players. The normal route is a develop release through ci-release. Use only when ffbox CI is actually down AND Ben has OK'd a manual build, or Ben explicitly asks for a special build that must not come from a develop release. A failed player on ffbox is not "ffbox down". Never start it on your own initiative.
 ---
 
 # Deploy a build to the MP beta branch

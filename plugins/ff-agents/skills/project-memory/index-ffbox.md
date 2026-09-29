@@ -1,0 +1,15 @@
+# Project memory: ffbox pipeline & ffweb
+
+Part of the `project-memory` skill; links are relative to the skill directory. Add new
+entries for this area here, one line each.
+
+ffbox is its own repo since 2026-09-22 ([Final-Factory/ffbox](https://github.com/Final-Factory/ffbox)); every `ffbox/…`, `design/…` and `docs/…` path in these memories is in that repo.
+
+- [`Referrer-Policy: no-referrer` nulls your own Origin](memories/referrer-policy-nulls-your-own-origin.md) — a page that sets no-referrer AND checks `Origin` for CSRF refuses its own forms (Fetch serialises the origin as `null` on a non-GET, non-CORS request); use `same-origin`, accept `Sec-Fetch-Site: same-origin`, and note that a suite posting with no Origin header never catches it
+- [A Claude result envelope's `subtype` is not a verdict](memories/claude-result-subtype-is-not-a-verdict.md) — the last `{"type":"result"}` record keeps `subtype: "success"` on a run it also flags `is_error`, and its `result` field carries the error text instead of an answer; read `is_error`, then `terminal_reason`/`api_error_status`, and treat a subtype of `success` as no detail at all. Reading it the obvious way told pull request 505 "the run failed: success" and put `success` in `turn.error`
+
+- [An ffbox container CAN run Unity and play the game](memories/ffbox-containers-can-run-unity.md) — there are no per-lane Bash allow lists; every run gets bare `Bash`, so `unity-editor` is directly runnable and only the git/gh tripwire is denied. `ffplaytest` is the play-mode wrapper (config deleted on every exit path, editor killed as a process group, label-scoped journal); it needs a DEVELOP-based workspace and its frame timings are meaningless (no GPU). When a capability changes, fix every prompt that describes it in the same commit
+
+- [UnityMCP works headless in an ffbox container](memories/unitymcp-works-headless-in-a-container.md) — 46 tools are served to the packaged server and `read_console` answers live from a batchmode editor. Needs four things: the PyPI `mcpforunityserver` baked into the image via uv at BUILD time (then it runs under `--network none`, so the egress fence needs nothing new), `UNITY_MCP_ALLOW_BATCH=1` (the bridge returns early in batchmode without it), `-executeMethod MCPForUnity.Editor.McpCiBoot.StartStdioForCi` with no `-quit`, and killing the editor as a PROCESS GROUP. Readiness is the log line `StdioBridgeHost started on port N`, NOT the port registry file, which is only written when the default port is taken. LIVE for ffdev on ffbox since 2026-09-12: 78-83s to a bridge, 863/863 EditMode in ~57s vs ffverify's 226s, 0 files dirtied by a whole turn. `No Unity Editor instances found` usually means BUSY (mid assembly-reload after run_tests; `wait_timeout` does not absorb it) or a `$HOME` mismatch — never assume the editor died
+
+- [Staged rebuilds and power fixtures](memories/staged-structure-rebuild-and-power-fixtures.md) — a fresh rebuilt prefab needs the staged-construction tag; a nearby Standard provider cannot connect directly to a Standard consumer.

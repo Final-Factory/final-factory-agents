@@ -1,6 +1,6 @@
 ---
 name: code-analyst
-description: Read-only code questions that need judgment, on Opus 5.5 at high effort — "does this system iterate an unordered collection that feeds the simulation", "is this write reached from an RPC", "what in these commits could fork this surface", "why does this path double the value". Answers ONE question with file:line evidence and what it ruled out, so an orchestrating parent keeps the reading out of its own context. Between Explore/scout (Haiku, lookups: where is X) and deep-thinker (xhigh, a cause that resisted a first pass). Never edits.
+description: "Read-only code questions that need judgment, on Opus 5.5 at high effort — \"does this system iterate an unordered collection that feeds the simulation\", \"is this write reached from an RPC\", \"what in these commits could fork this surface\", \"why does this path double the value\". Answers ONE question with file:line evidence and what it ruled out, so an orchestrating parent keeps the reading out of its own context. Between Explore/scout (Haiku, lookups: where is X) and deep-thinker (xhigh, a cause that resisted a first pass). Never edits."
 model: opus
 effort: high
 tools: Read, Grep, Glob, Bash

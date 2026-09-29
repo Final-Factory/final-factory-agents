@@ -1,6 +1,6 @@
 ---
 name: publish-skills
-description: Add, edit, or fix a Claude skill / subagent role, or record a durable project lesson into project memory — and publish it so every machine, clone, worktree, and branch gets it. Use whenever the user asks to change how a skill behaves, add a new skill or role, "remember this", "capture this lesson", or fix something a skill got wrong. Also use PROACTIVELY at the end of a session that produced a hard-won, reusable lesson. Skills do NOT live in the game repo — they live in the final-factory-agents marketplace repo, and edits there require a version bump to reach live sessions.
+description: Add, edit, or fix a skill or subagent role, or record a durable project lesson, in the final-factory-agents marketplace repo, and publish it (version bump, validate, push) so every machine gets it. Use when the user asks to change a skill, add a skill or role, "remember this" or "capture this lesson", and proactively at the end of a session that produced a hard-won reusable lesson.
 ---
 
 # Publishing skills, roles, and project memory
@@ -66,7 +66,7 @@ continue to step 2.
 |---|---|
 | Edit/add a skill | `plugins/<plugin>/skills/<name>/SKILL.md` (+ supporting files beside it) |
 | Edit/add a subagent role | `plugins/<plugin>/agents/<name>.md` |
-| Record a durable lesson | `plugins/ff-agents/skills/project-memory/memories/<slug>.md` **plus** one index line in that skill's `SKILL.md` |
+| Record a durable lesson | `plugins/ff-agents/skills/project-memory/memories/<slug>.md` **plus** one index line, in that skill's `SKILL.md` for standing feedback / ECS-Burst / localization / modding, otherwise in the matching `index-<area>.md` beside it |
 
 Plugins: `ff-agents` (core roles + workflow skills), `ff-speckit` (speckit-*),
 `ff-discord` (Discord roles + skills). Skill frontmatter needs `name:` and `description:`;

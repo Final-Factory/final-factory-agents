@@ -1,6 +1,6 @@
 ---
 name: drive-game
-description: Drive the running Final Factory game in the Unity editor via the MCP bridge — enter play mode, inject keyboard input (press or hold keys, open the in-game menu), and load saves. Use when asked to run the game, interact with it, press/hold keys, open the menu, or otherwise control the live game from Claude Code or Codex. Also the canonical screenshot recipe (both capture channels, Free Aspect, the GameView-focus trap) that the playtest/massdriver skills and the UI + playtest-harness docs all point at. Proven gameplay recipes (menus, saves, crafting, placement, research) live in recipes.md next to this file.
+description: Drive the running Final Factory game in the Unity editor via the MCP bridge — enter play mode, press or hold keys, open the in-game menu, load saves, and take screenshots (the canonical capture recipe other skills point at; gameplay recipes in recipes.md). Use when asked to run, interact with, or screenshot the live game.
 ---
 
 # Driving the Final Factory game from an agent runtime

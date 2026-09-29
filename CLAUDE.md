@@ -80,7 +80,7 @@ and how to publish. Keep the two in sync when the workflow changes.
 Create `plugins/<plugin>/skills/<name>/SKILL.md` with `name:` and `description:` frontmatter
 (supporting files live next to it in the same directory), then follow the publish workflow.
 New durable project lessons go in `plugins/ff-agents/skills/project-memory/` — one file under
-`memories/`, one index line in its SKILL.md — not in the machine-local
+`memories/`, one index line in its SKILL.md or the matching `index-<area>.md` — not in the machine-local
 `~/.claude/projects/*/memory/` dirs, which never propagate.
 
 ## Adding a plugin
