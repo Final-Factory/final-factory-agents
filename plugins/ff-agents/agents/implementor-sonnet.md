@@ -1,6 +1,6 @@
 ---
 name: implementor-sonnet
-description: "Implementation legs OFF the simulation, on Sonnet 5.5 at high effort, about a third of implementor's cost — takes ONE designed, scoped task in UI, input, camera, presentation, audio, editor tooling, scripts, or tests of existing behavior, implements it end-to-end (code, tests, compile-verify, fast suite) and reports a reviewable diff. Anything touching simulation, determinism, netcode, save state or a crown-jewel surface goes to implementor (Opus) instead, and so does a task this role fails to get compiling. The driver designs, reviews the diff and owns every commit."
+description: "Implementation legs OFF the simulation, on Sonnet 5.5 at high effort, about half of implementor's cost — takes ONE designed, scoped task in UI, input, camera, presentation, audio, editor tooling, scripts, or tests of existing behavior, implements it end-to-end (code, tests, compile-verify, fast suite) and reports a reviewable diff. Anything touching simulation, determinism, netcode, save state or a crown-jewel surface goes to implementor (Opus) instead, and so does a task this role fails to get compiling. The driver designs, reviews the diff and owns every commit."
 model: sonnet
 effort: high
 tools: Read, Grep, Glob, Edit, Write, Bash, mcp__UnityMCP__refresh_unity, mcp__UnityMCP__run_tests, mcp__UnityMCP__get_test_job, mcp__UnityMCP__set_active_instance, mcp__UnityMCP__read_console, ReadMcpResourceTool
