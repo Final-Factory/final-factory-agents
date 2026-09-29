@@ -1,6 +1,6 @@
 ---
 name: steam-upload
-description: Upload a multiplayer build to the Steam multiplayer-closed-beta (password-protected) and multiplayer-beta branches from the M5 Mac with steamcmd — the Steam login/upload mechanics that mp-beta-deploy (the fallback when ffbox cannot make the beta build) relies on. NOT for releases: a release (main or demo, any version on master/develop) goes through CI on ffbox via ci-release, never a manual upload. Carries the login recipe that actually works — steamcmd runs with its own HOME and reuses a cached token; the "it keeps asking me to log in" problem was the desktop app wiping steamcmd's token in the shared Steam folder, not a bad password.
+description: Upload a multiplayer build to the Steam beta branches from the M5 Mac with steamcmd — the login/upload mechanics mp-beta-deploy relies on, including the cached-token login recipe (the "it keeps asking me to log in" fix). Not for releases, which go through ci-release on ffbox.
 ---
 
 # Uploading a Final Factory build to Steam (from the Mac)

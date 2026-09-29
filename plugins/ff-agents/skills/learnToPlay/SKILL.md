@@ -1,6 +1,6 @@
 ---
 name: learnToPlay
-description: Harvest gameplay knowledge learned this session into the two HowToPlay guides — the PUBLIC player-framed kit/HowToPlay.md in Final-Factory/finalfactory-agent-kit (what players' agents read) and the internal code-traced docs/HowToPlay.md in the game repo. Reviews the current conversation for game mechanics you were confused about and then figured out (by reading code, testing, or the user explaining), routes each one to the guide whose reader needs it, and folds it in so the next session (and every player's agent) doesn't re-learn it. Invoke when the user says "/learnToPlay", asks to update the how-to-play doc, or after you've worked out a gameplay aspect that was non-obvious.
+description: Fold gameplay knowledge learned this session into the two HowToPlay guides — the public player-framed kit/HowToPlay.md (finalfactory-agent-kit) and the internal code-traced docs/HowToPlay.md. Use when the user says "/learnToPlay" or asks to update the how-to-play doc, or after you worked out a non-obvious game mechanic.
 ---
 
 # learnToPlay: capture gameplay knowledge into HowToPlay.md
