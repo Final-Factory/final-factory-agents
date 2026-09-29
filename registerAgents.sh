@@ -253,6 +253,24 @@ install_ffdiscord_launcher() {
   esac
 }
 
+# The same for ff-agents' watch_video (the watch-video skill's trailer/video review tool).
+install_watch_video_launcher() {
+  _src="$SCRIPT_DIR/plugins/ff-agents/skills/watch-video/bin"
+  [ -r "$_src/watch_video" ] || return 0
+  mkdir -p "$LAUNCHER_BIN"
+  cp "$_src/watch_video" "$LAUNCHER_BIN/watch_video"
+  chmod +x "$LAUNCHER_BIN/watch_video"
+  [ -r "$_src/watch_video.cmd" ] && cp "$_src/watch_video.cmd" "$LAUNCHER_BIN/watch_video.cmd"
+  echo "  installed watch_video into $LAUNCHER_BIN"
+}
+
+remove_watch_video_launcher() {
+  for _f in "$LAUNCHER_BIN/watch_video" "$LAUNCHER_BIN/watch_video.cmd"; do
+    [ -f "$_f" ] && rm -f "$_f" && echo "  removed $_f"
+  done
+  return 0
+}
+
 remove_ffdiscord_launcher() {
   _removed=0
   for _n in ffdiscord ffdiscord-listener; do
@@ -454,6 +472,12 @@ if [ "$MODE" = "remove" ] || list_has "$REMOVE_TARGETS" ff-discord; then
   remove_ffdiscord_launcher
 elif list_has "$PLUGINS" ff-discord; then
   install_ffdiscord_launcher
+fi
+
+if [ "$MODE" = "remove" ] || list_has "$REMOVE_TARGETS" ff-agents; then
+  remove_watch_video_launcher
+elif list_has "$PLUGINS" ff-agents; then
+  install_watch_video_launcher
 fi
 
 # A full marketplace removal takes the remembered set with it — the next plain run starts from
