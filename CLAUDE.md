@@ -39,7 +39,8 @@ registerAgents.sh                   idempotent per-machine bootstrap for BOTH Cl
                                     can find it on any machine, wherever it was cloned
 ```
 
-Plugins: `ff-agents` (core roles + skills, incl. `project-memory`), `ff-speckit`
+Plugins: `ff-agents` (core roles + skills, incl. `project-memory` and `watch-video`, whose
+`watch_video` launcher registerAgents.sh also puts in `~/.local/bin`), `ff-speckit`
 (speckit-* skills), `ff-discord` (Discord roles + skills, plus the `ffdiscord` CLI itself in
 the `discord-cli` skill; installing the plugin puts an `ffdiscord` launcher in `~/.local/bin`,
 so skills and roles invoke it by name rather than by a versioned cache path).

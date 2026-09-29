@@ -1,0 +1,38 @@
+#!/bin/sh
+# watch_video: launcher for the ff-agents watch-video skill's analyser.
+#
+# registerAgents.sh copies this onto PATH (~/.local/bin) so skills, subagent roles and humans can
+# say `watch_video cut.mp4 ...` instead of carrying a path into a versioned plugin cache. It runs
+# the script with `uv run`, which installs the script's own Python dependencies (numpy, OpenCV,
+# librosa, PySceneDetect, Pillow) into a cached environment on first use. Needs uv and ffmpeg.
+#
+# Resolution order, first hit wins: $WATCH_VIDEO_PY, the newest installed plugin copy (Claude Code,
+# then Codex), the checkout recorded by registerAgents.sh.
+set -u
+SCRIPT=watch_video.py
+
+newest() {
+    [ -d "$1" ] || return 1
+    ls -d "$1"/cache/*/ff-agents/*/skills/watch-video/"$SCRIPT" 2>/dev/null | sort -V | tail -1
+}
+
+PY=${WATCH_VIDEO_PY:-}
+if [ -z "$PY" ]; then
+    for root in "$HOME/.claude/plugins" "$HOME/.codex/plugins"; do
+        PY=$(newest "$root") || PY=
+        [ -n "$PY" ] && break
+    done
+fi
+if [ -z "$PY" ] && [ -r "$HOME/.claude/final-factory-agents-checkout" ]; then
+    c="$(cat "$HOME/.claude/final-factory-agents-checkout")/plugins/ff-agents/skills/watch-video/$SCRIPT"
+    [ -r "$c" ] && PY="$c"
+fi
+if [ -z "$PY" ] || [ ! -r "$PY" ]; then
+    echo "watch_video: cannot locate $SCRIPT. Install the plugin: sh registerAgents.sh (ff-agents)." >&2
+    exit 69
+fi
+if ! command -v uv >/dev/null 2>&1; then
+    echo "watch_video: needs uv (brew install uv, or winget install astral-sh.uv)" >&2
+    exit 127
+fi
+exec uv run --quiet --script "$PY" "$@"
