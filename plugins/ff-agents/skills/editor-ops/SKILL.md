@@ -438,6 +438,14 @@ rebuild into a fresh output, then repeat the file check and a real startup. Neve
 new player by copying baked scene data from an older build. Give every startup retry a fresh
 audit identity, including retries that never loaded a world.
 
+**Run a build from the player slot pool, never where it was built.** Windows Firewall keys its
+rules on the exe path, so a player started from a new folder (a sandbox's `Builds/pilot`, a temp
+output) stops at the "allow finalfactory.exe?" prompt. `python scripts/nightly/player_slots.py
+launch [--detach] <exe|folder|.app> -- <player args>` mirrors it into one of eight allowed slot
+paths and runs it there; bash scripts source `scripts/nightly/player_launch.sh` and use
+`"${FF_LAUNCH[@]}" "$PLAYER" -- …`. The audit, feel and bench scripts and `ffnightly.py` already
+do (project-memory `feedback-built-players-run-from-the-slot-pool`).
+
 Release builds and Steam uploads are NOT made from an editor: they go through CI on the ffbox build
 server, via the `ci-release` skill. Never make a release with `Build > Build and Upload All` or
 steamcmd. A develop release is the MP closed-beta build (ffbox sets it live on

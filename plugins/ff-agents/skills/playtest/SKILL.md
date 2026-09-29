@@ -105,11 +105,21 @@ Boot one with the channel on (the automation bootstrap gives it a world — the 
 menu verbs, so the channel cannot start a game itself):
 
 ```sh
-"<build>/finalfactory.app/Contents/MacOS/finalfactory" -ffAgentControl true -screen-fullscreen 0 \
+python scripts/nightly/player_slots.py launch --detach "<build>/finalfactory.exe" -- \
+  -ffAgentControl true -screen-fullscreen 0 \
   -ffAutomationRole host -ffAutomationTargetClients 1 \
   -ffAutomationDeterminismAudit false -ffAutomationWriteReport false \
-  -ffAutomationLabel my-playtest &
+  -ffAutomationLabel my-playtest
 ```
+
+⚠️ **Never run a built player from its build folder** (a sandbox's `Builds/…`, `builds/<sha>-win`,
+a temp dir): every new exe path raises the Windows Firewall "allow finalfactory.exe?" prompt and
+stalls the run. `player_slots.py launch` (game repo, `scripts/nightly/`) runs it from a player slot,
+one of eight firewall-allowed paths, and takes `finalfactory.exe`, its folder, a `.app` or the binary
+inside one. `--detach` prints `{"pid", "player", "slot"}` and returns; without it the launcher waits
+and returns the player's exit code. Stop the player by that pid. Mark it by its `-ffAutomationLabel`
+or `-logFile`, not its build path (the command line names the slot). Bash scripts: source
+`scripts/nightly/player_launch.sh` and start `"${FF_LAUNCH[@]}" "$PLAYER" -- <args> &`.
 
 ⚠️ `-ffAutomationDeterminismAudit false` REQUIRES `-ffAutomationWriteReport false`, or the session
 dies on "Determinism report publication failed". ⚠️ Windowed, never `-batchmode`: a headless player

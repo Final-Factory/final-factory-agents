@@ -94,6 +94,10 @@ Windows build on BEAST) at the same source sha.
    (074 T176; the sim and autosaves keep going, so end the sitting from an autosave). `derive-sitting.py`
    copies the previous launch lines, so check `host-<leg>.sh` and `beast-client-<leg>.sh` use
    `-screen-fullscreen 0 -screen-width 1280 -screen-height 720`, not `-batchmode -nographics` (M3 always has).
+   Also check `beast-client-<leg>.sh` starts the player through the slot pool
+   (`python <sandbox>/scripts/nightly/player_slots.py launch Builds/<tNN>/player/finalfactory.exe -- …`), not the
+   exe directly: every new `Builds/<tNN>` path otherwise raises BEAST's firewall prompt on its desktop. Rewrite
+   the line once if an older leg's copy still runs the exe; later legs inherit it.
    Host `(nohup bash host-<leg>.sh > host-<leg>.out 2>&1 &)`, wait for `status waiting-host-peers-connected`.
    BEAST must start in its logged-in DESKTOP session (an ssh-started process lands in session 0, "Services",
    with no desktop): copy `$E/beast-launch-h4-desktop.cmd` to `beast-launch-<leg>-desktop.cmd` with the

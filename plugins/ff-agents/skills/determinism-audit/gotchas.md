@@ -132,7 +132,9 @@ without any divergence:
 
 Any dev player works: `FF_BUILD_DIR=<dir holding finalfactory.exe> ... --skip-build` (e.g. an
 `Editor.ShaderBenchBuild` bench build), `--host-extra "-ffAutomationSave <name>"` runs it on a real save,
-`--port N` avoids a busy one. A pass prints `NO DIVERGENCE` and `PASS [playerSimPos]`.
+`--port N` avoids a busy one. A pass prints `NO DIVERGENCE` and `PASS [playerSimPos]`. The script starts
+both players from a player slot (`FF_LAUNCH`, `scripts/nightly/player_launch.sh`), so a new build folder
+raises no firewall prompt; start any player by hand the same way (`player_slots.py launch`).
 
 The shared audit folder bites the fast suite too: `NetworkDeterminismAuditReportTest` fails with an
 IOException (`...partial` "being used by another process") while any automation player writes there.

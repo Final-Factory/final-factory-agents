@@ -104,6 +104,8 @@ Everything below — the occlusion freeze, the `Step()` pump and its caps, the b
 the focus rules around screenshots — is the price of driving an EDITOR. A windowed built player has
 none of it: measured **141 fps fully occluded** (against the editor's ~2), so frames just run.
 
+Launch it through the player slot pool, never from its build folder (a new exe path raises the
+Windows Firewall prompt): `python scripts/nightly/player_slots.py launch --detach <build> -- …`.
 Launch it with `-ffAgentControl true` and it publishes `session-{pid}.json` (port + bearer token)
 under `<persistentDataPath>/AgentControl/`; from there an outside process drives the same bounded
 `ffauto` vocabulary over loopback HTTP — `POST /v1/command` instead of `execute_code`, a blocking
