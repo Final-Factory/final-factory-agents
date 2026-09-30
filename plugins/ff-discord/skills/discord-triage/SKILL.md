@@ -124,10 +124,9 @@ If the agent's verification fails, or it discovers the fix is larger than believ
 STOP and hand back — the verdict silently becomes ESCALATE, and you file the issue in §4
 including what was attempted and why it was abandoned.
 
-**Voice for all posts: read [the `max-voice` skill](../max-voice/SKILL.md) first.** Both the player-facing
-thread reply (plain language, warm, dry but never at the reporter's expense) and the
-`#dev-chat` note (dev register: terse, technical) post as Max. No em dashes, none of the LLM
-house phrases that file bans.
+**Voice for all posts: read [the `max-voice` skill](../max-voice/SKILL.md) first.** Thread
+replies and the `#dev-chat` note are both 1 to 3 short sentences, answer first; the thread reply
+is plain language, the dev note may carry one `file.cs:line`.
 
 ## 4. ESCALATE
 
@@ -137,8 +136,8 @@ reporter (commands + templates: `reference.md` §Escalation messages).
 
 ## 5. Reply-only verdicts
 
-No issue, no code. Reply in the thread as Max, per [the `max-voice` skill](../max-voice/SKILL.md). Keep it brief
-and warm; these are players, and the reply is the entire experience they get from reporting.
+No issue, no code. Reply in the thread as Max, per [the `max-voice` skill](../max-voice/SKILL.md):
+one to three short sentences.
 Per-verdict content guidance + the react commands: `reference.md` §Reply-only verdicts. Add a
 👀 reaction when you start on a report, take it off again when you are done with it, and leave ✅ on a resolved one.
 

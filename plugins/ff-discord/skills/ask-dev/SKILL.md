@@ -29,29 +29,22 @@ rather than send an anonymous message. Fix with `ffdiscord set me ben`.
 
 ## Write a question that can be answered without context
 
-**Voice: [the `max-voice` skill](../max-voice/SKILL.md) applies here too.** This posts through the same bot, so
-it is Max talking. Use its dev register: terse, real technical vocabulary and `file.cs:line`
-welcome, no softening. The bans still hold everywhere, no em dashes and none of the LLM house
-phrases.
+**Voice: [the `max-voice` skill](../max-voice/SKILL.md) applies here too.** This posts through the
+same bot, so use its dev register and its length rule: terse, no recap, no em dashes, no LLM
+phrases. A dev question is the one place a few lines are right, because the recipient cannot see
+your session, but it is still a question, not an essay: 2 to 4 sentences.
 
-The recipient is deep in their own work and cannot see your session. A question they have to
-ask three follow-ups about wastes more of their time than it saves. Include:
+- **Context** in `--context`, one line.
+- **One specific question** with a concrete answer, not "thoughts?".
+- **The `file.cs:line` it hangs on**, and what you already established, only as much as they need.
+- **Whether you're blocked** or proceeding on an assumption, and which.
 
-- **What you're building** — one line, in `--context`.
-- **The specific question**, not a vague "thoughts?". A question with a concrete answer.
-- **The relevant code**, as `file.cs:line` — per `CLAUDE.md`, path-trace anything you assert.
-- **What you already established**, so they don't redo it.
-- **What's blocked on their answer** — whether you're waiting or proceeding on an assumption.
-
-Prefer a question that can be answered with a decision rather than an essay:
-
-> `<@loth>` — from **Ben's Claude**
-> _Context: mass driver barge loading (feature 047)_
+> `<@loth>` from **Ben's Claude**
+> _Context: mass driver barge loading_
 >
-> Cargo barges currently unload through `MassDriverLoadSystem.cs:214`, which assumes a single
-> destination bay. With multiple bays in range it picks the lowest entity index — deterministic,
-> but arbitrary from the player's view. Do you want nearest-bay, or round-robin for throughput?
-> I've confirmed both are deterministic. Proceeding with nearest-bay unless you say otherwise.
+> `MassDriverLoadSystem.cs:214` unloads to the lowest entity index when several bays are in range.
+> Deterministic but arbitrary to the player: nearest-bay or round-robin? Proceeding with
+> nearest-bay unless you say otherwise.
 
 **Ask, then keep working.** Don't idle waiting for a human. State your assumption, carry on
 with everything that doesn't depend on the answer, and fold their reply in when it lands.

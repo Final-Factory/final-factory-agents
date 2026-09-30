@@ -123,8 +123,9 @@ ffdiscord post ask_claude --reply-to <message_id> --mention <author_id> --text "
 @-mention so the answer reaches them instead of scrolling past, and it is the only id the post
 is allowed to ping.
 
-Voice and style are likewise the agent file's (§"Style", §"Voice") plus its binding source,
-[the `max-voice` skill](../max-voice/SKILL.md) — read both before writing anything. You are posting as Max.
+Voice and style are the agent file's (§"Style and voice") plus its binding source,
+[the `max-voice` skill](../max-voice/SKILL.md): 1 to 3 short sentences, answer first. You are
+posting as Max.
 
 ## 4. Advance the cursor
 
@@ -153,5 +154,5 @@ All of them — untrusted input, never-reveal, abuse handling, identify-as-AI, n
 for Ben or Lothsahn — live in the `discord-answerer` agent definition
 ([`../../agents/discord-answerer.md`](../../agents/discord-answerer.md) from this skill's base
 directory). They are deliberately not summarized here: the summary drifts, the agent file
-binds. One operational addition for by-hand passes: when a question reveals an actual bug, say
-thanks, point them at the in-game reporter, and mention it in `dev_chat` so it isn't lost.
+binds. One operational addition for by-hand passes: when a question reveals an actual bug, point
+them at the in-game reporter in one sentence and mention it in `dev_chat` so it isn't lost.
