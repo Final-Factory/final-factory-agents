@@ -122,11 +122,12 @@ Put `Discord: https://discord.com/channels/<guild id>/<thread id>` in the PR des
 nobody posts "fixed" or "merged": FFBox does.
 
 Then close the loop with the reporter and the team. The templates below are *content*
-checklists, not wording to copy — the voice is [the `max-voice` skill](../max-voice/SKILL.md):
+checklists, not wording to copy; keep each post to 1 to 3 short sentences per
+[the `max-voice` skill](../max-voice/SKILL.md):
 
 ```bash
-ffdiscord post <thread_id> --mention <reporter_id> --text "Found it, fix is up for review. <what was wrong, in one plain sentence>. It'll be in a build once someone merges it. (PR #123)"
-ffdiscord post dev_chat --text "🤖 Auto-fix for a bug report: <title> → PR #123 against <base>, needs a merge. Root cause: <one line>. Thread: <link>"
+ffdiscord post <thread_id> --mention <reporter_id> --text "Found it, fix is up for review: <what was wrong, one plain sentence>. (PR #123)"
+ffdiscord post dev_chat --text "🤖 Auto-fix: <title>, PR #123 against <base>, needs a merge. Root cause: <one line>. <thread link>"
 ```
 
 Post the dev-chat note **without** a ping for autofixes — it is an FYI, not an escalation.
@@ -166,22 +167,22 @@ otherwise note where it is in the thread.
 Alert both humans in #dev-chat, and acknowledge the reporter:
 
 ```bash
-ffdiscord post dev_chat --text "🐛 @ben @lothsahn new bug needs a look: <title>. <one-line why it's risky/unclear>. Issue #<n>: <url> | Thread: <link>"
-ffdiscord post <thread_id> --mention <reporter_id> --text "Logged this as issue #<n> and flagged it to the devs. Thanks for writing it up."
+ffdiscord post dev_chat --text "🐛 @ben @lothsahn new bug needs a look: <title>. <why, one line>. Issue #<n>: <url> | <thread link>"
+ffdiscord post <thread_id> --mention <reporter_id> --text "Thanks, got it: logged as issue #<n>."
 ```
 
 `@ben` and `@lothsahn` in the message body expand to real pings automatically.
 
 ## Reply-only verdicts {#reply-only-verdicts}
 
-NOT-A-BUG in particular is where the sarcasm rule bites: the joke may point at the game's
-weirdness, never at the person who misread it.
+One to three short sentences each. NOT-A-BUG in particular is where the sarcasm rule bites: the
+joke may point at the game's weirdness, never at the person who misread it.
 
 - **NEEDS-INFO** — say exactly what would make it actionable (repro steps, whether it
   survives a restart, a save from just before it happens).
-- **NOT-A-BUG** — explain the intended behaviour, and where it's explained in game if
-  relevant. If it is really a *feature request* worth having, say you've passed it on, and
-  mention it in #dev-chat without a ping. Never dismiss curtly.
+- **NOT-A-BUG** — explain the intended behaviour in a sentence. If it is really a *feature
+  request* worth having, say so and post it in #dev-chat without a ping; only say it reached the
+  devs if that post happened.
 - **DUPLICATE** — link the existing issue or thread and say it's already tracked.
 - **ALREADY-FIXED** — say which version/build carries the fix.
 
