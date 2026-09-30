@@ -45,11 +45,9 @@ agents on a premium model. Setup (once per session, in this order):
    - `message` on ask_claude, or `catchup` → spawn the **`discord-answerer`** agent (Opus).
      It runs this file's steps 1–4 itself — pull, ground, answer/escalate, advance the
      cursor — and reports back. Relay its report to the user (step 5).
-   - `thread` or `thread_message` on bug_reports → spawn the **`discord-triager`** agent
-     (Opus) on that thread. It investigates: if likely player misunderstanding, posts a
-     casual explanation directly to the thread; if a real bug, returns a structured verdict.
-     Relay the report to Ben. It proposes only — never auto-act on its verdict from the
-     standing watch.
+   - `thread` or `thread_message` on bug_reports or dev_bug_reports → **nothing: FFBox owns
+     those channels** (Lothsahn, 2026-09-30) and answers them itself. Do not spawn the triager
+     to post there; no agent outside FFBox writes in them (`discord-cli` "FFBox's channels").
    - `message` in any other WATCHED channel → read it, and decide what it is. Addressed to the
      bot by a player → spawn **`discord-answerer`** in its Mode 2 (single-message reply, not a
      channel sweep), passing the channel id and message id; the same grounding and escalation

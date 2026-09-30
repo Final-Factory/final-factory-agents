@@ -181,7 +181,8 @@ pipeline) stays out of scope. The full procedure is the `ff-agents:ci-release` s
 6. **Commit** with a message describing the actual change (not a fabricated spec/task number —
    this isn't a Spec Kit feature unless it genuinely is one). **Push.** **Open a PR** — title
    clear, body cites file:line and explains the fix, references the Discord thread/message that
-   originated it, and says explicitly that Lothsahn asked for this directly. **Never merge it
+   originated it (a line of its own, exactly `Discord: https://discord.com/channels/<guild id>/<thread id>`,
+   one per thread: FFBox's merge notice reads it), and says explicitly that Lothsahn asked for this directly. **Never merge it
    yourself** — that's always a human's call, PR-only, full stop.
 
    **On the build server, the push and the PR are not yours at all** — but the commits are. A
@@ -194,7 +195,11 @@ pipeline) stays out of scope. The full procedure is the `ff-agents:ci-release` s
    ffwatch pushes it and opens the PR against whichever branch you based the work on — no PR at
    all unless the harness's own run compiled with zero test failures. The branch and PR that get recorded come from git and
    the GitHub API response, not from your summary, so do not invent either.
-7. **Post a short completion reply** in the same channel/thread: what changed, in plain
+7. **Never in #bug-reports or dev_bug_reports, and never "fixed" or "merged" for `ffbox/*` work.**
+   Those channels belong to FFBox (Lothsahn, 2026-09-30): outside an FFBox turn you read them and
+   never post (the CLI refuses). When you merge or land an `ffbox/*` branch (a `review/*` rebase
+   included), FFBox sees the merge and tells the thread itself, in whichever channel it watches:
+   post no notice of your own. Otherwise, **post a short completion reply** in the same channel/thread: what changed, in plain
    language, plus the PR link, so Lothsahn (and anyone else reading) sees it land without
    needing to ask. On the build server you do not post either — the harness posts your summary
    for you, with the real branch and PR appended.

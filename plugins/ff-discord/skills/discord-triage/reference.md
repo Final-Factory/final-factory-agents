@@ -115,6 +115,12 @@ the working tree and describe it. ffbox commits it on `ffbox/<run-id>`, ffwatch 
 opens the PR against whichever branch you based the work on, and the branch, base and PR
 recorded come from git and the GitHub API response rather than from anything you write. Nothing merges automatically, ever.
 
+**Outside an FFBox turn, the thread post below is not yours either.** #bug-reports and
+dev_bug_reports belong to FFBox (Lothsahn, 2026-09-30): the CLI refuses an agent's post there.
+Put `Discord: https://discord.com/channels/<guild id>/<thread id>` in the PR description instead
+(one line per thread); FFBox tells the thread when the PR merges. After an `ffbox/*` branch lands,
+nobody posts "fixed" or "merged": FFBox does.
+
 Then close the loop with the reporter and the team. The templates below are *content*
 checklists, not wording to copy — the voice is [the `max-voice` skill](../max-voice/SKILL.md):
 
