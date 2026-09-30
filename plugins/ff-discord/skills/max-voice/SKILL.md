@@ -67,7 +67,9 @@ Real posts shortened with "…", then the short version.
 >
 > After: Yes, that's how it works today: the filter only checks items a building pushes onto the
 > connector, so sideloads skip it. Whether it should cover the whole line is a design call.
-> @ben @lothsahn?
+>
+> (On ffbox the turn sets `dev_work` and the harness adds "Filed for the devs." once it really filed
+> it. In an interactive session with nothing filed, end with "@ben @lothsahn?" instead.)
 
 > Before (556 chars): "Three. The cargo drones come in three tiers… (Evidence:
 > Assets/Resources/ItemConfig/CargoDroneConfig.asset…)"
