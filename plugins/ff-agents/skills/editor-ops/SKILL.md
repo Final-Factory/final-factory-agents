@@ -53,6 +53,13 @@ the workflow below, then return to MCP for authoritative work. The file-trigger 
 documented elsewhere (memory snapshots, the determinism harness) remain limited to their
 explicit workflows.
 
+**Visual changes are verified on video, not stills** (Ben, 2026-09-29). Any change to VFX, shaders,
+animations, particles, camera feel or other visual presentation gets 60 fps clips, before and after,
+from gameplay angles, covering the effect's whole lifetime (`record_clip`). Review them with
+`watch_video --mode vfx` against a written description of the intended look, and step through the
+frames. The PR links the clips and the review report. Once Ben has approved a look, compare
+against that approved clip. Screenshots alone don't count. Recipe: `ff-agents:watch-video`.
+
 ## Mechanized preflight — run the script, don't recall the prose
 
 **`scripts/editor-preflight.sh <project-path>`** (game repo) is the executable form of this
