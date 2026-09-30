@@ -45,6 +45,8 @@ LOTH = "900000000000000101"
 # Two forum threads; ids are ascending snowflakes so cursor logic is meaningful.
 THREAD_OLD = "900000000000001000"
 THREAD_NEW = "900000000000002000"
+# A thread in #ask-claude (not FFBox's channel) where FFBox is working a fix on its own branch.
+FFBOX_WORK = "900000000000003000"
 
 POSTED = []  # captured outbound messages
 RATE_LIMIT_ONCE = {"tripped": False}
@@ -136,9 +138,18 @@ class MockDiscord(BaseHTTPRequestHandler):
         if path == f"/channels/{ASKCLAUDE}":
             return self._send(200, {"id": ASKCLAUDE, "name": "ask-claude", "type": 0})
         if path == f"/channels/{THREAD_NEW}":
-            return self._send(200, {"id": THREAD_NEW, "type": 11,
+            return self._send(200, {"id": THREAD_NEW, "type": 11, "parent_id": FORUM,
                                     "name": "Crash when placing solar panel",
                                     "applied_tags": []})
+        if path == f"/channels/{FFBOX_WORK}":
+            return self._send(200, {"id": FFBOX_WORK, "type": 11, "parent_id": ASKCLAUDE,
+                                    "name": "Mass drivers miss moving targets"})
+        if path == f"/channels/{FFBOX_WORK}/messages":
+            return self._send(200, [
+                {"id": "901", "content": "Found it. The fix is on branch `ffbox/massdriver-lead-d12t3`, waiting for review.",
+                 "author": {"id": BOT_ID, "username": "FFClaude"}},
+                {"id": "900", "content": "They miss anything that moves", "author": {"id": BEN, "username": "ben"}},
+            ])
         if path == "/channels/70002":
             return self._send(200, {"id": "70002", "type": 11, "name": "!branch develop Typo",
                                     "thread_metadata": {"archived": True}})
@@ -293,6 +304,10 @@ def run(home, *argv, expect_code=0, stdin_text=None, extra_env=None):
     # Only the FF_MAX_EVENTS case reports; a test run inside an FF Factory agent must not.
     env.pop("FF_MAX_EVENTS", None)
     env.pop("FF_SESSION_ID", None)
+    # Nor as an agent: FFBox's channels refuse agents' writes (ffbox_owned_refusal), and a case
+    # that means to be one says so in extra_env.
+    for marker in ("CLAUDECODE", "AI_AGENT", "CODEX_SANDBOX"):
+        env.pop(marker, None)
     env.update(extra_env or {})
     env["FFDISCORD_API"] = f"http://127.0.0.1:{PORT[0]}"
     env["FFDISCORD_HOME"] = home
@@ -575,6 +590,66 @@ def main():
     check("--dry-run touches nothing", len(POSTED) == n_before and "DRY RUN" in p.stdout,
           p.stdout)
 
+    print("FFBox owns #bug-reports: agents read, never write")
+    saved_cfg = read_cfg(tmp)
+    agent = {"CLAUDECODE": "1"}
+    POSTED.clear()
+    for argv, what in [
+        (("post", "bug_reports", "--text", "Fixed in develop"), "a post to the forum by alias"),
+        (("post", "#bug-reports", "--text", "Fixed"), "by #name"),
+        (("post", FORUM, "--text", "Fixed"), "by id"),
+        (("post", THREAD_NEW, "--text", "Fixed, ships with the next build"), "a reply in one of its threads"),
+        (("post", THREAD_NEW, "--text", "x", "--reply-to", THREAD_NEW), "a reply to a message there"),
+        (("close", THREAD_NEW), "closing one of its threads"),
+        (("rename", THREAD_NEW, "Fixed: solar panel"), "renaming one"),
+        (("react", THREAD_NEW, THREAD_NEW, "✅"), "a reaction"),
+        (("edit", THREAD_NEW, THREAD_NEW, "--text", "Fixed"), "an edit"),
+        (("post", THREAD_NEW, "--text", "Fixed", "--dry-run"), "even a dry run"),
+    ]:
+        p = run(tmp, *argv, expect_code=1, extra_env=agent)
+        check(f"refuses {what}", "belongs to FFBox" in p.stderr, p.stderr)
+    check("and sent nothing", not POSTED, POSTED)
+    p = run(tmp, "post", THREAD_NEW, "--text", "x", expect_code=1, extra_env={"FF_SESSION_ID": "s1"})
+    check("an FF Factory agent is an agent too", "belongs to FFBox" in p.stderr, p.stderr)
+    check("the refusal names the PR line to write",
+          f"Discord: https://discord.com/channels/{GUILD}/{THREAD_NEW}" in p.stderr, p.stderr)
+    p = run(tmp, "thread", THREAD_NEW, extra_env=agent)
+    check("reading a thread is still fine", p.returncode == 0, p.stderr)
+    p = run(tmp, "post", "dev_chat", "--text", "hello", extra_env=agent)
+    check("other channels are untouched", p.returncode == 0 and POSTED[-1]["path"] == f"/channels/{DEVCHAT}/messages", p.stderr)
+    POSTED.clear()
+    p = run(tmp, "close", THREAD_NEW)
+    check("FFBox's own harness (no agent markers) still closes its threads",
+          p.returncode == 0 and POSTED[-1]["path"] == f"/channels/{THREAD_NEW}", p.stderr)
+    print("an ffbox/* branch's thread: FFBox says it merged, agents never do")
+    POSTED.clear()
+    for text in ("Fixed on develop, it ships with the next build", "Merged, thanks!", "This is live in 0.50.0.52",
+                 "Landed the fix"):
+        p = run(tmp, "post", FFBOX_WORK, "--text", text, expect_code=1, extra_env=agent)
+        check(f"refuses {text!r}", "FFBox's work (ffbox/massdriver-lead-d12t3)" in p.stderr, p.stderr)
+    p = run(tmp, "edit", FFBOX_WORK, "901", "--text", "Merged", expect_code=1, extra_env=agent)
+    check("and as an edit", "FFBox's work" in p.stderr, p.stderr)
+    check("sent none of them", not POSTED, POSTED)
+    p = run(tmp, "post", FFBOX_WORK, "--text", "Could you attach your save?", extra_env=agent)
+    check("anything else in that thread still goes", p.returncode == 0, p.stderr)
+    p = run(tmp, "post", "dev_chat", "--text", "Fixed the doctor check", extra_env=agent)
+    check("a fixed-type post where no ffbox/ branch is named still goes", p.returncode == 0, p.stderr)
+    p = run(tmp, "post", FFBOX_WORK, "--text", "Merged", "--dry-run")
+    check("FFBox's harness itself (no agent markers) posts its notice", p.returncode == 0, p.stderr)
+
+    sys.path.insert(0, HERE)
+    import ffdiscord as ffd
+    check("ffwatch importing this file is FFBox, whatever its environment",
+          not ffd.running_as_agent({"CLAUDECODE": "1"}, {"ffwatch": object()}))
+    check("an agent's environment is an agent", ffd.running_as_agent({"CLAUDECODE": "1"}, {}))
+    check("a person's shell is not", not ffd.running_as_agent({}, {}))
+
+    # The list is config: [] turns the refusal off (a person's decision, in their config).
+    write_cfg(tmp, {**saved_cfg, "ffbox_owned": []})
+    p = run(tmp, "post", "bug_reports", "--text", "x", "--dry-run", extra_env=agent)
+    check("ffbox_owned: [] lets agents write again", p.returncode == 0 and "DRY RUN" in p.stdout, p.stderr)
+    write_cfg(tmp, saved_cfg)
+
     print("rename")
     POSTED.clear()
     p = run(tmp, "rename", THREAD_NEW, "Crash placing a solar panel")
@@ -818,7 +893,8 @@ def main():
     run(tmp, "post", "ask_claude", "--text", "an answer", "--reply-to", "123", extra_env=fenv)
     run(tmp, "thread-create", "ask_claude", "123", "--name", "How do mass drivers aim?", extra_env=fenv)
     run(tmp, "close", "70001", extra_env=fenv)
-    run(tmp, "rename", THREAD_NEW, "Belts stop", extra_env=fenv)
+    # 70002, not a thread in #bug-reports: FF_SESSION_ID marks an agent, and FFBox's threads refuse agents.
+    run(tmp, "rename", "70002", "Belts stop", extra_env=fenv)
     run(tmp, "edit", "dev_chat", "555", "--text", "fixed wording", extra_env=fenv)
     run(tmp, "post", "dev_chat", "--text", "nope", "--dry-run", extra_env=fenv)
     p = run(tmp, "post", NOPERM, "--text", "0.50.0.46 is live", extra_env=fenv, expect_code=1)
@@ -842,7 +918,7 @@ def main():
           and tc["thread_id"] == "900000000000009999" and tc["text"] == "How do mass drivers aim?", tc)
     check("close names the thread", lines[3]["thread_id"] == "70001" and lines[3]["channel_id"] == "70001", lines[3])
     check("rename: the thread and its new name, done",
-          lines[4]["ok"] is True and lines[4]["thread_id"] == THREAD_NEW and lines[4]["text"] == "Belts stop", lines[4])
+          lines[4]["ok"] is True and lines[4]["thread_id"] == "70002" and lines[4]["text"] == "Belts stop", lines[4])
     bad = lines[-1]
     check("a refused post is recorded with Discord's reason",
           bad["ok"] is False and bad["error"] == "HTTP 403: Missing Permissions"

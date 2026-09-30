@@ -24,8 +24,14 @@ fails, the verdict is ESCALATE and you leave the code alone.
 ffwatch loads these same skills and roles through `--plugin-dir`, so this is the policy its
 containers follow. See "On the build server" in `reference.md` §AUTOFIX flow.
 
-Running a pass by hand is the fallback, for a machine with no ffbox (BEAST, Windows) or a box
-where ffwatch is stopped. `/loop 15m /discord-triage` is the same thing on a timer, and a
+**FFBox owns #bug-reports and dev_bug_reports** (Lothsahn, 2026-09-30): outside an FFBox turn,
+do not run a pass on them at all. Any other agent may read their threads and download their files,
+never post, react or close there (the CLI refuses; `discord-cli` "FFBox's channels"), and puts
+`Discord: https://discord.com/channels/<guild id>/<thread id>` in the PR of a fix instead. Merging
+an `ffbox/*` branch is never followed by a "fixed" or "merged" post: FFBox announces it.
+
+Running a pass by hand was the fallback, for a machine with no ffbox (BEAST, Windows) or a box
+where ffwatch is stopped; for FFBox's channels it is retired. `/loop 15m /discord-triage` is the same thing on a timer, and a
 convenience rather than the design: it re-queries Discord on a fixed interval whether or not
 anything happened, and every pass starts cold. Check whether ffwatch is already running first — `python3 ffbox/ffwatch.py status` in the ffbox checkout, or
 `systemctl --user status ffwatch` — because two things triaging the same forum will both

@@ -590,6 +590,148 @@ def remember_channel_id(alias, channel_id):
         return False
 
 
+# --------------------------------------------------------------------------------------
+# Channels FFBox owns
+# --------------------------------------------------------------------------------------
+# #bug-reports and dev_bug_reports BELONG TO FFBOX (Lothsahn, 2026-09-30): "There are a lot of
+# duplicate 'this has been fixed' comments, and the FFBox harness is designed to see merged PRs and
+# report back on the thread." So an AGENT may read those threads and download their files, and
+# every write there is refused: post, reply, react, edit, thread-create, rename, close.
+#
+# ONLY AGENTS ARE REFUSED. FFBox's own harness (ffwatch) posts its merge notices and closes the
+# threads through this very file, and it runs as a service with none of the markers below; a
+# person at a terminal has none either. Claude Code sets CLAUDECODE (and AI_AGENT) in every
+# command it runs, FF Factory sets FF_SESSION_ID for every agent it starts, Codex sets
+# CODEX_SANDBOX. config `ffbox_owned` (aliases) replaces the default list; [] turns this off.
+FFBOX_OWNED_DEFAULT = ("bug_reports", "dev_bug_reports")
+AGENT_ENV_MARKERS = ("CLAUDECODE", "AI_AGENT", "FF_SESSION_ID", "CODEX_SANDBOX")
+THREAD_TYPES = (10, 11, 12)
+
+
+def inside_ffwatch(modules=None):
+    """FFBox's harness imports this file in-process (ffwatch.ffdiscord_run): that is FFBox, even
+    when somebody started ffwatch from an agent's shell and it inherited the agent markers."""
+    modules = sys.modules if modules is None else modules
+    main = getattr(modules.get("__main__"), "__file__", "") or ""
+    return "ffwatch" in modules or os.path.basename(main) == "ffwatch.py"
+
+
+def running_as_agent(env=None, modules=None):
+    env = os.environ if env is None else env
+    if inside_ffwatch(modules):
+        return False
+    return any(str(env.get(k) or "").strip() for k in AGENT_ENV_MARKERS)
+
+
+def _alias_key(name):
+    """bug_reports, #bug-reports and "🐞︰bug-reports" (a live name with its emoji) are one key."""
+    m = re.search(r"[a-z0-9][a-z0-9_-]*$", str(name or "").strip().lower())
+    return m.group(0).replace("-", "_") if m else ""
+
+
+def owned_aliases(client):
+    """FFBox's channel aliases: config `ffbox_owned`, else FFBOX_OWNED_DEFAULT."""
+    configured = client.cfg.get("ffbox_owned")
+    owned = {_alias_key(a) for a in (configured if isinstance(configured, list) else FFBOX_OWNED_DEFAULT)}
+    owned.discard("")
+    return owned
+
+
+def ffbox_owned_refusal(client, ref, target):
+    """Why an agent may not write to channel or thread `target` (given as `ref`), or None.
+
+    Known without a request when `ref` is an FFBox alias or the id of one in the config. Else one
+    GET of the target (and one of its parent when the owned ids are not in the config yet): a
+    thread in an FFBox forum is FFBox's. A lookup that fails decides nothing, and the write goes
+    on to meet whatever Discord says about it.
+    """
+    if not running_as_agent():
+        return None
+    owned = owned_aliases(client)
+    if not owned:
+        return None
+    channels = client.cfg.get("channels") or {}
+    owned_ids = {str(v) for k, v in channels.items() if _alias_key(k) in owned and str(v or "").strip()}
+    guild = str(client.cfg.get("server_id") or "").strip()
+
+    def refusal(where, thread=None):
+        url = f"https://discord.com/channels/{guild or '<guild id>'}/{thread}" if thread else None
+        how = (f"put this line in your PR description instead: Discord: {url}" if url else
+               "put `Discord: https://discord.com/channels/<guild id>/<thread id>` in your PR description instead")
+        return (f"refused: {where} belongs to FFBox (Lothsahn, 2026-09-30). Agents may read its threads and "
+                f"download their files, but never post, reply, react, edit, rename or close there. If you fixed "
+                f"the bug, {how}; FFBox tells the thread when the PR merges.")
+
+    if _alias_key(ref) in owned and not str(ref).strip().isdigit():
+        return refusal(f"#{_alias_key(ref).replace('_', '-')}")
+    if str(target) in owned_ids:
+        return refusal("this channel")
+    try:
+        ch = client.get(f"/channels/{target}") or {}
+    except DiscordError:
+        return None
+    is_thread = ch.get("type") in THREAD_TYPES
+    if not is_thread and _alias_key(ch.get("name")) in owned:
+        return refusal(f"#{_alias_key(ch.get('name')).replace('_', '-')}")
+    parent = str(ch.get("parent_id") or "")
+    if is_thread and parent:
+        if parent in owned_ids:
+            return refusal("this thread's channel", thread=target)
+        try:
+            pch = client.get(f"/channels/{parent}") or {}
+        except DiscordError:
+            return None
+        if _alias_key(pch.get("name")) in owned:
+            return refusal(f"#{_alias_key(pch.get('name')).replace('_', '-')}", thread=target)
+    return None
+
+
+def refuse_ffbox_owned(client, ref, target):
+    why = ffbox_owned_refusal(client, ref, target)
+    if why:
+        die(why)
+
+
+# A "FIXED"-TYPE POST ON FFBOX'S WORK IS FFBOX'S TO MAKE (Lothsahn, 2026-09-30): when a worker
+# merges an ffbox/* branch (or lands it through a review/* rebase), FFBox's harness sees the merge
+# and tells the thread itself, in whichever channel it watches. From here that is detectable only
+# through what the thread shows: FFBox names its branch there ("on branch `ffbox/...`"). So an
+# agent's fixed/merged/landed/live post or edit into a thread that mentions an ffbox/ branch is
+# refused. Anything else in that thread (a question, "looking into it") still goes.
+FIXED_TEXT = re.compile(r"\b(fix(?:ed|es)?\b(?! it\b)|merged|landed|shipped|ships (?:in|with)|is live|now live|live in|resolved)", re.I)
+FFBOX_BRANCH_TEXT = re.compile(r"\bffbox/[A-Za-z0-9._/-]+")
+
+
+def ffbox_branch_refusal(client, target, text):
+    """Why an agent may not post this "fixed"-type `text` to channel/thread `target`, or None."""
+    if not running_as_agent() or not text or not FIXED_TEXT.search(text):
+        return None
+    try:
+        msgs = client.get(f"/channels/{target}/messages?limit=50") or []
+    except DiscordError:
+        return None
+    for m in msgs if isinstance(msgs, list) else []:
+        found = FFBOX_BRANCH_TEXT.search(str(m.get("content") or ""))
+        if found:
+            return (f"refused: this thread is FFBox's work ({found.group(0)}). When an ffbox/* branch is "
+                    f"merged, FFBox's harness sees the merge and tells the thread itself; agents never post "
+                    f"a fixed, merged or live notice there, in any channel FFBox watches, nor as Max.")
+    return None
+
+
+def resolve_writable(client, ref):
+    """resolve_channel for a write, with FFBox's channels refused to agents (ffbox_owned_refusal).
+
+    An FFBox alias or #name is refused before resolving it, so the refusal is the answer even
+    where the name would not resolve.
+    """
+    if running_as_agent() and not str(ref).strip().isdigit() and _alias_key(ref) in owned_aliases(client):
+        die(ffbox_owned_refusal(client, ref, ""))
+    target = resolve_channel(client, ref)
+    refuse_ffbox_owned(client, ref, target)
+    return target
+
+
 def resolve_channel(client, ref):
     """Accept a raw id, a config alias (bug_reports), or #channel-name.
 
@@ -1207,7 +1349,7 @@ def cmd_thread(client, args):
 
 
 def cmd_post(client, args):
-    channel = resolve_channel(client, args.channel)
+    channel = resolve_writable(client, args.channel)
     content = read_text_arg(args.text)
     if not content and not args.file:
         die("nothing to post: pass --text, '-' to read stdin, or --file")
@@ -1218,6 +1360,9 @@ def cmd_post(client, args):
     if mention:
         content = lead_with_mention(content, mention)
     content = check_length(content)
+    why = ffbox_branch_refusal(client, channel, content)
+    if why:
+        die(why)
 
     payload = {"content": content or ""}
     allowed = {"parse": []} if args.silent else {"parse": ["users"]}
@@ -1301,7 +1446,7 @@ def cmd_ask(client, args):
     parts.append(text.strip())
     body = check_length("\n".join(parts))
 
-    channel = resolve_channel(client, args.channel)
+    channel = resolve_writable(client, args.channel)
     if args.dry_run:
         print(f"DRY RUN — would post to channel {channel}:\n\n{body}")
         return
@@ -1322,11 +1467,14 @@ def cmd_ask(client, args):
 
 def cmd_edit(client, args):
     """Edit one of the bot's own messages — the way to correct a wrong public answer."""
-    channel = resolve_channel(client, args.channel)
+    channel = resolve_writable(client, args.channel)
     text = read_text_arg(args.text)
     if not text:
         die("nothing to edit to: pass --text or '-' to read stdin")
     text = check_length(expand_mentions(text, client.cfg.get("mentions")))
+    why = ffbox_branch_refusal(client, channel, text)
+    if why:
+        die(why)
     if args.dry_run:
         print(f"DRY RUN — would edit {args.message} to:\n\n{text}")
         return
@@ -1348,7 +1496,7 @@ def cmd_react(client, args):
     there, and Discord answers the DELETE of a reaction that is not there with 404 /
     "Unknown Emoji", which is the state the caller asked for and so is not an error here.
     """
-    channel = resolve_channel(client, args.channel)
+    channel = resolve_writable(client, args.channel)
     emoji = urllib.parse.quote(args.emoji)
     path = f"/channels/{channel}/messages/{args.message}/reactions/{emoji}/@me"
     if not args.remove:
@@ -1373,7 +1521,7 @@ def cmd_thread_create(client, args):
     `post <thread-id>` then works unchanged, because a thread id IS a channel id everywhere
     in Discord's API.
     """
-    channel = resolve_channel(client, args.channel)
+    channel = resolve_writable(client, args.channel)
     name = args.name.strip()
     if not name:
         die("--name is required and cannot be blank")
@@ -1399,7 +1547,7 @@ def cmd_close(client, args):
     IDEMPOTENT. Archiving an already-archived thread is the state the caller asked for, so it
     is a success here rather than an error, and a retry after an ambiguous failure is safe.
     """
-    thread = resolve_channel(client, args.thread)
+    thread = resolve_writable(client, args.thread)
     if args.dry_run:
         print(f"DRY RUN — would archive thread {thread}")
         return
@@ -1423,7 +1571,7 @@ def cmd_rename(client, args):
     if not name:
         die("a thread name cannot be blank")
     name = name[:100]
-    thread = resolve_channel(client, args.thread)
+    thread = resolve_writable(client, args.thread)
     current = client.get(f"/channels/{thread}") or {}
     archived = bool((current.get("thread_metadata") or {}).get("archived"))
     if args.dry_run:

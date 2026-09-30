@@ -40,12 +40,35 @@ straight out of the file. Only an unambiguous single match is remembered.
 | `edit`, `react` | Amend one of the bot's own messages; add a reaction, or take one back off with `react <channel> <id> 👀 --remove`. Removing one that is already gone is a no-op, not an error. |
 | `thread-create <channel> <message_id>` | Open a thread on an existing message. |
 | `rename <thread_id> <name>` | Rename a thread (trimmed to 100). Discord refuses any edit to an archived thread except unarchiving it, so an archived thread is renamed in the request that unarchives it and archived again straight after — it ends as open or as archived as it started. `--dry-run` shows the old and new names. The bot can rename threads it opened; anybody else's needs MANAGE_THREADS. |
-| `close <thread_id>` | Archive a thread. The soft close: anybody who replies brings it straight back, which is why an agent is allowed to do it unattended. It never locks, so a reporter whose bug is still there reopens their own thread by answering. Archiving an already-archived thread is a no-op, not an error. Needs MANAGE_THREADS wherever the bot did not open the thread itself, which includes the bug_reports forum. |
+| `close <thread_id>` | (Never in FFBox's channels, for an agent: see below.) Archive a thread. The soft close: anybody who replies brings it straight back, which is why an agent is allowed to do it unattended. It never locks, so a reporter whose bug is still there reopens their own thread by answering. Archiving an already-archived thread is a no-op, not an error. Needs MANAGE_THREADS wherever the bot did not open the thread itself, which includes the bug_reports forum. |
 | `download <channel> <message_id> --dir <path>` | Pull a message's attachments. Bug reports carry a runtime log and a save zip. |
 | `ask <target>` | Post a question to `ben`, `lothsahn`, or both in `#dev-chat`, attributed to this machine's operator. |
 | `unseen <channel> --key <k>` | New messages or threads since the stored cursor. The entry point for every loop. |
 | `mark-seen <key> <id>`, `cursors` | Advance a cursor to a specific id; list all cursors. |
 | `config`, `set` | Show the config with the token redacted; set one field. |
+
+## FFBox's channels: agents read, never write
+
+**#bug-reports and dev_bug_reports belong to FFBox** (Lothsahn, 2026-09-30): "There are a lot of
+duplicate 'this has been fixed' comments, and the FFBox harness is designed to see merged PRs and
+report back on the thread." So:
+
+- **An agent never writes there.** `post`, a reply, `react`, `edit`, `thread-create`, `rename` and
+  `close` in those channels, or in any thread of theirs, are refused with a message saying why. The
+  CLI knows it is an agent by `CLAUDECODE` / `AI_AGENT` (Claude Code), `FF_SESSION_ID` (FF Factory)
+  or `CODEX_SANDBOX` (Codex). Reading (`read`, `thread`, `threads`, `unseen`) and `download` are fine.
+- **FFBox itself is not refused.** Its harness (ffwatch) posts its notices and closes the threads
+  through this same file, as a service with none of those markers (and a process that imported it
+  in-process, `ffwatch`, is never taken for an agent); its container turns have no CLI
+  at all and ask the harness to post. A person at a terminal is not refused either. Config
+  `ffbox_owned` (aliases) replaces the default list, and `[]` turns the refusal off.
+- **If you fixed a bug from a thread**, add one line per thread to your PR description, exactly
+  `Discord: https://discord.com/channels/<guild id>/<thread id>`. The refusal prints the line.
+- **Work on an `ffbox/*` branch is FFBox's to announce**, in whichever channel it watches
+  (bug_reports, dev_bug_reports, feedback_and_suggestions, ask_assistant, ...). When you merge or
+  land one (a `review/*` rebase included), post no "fixed" or "merged" notice, as Max or otherwise.
+  The CLI refuses an agent's fixed/merged/landed/live-type `post` or `edit` into a thread whose
+  recent messages name an `ffbox/` branch; anything else there (a question) still goes.
 
 ## FF Factory's Max page
 
