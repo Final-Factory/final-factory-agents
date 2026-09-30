@@ -1,0 +1,38 @@
+#!/bin/sh
+# record_clip: launcher for the watch-video skill's clip recorder (record_clip.py).
+#
+# registerAgents.sh copies this onto PATH (~/.local/bin) so skills, subagent roles and humans can
+# say `record_clip --player --effect afterburner` instead of carrying a path into a versioned plugin
+# cache. record_clip.py is standard library only; `uv run` supplies a Python. Needs uv and ffmpeg
+# (and swiftc on macOS, once, to build the ScreenCaptureKit recorder).
+#
+# Resolution order, first hit wins: $RECORD_CLIP_PY, the newest installed plugin copy (Claude Code,
+# then Codex), the checkout recorded by registerAgents.sh.
+set -u
+SCRIPT=record_clip.py
+
+newest() {
+    [ -d "$1" ] || return 1
+    ls -d "$1"/cache/*/ff-agents/*/skills/watch-video/"$SCRIPT" 2>/dev/null | sort -V | tail -1
+}
+
+PY=${RECORD_CLIP_PY:-}
+if [ -z "$PY" ]; then
+    for root in "$HOME/.claude/plugins" "$HOME/.codex/plugins"; do
+        PY=$(newest "$root") || PY=
+        [ -n "$PY" ] && break
+    done
+fi
+if [ -z "$PY" ] && [ -r "$HOME/.claude/final-factory-agents-checkout" ]; then
+    c="$(cat "$HOME/.claude/final-factory-agents-checkout")/plugins/ff-agents/skills/watch-video/$SCRIPT"
+    [ -r "$c" ] && PY="$c"
+fi
+if [ -z "$PY" ] || [ ! -r "$PY" ]; then
+    echo "record_clip: cannot locate $SCRIPT. Install the plugin: sh registerAgents.sh (ff-agents)." >&2
+    exit 69
+fi
+if ! command -v uv >/dev/null 2>&1; then
+    echo "record_clip: needs uv (brew install uv, or winget install astral-sh.uv)" >&2
+    exit 127
+fi
+exec uv run --quiet --script "$PY" "$@"

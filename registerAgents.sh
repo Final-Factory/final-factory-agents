@@ -253,19 +253,24 @@ install_ffdiscord_launcher() {
   esac
 }
 
-# The same for ff-agents' watch_video (the watch-video skill's trailer/video review tool).
+# The same for ff-agents' watch_video and record_clip (the watch-video skill's video review and
+# effect-clip recorder).
 install_watch_video_launcher() {
   _src="$SCRIPT_DIR/plugins/ff-agents/skills/watch-video/bin"
   [ -r "$_src/watch_video" ] || return 0
   mkdir -p "$LAUNCHER_BIN"
-  cp "$_src/watch_video" "$LAUNCHER_BIN/watch_video"
-  chmod +x "$LAUNCHER_BIN/watch_video"
-  [ -r "$_src/watch_video.cmd" ] && cp "$_src/watch_video.cmd" "$LAUNCHER_BIN/watch_video.cmd"
-  echo "  installed watch_video into $LAUNCHER_BIN"
+  for _n in watch_video record_clip; do
+    [ -r "$_src/$_n" ] || continue
+    cp "$_src/$_n" "$LAUNCHER_BIN/$_n"
+    chmod +x "$LAUNCHER_BIN/$_n"
+    [ -r "$_src/$_n.cmd" ] && cp "$_src/$_n.cmd" "$LAUNCHER_BIN/$_n.cmd"
+  done
+  echo "  installed watch_video + record_clip into $LAUNCHER_BIN"
 }
 
 remove_watch_video_launcher() {
-  for _f in "$LAUNCHER_BIN/watch_video" "$LAUNCHER_BIN/watch_video.cmd"; do
+  for _f in "$LAUNCHER_BIN/watch_video" "$LAUNCHER_BIN/watch_video.cmd" \
+            "$LAUNCHER_BIN/record_clip" "$LAUNCHER_BIN/record_clip.cmd"; do
     [ -f "$_f" ] && rm -f "$_f" && echo "  removed $_f"
   done
   return 0

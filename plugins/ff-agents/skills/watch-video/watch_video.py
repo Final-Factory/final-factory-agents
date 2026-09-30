@@ -47,7 +47,7 @@ STILL_CAM = 2.0         # camera slower than this ...
 STILL_ACT = 0.9         # ... and on-screen change below this (mean abs diff after camera compensation, 0-255)
 LINGER_MIN = 0.6        # a still stretch this long (s) inside a shot is flagged
 TAIL_DROP = 0.35        # tail motion below this fraction of the shot's own peak = "motion stopped, shot holds"
-REPEAT_DIFF = 0.25      # frame-to-frame mean abs diff below this = a repeated (duplicate) frame
+REPEAT_CHG = 0.0002     # under 0.02% of pixels changed (by > 12/255) since the last frame = a repeated frame
 MATCH_MIN = 0.97        # window alignment score for 'this is that track here' (true 0.99+, a similar track ~0.94)
 ON_BEAT_MS = 60         # a cut within this of a beat counts as on the beat
 OFF_BEAT_FRAC = 0.2     # a cut is flagged off the beat only past this share of a beat (tracker jitter is ~50 ms)
@@ -136,9 +136,14 @@ def video_signals(path, info, sfps, max_fps=60):
             samples.append(rgb.copy())
         g = cv2.resize(cv2.cvtColor(rgb, cv2.COLOR_RGB2GRAY), (W, H), interpolation=cv2.INTER_AREA)
         cell = np.zeros(GRID[0] * GRID[1])
-        r = {"diff": 0.0, "tx": 0.0, "ty": 0.0, "zoom": 0.0, "act": 0.0, "luma": float(g.mean()), "track": 0}
+        r = {"diff": 0.0, "tx": 0.0, "ty": 0.0, "zoom": 0.0, "act": 0.0, "luma": float(g.mean()), "track": 0,
+             "chg": 1.0}
         if prev is not None:
-            r["diff"] = float(np.abs(g.astype(np.int16) - prev.astype(np.int16)).mean())
+            ad = np.abs(g.astype(np.int16) - prev.astype(np.int16))
+            r["diff"] = float(ad.mean())
+            # share of pixels that really changed: a small effect moving on black barely moves the mean,
+            # but a repeated frame changes (almost) no pixel at all
+            r["chg"] = float((ad > 12).mean())
             pts = cv2.goodFeaturesToTrack(prev, maxCorners=300, qualityLevel=0.01, minDistance=6)
             M = None
             if pts is not None and len(pts) >= 12:
@@ -429,10 +434,12 @@ def analyse_shots(sig, bounds, flashes):
             s["focus"] = float(top[:k].sum() / C.sum())
             s["spread"] = float((C >= 0.2 * top[0]).mean())
         # repeated frames between moving frames (a dropped frame shows as a stutter)
-        d = sig["diff"][i0:i1]
-        rep = (d < REPEAT_DIFF) & (np.r_[0, d[:-1]] > 1.0) | (d < REPEAT_DIFF) & (np.r_[d[1:], 0] > 1.0)
+        c = sig["chg"][i0:i1]
+        dup = c < REPEAT_CHG
+        live = c > 3 * REPEAT_CHG
+        rep = dup & (np.r_[False, live[:-1]] | np.r_[live[1:], False])     # a repeat between moving frames
         s["repeats"] = int(rep.sum())
-        s["unique_fps"] = float(fps * (1 - (d < REPEAT_DIFF).mean())) if mov.mean() > 0.5 else None
+        s["unique_fps"] = float(fps * (1 - dup.mean())) if live.mean() > 0.5 else None
         shots.append(s)
     return shots
 
@@ -1020,8 +1027,8 @@ def render_sheets(out_dir, shots, frames, sfps, sig, max_frames=16):
             continue
         if len(idx) > max_frames:
             idx = [idx[int(round(k * (len(idx) - 1) / (max_frames - 1)))] for k in range(max_frames)]
-        cols = 4 if len(idx) > 6 else min(3, len(idx))
-        tw = 440
+        cols = 6 if len(idx) > 16 else 4 if len(idx) > 6 else min(3, len(idx))
+        tw = 440 if cols <= 4 else 320
         th = int(tw * frames[0].shape[0] / frames[0].shape[1])
         rows_ = int(math.ceil(len(idx) / cols))
         img = Image.new("RGB", (cols * (tw + 6) + 6, rows_ * (th + 28) + 40), (15, 15, 18))
@@ -1141,12 +1148,33 @@ Write markdown with exactly these sections:
 5. **Top 5 fixes**, most important first.
 Only report what you actually see or hear; write "unsure" rather than guess. Timestamps are video time."""
 
+GEMINI_VFX_PROMPT = """You are a senior real-time VFX artist reviewing a short gameplay clip of a visual effect in
+Final Factory, a top-down space factory and fleet-combat game. Judge it the way a player would see it,
+frame by frame. You get no measurements, on purpose.
+
+{brief}
+
+Write markdown with exactly these sections:
+1. **What happens**: the effect's life beat by beat with timestamps (it appears, grows, peaks, decays, ends):
+   shape, size next to the ship or object that emits it, colours, motion, whether it stays attached to its
+   source, how it blends with the scene.
+2. **Problems**: one bullet each, EXACTLY in this form: `- [m:ss.ss] CATEGORY: what is wrong and the fix`.
+   Categories: POP (appears or vanishes abruptly), TIMING (too fast, slow, long or short), SHAPE, SCALE, COLOR,
+   MOTION (wrong direction, lags, detaches, jitters), FLICKER, SORTING (drawn over or under the wrong thing),
+   ALIASING, READABILITY (hard to see or read), BRIEF (not the intended look), COMPARE (worse than video A).
+3. **Against the intended look**: each point of the brief, met or not, and why.
+4. **Against the reference** (only when video A is given): what changed from A to B, better or worse.
+5. **Verdict**: ship it, or fix first; the top 3 fixes.
+Only report what you actually see; write "unsure" rather than guess. Timestamps are video time of the clip
+under review."""
+
 # which machine flags a model finding of each category can corroborate
 CORROBORATES = {"LINGER": {"LINGER", "DEAD_AIR", "STATIC_SHOT", "MOTION_DIES"},
                 "MUSIC": {"MUSIC_EDIT", "MUSIC_EDIT?", "MUSIC_END", "OFF_BEAT"},
                 "CUT": {"OFF_BEAT", "JUMP_CUT", "FLASH_CUT"},
                 "ACTION": {"ACTION_CLUMP", "STATIC_SHOT", "DEAD_AIR"},
-                "FRAMING": {"TIGHT"}, "REPETITION": {"REPEATED", "JUMP_CUT"}, "TRANSITION": {"JUMP_CUT", "FLASH_CUT"}}
+                "FRAMING": {"TIGHT"}, "REPETITION": {"REPEATED", "JUMP_CUT"}, "TRANSITION": {"JUMP_CUT", "FLASH_CUT"},
+                "POP": {"POP_IN", "POP_OUT", "SNAP"}, "SHAPE": {"SNAP"}, "FLICKER": {"FLICKER"}, "TIMING": {"EFFECT_CUT_OFF", "EFFECT_MISSED_START", "SNAP"}}
 
 
 def model_findings(text, offset):
@@ -1177,14 +1205,35 @@ def corroborate(flags, findings, slack=1.0):
     return [g for k, g in enumerate(findings) if k not in used]
 
 
-def gemini_review(video, info, flags, brief_text, out_dir, model, fps, segment, daily_limit, dry=False):
+def gemini_upload(key, base, path):
+    size = os.path.getsize(path)
+    hdr, _ = http("POST", f"{base}/upload/v1beta/files", key, {"file": {"display_name": "watch_video"}},
+                  {"X-Goog-Upload-Protocol": "resumable", "X-Goog-Upload-Command": "start",
+                   "X-Goog-Upload-Header-Content-Length": str(size),
+                   "X-Goog-Upload-Header-Content-Type": "video/mp4"}, raw=True)
+    _, body = http("POST", hdr["x-goog-upload-url"], key, open(path, "rb").read(),
+                   {"X-Goog-Upload-Command": "upload, finalize", "X-Goog-Upload-Offset": "0",
+                    "Content-Length": str(size)}, raw=True)
+    f = json.loads(body)["file"]
+    for _ in range(120):
+        if f.get("state") == "ACTIVE":
+            return f
+        if f.get("state") == "FAILED":
+            raise RuntimeError(f"Gemini could not process the upload: {f.get('error')}")
+        time.sleep(2)
+        f = http("GET", f"{base}/v1beta/{f['name']}", key)
+    raise RuntimeError("Gemini upload still processing after 4 minutes")
+
+
+def gemini_review(video, info, flags, brief_text, out_dir, model, fps, segment, daily_limit, dry=False,
+                  prompt=None, ref_video=None, ref_dur=0.0):
     key = gemini_key()
     if not key:
         return {"status": "skipped", "why": "no GEMINI_API_KEY (env or ~/.config/ff-watch-video/gemini.env)"}
     a, b = segment or (0.0, info["duration"])
     dur = b - a
     pin, pout = price(model)
-    est_in = dur * fps * TOKENS_PER_FRAME + dur * TOKENS_AUDIO_S + 3000
+    est_in = (dur + ref_dur) * fps * TOKENS_PER_FRAME + (dur + ref_dur) * TOKENS_AUDIO_S + 3000
     est = est_in / 1e6 * pin + 6000 / 1e6 * pout
     ledger, today, lpath = spend_today()
     if today + est > daily_limit:
@@ -1192,42 +1241,39 @@ def gemini_review(video, info, flags, brief_text, out_dir, model, fps, segment, 
     if dry:
         return {"status": "dry", "estimate_usd": est, "model": model}
     # a 720p proxy keeps the upload small; Gemini samples frames itself
-    proxy = os.path.join(out_dir, "gemini_proxy.mp4")
-    run(["ffmpeg", "-v", "error", "-y", "-ss", f"{a:.3f}", "-to", f"{b:.3f}", "-i", video,
-         "-vf", "scale=-2:720", "-r", "30", "-c:v", "libx264", "-preset", "veryfast", "-crf", "28",
-         "-c:a", "aac", "-b:a", "128k", "-movflags", "+faststart", proxy])
-    size = os.path.getsize(proxy)
+    def proxy_of(src, tag, ss=None, to=None):
+        dst = os.path.join(out_dir, f"gemini_proxy_{tag}.mp4")
+        cut = (["-ss", f"{ss:.3f}", "-to", f"{to:.3f}"] if ss is not None else [])
+        run(["ffmpeg", "-v", "error", "-y", *cut, "-i", src, "-vf", "scale=-2:720", "-r", "30", "-c:v", "libx264",
+             "-preset", "veryfast", "-crf", "28", "-c:a", "aac", "-b:a", "128k", "-movflags", "+faststart", dst])
+        return dst
     base = "https://generativelanguage.googleapis.com"
-    hdr, _ = http("POST", f"{base}/upload/v1beta/files", key, {"file": {"display_name": "watch_video"}},
-                  {"X-Goog-Upload-Protocol": "resumable", "X-Goog-Upload-Command": "start",
-                   "X-Goog-Upload-Header-Content-Length": str(size),
-                   "X-Goog-Upload-Header-Content-Type": "video/mp4"}, raw=True)
-    up = hdr["x-goog-upload-url"]
-    _, body = http("POST", up, key, open(proxy, "rb").read(),
-                   {"X-Goog-Upload-Command": "upload, finalize", "X-Goog-Upload-Offset": "0",
-                    "Content-Length": str(size)}, raw=True)
-    f = json.loads(body)["file"]
+    proxies = [proxy_of(video, "this", a, b)] + ([proxy_of(ref_video, "ref")] if ref_video else [])
+    files = []
     try:
-        for _ in range(120):
-            if f.get("state") == "ACTIVE":
-                break
-            if f.get("state") == "FAILED":
-                raise RuntimeError(f"Gemini could not process the upload: {f.get('error')}")
-            time.sleep(2)
-            f = http("GET", f"{base}/v1beta/{f['name']}", key)
-        brief = f"The brief for this cut:\n\n{brief_text.strip()}\n" if brief_text else "No brief was given."
-        prompt = GEMINI_PROMPT.format(brief=brief)
-        video_part = {"file_data": {"mime_type": "video/mp4", "file_uri": f["uri"]}, "video_metadata": {"fps": fps}}
-        req = {"contents": [{"role": "user", "parts": [video_part, {"text": prompt}]}]}
+        files = [gemini_upload(key, base, pth) for pth in proxies]
+        brief = f"The brief:\n\n{brief_text.strip()}\n" if brief_text else "No brief was given."
+        text_prompt = (prompt or GEMINI_PROMPT).format(brief=brief)
+        vpart = lambda f: {"file_data": {"mime_type": "video/mp4", "file_uri": f["uri"]}, "video_metadata": {"fps": fps}}
+        if ref_video:
+            parts = [{"text": "VIDEO A is the REFERENCE (the approved look, or the version before the change):"},
+                     vpart(files[1]), {"text": "VIDEO B is the NEW version under review:"}, vpart(files[0]),
+                     {"text": text_prompt}]
+        else:
+            parts = [vpart(files[0]), {"text": text_prompt}]
+        req = {"contents": [{"role": "user", "parts": parts}]}
         t0 = time.time()
         r = http("POST", f"{base}/v1beta/models/{model}:generateContent", key, req)
         took = time.time() - t0
     finally:
-        try:
-            http("DELETE", f"{base}/v1beta/{f['name']}", key)
-        except Exception:
-            pass
-        os.remove(proxy)
+        for f in files:
+            try:
+                http("DELETE", f"{base}/v1beta/{f['name']}", key)
+            except Exception:
+                pass
+        for pth in proxies:
+            if os.path.exists(pth):
+                os.remove(pth)
     text = "".join(p.get("text", "") for c in r.get("candidates", [])[:1] for p in c["content"].get("parts", []))
     u = r.get("usageMetadata", {})
     tin = u.get("promptTokenCount", 0)
@@ -1334,6 +1380,8 @@ def analyse(path, args, light=False):
         keep.append(c)
     cuts = keep
     bounds = list(zip([0.0] + cuts, cuts + [info["duration"]]))
+    if getattr(args, "mode", "trailer") == "vfx":
+        bounds = [(0.0, info["duration"])]      # an effect clip is one take: bursts are not cuts
     shots = analyse_shots(sig, bounds, fl)
     add_readability(shots, frames, sfps)
     au = audio_signals(path, info, args.bpm)
@@ -1492,6 +1540,267 @@ def to_json(r, refs, gem):
                                  default=lambda o: o.item() if hasattr(o, "item") else str(o)))
 
 
+# ------------------------------------------------------------------------ visual-effect clips
+
+def effect_span(sig, fired_at=None):
+    """The effect's life in a short clip: where camera-compensated on-screen change rises above the
+    clip's own baseline. With `fired_at` (record_clip knows when it fired the effect) the search starts
+    there; without it, the busiest moment is taken as the effect, which a moving camera can fool."""
+    fps = sig["fps"]
+    e = smooth(sig["act"], 3)
+    if len(e) < 6:
+        return None
+    base = float(np.percentile(e, 20))
+    lo = 0 if fired_at is None else max(0, int((fired_at - 0.05) * fps))
+    if lo >= len(e) - 3:
+        return {"amp": 0.0, "found": False}
+    peak_i = lo + int(np.argmax(e[lo:]))
+    amp = float(e[peak_i]) - base
+    if amp < 0.3:
+        return {"amp": amp, "found": False}
+    active = e > base + 0.15 * amp
+    # the run holding the peak, bridging gaps under 0.15 s
+    gap = int(0.15 * fps)
+    s0 = peak_i
+    while s0 > lo and (active[s0 - 1] or active[max(lo, s0 - gap):s0].any()):
+        s0 -= 1
+    s1 = peak_i
+    while s1 < len(e) - 1 and (active[s1 + 1] or active[s1 + 1:s1 + 1 + gap].any()):
+        s1 += 1
+    hi = np.nonzero(e[s0:s1 + 1] >= base + 0.6 * amp)[0]
+    first_hi, last_hi = s0 + int(hi[0]), s0 + int(hi[-1])
+    lum = sig["luma"][s0:s1 + 1]
+    dl = np.diff(lum)
+    big = np.abs(dl) > 2.5
+    flips = int(np.sum(big[1:] & big[:-1] & (np.sign(dl[1:]) != np.sign(dl[:-1]))))
+    t = sig["t"]
+    return {"found": True, "amp": amp, "onset": float(t[s0]), "peak": float(t[peak_i]), "end": float(t[s1]),
+            "duration": float(t[s1] - t[s0]), "rise_frames": first_hi - s0, "fall_frames": s1 - last_hi,
+            "flicker_per_s": flips / max((s1 - s0) / fps, 1e-3), "at_start": fired_at is None and s0 <= 1,
+            "at_end": s1 >= len(e) - 2, "anchored": fired_at is not None, "fired_at": fired_at,
+            "curve": e, "base": base}
+
+
+def vfx_flags(r, span):
+    F = []
+    fps = r["sig"]["fps"]
+    for sh in r["shots"]:
+        if sh.get("repeats", 0) >= 2:
+            flag(F, sh["start"], "STUTTER", "high",
+                 f"{sh['repeats']} repeated frames while things move (~{(sh.get('unique_fps') or fps):.0f} unique fps): "
+                 "judder on screen, or the recorder missed frames (a macOS window capture can: re-record on "
+                 "Windows or check the game's own frame rate)", sh["i"])
+    inside = [c for c in r["cuts"] if span and span.get("found") and span["onset"] - 0.05 <= c <= span["end"] + 0.1]
+    outside = [c for c in r["cuts"] if c not in inside]
+    for c in inside:
+        flag(F, c, "SNAP", "med", f"the picture changes abruptly at frame {int(round(c * fps))} ({fmt_t(c)}), while the "
+             "effect plays: a part of it appears or vanishes in one frame. Step through frames.jpg around it.")
+    if outside:
+        flag(F, outside[0], "JUMPS", "low", f"{len(outside)} sudden full-frame change(s) at "
+             + ", ".join(fmt_t(c) for c in outside[:6]) + ": a flash, a camera jump, or an edit (one take is best)")
+    if not span or not span.get("found"):
+        flag(F, 0, "NO_EFFECT", "high", "no effect found: nothing changes beyond the clip's baseline (did it fire, "
+                                        "is it on screen, is the camera on it?)")
+        return F
+    if span["at_start"]:
+        flag(F, 0, "EFFECT_MISSED_START", "med", "the effect is already running on the first frame: raise --lead")
+    elif span["rise_frames"] <= 1 and span["amp"] > 1.5:
+        flag(F, span["onset"], "POP_IN", "med",
+             f"appears at full strength within {span['rise_frames'] + 1} frame(s): check it is meant to snap on")
+    if span["at_end"]:
+        flag(F, span["end"], "EFFECT_CUT_OFF", "med", "still running on the last frame: record longer to see it end")
+    elif span["fall_frames"] <= 1 and span["amp"] > 1.5:
+        flag(F, span["end"], "POP_OUT", "high",
+             f"vanishes within {span['fall_frames'] + 1} frame(s) of its peak strength: no fade-out")
+    if span["flicker_per_s"] > 6:
+        flag(F, span["onset"], "FLICKER", "med",
+             f"brightness reverses {span['flicker_per_s']:.0f} times/s while it plays: flicker or strobing", t_end=span["end"])
+    F.sort(key=lambda f: f["t"])
+    return F
+
+
+def frame_strip(path, info, a, b, out_path, cols=6, width=320, max_frames=60):
+    """Every frame between a and b (s), in order, stamped with time and frame number: stepping through."""
+    from PIL import Image, ImageDraw
+    fps = info["fps"]
+    h = even(width * info["height"] / info["width"])
+    raw = run(["ffmpeg", "-v", "error", "-ss", f"{a:.4f}", "-i", path, "-t", f"{b - a:.4f}", "-an",
+               "-vf", f"scale={width}:{h}", "-f", "rawvideo", "-pix_fmt", "rgb24", "-"]).stdout
+    n = len(raw) // (width * h * 3)
+    frames = np.frombuffer(raw[: n * width * h * 3], np.uint8).reshape(n, h, width, 3)
+    step = max(1, int(math.ceil(n / max_frames)))
+    pick = list(range(0, n, step))
+    rows_ = int(math.ceil(len(pick) / cols))
+    img = Image.new("RGB", (cols * (width + 4) + 4, rows_ * (h + 22) + 34), (15, 15, 18))
+    d = ImageDraw.Draw(img)
+    f14 = font(14)
+    d.text((6, 8), f"{os.path.basename(path)}  {fmt_t(a)}-{fmt_t(b)}  every {'' if step == 1 else f'{step}th '}frame "
+                   f"({fps:.0f} fps)", fill=(235, 235, 235), font=f14)
+    for k, j in enumerate(pick):
+        r_, c = divmod(k, cols)
+        x, y = 4 + c * (width + 4), 30 + r_ * (h + 22)
+        img.paste(Image.fromarray(frames[j]), (x, y))
+        t = a + j / fps
+        d.text((x + 2, y + h + 3), f"{fmt_t(t)}  f{int(round(t * fps))}", fill=(200, 200, 200), font=f14)
+    img.save(out_path, quality=88)
+    return out_path
+
+
+def side_by_side(ref, this, out_path, rows=12, width=420):
+    """Reference and new clip, frame for frame from each effect's onset (or the start)."""
+    from PIL import Image, ImageDraw
+    f14 = font(15)
+    def grab(r, t):
+        fr, sf = r["frames"], r["sfps"]
+        return fr[min(len(fr) - 1, max(0, int(round(t * sf))))]
+    o_ref = ref["span"]["onset"] if ref.get("span", {}).get("found") else 0.0
+    o_new = this["span"]["onset"] if this.get("span", {}).get("found") else 0.0
+    span = max(ref["info"]["duration"] - o_ref, this["info"]["duration"] - o_new)
+    lead = min(0.25, o_ref, o_new)
+    dt = (span + lead) / rows
+    h = int(width * this["frames"][0].shape[0] / this["frames"][0].shape[1])
+    img = Image.new("RGB", (2 * width + 170, rows * (h + 6) + 40), (15, 15, 18))
+    d = ImageDraw.Draw(img)
+    d.text((170, 10), "REFERENCE (approved / before)", fill=(150, 220, 255), font=f14)
+    d.text((170 + width + 4, 10), "THIS CLIP", fill=(255, 220, 120), font=f14)
+    for k in range(rows):
+        rel = -lead + k * dt
+        y = 36 + k * (h + 6)
+        d.text((6, y + h / 2 - 16), f"onset {rel:+.2f} s\nref {fmt_t(o_ref + rel)}\nnew {fmt_t(o_new + rel)}",
+               fill=(210, 210, 210), font=font(12))
+        for c, (r_, o) in enumerate(((ref, o_ref), (this, o_new))):
+            t = o + rel
+            if 0 <= t <= r_["info"]["duration"]:
+                img.paste(Image.fromarray(grab(r_, t)).resize((width, h)), (170 + c * (width + 4), y))
+    img.save(out_path, quality=88)
+    return out_path
+
+
+def span_row(r):
+    sp = r.get("span") or {}
+    sh = r["shots"][0] if r["shots"] else {}
+    return {"duration": r["info"]["duration"], "onset": sp.get("onset"), "effect_s": sp.get("duration"),
+            "rise_frames": sp.get("rise_frames"), "fall_frames": sp.get("fall_frames"), "strength": sp.get("amp"),
+            "flicker_per_s": sp.get("flicker_per_s"), "repeated_frames": sh.get("repeats"),
+            "peak_luma": float(np.max(r["sig"]["luma"])), "camera": sh.get("cam")}
+
+
+def write_vfx_report(out, r, cmp, brief_text, gem, images):
+    info, flags, sp = r["info"], r["flags"], r["span"] or {}
+    L = [f"# watch_video (effect clip): {os.path.basename(info['path'])}", "",
+         f"{info['width']}x{info['height']}, {info['fps']:.2f} fps, {info['duration']:.2f} s. watch_video {VERSION}, mode vfx.", ""]
+    L += ["## How to review this", "",
+          "1. LOOK at `sheet.jpg` (the clip at the sheet rate) and `frames.jpg` (every frame of the effect's "
+          "life): judge shape, size against the ship, colour, motion, attachment, how it starts and ends.",
+          "2. Check each point of the intended look (the brief) against those frames, one by one.",
+          "3. If there is a reference, compare `compare.jpg` row by row: same moment of the effect, side by side.",
+          "4. Weigh `gemini.md` (a blind whole-clip review) and check its claims on the frames.",
+          "5. The verdict for the PR: what matches the intended look, what does not, with the frame times. "
+          "Screenshots alone do not count as verification.", ""]
+    L += ["## The effect", ""]
+    if sp.get("found"):
+        L.append(("Anchored on the fire time " + fmt_t(sp["fired_at"]) + ". " if sp.get("anchored") else
+                  "ESTIMATED (no fire time: pass --onset, or record with record_clip): a moving camera or scenery "
+                  "can be mistaken for the effect, so check the frames. ")
+                 + f"Visible {fmt_t(sp['onset'])} to {fmt_t(sp['end'])} ({sp['duration']:.2f} s), peak at "
+                 f"{fmt_t(sp['peak'])}; reaches strength in {sp['rise_frames']} frame(s), fades in "
+                 f"{sp['fall_frames']} frame(s); brightness reversals {sp['flicker_per_s']:.1f}/s.")
+    else:
+        L.append("No effect found in the clip (nothing changes beyond its baseline).")
+    L += ["", "## Flags", ""]
+    L += [f"- **{fmt_t(f['t'])}** `{f['kind']}` ({f['sev']}): {f['msg']}"
+          + (" **[the blind model review saw this too]**" if f.get("model") else "") for f in flags] or ["None."]
+    if cmp:
+        a_, b_ = span_row(cmp), span_row(r)
+        L += ["", "## Against the reference", "", f"Reference: `{os.path.basename(cmp['info']['path'])}`", ""]
+        rows = []
+        for k in a_:
+            fa = lambda v: "-" if v is None else (f"{v:.2f}" if isinstance(v, float) else str(v))
+            rows.append([k.replace("_", " "), fa(a_[k]), fa(b_[k])])
+        L.append(md_table(rows, ["", "reference", "this clip"]))
+    if brief_text:
+        L += ["", "## Intended look (the brief)", "", brief_text.strip()]
+    L += ["", "## Whole-clip model review", ""]
+    if gem.get("status") == "ok":
+        L.append(f"`gemini.md`: {gem['model']} watched the clip blind{' next to the reference' if cmp else ''}, "
+                 f"{gem['fps']:g} fps, cost ${gem['cost_usd']:.4f}.")
+        if gem.get("model_only"):
+            L += ["", "Reported only by the model (check on the frames):", ""]
+            L += [f"- **{fmt_t(g['t'])}** {'/'.join(g['cats'])}: {g['text']}" for g in gem["model_only"]]
+    else:
+        L.append(f"Not run: {gem.get('why', gem.get('status'))}.")
+    L += ["", "## Files", ""] + [f"- `{os.path.relpath(p, out)}`" for p in images]
+    open(os.path.join(out, "report.md"), "w", encoding="utf-8").write("\n".join(L) + "\n")
+
+
+def fired_at(video, given=None):
+    """When the effect was fired: --onset, else record_clip's sidecar <clip>.json."""
+    if given is not None:
+        return given
+    side = os.path.splitext(video)[0] + ".json"
+    if os.path.exists(side):
+        try:
+            return float(json.load(open(side, encoding="utf-8")).get("fired_at"))
+        except (TypeError, ValueError):
+            return None
+    return None
+
+
+def vfx_main(args, out, brief_text):
+    r = analyse(args.video, args)
+    r["span"] = effect_span(r["sig"], fired_at(args.video, args.onset))
+    r["flags"] = vfx_flags(r, r["span"])
+    cmp = None
+    if args.compare:
+        print("  measuring the reference clip")
+        cmp = analyse(args.compare, args, light=True)
+        cmp["span"] = effect_span(cmp["sig"], fired_at(args.compare))
+    sp = r["span"] or {}
+    images = [os.path.join(out, "sheet.jpg")]
+    render_sheets(out, r["shots"][:1] if len(r["shots"]) == 1 else r["shots"], r["frames"], r["sfps"], r["sig"],
+                  max_frames=48)
+    first = os.path.join(out, "sheets", "shot_00.jpg")
+    if os.path.exists(first):
+        shutil.copy(first, images[0])
+    if args.frames:
+        a, b = (float(x) for x in args.frames.split("-"))
+    elif sp.get("found"):
+        a, b = max(0.0, sp["onset"] - 0.1), min(r["info"]["duration"], sp["end"] + 0.1)
+    else:
+        a, b = 0.0, min(r["info"]["duration"], 1.0)
+    images.append(frame_strip(args.video, r["info"], a, b, os.path.join(out, "frames.jpg")))
+    images += render_timeline(out, r["info"], r["sig"], r["shots"], r["frames"], r["sfps"], r["au"], None, r["loud"], r["flags"])
+    if cmp:
+        images.append(side_by_side(cmp, r, os.path.join(out, "compare.jpg")))
+    gem = {"status": "skipped", "why": "--model none"}
+    if args.model != "none" and (args.model == "gemini" or gemini_key()):
+        print(f"  asking {args.gemini_model} to watch it{' next to the reference' if cmp else ''}")
+        try:
+            gem = gemini_review(args.video, r["info"], r["flags"], brief_text, out, args.gemini_model, args.gemini_fps,
+                                None, args.daily_limit, prompt=GEMINI_VFX_PROMPT,
+                                ref_video=args.compare, ref_dur=cmp["info"]["duration"] if cmp else 0.0)
+        except Exception as e:
+            gem = {"status": "error", "why": str(e)[:500]}
+        if gem.get("status") == "ok":
+            gem["findings"] = model_findings(gem["text"], 0.0)
+            gem["model_only"] = corroborate(r["flags"], gem["findings"], slack=0.3)
+            print(f"  gemini: ${gem['cost_usd']:.4f}, today ${gem['spent_today_usd']:.3f}")
+        else:
+            print(f"  gemini: {gem.get('why', gem.get('status'))}")
+    elif args.model == "auto":
+        gem = {"status": "skipped", "why": "no GEMINI_API_KEY (env or ~/.config/ff-watch-video/gemini.env)"}
+    write_vfx_report(out, r, cmp, brief_text, gem, images)
+    j = to_json(r, [], gem)
+    j["effect"] = {k: v for k, v in sp.items() if k not in ("curve",)}
+    j["reference"] = span_row(cmp) if cmp else None
+    json.dump(json.loads(json.dumps(j, default=lambda o: o.item() if hasattr(o, "item") else str(o))),
+              open(os.path.join(out, "report.json"), "w", encoding="utf-8"), indent=1)
+    print(f"\nreport: {os.path.join(out, 'report.md')}")
+    for f in r["flags"]:
+        print(f"  {fmt_t(f['t'])} {f['kind']} ({f['sev']}): {f['msg']}")
+
+
+
 def main():
     ap = argparse.ArgumentParser(description="Watch a video (with sound) and write a time-stamped review report.")
     ap.add_argument("video")
@@ -1501,14 +1810,21 @@ def main():
     ap.add_argument("--music", action="append", default=[],
                     help="source music track(s), a folder of them, or ff (the game soundtrack): exact music-edit map + beat grid")
     ap.add_argument("--out", help="output folder (default: <tmp>/watch_video/<name>)")
-    ap.add_argument("--sheet-fps", type=float, default=4.0, help="contact-sheet frames per second (default 4)")
+    ap.add_argument("--mode", choices=["trailer", "vfx"], default="trailer",
+                    help="trailer (a cut: pacing, music) or vfx (a short effect clip: lifetime, pops, flicker, "
+                         "judder, frame stepping)")
+    ap.add_argument("--compare", help="vfx mode: the reference clip (before the change, or Ben's approved look)")
+    ap.add_argument("--frames", help="vfx mode: step through every frame in this window, e.g. 1.2-2.0 (s)")
+    ap.add_argument("--onset", type=float, help="vfx mode: when the effect was fired (s); record_clip writes it "
+                                                "to <clip>.json, which is read automatically")
+    ap.add_argument("--sheet-fps", type=float, help="contact-sheet frames per second (default 4; vfx 12)")
     ap.add_argument("--bpm", type=float, help="force the tempo if the tracker gets it wrong")
     ap.add_argument("--beats", help="JSON list of beat times (s) in the SOURCE track (the editor's own grid); "
                                     "used instead of the tracked grid when --music matches one track")
     ap.add_argument("--model", choices=["auto", "gemini", "none"], default="auto",
                     help="whole-video review: gemini (needs GEMINI_API_KEY), none, or auto (gemini if a key exists)")
     ap.add_argument("--gemini-model", default=os.environ.get("WATCH_VIDEO_GEMINI_MODEL", "gemini-3.8-flash"))
-    ap.add_argument("--gemini-fps", type=float, default=2.0, help="frames/s Gemini samples (default 2)")
+    ap.add_argument("--gemini-fps", type=float, help="frames/s Gemini samples (default 2; vfx 10)")
     ap.add_argument("--segment", help="only send this part to Gemini, e.g. 12.5-30 (seconds)")
     ap.add_argument("--daily-limit", type=float, default=float(os.environ.get("WATCH_VIDEO_DAILY_USD", 5.0)),
                     help="hard cap on Gemini spend per day in USD (default 5)")
@@ -1523,6 +1839,12 @@ def main():
     for old in ("sheets",):
         shutil.rmtree(os.path.join(out, old), ignore_errors=True)
     brief_text = open(args.brief, encoding="utf-8", errors="replace").read() if args.brief else None
+    vfx = args.mode == "vfx"
+    args.sheet_fps = args.sheet_fps or (12.0 if vfx else 4.0)
+    args.gemini_fps = args.gemini_fps or (10.0 if vfx else 2.0)
+    if vfx:
+        print("watch_video: analysing an effect clip")
+        return vfx_main(args, out, brief_text)
     print("watch_video: analysing")
     r = analyse(args.video, args)
     refs = []

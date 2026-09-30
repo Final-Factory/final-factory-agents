@@ -1,6 +1,6 @@
 ---
 name: watch-video
-description: Watch a video WITH its sound and judge it like a viewer - a trailer cut, a capture take, a gameplay clip. Runs watch_video, which measures every cut, shot length, camera motion, dead air and lingering, jump cuts, reused footage, tight framing, stacked "all in one spot" action, the beat grid and cut-on-beat accuracy, exact music edits against the source track, and loudness, then asks Gemini to watch and listen to the whole cut blind. Writes a time-stamped report, a timeline image and per-shot contact sheets for the agent to look at. Use before any trailer or video goes to Ben, in the render -> watch_video -> fix loop, or when asked to watch, review, critique or check a video.
+description: Watch a video WITH its sound and judge it like a viewer, and record + review 60 fps clips of visual effects. For a trailer cut or capture take, watch_video measures cuts, shot length, lingering and dead air, jump cuts, reused footage, tight framing, stacked action, the beat grid, exact music edits and loudness. For an effect (record_clip + watch_video --mode vfx) it measures the effect's lifetime, pops, one-frame snaps, flicker and judder, steps through every frame, and compares against the approved or before clip side by side. Gemini reviews the whole clip blind. Use before any trailer or video goes to Ben, and to verify ANY change to VFX, shaders, particles, animations, camera feel or other visual presentation (screenshots alone never count).
 ---
 
 # watch-video: review a video the way a viewer would
@@ -9,6 +9,59 @@ Frame grabs and shot lists miss what a viewer notices at once: a shot that sits 
 stops, a music chop, combat that is one clump of enemies, a camera that is too close. This skill
 measures those things with timestamps, gets a whole-video opinion WITH sound, and hands you the
 images to judge the rest yourself.
+
+## Visual effects: record a clip, then review it (the rule)
+
+Any change to visual effects, shaders, animations, particles, camera feel or other visual presentation is
+verified with short **60 fps clips, before and after**, from gameplay angles, covering the effect's whole
+lifetime, reviewed with `watch_video --mode vfx` against a written description of the intended look, plus
+stepping through the frames. **Screenshots alone do not count.** The PR links the clips and the review
+report. Once Ben has approved a look, compare against that approved clip, not just the previous build.
+
+1. **Write the intended look** in a few lines (`look.md`): shape, size next to the ship, colours, how it
+   starts, how long it lasts, how it ends, what it must not do.
+2. **Record before and after** with `record_clip`. It records in real time what the screen shows (the
+   simulation runs on wall-clock heartbeats, the VFX clock on frame time, so a frame-by-frame offline
+   recorder like Unity Recorder would put them out of step):
+   ```sh
+   record_clip --player --effect afterburner --name ab_before            # a built player, over its agent channel
+   record_clip --player --effect afterburner --name ab_after --review "$(cat look.md)" --compare <ab_before.mp4>
+   record_clip --unity --name frenzy --seconds 4 --lead 1 --crop W:H:X:Y  # the editor: fire it yourself (MCP) when RECORDING prints
+   ```
+   Named effects (`--effect`): `afterburner`, `engine`, `bat-exhaust`, `plasma`, `frenzy`, `guardian`,
+   `obliterator`. They send `ffauto:` verbs over the game's agent channel, so the player needs
+   `-ffAgentControl true -ffAgentControlDev true` and must be launched from the slot pool. `--do
+   "ffauto:..."` fires any other command, and `--pre` runs set-up first. Frame the effect first (e.g.
+   `ffauto:camera.zoom|600`, UI hidden). The clip is a constant-60-fps MP4 in `<tmp>/vfx_clips/`, with
+   `<clip>.json` recording when the effect fired. `watch_video` anchors on that time.
+3. **Review** (`--review`/`--brief` runs it for you): `watch_video clip.mp4 --mode vfx --brief look.md
+   [--compare approved.mp4] [--frames 2.4-3.1]`. Read `report.md`, then LOOK at `frames.jpg` (every
+   frame of the effect's life, numbered), `sheet.jpg`, `compare.jpg` (the reference and this clip side
+   by side, row by row from each onset), and `gemini.md` (a blind review at 10 fps; about $0.01 a clip).
+4. **Put in the PR**: the before/after (or approved/after) clips, `report.md`, and your verdict against
+   each line of the intended look, with frame numbers.
+
+VFX flags: `SNAP` (the picture changes abruptly mid-effect: a part appears or vanishes in one frame),
+`POP_IN` / `POP_OUT` (full strength within a frame; no fade), `FLICKER`, `STUTTER` (repeated frames
+while moving), `EFFECT_CUT_OFF` / `EFFECT_MISSED_START` (record longer / raise `--lead`), `NO_EFFECT`.
+On the Afterburner v2 capture it found the big plume collapsing into the thin trail in one frame
+(f164 to f165), and Gemini, reviewing blind, described the same moment.
+
+Recording notes:
+- **macOS**: ScreenCaptureKit (`mac/sckrec.swift`, compiled on first use) records the window even
+  when it is covered, but delivers ~58 fps with gaps, so ~25% of frames are repeats. Judge judder on
+  Windows.
+- **Windows**: `ddagrab` records the window's client area off the monitor, so keep it on top and
+  unobstructed (toasts and overlapping windows are recorded). It must run in the logged-in desktop
+  session: over ssh, launch it with `schtasks /create ... /it` then `schtasks /run`.
+- **Editor Game view crop** (macOS, docked Game view): `execute_code` → `var gv =
+  Resources.FindObjectsOfTypeAll(typeof(Editor).Assembly.GetType("UnityEditor.GameView"))[0] as
+  EditorWindow; var m = EditorGUIUtility.GetMainWindowPosition(); var k =
+  EditorGUIUtility.pixelsPerPoint; return $"{(int)(gv.position.width*k)&~1}:{(int)((gv.position.height-43)*k)&~1}:{(int)((gv.position.x-m.x)*k)}:{(int)((gv.position.y-m.y+71)*k)}";`
+  (71 = the 28 pt title bar + the 43 pt tab row and Game toolbar). Check the first frame of
+  `sheet.jpg`, and adjust if the layout differs.
+- The editor throttles when it isn't focused, and a covered editor may render slowly. A built player
+  from the slot pool gives the truest clip.
 
 ## Run it
 
@@ -32,7 +85,10 @@ Windows (BEAST). A 45 s cut takes ~25 s plus ~30 s for Gemini.
 | `--segment 12-30` | Send only that part to Gemini, to save cost on long videos. |
 | `--gemini-model`, `--gemini-fps` | Default `gemini-3.8-flash` at 2 frames/s. |
 | `--daily-limit 5` | Hard cap on Gemini spend per day in USD (ledger `~/.config/ff-watch-video/spend.json`). |
-| `--sheet-fps 4` | Contact-sheet frames per second. |
+| `--sheet-fps 4` | Contact-sheet frames per second (12 in vfx mode). |
+| `--mode vfx` | A short effect clip, not a cut: no pacing or music flags; effect lifetime, pops, snaps, flicker, judder; `frames.jpg`. Gemini at 10 fps. |
+| `--compare clip` | vfx mode: the reference (before, or Ben's approved look). Side-by-side `compare.jpg`, a stats table, and Gemini sees both. |
+| `--frames 2.4-3.1`, `--onset 2.4` | vfx mode: step through every frame in a window; when the effect fired (read from `record_clip`'s `<clip>.json` otherwise). |
 
 ## Then look at it (the part that needs you)
 
@@ -78,9 +134,14 @@ table still shows their pacing (median shot 1.4-2.2 s), motion and loudness.
 
 ## Gemini: key, cost, limits
 
-- The key lives ONLY in `~/.config/ff-watch-video/gemini.env` (`GEMINI_API_KEY=...`, mode 600), or
+- Configured on the M5 and BEAST (2026-09-29). The key lives ONLY in `~/.config/ff-watch-video/gemini.env` (`GEMINI_API_KEY=...`, mode 600), or
   in the `GEMINI_API_KEY` env var. **Never** commit it, print it, or paste it into a report, PR or
   chat (write `AQ.…`). On a machine without the file the tool simply skips Gemini.
+- A new machine: copy the file over ssh from one that has it (`scp ~/.config/ff-watch-video/gemini.env
+  <host>:.config/ff-watch-video/`), then `chmod 600` it; on Windows it is
+  `%USERPROFILE%\.config\ff-watch-video\gemini.env`, restricted with
+  `icacls <file> /inheritance:r /grant:r %USERNAME%:F`. Never type or paste the key itself.
+- The daily cap and its ledger (`spend.json` beside the key) are per machine.
 - It uploads a 720p proxy through the Files API, samples it at 2 fps, then deletes the upload.
   A 45 s cut costs **~$0.02** (about 10k tokens in, 4k out). The tool estimates the cost first and
   refuses once today's spend would pass `--daily-limit` (default $5). The report prints the actual
@@ -121,5 +182,6 @@ recording, so ask the orchestrator first.
 
 ## Source
 
-`watch_video.py` (one file; its dependencies are declared inline for `uv`); launchers in `bin/`.
-Thresholds sit at the top of the script with the calibration they came from.
+`watch_video.py` (one file; its dependencies are declared inline for `uv`), `record_clip.py` (standard
+library only) and `mac/sckrec.swift`; launchers for both in `bin/`. Thresholds sit at the top of
+`watch_video.py`, with the calibration they came from.

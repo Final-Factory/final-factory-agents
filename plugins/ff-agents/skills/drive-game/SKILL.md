@@ -214,6 +214,13 @@ return "frame=" + UnityEngine.Time.frameCount;                       // ALWAYS v
 > co-visible HUD) and fix what you see — Ben's standing rule and the layout traps:
 > `project-memory` → `ui-screenshot-worst-case-before-done`.
 
+> **Visual changes are verified on video, not stills** (Ben, 2026-09-29). Any change to VFX, shaders,
+> animations, particles, camera feel or other visual presentation gets 60 fps clips, before and after,
+> from gameplay angles, covering the effect's whole lifetime (`record_clip`). Review them with
+> `watch_video --mode vfx` against a written description of the intended look, and step through the
+> frames. The PR links the clips and the review report. Once Ben has approved a look, compare
+> against that approved clip. Screenshots alone don't count. Recipe: `ff-agents:watch-video`.
+
 > **Single source of truth.** The `playtest` skill, `massdriver-visual-e2e`, the `game-driver`
 > agent, `recipes.md`, `Documentation/Agent-Playtest-Harness.md` and `docs/UI-Architecture.md` all
 > point HERE. Fix this section; don't re-copy it.
