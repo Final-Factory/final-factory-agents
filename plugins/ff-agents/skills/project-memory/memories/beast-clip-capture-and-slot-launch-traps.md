@@ -41,3 +41,18 @@
    `BuildPipeline.BuildPlayer` (StandaloneWindows64, Development) on `EditorApplication.update` from
    `execute_code` and write the `BuildReport` summary to a marker file. No second Unity, no stopped editor,
    against item 6's 46 minutes cold.
+11. **A clip WITH sound: automation sessions are muted, and the desktop mix is everybody's** (w160, 2026-10-01).
+   `-ffAutomationRole` and `-ffSoloNewGame` mute FMOD for the whole session (`AudioController.SetAutomationMuted`,
+   log line `[ffauto] audio muted for automation`): a capture of such a player is digital silence. For a clip
+   with sound use a real single-player load: build the fixture world in an automation session, save it over the
+   agent channel (`ffauto:game.save|<name>`), then relaunch with `-ffFeelProbe <csv> -ffFeelLoad <name>
+   -ffFeelFrames <dir> -ffFeelFramesAt 0+200 -ffFeelFramesWidth 960 -ffFeelVsync 0 -ffFeelFps 60 -ffAgentControl
+   true -ffAgentControlDev true` (no automation role, so not muted; the channel still drives it; delete the save
+   after). Record THAT process's audio alone with WASAPI process loopback: `uv run --with proc-tap --with
+   soundfile`, `ProcessAudioCapture(pid, on_data=cb).start()` gives 48 kHz stereo float32 and keeps delivering
+   through silence, so sample count is time. A machine-wide loopback (`soundcard`) also records every other
+   agent's game. Both clocks are QueryPerformanceCounter (`frames.csv` `t_ns` is Stopwatch; Python
+   `time.perf_counter_ns()` is the same counter), so stamp the first audio chunk and each `ffauto` fire with
+   `perf_counter_ns()`, cut frames and samples by the same marks, and mux. The music stays on (PlayerPrefs are
+   shared by every checkout on the machine: do not change volumes), so take sound onsets from the review, not
+   from a loudness envelope.

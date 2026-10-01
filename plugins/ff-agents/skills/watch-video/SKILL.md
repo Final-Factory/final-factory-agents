@@ -62,6 +62,9 @@ Recording notes:
   `sheet.jpg`, and adjust if the layout differs.
 - The editor throttles when it isn't focused, and a covered editor may render slowly. A built player
   from the slot pool gives the truest clip.
+- **Sound**: `record_clip` records video only, and a player started with an automation role is muted.
+  For a clip with sound, and on a desktop shared with other agents' windows, record the game's own frames
+  and that one process's audio: project-memory `beast-clip-capture-and-slot-launch-traps`, items 1 and 11.
 
 ## Run it
 
