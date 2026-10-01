@@ -177,9 +177,13 @@ Proven over tutorial objectives 50→63.
 - **Set a connector filter**: `Helpers.FilterHelper.DispatchFilter(connectorEntity,
   new FFComponents.Stations.Filter { FilterItem = itemId })` — also rides the op queue.
 - **Deposit fleet ships at a station** (fleet→factory hand-off; manually-crafted miner bots land in the
-  FLEET, they do NOT auto-fly to stations): reflect `UI.Panels.Fleet.PlayerFleetPanel`, call private
-  static `DeployShipToNavigationNetwork(itemId, count)`. Player must be in/near the target station's
-  logistics network (fly within ~100 units first).
+  FLEET, they do NOT auto-fly to stations): `ffauto:fleettransfer.deploy|<shipName>|<count>` makes the
+  dispatch the Fleet panel's Deploy button makes (or press the button:
+  `ffauto:ui.click|fleet|FleetElement[sprite=Bat]/Send`). The host sends the ships to the stations of the
+  player's logistics network that take that ship and have room, in tile order; the panel's result line
+  says how many moved. `fleet.stationships` counts the ships stations hold. Idle fleet ships sit ON the
+  player's ship (`fleet.dumpstate` positions are world units), and a deployed ship parks beside its
+  station only a few pixels wide at default zoom.
 - **Blueprint placement re-anchor gotcha**: 1×1 and 2×2 items land EXACTLY at the paste tile, but a
   width-3 item (Mining Station 2×3) landed shifted −1 in x — ALWAYS re-read `Placeable.GridTile` after
   placement instead of assuming. `placed.Count==0` means the spot was blocked (skipBlockedStructures

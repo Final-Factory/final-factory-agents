@@ -25,3 +25,19 @@
    sandbox editor stopped and a clean tree. Start it as soon as the fix is committed.
 7. **`/v1/screenshot` of a multiplayer client came back upside down in one run.** Use the frame capture for
    anything you will show.
+8. **A Windows Firewall prompt dims every desktop recording** (w157, 2026-10-01). "Do you want to allow public
+   and private networks to access this app?" for some `finalfactory.exe` sat on the desktop for over an hour.
+   Windows dims everything behind it, so every `record_clip` (ddagrab) clip came out dark, and the prompt itself
+   covered part of a window placed mid-screen. It does not show in a window enumeration. Grab the desktop once
+   (`ffmpeg -init_hw_device d3d11va -filter_complex "ddagrab=output_idx=0,hwdownload,format=bgra" -frames:v 1`)
+   when a clip looks dark. Do not click it: tell Ben. `/v1/screenshot` is the game's own frame and is not dimmed;
+   move player windows clear of the screen centre with `SetWindowPos`.
+9. **Gemini cannot read a HUD panel or see a few-pixel ship on the full 1280x720 frame.** Blind, it reported the
+   count unchanged on a clip where it dropped, and quoted error texts the game does not contain. Review crops
+   instead: a 2x crop of the panel for text and counts, a 3x crop of the world for a small ship (`ffmpeg -vf
+   "crop=...,scale=..."`, pass `--onset`), and say in the brief which ship is the acting one (in a client's view
+   the labelled ship is the OTHER player). Keep the raw clips as the evidence and say what the crops are.
+10. **A warm player build from the running sandbox editor takes 3 to 5 minutes**: schedule
+   `BuildPipeline.BuildPlayer` (StandaloneWindows64, Development) on `EditorApplication.update` from
+   `execute_code` and write the `BuildReport` summary to a marker file. No second Unity, no stopped editor,
+   against item 6's 46 minutes cold.
