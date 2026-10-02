@@ -84,6 +84,13 @@ Run this before delivering. Do not narrate it or report on it.
 6. Ask what still reads as generic or machine-written, and rewrite those passages without
    changing any fact.
 
+## Text the person will paste
+
+Copy that someone will paste somewhere else (a post, an e-mail, a form, a message) goes into the chat
+as plain text: no code block, no Markdown, nothing they would have to strip. Code blocks are for commands
+and code. Give one version in their own voice, and get their sign-off before anything is sent or
+published (Ben, 2026-10-02; `evidence-gate`, `lessons/paste-text-is-plain.md`).
+
 ## Applying it to slides
 
 Slides amplify every habit above, because a headline has room for exactly one idea and the

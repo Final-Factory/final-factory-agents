@@ -51,6 +51,9 @@ gh pr diff <n> --repo Final-Factory/FinalFactory        # the diff
   - Tests: behavior changes should come with tests when the repo has a natural home for
     them (EditMode suites, determinism testcases); flag missing coverage, and also tests
     that assert nothing real.
+  - Evidence: does each claim in the title and TL;DR ("fixed", "presentation only") rest on
+    something that shows it? A visual fix proven by numbers, an editor rig standing in for the
+    built game, a review still pending: say so (the `evidence-gate` skill, `pr_evidence.py`).
 - Few and real beats many and maybe. 0 comments is a valid review result; nitpicks that a
   formatter or reviewer bot could make are not worth Ben's name.
 

@@ -66,7 +66,8 @@ continue to step 2.
 |---|---|
 | Edit/add a skill | `plugins/<plugin>/skills/<name>/SKILL.md` (+ supporting files beside it) |
 | Edit/add a subagent role | `plugins/<plugin>/agents/<name>.md` |
-| Record a durable lesson | `plugins/ff-agents/skills/project-memory/memories/<slug>.md` **plus** one index line, in that skill's `SKILL.md` for standing feedback / ECS-Burst / localization / modding, otherwise in the matching `index-<area>.md` beside it |
+| Record a durable lesson about one system (Unity, ECS, a tool trap, a test recipe) | `plugins/ff-agents/skills/project-memory/memories/<slug>.md` **plus** one index line, in that skill's `SKILL.md` for standing feedback / ECS-Burst / localization / modding, otherwise in the matching `index-<area>.md` beside it |
+| Record a working rule: how to decide, verify or report, learned from a miss | `plugins/ff-agents/skills/evidence-gate/lessons/<slug>.md` (the rule, why with the dated incident, how to apply) **plus** one index line in that skill's `SKILL.md`, **plus** the checklist line or tool check that would have caught it. A marketing lesson goes to the ff-marketing repo's `lessons/` instead |
 
 Plugins: `ff-agents` (core roles + workflow skills), `ff-speckit` (speckit-*),
 `ff-discord` (Discord roles + skills). Skill frontmatter needs `name:` and `description:`;
@@ -78,7 +79,10 @@ copy per skill — never fork a body per tool. Subagent roles under `agents/` ar
 Codex loads its roles from the game repo's `.codex/agents/*.toml` instead.
 
 **Never** write durable lessons to `~/.claude/projects/*/memory/` — those are machine-local,
-keyed on checkout path, and never propagate. That fragmentation is why this repo exists.
+keyed on checkout path, and never propagate. That fragmentation is why this repo exists. The same
+goes for an orchestrator's memory folder in FF Factory: it holds a pointer and one person's
+preferences; the rule itself comes here by pull request, so every agent and every fork gets it
+(`evidence-gate`, `lessons/lessons-belong-in-the-harness-repo.md`).
 
 ## 3. Bump the version — MANDATORY, via the script
 

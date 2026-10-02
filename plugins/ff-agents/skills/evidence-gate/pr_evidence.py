@@ -1,0 +1,262 @@
+#!/usr/bin/env python3
+"""pr_evidence: check a pull request's "## Evidence" section before it merges.
+
+The evidence-gate skill (checklists/merge.md) says what the section holds. This script checks the
+part a script can check: every claim has a basis and none is a guess, nothing is pending, a visual
+change names a built player, the event's place in the clip and the intended look, and a simulation
+change names its tests, its determinism audit and its save compatibility. It cannot tell whether
+anyone looked carefully. Standard library only; `gh` for everything that reads GitHub.
+
+    pr_evidence.py --repo OWNER/NAME --pr N               check one pull request (exit 1 on FAIL)
+    pr_evidence.py --repo OWNER/NAME --pr N --comment     the same, and post the verdict on it
+    pr_evidence.py --body-file F [--files-file G]         the same, offline (a description and a file list)
+    pr_evidence.py --repo OWNER/NAME --audit --since 2026-10-01 [--base develop]
+                                                          merged pull requests: the verdict now, and
+                                                          whether a PASS was posted before the merge
+"""
+from __future__ import annotations
+
+import argparse
+import json
+import re
+import subprocess
+import sys
+from pathlib import Path
+
+MARKER = "evidence-gate:"
+KINDS = ("visual", "simulation", "other")
+BASES = ("MEASURED", "SOURCED", "DECIDED", "GUESS")
+PENDING = re.compile(r"\b(pending|not yet|tbd|todo|to be (done|verified|reviewed|recorded|checked)|"
+                     r"will be (reviewed|verified|recorded|checked))\b", re.IGNORECASE)
+VIDEO = re.compile(r"\.(mp4|webm|mov|mkv)\b", re.IGNORECASE)
+# Where in a clip the event is: "frames 118-190", "at 2.4 s", "0:12". A bare number range is not enough (dates, sizes).
+PLACE = re.compile(r"\bframes?\b[^\n]{0,20}\d|\b\d+(\.\d+)?\s*(s|sec|secs|seconds)\b|\b\d+:\d{2}(\.\d+)?\b", re.IGNORECASE)
+VISUAL_PATH = re.compile(r"/(Presentation|UI|VFX|Vfx|Shaders?)/|\.(shader|shadergraph|vfx|hlsl|anim|controller|uxml|uss)$")
+SIMULATION_PATH = re.compile(r"^Assets/Scripts/(FFSystems|FFComponents|FFCore|FFNetcode|FFConfiguration|FFTechnology)/"
+                             r"|NetworkOperations")
+NOT_GAME_CODE = re.compile(r"^Assets/(Tests|TestsSlow|Editor)/|^Assets/Scripts/PlayModeTests/|\.(meta|md)$")
+
+
+def evidence_section(body: str) -> str | None:
+    """The text under the "Evidence" heading, up to the next heading of the same or a higher level."""
+    lines = body.replace("\r\n", "\n").split("\n")
+    for i, line in enumerate(lines):
+        found = re.match(r"^(#{1,6})\s*Evidence\b", line.strip(), re.IGNORECASE)
+        if found:
+            level = len(found.group(1))
+            rest = []
+            for later in lines[i + 1:]:
+                if re.match(rf"^#{{1,{level}}}\s", later):
+                    break
+                rest.append(later)
+            return re.sub(r"<!--.*?-->", "", "\n".join(rest), flags=re.DOTALL)
+    return None
+
+
+def field(section: str, name: str) -> tuple[str, str] | None:
+    """`Name (who): value` on a line of its own -> (who, value); None when the line is missing."""
+    found = re.search(rf"^\s*{re.escape(name)}\s*(?:\(([^)]*)\))?\s*:\s*(.*)$", section, re.IGNORECASE | re.MULTILINE)
+    return ((found.group(1) or "").strip(), found.group(2).strip()) if found else None
+
+
+def claims(section: str) -> list[tuple[str, str]]:
+    """Rows of the claims table as (claim, basis), without the header and the separator."""
+    rows = []
+    for line in section.split("\n"):
+        cells = [c.strip() for c in line.strip().strip("|").split("|")] if line.strip().startswith("|") else []
+        if len(cells) < 2 or set(cells[0]) <= set("-: ") or cells[0].lower() == "claim":
+            continue
+        rows.append((cells[0], cells[1]))
+    return rows
+
+
+def kinds_of(section: str) -> list[str]:
+    declared = field(section, "Kind")
+    words = re.split(r"[,\s]+|\band\b", declared[1].lower()) if declared else []
+    return [w for w in words if w in KINDS]
+
+
+def has_basis(basis: str) -> bool:
+    return basis.split(":")[0].strip() in ("MEASURED", "SOURCED", "DECIDED") and len(basis.split(":", 1)[-1].strip()) >= 10
+
+
+def applies(files: list[str]) -> bool:
+    """Game code or assets a player can meet. Docs, tools and tests of existing behaviour need no section."""
+    return any(f.startswith("Assets/") and not NOT_GAME_CODE.search(f) for f in files)
+
+
+def check(body: str, files: list[str] | None = None) -> tuple[list[str], list[str]]:
+    """Every reason the evidence is not ready (empty = PASS), and notes that do not fail it."""
+    section = evidence_section(body or "")
+    if section is None:
+        return (["no '## Evidence' section: say what each claim of this pull request rests on "
+                 "(the evidence-gate skill, checklists/merge.md)"], [])
+    problems, notes = [], []
+    kinds = kinds_of(section)
+    if not kinds:
+        problems.append("no 'Kind:' line (visual, simulation, both, or other)")
+
+    rows = claims(section)
+    if not rows:
+        problems.append("no claims table: one row per claim the title and TL;DR make, with its basis")
+    for claim, basis in rows:
+        label = basis.split(":")[0].strip()
+        if label == "GUESS":
+            problems.append(f"'{claim}' rests on a guess: verify it, or move it to 'Not verified' and take it out of "
+                            f"the title and TL;DR")
+        elif label not in BASES:
+            problems.append(f"'{claim}': the basis starts with MEASURED or SOURCED, then says how or where")
+        elif not has_basis(basis):
+            problems.append(f"'{claim}': {label} needs what was measured or the source, after a colon")
+
+    open_lines = [l for l in section.split("\n") if not re.match(r"^\s*Not verified\s*:", l, re.IGNORECASE)]
+    pending = PENDING.search("\n".join(open_lines))
+    if pending:
+        problems.append(f"something is still '{pending.group(0)}': no merge before the review is finished. Finish it, "
+                        f"or move the claim it supports to 'Not verified'")
+    unverified = field(section, "Not verified")
+    if not unverified or not unverified[1]:
+        problems.append("no 'Not verified:' line: name what you could not check, or write 'nothing'")
+
+    if "visual" in kinds:
+        look = field(section, "Intended look")
+        if not look or len(look[1]) < 15:
+            problems.append("no 'Intended look (who): ...' line: quote the person's own description, or write yours "
+                            "and say it is yours")
+        elif not look[0]:
+            problems.append("'Intended look' does not say whose words they are: Intended look (Ben): ...")
+        built = field(section, "Built player")
+        if not built or not built[1].lower().startswith("yes"):
+            problems.append("'Built player: yes' is missing: a visual change is verified in a built player through the "
+                            "real event, not an editor rig. Until then it is changed, not fixed")
+        clips = field(section, "Clips")
+        if not clips or not VIDEO.search(clips[1]):
+            problems.append("no 'Clips:' line naming a before and an after clip")
+        elif not PLACE.search(clips[1]):
+            problems.append("'Clips' does not say where the event is (frames or seconds): a clip that does not contain "
+                            "the event proves nothing")
+        looked = field(section, "Looked")
+        if not looked or not looked[1].lower().startswith("yes"):
+            problems.append("'Looked: yes, ...' is missing: someone steps through the event's frames against the "
+                            "intended look. A measurement or a watch_video verdict is not a look")
+
+    if "simulation" in kinds:
+        tests = field(section, "Tests")
+        if not tests or not re.search(r"\d", tests[1]):
+            problems.append("no 'Tests:' line with the suite and its counts")
+        audit = field(section, "Determinism audit")
+        if not audit or not audit[1]:
+            problems.append("no 'Determinism audit:' line: the result and how many heartbeats were compared")
+        elif audit[1].lower().startswith("not needed"):
+            notes.append(f"determinism audit skipped: {audit[1]}")
+            if len(audit[1]) < 30:
+                problems.append("'Determinism audit: not needed' has to say why")
+        elif not re.search(r"\d[\d,]*\s*(shared\s+)?heartbeats", audit[1], re.IGNORECASE):
+            problems.append("'Determinism audit' does not give the number of heartbeats compared")
+        save = field(section, "Save compatibility")
+        if not save or not save[1]:
+            problems.append("no 'Save compatibility:' line (the repo's hard rule)")
+
+    if files:
+        code = [f for f in files if not NOT_GAME_CODE.search(f)]
+        visual = [f for f in code if VISUAL_PATH.search(f)]
+        if visual and "visual" not in kinds and not any("no visible change" in c.lower() and has_basis(b) for c, b in rows):
+            problems.append(f"the changed files look visual ({', '.join(visual[:3])}): say Kind: visual, or add a claim "
+                            f"row 'No visible change' with its basis")
+        simulation = [f for f in code if SIMULATION_PATH.search(f) and "/Presentation/" not in f]
+        if simulation and "simulation" not in kinds and not any("no simulation" in c.lower() and has_basis(b) for c, b in rows):
+            problems.append(f"simulation code changed ({', '.join(simulation[:3])}): say Kind: simulation, or add a "
+                            f"claim row 'No simulation state changes' with its basis")
+    return problems, notes
+
+
+# ---------------------------------------------------------------------------------------------
+# GitHub
+
+
+def gh(*args: str) -> str:
+    done = subprocess.run(["gh", *args], capture_output=True, text=True, encoding="utf-8")
+    if done.returncode:
+        sys.exit(f"pr_evidence: gh {' '.join(args[:3])} failed: {done.stderr.strip()}")
+    return done.stdout
+
+
+def verdict_text(problems: list[str], notes: list[str]) -> str:
+    lines = [f"{MARKER} {'FAIL' if problems else 'PASS'} (pr_evidence.py, the evidence-gate skill)"]
+    lines += [f"- {p}" for p in problems] + [f"- note: {n}" for n in notes]
+    return "\n".join(lines)
+
+
+def passed_before_merge(pr: dict) -> bool:
+    """A PASS verdict posted on the pull request before it merged."""
+    merged = pr.get("mergedAt") or ""
+    return any(MARKER + " PASS" in (c.get("body") or "") and (c.get("createdAt") or "") <= merged
+               for c in pr.get("comments") or [])
+
+
+def audit_rows(prs: list[dict]) -> list[dict]:
+    rows = []
+    for pr in prs:
+        files = [f["path"] for f in pr.get("files") or []]
+        if not applies(files):
+            rows.append({"number": pr["number"], "title": pr["title"], "verdict": "n/a", "before_merge": "", "why": ""})
+            continue
+        problems, _ = check(pr.get("body") or "", files)
+        rows.append({"number": pr["number"], "title": pr["title"], "verdict": "FAIL" if problems else "PASS",
+                     "before_merge": "yes" if passed_before_merge(pr) else "no", "why": problems[0] if problems else ""})
+    return rows
+
+
+def main(argv=None) -> int:
+    ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
+    ap.add_argument("--repo", help="OWNER/NAME")
+    ap.add_argument("--pr", type=int)
+    ap.add_argument("--comment", action="store_true", help="post the verdict on the pull request")
+    ap.add_argument("--body-file", help="check this description instead of asking GitHub")
+    ap.add_argument("--files-file", help="with --body-file: the changed paths, one per line")
+    ap.add_argument("--audit", action="store_true", help="list merged pull requests and their verdicts")
+    ap.add_argument("--since", help="--audit: merged on or after this date (YYYY-MM-DD)")
+    ap.add_argument("--base", default="develop", help="--audit: the base branch (default develop)")
+    ap.add_argument("--limit", type=int, default=100, help="--audit: at most this many pull requests")
+    args = ap.parse_args(argv)
+
+    if args.audit:
+        if not (args.repo and args.since):
+            ap.error("--audit needs --repo and --since")
+        prs = json.loads(gh("pr", "list", "--repo", args.repo, "--state", "merged", "--base", args.base,
+                            "--search", f"merged:>={args.since}", "--limit", str(args.limit),
+                            "--json", "number,title,mergedAt,body,files,comments"))
+        rows = audit_rows(prs)
+        for r in rows:
+            print(f"#{r['number']:<5} {r['verdict']:<4} {'PASS before merge: ' + r['before_merge'] if r['before_merge'] else '':<22} "
+                  f"{r['title'][:70]}" + (f"\n       {r['why']}" if r["why"] else ""))
+        counted = [r for r in rows if r["verdict"] != "n/a"]
+        print(f"pr_evidence audit: {len(rows)} merged since {args.since}, {len(counted)} with game changes, "
+              f"{sum(r['verdict'] == 'FAIL' for r in counted)} fail now, "
+              f"{sum(r['before_merge'] == 'no' for r in counted)} merged without a PASS")
+        return 0
+
+    if args.body_file:
+        body = Path(args.body_file).read_text(encoding="utf-8")
+        files = Path(args.files_file).read_text(encoding="utf-8").split() if args.files_file else None
+    elif args.repo and args.pr:
+        pr = json.loads(gh("pr", "view", str(args.pr), "--repo", args.repo, "--json", "body,files"))
+        body, files = pr.get("body") or "", [f["path"] for f in pr.get("files") or []]
+        if not applies(files):
+            print("PASS: no game code or assets changed, so no Evidence section is needed")
+            return 0
+    else:
+        ap.error("give --repo and --pr, or --body-file, or --audit")
+
+    problems, notes = check(body, files)
+    text = verdict_text(problems, notes)
+    print(text)
+    if args.comment:
+        if not (args.repo and args.pr):
+            ap.error("--comment needs --repo and --pr")
+        gh("pr", "comment", str(args.pr), "--repo", args.repo, "--body", text)
+    return 1 if problems else 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())
