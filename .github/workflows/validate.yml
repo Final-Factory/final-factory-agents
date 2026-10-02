@@ -78,6 +78,9 @@ jobs:
           done
           exit $fail
 
+      - name: Tool tests (pr_evidence.py)
+        run: python3 -m unittest discover -s plugins/ff-agents/skills/evidence-gate/tests -p 'test_*.py' -v
+
       - name: Dead references
         run: |
           set -eu

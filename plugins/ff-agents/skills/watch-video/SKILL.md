@@ -18,8 +18,16 @@ lifetime, reviewed with `watch_video --mode vfx` against a written description o
 stepping through the frames. **Screenshots alone do not count.** The PR links the clips and the review
 report. Once Ben has approved a look, compare against that approved clip, not just the previous build.
 
-1. **Write the intended look** in a few lines (`look.md`): shape, size next to the ship, colours, how it
-   starts, how long it lasts, how it ends, what it must not do.
+**This tool is a second opinion, and you are the one who looks** (2026-10-02, after three fixes merged on
+evidence for a different claim; `evidence-gate`, `checklists/visual.md`). The clips come from a built player
+and the real event, each clip contains the event (name the frames), the intended look starts from the
+person's own words, and nothing merges while the review is pending. `watch_video` and its blind model
+review have passed clips that did not contain the event, and agreed with a mistake the brief described as
+intended.
+
+1. **Write the intended look** in a few lines (`look.md`), starting from what the person said, quoted. Then:
+   shape, size next to the ship, colours, how it starts, how long it lasts, how it ends, what it must not
+   do. A look you wrote alone can describe the bug as the goal.
 2. **Record before and after** with `record_clip`. It records in real time what the screen shows (the
    simulation runs on wall-clock heartbeats, the VFX clock on frame time, so a frame-by-frame offline
    recorder like Unity Recorder would put them out of step):
@@ -39,7 +47,8 @@ report. Once Ben has approved a look, compare against that approved clip, not ju
    frame of the effect's life, numbered), `sheet.jpg`, `compare.jpg` (the reference and this clip side
    by side, row by row from each onset), and `gemini.md` (a blind review at 10 fps; about $0.01 a clip).
 4. **Put in the PR**: the before/after (or approved/after) clips, `report.md`, and your verdict against
-   each line of the intended look, with frame numbers.
+   each line of the intended look, with frame numbers, as the `## Evidence` section the `evidence-gate`
+   skill describes (`checklists/merge.md`; `pr_evidence.py` checks it before the merge).
 
 VFX flags: `SNAP` (the picture changes abruptly mid-effect: a part appears or vanishes in one frame),
 `POP_IN` / `POP_OUT` (full strength within a frame; no fade), `FLICKER`, `STUTTER` (repeated frames

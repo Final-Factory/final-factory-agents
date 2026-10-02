@@ -112,6 +112,12 @@ blank, and the rest is the player-facing #dev-patch-notes post. Then pass it to 
 `--notes`, which commits it with the bump as `cicd/release-notes/<version>.md`. The script refuses a
 file without the `steam_description:` line.
 
+**"Fixed" in the notes rests on something** (2026-10-02; `evidence-gate`, `checklists/release.md`). 0.50.0.64
+told players two things were fixed that nobody had seen in a built game. For each player-visible fix, find
+its pull request's `## Evidence`: looked at in a built player, write "Fixed"; otherwise say what changed, or
+leave it out, and tell whoever asked for the release which fixes are unseen. `pr_evidence.py --audit
+--since <date of the previous release>` (beside the `evidence-gate` skill) lists them.
+
 ## 1. Start it: one command
 
 The game repo's `scripts/trigger-ci-release.sh` makes the bump: the `FinalFactoryVersion` line in
@@ -185,6 +191,15 @@ notice's desc too if you can see it (the ledger's `desc`). The procedure, the ex
 template, and the 403 rule are in **`patch-notes.md`** beside this file; follow it as written. Put the
 message link in the release report. A release bumped without notes (the Build menu) still gets them:
 write them from the commits then, and add the file to develop afterwards for the record.
+
+## 4. The first check, within an hour of live
+
+A release is not done at the upload notice (`evidence-gate`, `checklists/release.md`). Within an hour of
+the build going live: confirm the BuildID on the branch is the new one, then read, by version and by
+platform, the crash and desync reports players' games uploaded for it and any new bug threads that name
+it. A save that does not load, a missing platform, or reports clearly above the previous build's: tell
+whoever asked for the release at once, with the evidence and the previous BuildID. Use `wake_me` so the
+check happens when it is due.
 
 ## When it goes wrong
 

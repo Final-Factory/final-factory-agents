@@ -74,7 +74,7 @@ Codex plugins cannot carry subagent roles, so Codex still loads those from the g
 
 | Plugin | Contents |
 |---|---|
-| `ff-agents` | 8 delegation roles (`implementor`, `mech-executor`, `scout`, `Explore`, `code-analyst`, `build-verifier`, `deep-thinker`, `game-driver`) + 11 skills: `deep-think`, `determinism-audit`, `drive-game`, `handoff`, `learnToPlay`, `massdriver-visual-e2e`, `playtest`, `project-memory`, `publish-skills`, `resumeFromHandoff`, `update-docs`, `watch-video` (trailer/video review with sound; `watch_video` on PATH) |
+| `ff-agents` | 8 delegation roles (`implementor`, `mech-executor`, `scout`, `Explore`, `code-analyst`, `build-verifier`, `deep-thinker`, `game-driver`) + 11 skills: `deep-think`, `determinism-audit`, `drive-game`, `handoff`, `learnToPlay`, `massdriver-visual-e2e`, `playtest`, `project-memory`, `publish-skills`, `resumeFromHandoff`, `update-docs`, `watch-video` (trailer/video review with sound; `watch_video` on PATH), and others; `evidence-gate` holds the working rules (research the decision before acting), their dated lessons, the visual, merge and release checklists, and `pr_evidence.py` |
 | `ff-speckit` | 10 `speckit-*` skills. Operates on the `.specify/` machinery in whichever project you invoke it from — that stays in the game repo. |
 | `ff-discord` | 5 roles (`discord-answerer`, `discord-dev-agent`, `discord-triager`, and the read-only subagents `scout` and `code-analyst` for the player lane) + 4 skills: `ask-claude`, `ask-dev`, `discord-triage`, `discord-cli`. `discord-cli` carries the `ffdiscord` CLI and Gateway listener themselves. Requires the bot token in the `discord` section of `~/.config/ffbox/config.json`. |
 
@@ -97,6 +97,14 @@ per-worktree `~/.claude/projects/*/memory/` dirs (which are machine-local, keyed
 path, and never propagate). The imported set is the union of the develop and master worktree
 memories. New lessons worth keeping get promoted here — one file under `memories/`, one index
 line in `SKILL.md`, then bump, commit, push as above.
+
+## Working rules and their lessons
+
+`plugins/ff-agents/skills/evidence-gate/` holds the rules for how to decide, verify and report: list
+the choices before researching, say what each rests on, settle your own guesses, name how it could
+fail and look early. Its `lessons/` folder has one file per rule the team paid for (the rule, the
+dated incident, how to apply it), and `design.md` has the reasoning. A fork gets all of it with the
+plugin. A lesson never lives only in a machine's or an orchestrator's memory folder.
 
 ## What deliberately stays in the game repo
 

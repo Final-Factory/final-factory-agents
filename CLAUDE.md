@@ -83,7 +83,9 @@ Create `plugins/<plugin>/skills/<name>/SKILL.md` with `name:` and `description:`
 (supporting files live next to it in the same directory), then follow the publish workflow.
 New durable project lessons go in `plugins/ff-agents/skills/project-memory/` — one file under
 `memories/`, one index line in its SKILL.md or the matching `index-<area>.md` — not in the machine-local
-`~/.claude/projects/*/memory/` dirs, which never propagate.
+`~/.claude/projects/*/memory/` dirs, which never propagate. Working rules (how to decide, verify and
+report, learned from a miss) go in `plugins/ff-agents/skills/evidence-gate/lessons/` with one index
+line in that skill's SKILL.md and the checklist line or tool check that would have caught the miss.
 
 ## Adding a plugin
 
