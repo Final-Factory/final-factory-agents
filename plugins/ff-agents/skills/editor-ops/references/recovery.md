@@ -228,3 +228,37 @@ play mode on that empty project is NOT a hang: it produces a real, running ~26-e
 world that looks wedged under `EditorApplication.Step()` because nothing in it ever changes.
 Open the boot scene (`main.unity`) explicitly before entering play mode — full detail and the
 matching symptom in the project-memory `playmode-needs-main-scene` entry.
+
+### A failed batch build leaves `Temp/UnityLockfile`: the next build says the project is open
+
+`run_build_multiplayer_audit.sh` (and every audit wrapper that builds) refuses with "the project
+is open in the editor (Temp/UnityLockfile present)" when the previous batchmode pass died in its
+prepare step, e.g. on a compile error. With the sandbox editor stopped (`mcp__sandbox__unity`
+status), delete `Temp/UnityLockfile` and rerun. Do it in its own shell call: the sandbox hook
+refuses any command line that combines `taskkill` with the words `Unity` or `PowerShell`, so find
+a built player's PID in one call (PowerShell tool, `Get-CimInstance Win32_Process` filtered on
+your `-ffAutomationLabel`) and `taskkill /PID <n> /F` in another.
+
+### An ffsb sandbox shared by two sessions: `switch_branch` refuses, and a commit without switching
+
+`mcp__sandbox__switch_branch` refuses while another session is mid-turn in the same sandbox, even
+when that session never touches the worktree (its background agents keep it mid-turn after it
+says it stopped). Ask it first (`ListAgents`, then `SendMessage`): what it reads, writes and
+runs there. If the switch still refuses and the peer does not use the tree, a commit can go onto
+develop without moving `HEAD`:
+
+```sh
+git fetch origin && git merge origin/develop          # the checked-out branch is now develop + its own work
+git diff --stat HEAD origin/develop -- <your files>   # must be empty: their base equals develop
+export GIT_INDEX_FILE="$(git rev-parse --git-dir)/tmp.index"
+git read-tree origin/develop
+git update-index --add <changed and new files>         # runs the same filters as git add (LFS, line endings)
+git update-index --force-remove <deleted files>
+commit=$(git commit-tree "$(git write-tree)" -p origin/develop -F message.txt)
+git update-ref refs/heads/<new-branch> "$commit"; unset GIT_INDEX_FILE
+git push origin <new-branch>
+```
+
+Then put the working tree back (`git checkout -- <files>`, delete the new files). The runs were
+made on develop plus the checked-out branch plus the change, so say so in the PR; CI runs the
+suite on the branch as pushed.

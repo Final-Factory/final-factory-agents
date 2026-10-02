@@ -54,6 +54,15 @@ comparator flagged) found zero mismatching fields elsewhere; R28's re-fold is wh
 a second live cause. A fix that only silences the field the comparator happened to print is
 unproven — re-fold every field, not just the named one, before calling a fix complete.
 
+**The text-mirror comparator can hand you a partial window without saying so** (w173, 2026-10-01).
+`compare_determinism_reports.sh` reads the report's text mirror, which is a bounded tail of the
+run. In a windowed two-peer session of about 3,500 heartbeats it printed `NO DIVERGENCE:
+fingerprints match on all 2573 shared heartbeats (epoch 1 hb 917 .. 3489)`, and every op under
+test had applied between heartbeats 375 and 641. `python scripts/audit/compare_audit_records.py
+<host report> <client report>` reads the structured `audit-record-v1` records and compared all
+3,489. For any session longer than about two and a half minutes, use the typed comparator, and
+check that the first shared heartbeat it prints is before your ops.
+
 ## Inventory hash roles: retain the raw field, gate the contracted surfaces {#inventory-hash-roles}
 
 `PlayerInventoryHash` folds the slot arrangement of every authoritative player inventory in one
@@ -220,6 +229,16 @@ this project. (First run on stale code otherwise silently uses the old build.)
   re-run (the compile is warm the second time). The ceiling is `RECOMPILE_WAIT_TICKS`
   (240 ticks × 2 s = 480 s default), raised from a fixed 180 s that three consecutive runs
   overran on a loaded machine.
+- **Run pair audits and recorded two-peer sessions with nothing else of yours running** (w154,
+  2026-10-01). Gates that compare dumps scheduled by wall clock, or that need both peers to keep
+  up, fail under load while the fingerprints still match. Two cases on one machine:
+  `run_same_name_zone_audit.sh` failed its gate 4 ("both stations hold the zone at int3(0, 0, 0)":
+  the client's dump ran one step ahead of the stations' pick) while two windowed players were
+  running, and passed twice when run alone on the same build; and a recorded windowed two-peer
+  session had its client dropped by the host (`FlowControl:TooSlow`,
+  `peers=1:5.0:DroppedTooSlow`) while a batch build or a `watch_video` review was running. Before
+  blaming your change for a kick, look for the same line in a session on a build without it. The
+  typed comparator still covers the session up to the drop.
 - **Launch long audits detached**: `nohup ./scripts/audit/run_construction_audit.sh > log 2>&1 < /dev/null &
   disown`, and monitor the LOG FILE rather than the job — a tracked background task was reaped
   mid-phase-1 and reported as killed with no audit failure at all. (`setsid` does not exist on

@@ -42,5 +42,18 @@ Edit prefabs and scenes through the editor API (`PrefabUtility.LoadPrefabContent
 open asset ([[no-external-edits-to-open-unity-scenes]]). Expect TMP's field-format upgrade lines
 in the diff; they are harmless.
 
+**The longest locale without switching the language** (w154 PR 6, 2026-10-01). A built player
+started through the automation harness ignores `-language=<code>`, and changing the language in
+the settings menu rewrites a saved setting that every other session on the machine shares. Measure
+in the editor instead, through `execute_code`, on the real objects: instantiate the prefab (or the
+scene object's `TextMeshProUGUI`) under a temporary `Canvas` with `HideFlags.HideAndDontSave`; for
+each locale set `font` to the one the game uses for it (read `_englishFont`, `_japaneseFont`,
+`_koreanFont`, `_russianFont`, `_chineseFont` from `Helpers.LocalizationHelper` with a
+`SerializedObject`), set that locale's string, call `ForceMeshUpdate(true, true)`, and read
+`fontSize` after auto-size, `textInfo.lineCount`, `isTextTruncated` and
+`GetRenderedValues(true).y` against the rect height. Destroy the canvas in a `finally`. Put the
+table in the PR as the worst-case evidence and say the other languages were measured, not seen.
+That pass found a 185x24 status label whose longer translations wrapped to two lines 32.7 high.
+
 Multiplayer UI that only draws for other players (name tags, peer status, chat notices): the
 editor-host + headless-client recipe is [[editor-host-mp-ui-worst-case-screenshots]].

@@ -157,6 +157,14 @@ table still shows their pacing (median shot 1.4-2.2 s), motion and loudness.
   the brief, floating-text spam. In three runs it **never heard a music edit**, and it caught the
   v4 stacked-enemy rings in one run of three. The machine flags carry music and timing; Gemini and
   your own look at the sheets carry content.
+- **It is unreliable on "where did the small thing go"** (w154, 2026-10-01: mobile stations and
+  landing pads, 1280x720 gameplay clips). On 3 of 6 clips its verdict was wrong: it reported the
+  fixed behaviour for the unfixed build, and twice "the second ship never lands" for a ship that
+  lands in plain view. It also misread small UI numbers and sentences (525 m for 123 m). For
+  "which pad", "did it land", "did the count change", sample the game's own state every few
+  seconds (`observe.state`) and build a contact sheet; quote the model's review, and say where the
+  frames and the samples contradict it. For "this text must never flash", scan every frame's crop
+  of the label for the text's colour (ffmpeg `crop` to raw rgb24) rather than asking the model.
 
 ## Validation (2026-09-29, the Multiplayer Update trailer cuts)
 

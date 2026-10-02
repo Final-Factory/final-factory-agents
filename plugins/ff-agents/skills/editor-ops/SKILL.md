@@ -211,6 +211,8 @@ Open it when the editor or bridge misbehaves:
 - The scene-modified modal on macOS: signature, recovery, and the prevention that beats both
 - A long-uptime Steam client can wedge play-mode entry (~26h uptime)
 - A fresh editor boot with no scene looks wedged, not hung
+- A failed batch build leaves `Temp/UnityLockfile`: the next build says the project is open
+- An ffsb sandbox shared by two sessions: `switch_branch` refuses, and a commit without switching
 
 ## Running tests
 
