@@ -38,3 +38,8 @@ and the call ran again. The side effects added up:
   `PlayersManager.Me` / `GetSingleton` threw. Guard one-shot calls with a flag that survives the retry:
   `if (AppDomain.CurrentDomain.GetData("started") != null) return; AppDomain.CurrentDomain.SetData("started", true);`
   before the call, and clear it before the next play session.
+- **A retried `BuildPipeline.BuildPlayer` overwrites the build** (2026-10-01, w193): the bridge re-ran a
+  timed-out build script after the source had been switched back, so the "before" player held the fixed code and
+  the red-on-before run went green. Make a build script one-shot with a lock file written first (refuse when it
+  exists), schedule the build once on `EditorApplication.update`, write a result marker, and check which code
+  the player's DLL holds (Mono.Cecil) before trusting a before/after pair.

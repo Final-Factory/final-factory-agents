@@ -28,3 +28,6 @@ runs one chain per peer, each on its own clock.
   -> DoOperation` records in the two audit reports.
 - **A demo-locked refusal on development players:** `ffauto:research.demolock|on` (DevOnly) sets the
   per-process `GameMetaState.IsDemo` the host's validation reads; no development build is a demo.
+- **The client joins part-way through a `--host-preconnect-cmd` chain, and its `wait|N` seconds are not
+  heartbeats** (w196, 2026-10-02): order the peers with `ffauto:heartbeats|N` on both. Details:
+  [[barge-scenarios-audits-and-clips-lessons-2026-10-02]].

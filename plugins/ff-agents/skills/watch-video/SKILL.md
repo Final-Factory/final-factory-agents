@@ -165,6 +165,9 @@ table still shows their pacing (median shot 1.4-2.2 s), motion and loudness.
   seconds (`observe.state`) and build a contact sheet; quote the model's review, and say where the
   frames and the samples contradict it. For "this text must never flash", scan every frame's crop
   of the label for the text's colour (ffmpeg `crop` to raw rgb24) rather than asking the model.
+- **Re-run it on a crop before giving up on it** (w195, w196): on a 2x to 6x crop of the region the same
+  model got a tooltip count and "did the barge come back" right after getting both wrong on the full frame.
+  Keep both reports in the PR, and say which the samples support.
 
 ## Validation (2026-09-29, the Multiplayer Update trailer cuts)
 

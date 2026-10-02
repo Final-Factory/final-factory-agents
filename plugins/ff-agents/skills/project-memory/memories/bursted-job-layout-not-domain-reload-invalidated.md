@@ -22,3 +22,9 @@ touched.
 try the `EnableBurstCompilation` off/on toggle before reaching for a JIT cache wipe. Always
 populate every `ComponentLookup` job field with a real lookup, never `default`, even if unused on
 some paths.
+
+**A third signature (2026-10-02, w195):** after a field was inserted into a Bursted job struct, the job read
+a bool at its old offset and tests failed with nonsense values, with no error at all. A domain reload and the
+`EnableBurstCompilation` toggle did not clear it. Stopping the editor, moving `Library/BurstCache/JIT` aside and
+restarting did. Wait for Burst to go idle before the next run (`BurstLoader.BurstProgressId` is -1, or
+`Progress.Exists(id)` is false).
