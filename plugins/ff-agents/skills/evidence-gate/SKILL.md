@@ -55,9 +55,13 @@ Ask the person only for:
 1. **Money.** They confirm the value (a budget, a bid, a purchase) once per decision, with the
    record in front of them.
 2. **What the rules already reserve for them:** deleting, app settings and deploys, publishing in
-   their name, merges that are not pre-approved, releases.
+   their name, releases.
 3. **A real fork research could not settle:** the options, what each rests on, and the one you
    recommend.
+
+**Merging is not on that list.** Once the verification is done and CI is green, merge your own
+pull request. Don't stop at an open PR waiting for the person. Hold one only for exceptional risk
+or a concrete timing reason, and say in your report which it is and when it will merge.
 
 ## After the action
 
@@ -96,6 +100,8 @@ One file each under `lessons/`: the rule, why (the incident, dated), how to appl
   player, a clip that contains the event, the intended look in the person's words; `watch_video`
   is a second opinion.
 - [No merge before the review](lessons/no-merge-before-the-review.md): "pending" is not done.
+- [Merge your own pull request](lessons/merge-your-own-pr.md): verified and green means merge;
+  hold only for exceptional risk or a timing reason, and say which and when.
 - [Keep rm out of long commands](lessons/keep-rm-out-of-long-commands.md): a deletion chained
   into a long command waits on a permission prompt nobody sees.
 - [Text for the person to paste is plain](lessons/paste-text-is-plain.md): no code block, no

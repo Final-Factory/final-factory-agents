@@ -71,8 +71,13 @@ So a person is asked only for:
 1. **Money**: the value (budget, bid, purchase), once per decision, with the evidence shown. In
    `ffads` that is the approval phrase, printed beside what each choice rests on.
 2. **What the rules already reserve for them**: deletes, app settings and deploys, publishing in
-   their name, merges that are not pre-approved, releases.
+   their name, releases.
 3. **A real fork research could not settle**: the options, with a recommendation.
+
+Merging is not on that list. Later the same day: "stop holding prs, just merge them remember
+this... only hold pr's that are exceptionally high risk or you need to hold them for timing issues
+or something". An agent merges its own pull request once its verification is done and CI is green,
+and a hold names its reason and the time it will merge.
 
 "Decided by the person" is therefore not a basis an agent can reach for. In `ffads` it is accepted
 on a money value, and elsewhere only with a statement of why research could not settle it.
