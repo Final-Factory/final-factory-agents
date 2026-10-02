@@ -6,7 +6,7 @@ description: "w197 (2026-10-02): running a Mac host on the M3 with a Windows cli
 # Two-peer pair lab on the M3 and BEAST: traps (w197, 2026-10-02)
 
 `scripts/nightly/lab.py` could not start a Windows peer on BEAST. PR #924 adds opt-in peer options
-and `lab.pair-*.json`; until it merges, these are the facts.
+and `lab.pair-*.json`.
 
 **BEAST over ssh.**
 
@@ -40,6 +40,19 @@ and `lab.pair-*.json`; until it merges, these are the facts.
 - 18 GB of RAM: the nightly lab (01:30) plus a second Unity build plus four players took swap to
   10 GB and the disk to 320 MB free. One build at a time, and none while your players run.
 - A build killed mid-way leaves an orphan Burst compiler (`mono … bcl`) running for hours.
+
+**Runner traps found in w214 (2026-10-02).**
+
+- A fresh `CFFIXED_USER_HOME` has no `Library/Application Support/Never Games/finalfactory`, and Unity then
+  falls back to the legacy `com.Never-Games.finalfactory`; the runner looked in the first and reported "agent
+  channel never appeared". `lab.py` now creates the folder.
+- Without `--player-win-root`, `ffnightly.py run` turns every `remote-win` peer into a local Mac peer and only
+  logs it. A "pre-fix Windows control" ran the Mac fix build that way. Check `Starting up in version` in each
+  peer's log before counting a run.
+- A scenario with a saved world and a remote Windows host needs the save in that host's own saves folder;
+  `ffnightly.py` now copies it there and deletes it after.
+- Rerunning under the same run tag reads the remote log the failed run left, so it fails in seconds with
+  that run's status. Use a new tag.
 
 **Replaying a desync report.** The host's report zip carries the save it served at the join
 (`*_host_served-*-e1.zip`). Load it with `"world": {"saveFile": "<path>"}`. To be the saved host

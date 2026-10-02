@@ -1,14 +1,25 @@
 ---
 name: hidden-ship-stale-knn-vision-forks-host-vs-joiner
-description: "w197, live 0.50.0.64: Bats in Chase on the host only. A ship out of the KNN (DisableKnnMarker) keeps the vision of its last refresh on a long-running peer and has none on a peer that loaded; the un-hide heartbeat targets from it. Not CPU architecture: the Steam Mac build runs x86_64 under Rosetta and Burst float there equals Windows."
+description: "w197, live 0.50.0.64: Bats in Chase on the host only (fixed by PR #924). A ship out of the KNN (DisableKnnMarker) keeps the vision of its last refresh on a long-running peer and has none on a peer that loaded; the un-hide heartbeat targets from it. Not CPU architecture: the Steam Mac build runs x86_64 under Rosetta and Burst float there equals Windows."
 ---
 
 # A hidden ship's stale KNN vision forks host against joiner (w197, 2026-10-02)
 
 Report `20261002T043752Z-desync-f4f4952e62`: 3,544 heartbeats after a join, 6 of the host's 44 Bats
 were in Chase on the host and idle on the client (`movers+census`). FFBox blamed Apple Silicon
-against x86 float. It was a join-state gap. PR #924 (probes and repro, not merged) and desync board
-round 7 hold the detail.
+against x86 float. It was a join-state gap. Desync board rounds 7 and 8 hold the detail.
+
+**Fixed by PR #924 (w214):** `KnnSystem` empties the vision of every holder with `DisableKnnMarker` (parked
+`Disabled` ones too) each refresh, and so does the C3 path's `LegacyVisionShimSystem`. Nothing new is saved. Two
+things surprised:
+
+- A test had pinned the bug. `KnnLegacyVisionCharacterizationTest.IneligibleHolder_KeepsItsStaleBufferFrozen`
+  (and a shim test) asserted the frozen buffer on purpose, as the legacy contract to preserve. Before calling
+  a stale buffer "the contract", ask whether a peer that loaded would hold the same one.
+- The detector misses it when no ship is free to take a target. On the pre-fix build, Mac + Mac runs of
+  `W197-stale-vision-unhide` passed 3 of 3, but `scripts/audit/check_knn_excluded_vision.py` failed all 3 (the host's
+  Bats came back with 8 + 8 neighbours, the client's with 0). Run both peers with `-ffCombatFloatWitness` and
+  that script: exit 2 means the run never exercised hide, then load, then un-hide, so its pass proves nothing.
 
 **Mechanism.**
 
