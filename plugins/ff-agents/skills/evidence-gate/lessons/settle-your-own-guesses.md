@@ -13,7 +13,8 @@ Ask the person only for:
 
 1. **Money:** the value (a budget, a bid, a purchase), once per decision, with the evidence shown.
 2. **What the rules already reserve for them:** deletes, app settings and deploys, publishing in
-   their name, merges that are not pre-approved, releases.
+   their name, releases. Merging your own verified work is not on the list: later the same day Ben
+   added "stop holding prs, just merge them" ([merge your own pull request](merge-your-own-pr.md)).
 3. **A real fork research could not settle:** the options, with a recommendation.
 
 **Why.** Ben, 2026-10-02, on the first design of this gate, which let a guess be resolved by

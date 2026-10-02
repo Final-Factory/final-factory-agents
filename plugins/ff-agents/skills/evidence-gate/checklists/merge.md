@@ -3,8 +3,11 @@
 For a pull request that changes what a player sees, or simulation, save or netcode state, or that
 claims to fix a reported bug. Docs, tools and tests of existing behaviour need none of this.
 
-You are trusted to merge verified work on your own. This list is what "verified" means, and
-`pr_evidence.py` checks the part a script can check.
+Merge your own pull request once its verification is done and CI is green. Don't leave it open
+waiting for the person. Hold one only for exceptional risk or a concrete timing reason, and say in
+your report which it is and when it will merge
+([merge your own pull request](../lessons/merge-your-own-pr.md)). This list is what "verified"
+means, and `pr_evidence.py` checks the part a script can check.
 
 ## What goes in the pull request
 
@@ -64,5 +67,6 @@ basis and the place to look are written down, that nothing is pending, and that 
 names a built player, the event's frames and the intended look.
 
 Lessons behind this list:
+[merge your own pull request](../lessons/merge-your-own-pr.md),
 [no merge before the review](../lessons/no-merge-before-the-review.md),
 [a visual fix is verified by looking](../lessons/visual-fixes-are-verified-by-looking.md).

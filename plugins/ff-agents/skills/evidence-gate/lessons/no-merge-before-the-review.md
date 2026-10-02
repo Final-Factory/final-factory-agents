@@ -23,7 +23,10 @@ to mean finished.
   It fails on anything pending in the `## Evidence` section, and `--comment` leaves the verdict
   on the pull request before the merge.
 - If the review cannot run where you are (no key on this machine, no built player), move the work
-  to where it can, or leave the pull request open and say what is missing. Don't merge and
-  promise the review afterwards.
+  to where it can, or hold the pull request and say what is missing and when it will merge. Don't
+  merge and promise the review afterwards.
+- The other half of this rule: once the review is finished and CI is green, merge it yourself.
+  An open, green pull request with no stated reason is unfinished
+  ([merge your own pull request](merge-your-own-pr.md)).
 - Speed is not a reason. A merged change that is wrong costs a release and a report from a
   player.
