@@ -5,6 +5,8 @@ description: "How the last three tutorial objectives complete from the harness: 
 
 # Tutorial objectives 76–78 from the harness (live-proven 2026-09-11, build 2a0ce38bb)
 
+> **Superseded in part by w175 (#893, 2026-10-02):** see [mp-tutorial-is-one-shared-list-host-decides](mp-tutorial-is-one-shared-list-host-decides.md). The Complete button is no longer a local click: one click on ANY peer completes the card for every peer, and the map and fleet-panel counts are shared (any player's use counts).
+
 - **76 "Open the map"**: `ffauto:ui.open|map` → `ffauto:wait|2` → `ffauto:ui.close|map`. The
   `map` panel entry (AutomationUiDriver, alias `worldmap`) drives
   `WorldMapControlAction.OpenMap/CloseMap` — the [M] key's path — and the objective's

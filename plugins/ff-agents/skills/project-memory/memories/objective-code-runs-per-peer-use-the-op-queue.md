@@ -5,6 +5,8 @@ description: "Tutorial/objective code (triggers, OnStart actions, completion rew
 
 # Objective code runs per peer — simulation writes must ride the op queue (2026-09-11, 069)
 
+> **Superseded in part by w175 (#893, 2026-10-02):** see [mp-tutorial-is-one-shared-list-host-decides](mp-tutorial-is-one-shared-list-host-decides.md). Verifiers and initiators now run on the host only, and the lists move inside the `ObjectiveProgress` apply on every peer. Triggers still run per peer (inside that apply), so the rule below stands: a trigger's simulation write must be a host-authored op.
+
 **The defect shape.** `SpawnEnemyCampTrigger.PerformActionImpl` (the `7_DestroyEnemyCamp.asset`
 OnStart trigger) created the tutorial's Urso spawner straight into the ECS world on whichever
 peer's `ObjectivesController` started objective 7, and `ObjectivesController.CompleteObjectiveNoCleanup`

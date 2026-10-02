@@ -5,6 +5,8 @@ description: "074 T104: '[PlayerAbilityFire]' lines are REJECTS only -- an accep
 
 # Accepted casts log nothing; objective counters are presentation hooks (074 T104, 2026-09-19)
 
+> **Superseded in part by w175 (#893, 2026-10-02):** see [mp-tutorial-is-one-shared-list-host-decides](mp-tutorial-is-one-shared-list-host-decides.md). Rule (1) still holds. Rule (2) does not: the counters are no longer presentation hooks. Frenzy and Plasma are counted where `PlayerAbilityFire` APPLIES (`ObjectiveCounters.TryAdd`), for any player; `PlayerAbilityFireDispatch.Dispatch` raises nothing.
+
 **The trap.** "Frenzy never accepts on a fresh game": `ability.cast` returned `kind=Frenzy,actor=1`,
 the hotbar showed a charge, no `[PlayerAbilityFire]` line followed, `frenzyUsed` stayed 0. A whole
 handoff theorised an id-less commander. The editor probe showed every cast APPLIED (all four Bats got
