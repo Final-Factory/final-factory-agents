@@ -14,13 +14,16 @@ adds what a release rests on and the first check after it.
    `pr_evidence.py --audit --since <date of the previous release>` lists them.
 3. **Saves still load.** The hard rule, as `ci-release` section 0 has it: the golden-fixture and
    layout tests pass in the release run, and a layout change has its upgrade step.
-4. **Write what you expect:** which players build, which branch goes live with which app, and the
-   test counts you expect to see.
+4. **Write what you expect:** which players build, which branch goes live with which app (read
+   `SETLIVE`, never recall it), and the test counts you expect to see.
 
 ## After it is live: the first check, within an hour
 
-5. **It is the build you meant.** The BuildID on `multiplayer-beta` (a develop release) is the new
-   one, per the upload notice and the ledger. `ci-release` section 2 has the commands.
+5. **It is the build you meant, on the branch ffbox actually sets.** `python scripts/release-status.py
+   <version>` (game repo) says LANDED, with the BuildID on `pre-release` for a develop release or on
+   `multiplayer-beta` for a master release (ffbox `release_lane.SETLIVE`, read by the script). Any
+   other branch is moved by a person; never propose moving one while the script says BUILDING or
+   WAITING (lesson: [a release lands where SETLIVE says](../lessons/a-release-lands-where-setlive-says.md)).
 6. **Players are not worse off than on the previous build.** Read, by version and by platform
    (Windows, Mac): the crash and desync reports players' games uploaded for the new version
    (FFBox's intake holds them; an orchestrator sees them with `ffbox_activity`), and new threads
