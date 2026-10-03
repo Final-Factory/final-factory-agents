@@ -74,9 +74,9 @@ script's `--notes` commits it as `cicd/release-notes/<version>.md`.
 ```text
 steam_description: <MP beta|Release>: <biggest change>, <next>, <next>, <N> other fixes
 
-**<version>** <a short title naming the two or three biggest changes> (Live on the multiplayer beta branch)
+**<version>** <a short title naming the two or three biggest changes> (Live on the <branch> branch)
 
-Restart Steam to pick up the update on the beta branch.
+Restart Steam to pick up the update on the <branch> branch.
 
 **Improvements:**
 * <what is new or better, one line each>
@@ -119,12 +119,18 @@ grep -c '[—–]' Temp/release-notes-<version>.md             # 0
 
 ## 4. Post it as Max, once the build is live
 
-"Confirmed live" means:
-- **develop** (the multiplayer beta): the main notice says "set live on multiplayer-beta (BuildID
-  …)" (`ci-release` §2), or the `mp-beta-deploy` §6 log shows its BuildID. The closed beta is retired
-  (ffbox `f9174b61d`, 2026-09-28), so no closed-beta BuildID is expected.
-- **master** (public): nothing is live at upload. Hand the notes over with the report; post them only
-  once Ben or Lothsahn says the build is on the default branch.
+"Confirmed live" means `python scripts/release-status.py <version>` (game repo) says **LANDED**, and
+you name the branch it landed on. Never wait for a branch ffbox does not set:
+
+- **develop:** ffbox sets main live on **`pre-release`** (ffbox `release_lane.SETLIVE`, since
+  2026-10-02). Post once it LANDED there, and title and restart line name `pre-release`. If Ben or
+  Lothsahn has since moved the same BuildID to `multiplayer-beta` (the script lists the branches that
+  hold it), name that branch instead. Do not hold the post for `multiplayer-beta`: 0.50.0.65 and .66
+  went unposted that way.
+- **master:** ffbox sets main live on **`multiplayer-beta`**. Post once it LANDED there. The default
+  branch is promoted by hand; a post that says "default branch" waits for Ben or Lothsahn to say so.
+- Unposted earlier releases (the script's verdict for them is LANDED or SUPERSEDED, with no post in
+  #dev-patch-notes) are folded into the next post, newest first.
 
 Post the committed copy, so what players read is what the release carried:
 
