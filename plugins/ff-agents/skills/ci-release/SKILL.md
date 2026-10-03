@@ -1,6 +1,6 @@
 ---
 name: ci-release
-description: Cut a release through CI on the ffbox build server — write the release notes, bump the version (FFVersion.cs + bundleVersion) and push, follow CI through the Windows/Mac main+demo builds, tests and Steam uploads, then post the patch notes as Max in #dev-patch-notes. ffbox sets a develop release's main app live on `development` and a master release's on `pre-release`, automatically; Ben or Lothsahn move the default branch by hand. `scripts/release-status.py` says where a release is. Use when Ben or Lothsahn asks for either in any words ("push a new dev build", "a build for the testers", "cut a release on master"). Never start it on your own initiative or as a side step of other work.
+description: Cut a release through CI on the ffbox build server — write the release notes, bump the version (FFVersion.cs + bundleVersion) and push, follow CI through the Windows/Mac main+demo builds, tests and Steam uploads, then post the patch notes as Max in #dev-patch-notes. A requested release is done only when it is live on its Steam branch AND its notes are posted. ffbox sets a develop release's main app live on `development` and a master release's on `pre-release`, automatically; Ben or Lothsahn move the default branch by hand. `scripts/release-status.py` says where a release is. Use when Ben or Lothsahn asks for either in any words ("push a new dev build", "a build for the testers", "cut a release on master"). Never start it on your own initiative or as a side step of other work.
 ---
 
 # Trigger a CI release on master or develop
@@ -191,15 +191,30 @@ moves it there. BUILDING or WAITING is normal (measured 22-78 min from the
 bump); only LATE is an ffbox problem for its owner. **Never move a Steam branch, never ask a worker to,
 and never tell Ben a branch must be moved for the build to count**: report where it landed.
 
-## 3. Patch notes, once it is live
+## 3. Patch notes: the required last step
 
-**Every release ends with patch notes** (Ben, 2026-09-28): once the build is confirmed live, post the
-body of the release's `cicd/release-notes/<version>.md` (everything after its first two lines) as Max
-in #dev-patch-notes (channel `1072387196927094845`), never with @everyone. Check the main upload
-notice's desc too if you can see it (the ledger's `desc`). The procedure, the exact format with a
-template, and the 403 rule are in **`patch-notes.md`** beside this file; follow it as written. Put the
-message link in the release report. A release bumped without notes (the Build menu) still gets them:
-write them from the commits then, and add the file to develop afterwards for the record.
+**Every requested release ends with its patch notes posted in #dev-patch-notes** (Lothsahn,
+2026-10-03: "any time a release is requested, you should always post the #dev-patch-notes after the
+build is complete and uploaded"). A release is **done only when both** are true:
+
+- [ ] **Live on its Steam branch**: `python scripts/release-status.py <version>` says LANDED, on
+  `development` for a develop release or `pre-release` for a master release.
+- [ ] **Notes posted once, as Max, in #dev-patch-notes** (channel `1072387196927094845`): the body of
+  the release's `cicd/release-notes/<version>.md` (everything after its first two lines),
+  player-facing, no internal ids, never with @everyone; the message link is in the release report.
+
+The procedure, the exact format with a template, and the 403 rule are in **`patch-notes.md`** beside
+this file; follow it as written. Check the main upload notice's desc too if you can see it (the
+ledger's `desc`). A release bumped without notes (the Build menu) still gets them: write them from
+the commits then, and add the file to develop afterwards for the record.
+
+**Posting needs a machine with the ffdiscord config** (the `discord` section and bot token that the
+ff-discord `discord-cli` skill reads; LothDesktop today). Check before the bump:
+`ffdiscord read 1072387196927094845 --limit 1` must list the channel's last post. If this machine
+cannot post, the release is **not done**: report "live on <branch> (BuildID …), patch notes NOT
+posted: no ffdiscord config on <machine>", with the notes file's path, and leave the posting step
+open for a machine that has it. Never finish a release report without one of the two: the message
+link, or that open step.
 
 ## 4. The first check, within an hour of live
 

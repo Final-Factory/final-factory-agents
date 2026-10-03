@@ -11,8 +11,9 @@ Every release carries its notes (Ben, 2026-09-28). They are written **before** t
 2. **The #dev-patch-notes post.** Once the build is **confirmed live**, the rest of the file is
    posted as Max in #dev-patch-notes (channel `1072387196927094845`).
 
-It is part of the release, not an optional extra: the release is not reported done until the notes
-are posted or you have said why they could not be.
+It is part of the release, not an optional extra: a requested release is done only when it is live
+on its branch AND the notes are posted (`SKILL.md` section 3). If they cannot be posted from this
+machine, the release stays open and the report says so.
 
 ## 1. Find the range
 

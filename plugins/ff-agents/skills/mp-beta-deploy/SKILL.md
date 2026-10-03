@@ -201,8 +201,8 @@ Commit a one-line note with version, source sha and BuildID where the active wor
 active spec's `tasks.md`). Report to Ben: TL;DR (version, sha, BuildID, branch), then what was built,
 verified and staged. Any new gotcha goes through `ff-agents:publish-skills` into THIS skill.
 
-## 8. Patch notes
-Once the upload's BuildID is in the log (§6), post the body of `cicd/release-notes/<version>.md` (the file
+## 8. Patch notes (required)
+The build is not done until its notes are posted (`ci-release` section 3). Once the upload's BuildID is in the log (§6), post the body of `cicd/release-notes/<version>.md` (the file
 §1 committed, everything after its first two lines) as Max in #dev-patch-notes (channel
 `1072387196927094845`), never with @everyone (Ben, 2026-09-28). The procedure, the exact format with a
 template, and the 403 rule are in the `ci-release` skill's `patch-notes.md` §4; follow it as written, and
