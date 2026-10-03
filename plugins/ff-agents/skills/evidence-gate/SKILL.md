@@ -77,6 +77,10 @@ report. Change nothing on a guess.
   settles its own guesses.
 - When you pass on someone's report, keep its labels. A guess never becomes a recommendation on
   the way up.
+- **Say what every id is, every time** ([lesson](lessons/say-what-an-id-is.md)). Before you send
+  anything a person reads, scan it for request ids (w293), PR numbers (#972), commits, worker or
+  session ids and sandbox names: each one gets its plain-English words beside it, on every
+  appearance, not only the first.
 
 ## Checklists: read the one for what you are doing
 
@@ -111,6 +115,8 @@ One file each under `lessons/`: the rule, why (the incident, dated), how to appl
   into a long command waits on a permission prompt nobody sees.
 - [Text for the person to paste is plain](lessons/paste-text-is-plain.md): no code block, no
   formatting, their voice.
+- [Say what an id is, every time](lessons/say-what-an-id-is.md): w293, #972, a sha or a sandbox
+  name means nothing to a person; put what it is beside it, every time.
 - [Lessons belong in the harness repo](lessons/lessons-belong-in-the-harness-repo.md): not in a
   machine's or an orchestrator's memory folder.
 

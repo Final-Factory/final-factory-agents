@@ -81,7 +81,10 @@ Run this before delivering. Do not narrate it or report on it.
 3. Remove claims you cannot support and attributions you cannot name.
 4. Cut redundant introductions, summaries, and conclusions.
 5. Check for repeated sentence shapes and rhetorical patterns. Count the em dashes.
-6. Ask what still reads as generic or machine-written, and rewrite those passages without
+6. Find every request id (w293), PR number (#972), commit, worker or session id and sandbox name; each
+   needs its plain-English words beside it, every time it appears (`evidence-gate`,
+   `lessons/say-what-an-id-is.md`).
+7. Ask what still reads as generic or machine-written, and rewrite those passages without
    changing any fact.
 
 ## Text the person will paste
