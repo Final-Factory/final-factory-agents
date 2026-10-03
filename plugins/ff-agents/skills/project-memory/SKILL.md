@@ -109,7 +109,7 @@ your task before re-deriving anything the hard way.
 
 - [Unity MCP bridge](index-unity-mcp.md) (9 lessons): the MCP bridge itself: setup, resource URIs, per-project config, proving a compile landed, the `unity` CLI when the bridge is down.
 - [Editor & play mode traps](index-editor-play-mode.md) (14 lessons): entering play mode, open scenes, editor wedges, shader/VFX draw traps, profiling.
-- [Testing & tooling gotchas](index-testing-tooling.md) (24 lessons): running tests, builds, perf A/Bs, built-player harnesses, sandbox branches, fixtures and guard tests.
+- [Testing & tooling gotchas](index-testing-tooling.md) (37 lessons): running tests, builds, perf A/Bs, built-player harnesses, sandbox branches, fixtures and guard tests.
 - [Gameplay diagnosis & live-test recipes](index-gameplay-diagnosis.md) (64 lessons): diagnosing a desync or gameplay bug, and live / multiplayer / soak / tutorial test recipes.
 - [ffbox pipeline & ffweb](index-ffbox.md) (5 lessons): the ffbox build server pipeline, containers, ffweb.
 

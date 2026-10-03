@@ -28,3 +28,11 @@ a bool at its old offset and tests failed with nonsense values, with no error at
 `EnableBurstCompilation` toggle did not clear it. Stopping the editor, moving `Library/BurstCache/JIT` aside and
 restarting did. Wait for Burst to go idle before the next run (`BurstLoader.BurstProgressId` is -1, or
 `Progress.Exists(id)` is false).
+
+**A fourth signature (2026-10-03, w225):** after a `BufferLookup` field replaced a `DynamicBuffer` field in an
+`IJobEntity` and a `ComponentLookup` was captured into a `Job.WithCode`, EditMode tests failed with a
+`NullReferenceException` at `JobChunkProducer.ExecuteInternal` (`IJobChunk.cs:374`), and the lambda job silently
+spawned nothing. The same tests passed with Burst off; turning it back on with synchronous compilation did not
+clear it. The stack's module hash named a `Library/BurstCache/JIT/<hash>.dll` dated an hour BEFORE the edit (the
+session had shared the Library with batchmode player builds). A plain editor restart cleared it. Reading that DLL's
+timestamp is the quick check that it is stale native code and not the change.
