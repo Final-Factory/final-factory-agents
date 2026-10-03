@@ -63,16 +63,15 @@ branch moves before you trigger, re-read the new commits and add them.
 script's `--notes` commits it as `cicd/release-notes/<version>.md`.
 
 - **Line 1**: `steam_description: ` then a short change list for the partner site's Builds page.
-  Start with the build kind ("MP beta:" for develop, "Release:" for master), then the three or four
+  Start with the build kind ("Dev build:" for develop, "Release:" for master), then the three or four
   biggest changes, comma-separated, plus a count of the rest. ffbox prefixes the version and sha, so
   keep the line under about 170 characters. No quotes or backslashes (they are dropped).
 - **Line 2**: blank.
-- **The rest**: the #dev-patch-notes post, in the shape of the recent posts in that channel (0.50.0.41
-  and 0.50.0.42). Read the last two or three (`ffdiscord read 1072387196927094845 --limit 3`) before
+- **The rest**: the #dev-patch-notes post, in the shape of the recent posts in that channel. Read the last two or three (`ffdiscord read 1072387196927094845 --limit 3`) before
   writing, and match them if they changed.
 
 ```text
-steam_description: <MP beta|Release>: <biggest change>, <next>, <next>, <N> other fixes
+steam_description: <Dev build|Release>: <biggest change>, <next>, <next>, <N> other fixes
 
 **<version>** <a short title naming the two or three biggest changes> (Live on the <branch> branch)
 
@@ -87,28 +86,26 @@ Restart Steam to pick up the update on the <branch> branch.
 * <...>
 ```
 
-Example (the committed `cicd/release-notes/0.50.0.42.md`, shortened):
+Example (the committed `cicd/release-notes/0.50.0.71.md`, shortened):
 
 ```text
-steam_description: MP beta: smoother ship on laggy connections, join desync fix for buildings marked for removal, fog/comet draw fixes, 15 bug report fixes
+steam_description: Dev build: station deconstruct no longer tanks the frame rate, research queue drag fix, Show My Name and My Ship Outline settings, 4 other changes
 
-**0.50.0.42** Laggy Connections, a Join Desync, and Your Bug Reports (Live on the multiplayer beta branch)
+**0.50.0.71** Deconstruct Slowdown, Research Queue Drag and Your Own Name Tag (Live on the development branch)
 
-Restart Steam to pick up the update on the beta branch.
-
-**Improvements:**
-* On a laggy connection your ship keeps moving through a late update instead of freezing on every lost packet
-* Players who joined after you now have name tags over their ships
-* Background comets fly well below the asteroid layer instead of through it
+Restart Steam to pick up the update on the development branch.
 
 **Fixes:**
-* Joining a game with buildings marked for deconstruction or swap could desync the joiner straight away
-* Comet tails, beams and impacts were cut off at the fog of war line
-* Zooming panned the minimap
+* Dragging a tile in the research queue and letting go just under the row now moves it, instead of quietly cancelling the drag
+* Changing the language with Settings open no longer turns VSync on
+
+**Improvements:**
+* New setting Interface > Show My Name puts your own name tag over your ship
+* A research tile you can't drop ahead of its prerequisite now says why for a few seconds
 ```
 
-For a master release the title ends "(Live on the default branch)" and the restart line is left out
-unless the post is about a beta branch. Omit a section that would be empty.
+The title and restart line name the branch the build landed on: `development` for a develop release,
+`pre-release` for a master release. Omit a section that would be empty.
 
 Before triggering, check the post's length and dashes:
 
@@ -122,13 +119,11 @@ grep -c '[—–]' Temp/release-notes-<version>.md             # 0
 "Confirmed live" means `python scripts/release-status.py <version>` (game repo) says **LANDED**, and
 you name the branch it landed on. Never wait for a branch ffbox does not set:
 
-- **develop:** ffbox sets main live on **`pre-release`** (ffbox `release_lane.SETLIVE`, since
-  2026-10-02). Post once it LANDED there, and title and restart line name `pre-release`. If Ben or
-  Lothsahn has since moved the same BuildID to `multiplayer-beta` (the script lists the branches that
-  hold it), name that branch instead. Do not hold the post for `multiplayer-beta`: 0.50.0.65 and .66
-  went unposted that way.
-- **master:** ffbox sets main live on **`multiplayer-beta`**. Post once it LANDED there. The default
-  branch is promoted by hand; a post that says "default branch" waits for Ben or Lothsahn to say so.
+- **develop:** ffbox sets main live on **`development`** (ffbox `release_lane.SETLIVE`). Post once it
+  LANDED there; title and restart line name `development`.
+- **master:** ffbox sets main live on **`pre-release`**. Post once it LANDED there; title and restart
+  line name `pre-release`. The default branch is moved by hand by Ben or Lothsahn; a post that says
+  "default branch" waits for one of them to say it is there.
 - Unposted earlier releases (the script's verdict for them is LANDED or SUPERSEDED, with no post in
   #dev-patch-notes) are folded into the next post, newest first.
 

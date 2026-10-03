@@ -20,8 +20,8 @@ adds what a release rests on and the first check after it.
 ## After it is live: the first check, within an hour
 
 5. **It is the build you meant, on the branch ffbox actually sets.** `python scripts/release-status.py
-   <version>` (game repo) says LANDED, with the BuildID on `pre-release` for a develop release or on
-   `multiplayer-beta` for a master release (ffbox `release_lane.SETLIVE`, read by the script). Any
+   <version>` (game repo) says LANDED, with the BuildID on `development` for a develop release or on
+   `pre-release` for a master release (ffbox `release_lane.SETLIVE`, read by the script). Any
    other branch is moved by a person; never propose moving one while the script says BUILDING or
    WAITING (lesson: [a release lands where SETLIVE says](../lessons/a-release-lands-where-setlive-says.md)).
 6. **Players are not worse off than on the previous build.** Read, by version and by platform

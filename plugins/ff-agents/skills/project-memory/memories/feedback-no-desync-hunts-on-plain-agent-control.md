@@ -10,8 +10,8 @@ forcing a fork (`desync.inject`), soak-playing to see if one appears — do it i
 marks as ours. Never do it in a player launched with only plain `-ffAgentControl true`.
 
 **Why:** since game commit `c6f88fa99` (develop, 2026-09-25) desync and crash reports upload to
-ffintake whenever a person plays and has opted in, on ANY build (release, the Steam multiplayer
-closed beta, a local dev build). The game cannot tell a player's own agent (the shipped agent kit,
+ffintake whenever a person plays and has opted in, on ANY build (a Steam release on any
+branch, a local dev build). The game cannot tell a player's own agent (the shipped agent kit,
 plain `-ffAgentControl`) from one of ours, so that tier counts as a player and uploads. A desync our
 agent is already investigating then lands in ffbox too and gets triaged a second time.
 

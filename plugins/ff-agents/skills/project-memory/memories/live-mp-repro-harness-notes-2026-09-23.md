@@ -42,8 +42,8 @@ description: "Operational facts from the overnight three-peer live-MP repro lane
   - Host config: `UseRelay: true`. It logs `status relay-join-code: joinCode=XXXXXX`.
   - Put that code in each client config's `RelayJoinCode`. Rejoin with `net.rejoin|relay|<code>`.
   - Leg r1 (three machines, e2 scenario over real Relay) was clean.
-- **Ben, 2026-09-23: testing never goes through Steam.** Copy local builds to the three machines; upload to the
-  beta branch only when Ben asks for a beta. A Steam upload costs him a manual login.
+- **Ben, 2026-09-23: testing never goes through Steam.** Copy local builds to the three machines; upload to Steam
+  only when Ben asks for a build. A Steam upload costs him a manual login.
 - **Bystander watchdog trips during another peer's load (T158) — fixed `925e005f2`.**
   - Tell: a bystander logs `[Reconnect] WatchdogTripped appliedAgeSeconds=5.1` about 5 s after
     `NotifyFlowControlWaitingRpc waiting=True,peers=<other peer>`, typically 60-90 hb after that peer was served.

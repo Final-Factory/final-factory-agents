@@ -457,8 +457,8 @@ do (project-memory `feedback-built-players-run-from-the-slot-pool`).
 
 Release builds and Steam uploads are NOT made from an editor: they go through CI on the ffbox build
 server, via the `ci-release` skill. Never make a release with `Build > Build and Upload All` or
-steamcmd. A develop release is the MP closed-beta build (ffbox sets it live on
-`multiplayer-closed-beta` and `multiplayer-beta`); `mp-beta-deploy` is the last-resort M5 fallback, only when ffbox CI is actually down and only with
+steamcmd. ffbox sets a develop release live on `development` and a master release on
+`pre-release`; `mp-beta-deploy` is the last-resort M5 fallback, only when ffbox CI is actually down and only with
 Ben's OK.
 
 ## Capturing editor memory

@@ -19,7 +19,7 @@ package upgrade counts too: it can shift every StableTypeHash.
 since.** The golden fixtures are how that is proven: `Assets/Tests/Serialization/Fixtures/`
 (slate and rules in its README; `MasterNewGame-0.21.0.34` is the master save).
 
-**Why:** 0.50.0.45 shipped to `multiplayer-beta` unable to load any save from 0.50.0.35 to .44.
+**Why:** 0.50.0.45 shipped to players unable to load any save from 0.50.0.35 to .44.
 Commit `1f0f1b62f` appended `Player.SimulationVelocity` (200 -> 224 bytes) and moved
 `PlayerAbilityFireIntent.LeadMilliseconds` into tail padding (same size, new StableTypeHash), with
 no step. Its message assumed old saves would "zero-extend". They took the columnar fast path, and

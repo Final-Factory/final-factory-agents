@@ -1,31 +1,26 @@
 ---
 name: ci-release
-description: Cut a release through CI on the ffbox build server — write the release notes, bump the version (FFVersion.cs + bundleVersion) and push, follow CI through the Windows/Mac main+demo builds, tests and Steam uploads, then post the patch notes as Max in #dev-patch-notes. ffbox sets a develop release's main app live on `pre-release` and a master release's on `multiplayer-beta`, automatically; the default branch is always a person's. `scripts/release-status.py` says where a release is. Use when Ben or Lothsahn asks for either in any words ("push a new beta build", "a multiplayer build for the testers", "cut a release on master"). Never start it on your own initiative or as a side step of other work.
+description: Cut a release through CI on the ffbox build server — write the release notes, bump the version (FFVersion.cs + bundleVersion) and push, follow CI through the Windows/Mac main+demo builds, tests and Steam uploads, then post the patch notes as Max in #dev-patch-notes. ffbox sets a develop release's main app live on `development` and a master release's on `pre-release`, automatically; Ben or Lothsahn move the default branch by hand. `scripts/release-status.py` says where a release is. Use when Ben or Lothsahn asks for either in any words ("push a new dev build", "a build for the testers", "cut a release on master"). Never start it on your own initiative or as a side step of other work.
 ---
 
 # Trigger a CI release on master or develop
 
-> **WHERE A RELEASE LANDS (ffbox `scripts/release_lane.py:88`, `SETLIVE`; ffbox `1f51596`, 2026-10-02).
-> Read it there, or run `python scripts/release-status.py [<version>]` in the game repo, which reads it
-> from ffbox and the branches from Steam. Never from memory: this changed three times in five days.**
+> **WHERE A RELEASE LANDS (ffbox `scripts/release_lane.py`, `SETLIVE`).** Read it there, or run
+> `python scripts/release-status.py [<version>]` in the game repo, which reads it from ffbox and the
+> branches from Steam. Never from memory.
 >
 > ```python
-> SETLIVE = {("master", "main"): ("multiplayer-beta",), ("develop", "main"): ("pre-release",)}
+> SETLIVE = {("develop", "main"): ("development",), ("master", "main"): ("pre-release",)}
 > ```
 >
-> - **A develop release:** ffbox sets the **main** app live on **`pre-release`**, automatically, as it
->   uploads. It does not touch `multiplayer-beta`. Ben or Lothsahn moves a develop build to
->   `multiplayer-beta` on the partner site when they want it there; an agent never does, and never
->   proposes it while `release-status.py` says BUILDING or WAITING.
-> - **A master release:** ffbox sets the main app live on **`multiplayer-beta`**, automatically. The
->   default branch is promoted by Ben or Lothsahn by hand. master has multiplayer since develop's
->   ProjectSettings were merged up (`FF_ENABLE_MULTIPLAYER_BUILD`, #614).
-> - **Never:** the demo app is set live nowhere; the default branch is never set by ffbox;
->   `multiplayer-closed-beta` is retired (`f9174b61d`).
-> - **History, so old reports make sense:** a develop release went live on `multiplayer-beta` from
->   2026-09-28 (`d46d438`) until 2026-10-02; on Steam, 0.50.0.45 to .64 landed there and .65 to .67
->   on `pre-release`. `b2e99d6` (2026-10-01) added master -> `multiplayer-beta`; `1f51596` (2026-10-02)
->   added develop -> `pre-release`.
+> - **A develop release:** ffbox sets the **main** app live on **`development`**, automatically, as it
+>   uploads.
+> - **A master release:** ffbox sets the main app live on **`pre-release`**, automatically. master has
+>   multiplayer since develop's ProjectSettings were merged up (`FF_ENABLE_MULTIPLAYER_BUILD`, #614).
+> - **The default (public) branch** is moved by hand by Ben or Lothsahn on the partner site. An agent
+>   never moves any Steam branch, and never proposes it while `release-status.py` says BUILDING or
+>   WAITING.
+> - **Never:** the demo app is set live nowhere; ffbox never sets the default branch.
 > - **Timing, measured** (CI run start to the branch moving, 0.50.0.57 to .67, nine uploads): 22 to
 >   78 min, median 36; after the Release jobs ended, -7 to +43 min (main uploads before the demo is
 >   built). `release-status.py` calls it LATE only past 60 min after the Release jobs end.
@@ -68,10 +63,9 @@ version.
 **Each app uploads on its own, and only after the tests pass.** Once an app's two players (Windows and
 Mac) are GOOD, the host waits until every `Test in …` job of the same CI run has succeeded, then
 uploads that app to Steam as `Lothsahn_FFBox`, exactly as Build and Upload All did: `desc` is the
-version and **nothing is set live, except the main app on the branch `SETLIVE` names: `pre-release`
-for develop, `multiplayer-beta` for master** (the notice: "main uploaded to Steam, set live on
-<branch> (BuildID …)"). From `d46d438d5` to `f9174b61d` (2026-09-28) a develop release also went live
-on `multiplayer-closed-beta`; releases up to 0.50.0.44 name both. So main (app 1383150) goes up as soon as its players and the tests
+version and **nothing is set live, except the main app on the branch `SETLIVE` names: `development`
+for develop, `pre-release` for master** (the notice: "main uploaded to Steam, set live on
+<branch> (BuildID …)"). So main (app 1383150) goes up as soon as its players and the tests
 are done, without waiting for the demo, and the demo (app 2387320) follows. If a test job fails, both
 uploads are skipped with a notice; the players are still built and their symbols filed. Every other build
 Lothsahn and Ben promote to Steam branches by hand. The host also posts notices to #release-build-announce
@@ -189,11 +183,11 @@ release run's `Test in editmode` result (ran, passed, its counts), the
 four results, the two BuildIDs (main app 1383150, demo app 2387320), and the regenerated-files PR if
 there is one. **Run `python scripts/release-status.py <version>`** (game repo): it prints the run,
 the branch `SETLIVE` names for this release, every Steam branch's BuildID and time, a verdict and the
-next step. Report the BuildID on that branch: **`pre-release` for develop, `multiplayer-beta` for
+next step. Report the BuildID on that branch: **`development` for develop, `pre-release` for
 master** (the notice: "set live on <branch> (BuildID …)"; the ledger's `uploads.main.setlive` and
-`uploads.main.live_builds`). Then say plainly where it is not: a develop build is not on
-`multiplayer-beta` or the default branch until Ben or Lothsahn moves it, and a master build is not on
-the default branch until they promote it. BUILDING or WAITING is normal (measured 22-78 min from the
+`uploads.main.live_builds`). Then say plainly where it is not: a develop build reaches
+`pre-release` only as a master release, and no build is on the default branch until Ben or Lothsahn
+moves it there. BUILDING or WAITING is normal (measured 22-78 min from the
 bump); only LATE is an ffbox problem for its owner. **Never move a Steam branch, never ask a worker to,
 and never tell Ben a branch must be moved for the build to count**: report where it landed.
 

@@ -1,6 +1,6 @@
 ---
 name: steam-upload
-description: Upload a multiplayer build to the Steam beta branches from the M5 Mac with steamcmd — the login/upload mechanics mp-beta-deploy relies on, including the cached-token login recipe (the "it keeps asking me to log in" fix). Not for releases, which go through ci-release on ffbox.
+description: Upload a multiplayer build to Steam from the M5 Mac with steamcmd — the login/upload mechanics mp-beta-deploy relies on, including the cached-token login recipe (the "it keeps asking me to log in" fix). Not for releases, which go through ci-release on ffbox.
 ---
 
 # Uploading a Final Factory build to Steam (from the Mac)
@@ -8,24 +8,24 @@ description: Upload a multiplayer build to the Steam beta branches from the M5 M
 **Releases never come through here.** Every release build of the main game and the demo is built
 and uploaded by CI on the ffbox build server: use the `ci-release` skill. Nobody builds or uploads
 a release by hand any more (no `Build and Upload All`, no steamcmd, no ZIP upload). This skill
-covers only the MP closed-beta upload (`mp-beta-deploy`).
+covers only the fallback upload (`mp-beta-deploy`).
 
 An upload made here is still a release to the testers, so it ends with the patch notes step of
 `mp-beta-deploy` (§8: the `ci-release` skill's `patch-notes.md`, posted as Max in #dev-patch-notes), and
 its vdf `"desc"` comes from the same notes file (`mp-beta-deploy` §5).
 
-**Which build skill, in one line:** a new closed-beta build is a develop `ci-release` (ffbox sets its
-main app live on `multiplayer-closed-beta` and `multiplayer-beta`, 2026-09-26/28); a public release is a master `ci-release`;
+**Which build skill, in one line:** a new dev build is a develop `ci-release` (ffbox sets its main app
+live on `development`); a release is a master `ci-release` (main live on `pre-release`);
 `mp-beta-deploy` (this skill's upload mechanics) is only the fallback when ffbox is down or for a
 special build. Full decision table: project-memory `which-build-skill`.
 
-**Branch and sign-in (Ben, 2026-09-25, supersedes older notes below where they differ):** the MP beta
-branches are **`multiplayer-closed-beta`** and, since 2026-09-28, **`multiplayer-beta`** (a beta build goes live on both), never `development` (another branch on the same app). Uploads use
-steamcmd on the M5 with its own home and a cached token (below), so normally nobody signs in. When the
-token is rejected, steamcmd prompts and Ben signs in; agents need no Steam password and never ask for one. The branch's tester password (for
-`app_update 1383150 -beta multiplayer-closed-beta -betapassword <pw>` to install or verify the build as
-a tester) is deliberately NOT in this public repo: it is in the private game repo, 068 `tasks.md` T041,
-or ask Ben.
+**Branch and sign-in:** the fallback sets the main app live on the branch ffbox would have set:
+`development` for a develop build, `pre-release` for a master build, never the default branch (Ben or
+Lothsahn move that by hand). Uploads use steamcmd on the M5 with its own home and a cached token
+(below), so normally nobody signs in. When the token is rejected, steamcmd prompts and Ben signs in;
+agents need no Steam password and never ask for one. A branch's tester password (for
+`app_update 1383150 -beta <branch> -betapassword <pw>` to install or verify the build as a tester) is
+deliberately NOT in this public repo: ask Ben.
 
 ## The login model that actually works — read this FIRST (proven 2026-09-27)
 
@@ -50,7 +50,7 @@ or expired) does Ben type the password and approve Steam Guard, at steamcmd's ow
 
 ## Recipe
 
-1. **Building + deploying the MP beta is its own skill: `ff-agents:mp-beta-deploy`** (Ben's word only).
+1. **The manual build + upload fallback is its own skill: `ff-agents:mp-beta-deploy`** (Ben's word only).
    It carries the full verified procedure. This skill is the Steam login/upload mechanics it relies on.
    Never use the Build menu for the beta: every Build path strips the multiplayer define (`6c8dc3f99`).
 
@@ -65,16 +65,15 @@ or expired) does Ben type the password and approve Steam Guard, at steamcmd's ow
    to sign in there. A wrong password makes steamcmd exit: relaunch the same file.
 
 4. **Verify** the BuildID in the output. `app_info_print 1383150` from the separate home does NOT list the
-   private `multiplayer-closed-beta` branch (2026-09-27), so it cannot confirm the branch; see `mp-beta-deploy` §6.
+   password-protected branches, so it cannot confirm the branch; see `mp-beta-deploy` §6.
 
 **First-time setup on a new home** (done on the M5 2026-09-27): `mkdir -p ~/.steamcmd-home`, then run
 `HOME=~/.steamcmd-home steamcmd +login slims20 +quit` in a Terminal window for Ben to sign in once.
 
 ## Facts and gotchas
 
-- The three `*_mp_beta.vdf` in `cicd/` are UNTRACKED and carry `setlive multiplayer-closed-beta`
-  (the fallback also sets `multiplayer-beta` with a second app build: `mp-beta-deploy` §5/§6)
-  with forward-slash contentroots pointing at the `cicd/mp_beta_upload/` snapshot. The canonical
+- The three `*_mp_beta.vdf` in `cicd/` are UNTRACKED; the app vdf's `setlive` names the branch
+  (`mp-beta-deploy` §5), and the depot vdfs carry forward-slash contentroots pointing at the `cicd/mp_beta_upload/` snapshot. The canonical
   depot vdfs are left untouched.
 - The **in-editor uploader is Windows-only** (`FindSteamCmdPath` wants `steamcmd.exe`,
   `BuildCommand2.cs`), so the Mac path is always `steamcmd` on the command line.
@@ -91,7 +90,7 @@ or expired) does Ben type the password and approve Steam Guard, at steamcmd's ow
 
 ## Beta builds and uploads come from the M5, never BEAST
 
-Standing rule (Ben, 2026-09-25): every MP beta build is made on the M5, because it builds both the
+Standing rule (Ben, 2026-09-25): every manual build is made on the M5, because it builds both the
 PC and the Mac versions, and the upload runs there too. (Releases are built on ffbox: `ci-release`.) Do not build or upload from BEAST,
 even though BEAST has a steamcmd (`C:\steamworks\sdk	ools\ContentBuilderuilder`) with a cached
 `slims20` entry: its desktop Steam is logged into the same account and the live play clients there use

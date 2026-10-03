@@ -11,8 +11,7 @@ multiplayer test-leg client, an honest-coop play client, an editor, a worker age
 run players from `C:/Users/rydin/ff-worker` any more; those are the pre-sandbox lab and are legacy.
 
 **Exception, builds that go to Steam (Ben, 2026-09-25):** never made on BEAST, sandbox or not.
-Releases (main and demo) are built and uploaded by CI on ffbox (`ci-release`), and since 2026-09-26 a
-develop release is also the MP beta build; the last-resort manual fallback (`mp-beta-deploy`, `steam-upload`; only when ffbox CI is down, with Ben's OK) builds
+Releases (main and demo) are built and uploaded by CI on ffbox (`ci-release`); the last-resort manual fallback (`mp-beta-deploy`, `steam-upload`; only when ffbox CI is down, with Ben's OK) builds
 both the PC and the Mac versions on the M5. Sandbox
 Windows builds are for test legs and play clients only.
 
