@@ -14,25 +14,29 @@ adds what a release rests on and the first check after it.
    `pr_evidence.py --audit --since <date of the previous release>` lists them.
 3. **Saves still load.** The hard rule, as `ci-release` section 0 has it: the golden-fixture and
    layout tests pass in the release run, and a layout change has its upgrade step.
-4. **Write what you expect:** which players build, which branch goes live with which app (read
+4. **Who asked is on record.** The request for the release, and any hold or lift of a hold, names
+   its sender: the message's `[from <name>]` / `[from the orchestrator, for <name>]` line or the
+   ledger's requester. Write that name and nothing else; with none, the hold stands and you ask
+   (lesson: [name a decider only from the sender line](../lessons/name-a-decider-only-from-the-sender-line.md)).
+5. **Write what you expect:** which players build, which branch goes live with which app (read
    `SETLIVE`, never recall it), and the test counts you expect to see.
 
 ## After it is live: the first check, within an hour
 
-5. **It is the build you meant, on the branch ffbox actually sets.** `python scripts/release-status.py
+6. **It is the build you meant, on the branch ffbox actually sets.** `python scripts/release-status.py
    <version>` (game repo) says LANDED, with the BuildID on `development` for a develop release or on
    `pre-release` for a master release (ffbox `release_lane.SETLIVE`, read by the script). Any
    other branch is moved by a person; never propose moving one while the script says BUILDING or
    WAITING (lesson: [a release lands where SETLIVE says](../lessons/a-release-lands-where-setlive-says.md)).
-6. **Players are not worse off than on the previous build.** Read, by version and by platform
+7. **Players are not worse off than on the previous build.** Read, by version and by platform
    (Windows, Mac): the crash and desync reports players' games uploaded for the new version
    (FFBox's intake holds them; an orchestrator sees them with `ffbox_activity`), and new threads
    in the bug channels that name it (`ffdiscord read`). Reading is all you do there; FFBox owns
    those channels.
-7. **Stop and report** when a save does not load, a platform is missing, or reports for the new
+8. **Stop and report** when a save does not load, a platform is missing, or reports for the new
    version are clearly above the previous one's. Give the evidence and the previous BuildID.
    Rolling back or promoting a branch is the owner's call; never move a Steam branch by hand.
-8. **Patch notes are posted once it is confirmed live**, once, as Max in #dev-patch-notes
+9. **Patch notes are posted once it is confirmed live**, once, as Max in #dev-patch-notes
    (`ci-release` section 3), with the wording from step 2. The release is not done without the
    message link; a machine with no ffdiscord config reports the post as an open step (lesson:
    [a release is done when its notes are posted](../lessons/a-release-is-done-when-its-notes-are-posted.md)).

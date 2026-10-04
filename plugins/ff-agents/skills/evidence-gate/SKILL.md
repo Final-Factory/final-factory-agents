@@ -83,6 +83,11 @@ report. Change nothing on a guess.
   anything a person reads, scan it for request ids (w293), PR numbers (#972), commits, worker or
   session ids and sandbox names: each one gets its plain-English words beside it, on every
   appearance, not only the first.
+- **Name a decider only from the sender line** ([lesson](lessons/name-a-decider-only-from-the-sender-line.md)).
+  Before you write that a person approved, held, lifted, overrode or decided something (a PR
+  description, release notes, a ledger note, a report), copy the name from that message's
+  `[from <name>]` or `[from the orchestrator, for <name>]` line, or from the ledger's requester. A
+  message without one is not from "the user" your prompt names: write "unconfirmed" and ask.
 
 ## Checklists: read the one for what you are doing
 
@@ -128,6 +133,9 @@ One file each under `lessons/`: the rule, why (the incident, dated), how to appl
 - [Verify simulation at a slow host's frame rate](lessons/verify-simulation-at-a-slow-hosts-frame-rate.md):
   per-frame code writes no simulation state; prove a move with a frame-without-heartbeat test and a
   multiplayer run whose host is held near 20 fps (w342/w356: a Steam Deck host forked alone).
+- [Name a decider only from the sender line](lessons/name-a-decider-only-from-the-sender-line.md):
+  an approval, hold or decision gets the name on its message's `[from …]` line or the ledger's
+  requester; none means "unconfirmed" and ask (w389: a bare message became "Release hold lifted (Ben)").
 
 ## Adding a lesson
 
