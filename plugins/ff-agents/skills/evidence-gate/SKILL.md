@@ -125,6 +125,9 @@ One file each under `lessons/`: the rule, why (the incident, dated), how to appl
   name means nothing to a person; put what it is beside it, every time.
 - [Lessons belong in the harness repo](lessons/lessons-belong-in-the-harness-repo.md): not in a
   machine's or an orchestrator's memory folder.
+- [Verify simulation at a slow host's frame rate](lessons/verify-simulation-at-a-slow-hosts-frame-rate.md):
+  per-frame code writes no simulation state; prove a move with a frame-without-heartbeat test and a
+  multiplayer run whose host is held near 20 fps (w342/w356: a Steam Deck host forked alone).
 
 ## Adding a lesson
 

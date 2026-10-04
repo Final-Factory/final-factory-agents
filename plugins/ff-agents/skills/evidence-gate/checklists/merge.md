@@ -42,6 +42,12 @@ Not verified: the Bats' slot lag (simulation, follow-up PR)
   where the event is.
 - **Kind `simulation`** needs "Tests", "Determinism audit" (with the heartbeat count, per the
   `determinism-audit` skill) and "Save compatibility" (the repo's hard rule).
+- **A new or moved system, or code that runs per frame or on one peer only** (a request leg, a
+  publisher): the PR names the system's group; per-frame code writes nothing the simulation reads
+  (`PerFrameSystemCensusTest` passes, a frame-without-heartbeat test pins a move); and the
+  determinism run names its frame rates, with a host held near 20 fps against 60 fps clients
+  ([verify at a slow host's frame rate](../lessons/verify-simulation-at-a-slow-hosts-frame-rate.md)).
+  A reviewer checks the same three things.
 - **"Not verified"** is always there, even when it says "nothing". It is the honest place for
   what you could not check.
 - Nothing in the section may be pending. Finish the review, then merge.
