@@ -1,6 +1,6 @@
 ---
 name: evidence-gate
-description: "Before any consequential action (spending money, publishing or sending anything, changing a live setting, releasing, merging a simulation or player-visible change, deleting, or reporting a fix as done) and before recommending one, list the choices, say what each rests on (measured, sourced or guess), settle your own guesses by research, name how it could fail and when you will look, then proceed. A person is asked only for money, for what the rules reserve for them, or at a real fork. Holds the working-rule lessons, the visual, merge and release checklists, and pr_evidence.py, which checks a PR's Evidence section. Use before acting on something you have not verified, when writing a brief or a report with numbers or recommendations, and after any miss (add a lesson)."
+description: "Before any consequential action (spending money, publishing or sending anything, changing a live setting, releasing, merging a simulation or player-visible change, deleting, or reporting a fix as done) and before recommending one, list the choices, say what each rests on (measured, sourced or guess), settle your own guesses by research, name how it could fail and when you will look, then proceed. A person is asked only for money, for what the rules reserve for them, or at a real fork. Holds the working-rule lessons, the visual, merge, release and FFBox desync PR checklists, and pr_evidence.py, which checks a PR's Evidence section. Use before acting on something you have not verified, when writing a brief or a report with numbers or recommendations, and after any miss (add a lesson)."
 ---
 
 # Evidence gate: research the decision before acting
@@ -89,6 +89,10 @@ report. Change nothing on a guess.
 - [Visual changes](checklists/visual.md)
 - [Merges](checklists/merge.md), with `pr_evidence.py` for the pull request's `## Evidence` section
 - [Releases](checklists/release.md)
+- [FFBox desync PRs](checklists/ffbox-desync-pr.md) (Lothsahn's standing policy, 2026-10-04): classify
+  1 report generation only, 2 a game desync fix, 3 capture during play; tests, a 2-peer red/green
+  check for 2, a before/after tick and frame measurement for 3 (under 1% merges, above escalates
+  through the intake with `PERF-ESCALATION`).
 - Ads and outreach live in the ff-marketing repo: `lessons/ads.md` and `lessons/outreach.md`,
   enforced by `scripts/ads/ffads lint`.
 
