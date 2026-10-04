@@ -65,7 +65,9 @@ or a concrete timing reason, and say in your report which it is and when it will
 
 ## After the action
 
-Do the first check when you said you would (`wake_me` brings you back), by the breakdowns you
+Do the first check when you said you would (`wake_me` brings you back; an FF Factory orchestrator
+watching something every N hours or each morning sets `set_timer` once instead, which survives
+restarts and its person's messages: FF Factory docs/orchestrators.md, "Timers"), by the breakdowns you
 named, against the numbers you wrote. If reality is far off, stop, find which failure it is, and
 report. Change nothing on a guess.
 

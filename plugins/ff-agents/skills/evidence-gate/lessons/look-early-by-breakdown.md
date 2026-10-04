@@ -29,7 +29,9 @@ seven-day sale, each lost day is a seventh of the window.
   first check), **first check** (when, which breakdowns), and the result that means stop.
 - Pick breakdowns that separate the failures: for ads, country, ad group and creative; for a
   release, version and platform; for a multiplayer fix, host and client.
-- Use `wake_me` so the check happens when it is due, not when someone asks.
+- Use `wake_me` so the check happens when it is due, not when someone asks. A check that recurs
+  (every hour, each morning) is an FF Factory orchestrator's `set_timer`, set once; `wake_me` is
+  one-off and a person's message cancels it.
 - A check that returns totals only is incomplete. Say so and read the tables.
 - Off the numbers: pause what is off, name which failure it is, report. An adjustment is a new
   decision with its own basis.
