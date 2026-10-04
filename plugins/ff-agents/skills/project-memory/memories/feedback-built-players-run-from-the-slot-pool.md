@@ -37,8 +37,21 @@ eight slot paths once per machine (32 rules), so a slot never prompts.
 - A player found by its command line (`peer.py`, `agent_chain.py`) is marked by its `-logFile` or
   label now: its exe path is the slot, not the build.
 - The audit (`run_build_multiplayer_audit.sh` and its wrappers), feel, bench, join-policy and
-  slow-client scripts, `launch_windowed_pair.sh`, the cross-platform peer adapters and `ffnightly.py`
-  already go through it (game PR #770; nightly #758).
+  slow-client scripts, `launch_windowed_pair.sh`, the cross-platform peer adapters, `ffnightly.py run`
+  (game PR #770; nightly #758) and `poke.py up` (game PR #993) already go through it.
+- **`ScenarioRun` alone does not lease** (w323, 2026-10-03). The lease lives in `ffnightly.py`'s `run`
+  main (`PlayerSlots` before `ScenarioRun`). `poke.py up` built its own `ScenarioRun` with the raw
+  `--player` path, so every `poke.py up --player <per-commit build>` (and agents' wrapper scripts
+  around it) raised a prompt: four on lothdesktop in 40 minutes. Code that constructs `ScenarioRun` or
+  `lab.Peer` and launches must lease first (`player_slots.acquire_or_fallback`; a short-lived
+  launcher whose players outlive it gives each its own lease with `player_slots.share(lease, pid)`).
+  A checkout from before #993 still has the old `poke.py`: rebase onto develop.
+- **Finding what prompted** (Windows): `Get-WinEvent -LogName 'Microsoft-Windows-Windows Firewall
+  With Advanced Security/Firewall'`. Event 2097 added by `svchost.exe` = a prompt appeared
+  (`Application Path` names the exe); 2099 by `dllhost.exe` = someone answered it. Match that local
+  time against the agents' Bash/PowerShell tool calls in `~/.claude/projects/D--work-ffsb-*/*.jsonl`
+  (timestamps are UTC) to find the launcher. `Get-NetFirewallApplicationFilter` rules named
+  `finalfactory` (not `Final Factory player slotK`) are each a past prompt.
 - Full pool or `FF_PLAYER_SLOTS=off`: the path itself runs, with a log line. The pool is off by
   default on GitHub Actions runners. `player_slots.py status` shows the pool.
 - A new Windows machine needs the rules once: `scripts\nightly\setup_player_slot_firewall.ps1` as
