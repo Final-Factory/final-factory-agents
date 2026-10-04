@@ -52,7 +52,15 @@ eight slot paths once per machine (32 rules), so a slot never prompts.
   time against the agents' Bash/PowerShell tool calls in `~/.claude/projects/D--work-ffsb-*/*.jsonl`
   (timestamps are UTC) to find the launcher. `Get-NetFirewallApplicationFilter` rules named
   `finalfactory` (not `Final Factory player slotK`) are each a past prompt.
-- Full pool or `FF_PLAYER_SLOTS=off`: the path itself runs, with a log line. The pool is off by
-  default on GitHub Actions runners. `player_slots.py status` shows the pool.
+- **A launch outside the slot root is refused** (w350, game PR #1015). A full or broken pool raises
+  `SlotRequired` (`player_slots.py launch`/`FF_LAUNCH` exit 3) instead of running the build folder,
+  and `lab.Peer.launch` refuses a local player outside the slot root, so `ffnightly run`, `poke up`
+  and the audit, feel and bench scripts stop with the reason rather than at a prompt. Read
+  `player_slots.py status` (who holds the slots) and wait or stop your own players; don't work
+  around it. `FF_PLAYER_SLOTS=off` runs from anywhere, and is the default on GitHub Actions runners.
+- **A branch cut before a launcher fix keeps the old launcher** (w350, 2026-10-03): lag-lead cut its
+  branch 20 minutes before #993 merged and its `poke.py up` raised a prompt for its
+  `.nightly-builds/<sha>-win` build. After a tooling fix lands, rebase before launching players, or
+  run the script from an up-to-date checkout.
 - A new Windows machine needs the rules once: `scripts\nightly\setup_player_slot_firewall.ps1` as
   admin (expect "OK: 32 allow rules").

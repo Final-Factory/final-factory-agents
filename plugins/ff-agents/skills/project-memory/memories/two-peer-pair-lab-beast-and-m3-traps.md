@@ -14,8 +14,9 @@ and `lab.pair-*.json`.
   split at `&&` and `|` before bash sees it. Send the script over stdin:
   `ssh beast '"C:\Program Files\Git\bin\bash.exe" -l -s' < script`.
 - The session's processes die when the ssh session ends, `nohup … &` or not. Keep one ssh open for
-  the player's life (`exec ./finalfactory.exe …` as the last line of the stdin script) and stop it
-  by ending that ssh or `taskkill //PID`.
+  the player's life (`exec python scripts/nightly/player_slots.py launch <player dir> -- …` as the
+  last line of the stdin script: it waits, and the player runs from a firewall-allowed slot, never
+  `./finalfactory.exe` in the build folder) and stop it by ending that ssh or `taskkill //PID`.
 - `wmic` is gone. Find a player with PowerShell:
   `Get-CimInstance Win32_Process -Filter "Name='finalfactory.exe'"` and match its command line.
   Match on the run's own log file name, not on the scenario label, or a second run finds the first
