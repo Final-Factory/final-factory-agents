@@ -72,6 +72,13 @@ What the script cannot do: judge whether you looked carefully. It checks that th
 basis and the place to look are written down, that nothing is pending, and that a visual change
 names a built player, the event's frames and the intended look.
 
+## After the merge: close the request
+
+When the PR serves an FF Factory request (its `Request: wNNN` line) and every step after the merge
+is finished too, end your report with a line `DONE: wNNN` and say there how each step after the
+merge went; while one is left, say which instead. The ledger closes the request on that line
+([say DONE per request](../lessons/say-done-per-request.md)).
+
 Lessons behind this list:
 [merge your own pull request](../lessons/merge-your-own-pr.md),
 [no merge before the review](../lessons/no-merge-before-the-review.md),

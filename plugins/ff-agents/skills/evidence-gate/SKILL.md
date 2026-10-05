@@ -143,6 +143,9 @@ One file each under `lessons/`: the rule, why (the incident, dated), how to appl
 - [Check the other system's live config](lessons/check-the-other-systems-live-config.md): a tool's
   sentence about what another system does is a guess until that system's own config says so (w412:
   "automatic investigations are not built yet" while FFBox's `intake.auto` was on).
+- [Say DONE per request](lessons/say-done-per-request.md): end a report with `DONE: wNNN` only when
+  every step of the request is finished, post-merge steps included; answer a wrap-up or "Is it
+  done?" with DONE or what is left (w419: w342 stayed open with its work done).
 
 ## Adding a lesson
 
