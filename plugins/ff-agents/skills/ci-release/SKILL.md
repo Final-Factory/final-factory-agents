@@ -81,6 +81,9 @@ Design and code: ffbox repo `design/ffbuild_release_design.txt`, `scripts/releas
 - Which branch: master or develop only, as asked. Never bump a feature branch: that is not a release.
 - Which version: the RC (the fourth number) plus one, unless you were told otherwise (e.g. a minor
   bump `0.21.0.30` → `0.22.0.0`, which is `--version 0.22.0.0` below). Say the version before you push.
+  **To players it is "Build R", its last number** (Ben, 2026-10-04, w395): 0.50.0.76 is Build 76 in
+  the notes, the #dev-patch-notes post and the Steam description. The version stays four-part in
+  everything else (the bump, file names, `release-status.py`, ffbox).
 - Nothing already in flight for that branch: check that the latest version bump's release has finished
   (section 2) before starting another.
 - **Tests: the release run's own `Test in editmode` job is the gate; run none yourself**
@@ -116,7 +119,8 @@ exactly as **`patch-notes.md`** beside this file says: line 1 is `steam_descript
 list>` (ffbox makes it the Steam build's description, `<version> (<sha9>): <that line>`), line 2 is
 blank, and the rest is the player-facing #dev-patch-notes post. Then pass it to the script with
 `--notes`, which commits it with the bump as `cicd/release-notes/<version>.md`. The script refuses a
-file without the `steam_description:` line.
+file without the `steam_description:` line, and (since w395) one that names a four-part version or
+whose post does not call the release `Build <R>`.
 
 **"Fixed" in the notes rests on something** (2026-10-02; `evidence-gate`, `checklists/release.md`). 0.50.0.64
 told players two things were fixed that nobody had seen in a built game. For each player-visible fix, find
@@ -127,8 +131,9 @@ leave it out, and tell whoever asked for the release which fixes are unseen. `pr
 ## 1. Start it: one command
 
 The game repo's `scripts/trigger-ci-release.sh` makes the bump: the `FinalFactoryVersion` line in
-`FFVersion.cs` and `bundleVersion` in `ProjectSettings.asset`, committed alone with the version as the
-message. With `--notes FILE` it adds that file as `cicd/release-notes/<version>.md` in the same
+`FFVersion.cs`, the `ReleasedUtc` line under it (the bump's time in UTC, which the main menu shows
+beside the version, w395) and `bundleVersion` in `ProjectSettings.asset`, committed alone with the
+version as the message. With `--notes FILE` it adds that file as `cicd/release-notes/<version>.md` in the same
 commit. The Unity editor's **Build → Trigger CI Release** runs the same script (without notes, so its
 Steam description is only the version: prefer the command line).
 

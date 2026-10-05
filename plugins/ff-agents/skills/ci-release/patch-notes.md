@@ -15,6 +15,14 @@ It is part of the release, not an optional extra: a requested release is done on
 on its branch AND the notes are posted (`SKILL.md` section 3). If they cannot be posted from this
 machine, the release stays open and the report says so.
 
+**Players hear "Build R", its last number** (Ben, 2026-10-04, w395: "Build 75 is out"). In everything
+a player reads (the post's title and bullets, and the `steam_description:` line), 0.50.0.76 is
+**Build 76**, and an older release named in a bullet is a build too ("saves that Builds 72 to 74
+wrote", never "0.50.0.72"). The version itself stays four-part everywhere else: the file name
+`cicd/release-notes/<version>.md`, the bump, `release-status.py <version>`, ffbox. The game repo's
+`scripts/trigger-ci-release.sh --notes` refuses a file that names a four-part version or whose post
+does not say `Build <R>`.
+
 ## 1. Find the range
 
 The base is the commit the previous build players got was **built from**, on the same branch. Look
@@ -64,17 +72,18 @@ branch moves before you trigger, re-read the new commits and add them.
 script's `--notes` commits it as `cicd/release-notes/<version>.md`.
 
 - **Line 1**: `steam_description: ` then a short change list for the partner site's Builds page.
-  Start with the build kind ("Dev build:" for develop, "Release:" for master), then the three or four
-  biggest changes, comma-separated, plus a count of the rest. ffbox prefixes the version and sha, so
-  keep the line under about 170 characters. No quotes or backslashes (they are dropped).
+  Start with the build kind and number ("Dev build 76:" for develop, "Release build 76:" for
+  master), then the three or four biggest changes, comma-separated, plus a count of the rest. ffbox
+  prefixes the version and sha, so keep the line under about 170 characters. No quotes or
+  backslashes (they are dropped).
 - **Line 2**: blank.
 - **The rest**: the #dev-patch-notes post, in the shape of the recent posts in that channel. Read the last two or three (`ffdiscord read 1072387196927094845 --limit 3`) before
   writing, and match them if they changed.
 
 ```text
-steam_description: <Dev build|Release>: <biggest change>, <next>, <next>, <N> other fixes
+steam_description: <Dev build|Release build> <R>: <biggest change>, <next>, <next>, <N> other fixes
 
-**<version>** <a short title naming the two or three biggest changes> (Live on the <branch> branch)
+**Build <R>** <a short title naming the two or three biggest changes> (Live on the <branch> branch)
 
 Restart Steam to pick up the update on the <branch> branch.
 
@@ -87,12 +96,13 @@ Restart Steam to pick up the update on the <branch> branch.
 * <...>
 ```
 
-Example (the committed `cicd/release-notes/0.50.0.71.md`, shortened):
+Example (the committed `cicd/release-notes/0.50.0.71.md`, shortened, with its first two lines as
+they are written since w395):
 
 ```text
-steam_description: Dev build: station deconstruct no longer tanks the frame rate, research queue drag fix, Show My Name and My Ship Outline settings, 4 other changes
+steam_description: Dev build 71: station deconstruct no longer tanks the frame rate, research queue drag fix, Show My Name and My Ship Outline settings, 4 other changes
 
-**0.50.0.71** Deconstruct Slowdown, Research Queue Drag and Your Own Name Tag (Live on the development branch)
+**Build 71** Deconstruct Slowdown, Research Queue Drag and Your Own Name Tag (Live on the development branch)
 
 Restart Steam to pick up the update on the development branch.
 
@@ -108,11 +118,12 @@ Restart Steam to pick up the update on the development branch.
 The title and restart line name the branch the build landed on: `development` for a develop release,
 `pre-release` for a master release. Omit a section that would be empty.
 
-Before triggering, check the post's length and dashes:
+Before triggering, check the post's length, dashes and version names:
 
 ```sh
 tail -n +3 Temp/release-notes-<version>.md | wc -m          # at most 2000
 grep -c '[—–]' Temp/release-notes-<version>.md             # 0
+grep -nE '[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+' Temp/release-notes-<version>.md   # nothing: say Build <R>
 ```
 
 ## 4. Post it as Max, once the build is live
