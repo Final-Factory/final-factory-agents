@@ -3,9 +3,10 @@
 
 The evidence-gate skill (checklists/merge.md) says what the section holds. This script checks the
 part a script can check: every claim has a basis and none is a guess, nothing is pending, a visual
-change names a built player, the event's place in the clip and the intended look, and a simulation
-change names its tests, its determinism audit and its save compatibility. It cannot tell whether
-anyone looked carefully. Standard library only; `gh` for everything that reads GitHub.
+change names a built player, the event's place in the clip and the intended look, a simulation
+change names its tests, its determinism audit and its save compatibility, and a change to a shader
+or material lists everything that uses it ("## Used by", from the game repo's scripts/asset_usage.py)
+with a basis for each. It cannot tell whether anyone looked carefully. Standard library only; `gh` for everything that reads GitHub.
 
     pr_evidence.py --repo OWNER/NAME --pr N               check one pull request (exit 1 on FAIL)
     pr_evidence.py --repo OWNER/NAME --pr N --comment     the same, and post the verdict on it
@@ -31,17 +32,22 @@ PENDING = re.compile(r"\b(pending|not yet|tbd|todo|to be (done|verified|reviewed
 VIDEO = re.compile(r"\.(mp4|webm|mov|mkv)\b", re.IGNORECASE)
 # Where in a clip the event is: "frames 118-190", "at 2.4 s", "0:12". A bare number range is not enough (dates, sizes).
 PLACE = re.compile(r"\bframes?\b[^\n]{0,20}\d|\b\d+(\.\d+)?\s*(s|sec|secs|seconds)\b|\b\d+:\d{2}(\.\d+)?\b", re.IGNORECASE)
-VISUAL_PATH = re.compile(r"/(Presentation|UI|VFX|Vfx|Shaders?)/|\.(shader|shadergraph|vfx|hlsl|anim|controller|uxml|uss)$")
+VISUAL_PATH = re.compile(r"/(Presentation|UI|VFX|Vfx|Shaders?)/|\.(shader|shadergraph|shadersubgraph|vfx|hlsl|cginc|mat|anim|"
+                         r"controller|uxml|uss)$", re.IGNORECASE)
+# A shared look: changing one changes everything that draws with it (w438, lessons/check-who-uses-a-shared-asset.md).
+SHARED_ASSET = re.compile(r"\.(shader|shadergraph|shadersubgraph|hlsl|cginc|mat)$", re.IGNORECASE)
+USAGE_LINE = re.compile(r"asset-usage:\s*`?([^`\s]+?)`?\s+has\s+(\d+)\s+users?\b", re.IGNORECASE)
+MEDIA = re.compile(r"\.(png|jpe?g|gif|mp4|webm|mov|mkv)\b|built player", re.IGNORECASE)
 SIMULATION_PATH = re.compile(r"^Assets/Scripts/(FFSystems|FFComponents|FFCore|FFNetcode|FFConfiguration|FFTechnology)/"
                              r"|NetworkOperations")
 NOT_GAME_CODE = re.compile(r"^Assets/(Tests|TestsSlow|Editor)/|^Assets/Scripts/PlayModeTests/|\.(meta|md)$")
 
 
-def evidence_section(body: str) -> str | None:
-    """The text under the "Evidence" heading, up to the next heading of the same or a higher level."""
+def evidence_section(body: str, heading: str = "Evidence") -> str | None:
+    """The text under the heading, up to the next heading of the same or a higher level."""
     lines = body.replace("\r\n", "\n").split("\n")
     for i, line in enumerate(lines):
-        found = re.match(r"^(#{1,6})\s*Evidence\b", line.strip(), re.IGNORECASE)
+        found = re.match(rf"^(#{{1,6}})\s*{heading}\b", line.strip(), re.IGNORECASE)
         if found:
             level = len(found.group(1))
             rest = []
@@ -85,13 +91,74 @@ def applies(files: list[str]) -> bool:
     return any(f.startswith("Assets/") and not NOT_GAME_CODE.search(f) for f in files)
 
 
+def shared_assets(files: list[str] | None) -> list[str]:
+    return [f for f in files or [] if f.startswith("Assets/") and SHARED_ASSET.search(f) and not NOT_GAME_CODE.search(f)]
+
+
+def usage_tables(section: str) -> dict[str, tuple[int, dict[str, str]]]:
+    """{asset: (the user count the tool printed, {user: basis})} from the "## Used by" section."""
+    tables, rows = {}, None
+    for line in section.split("\n"):
+        found = USAGE_LINE.search(line)
+        if found:
+            rows = {}
+            tables[found.group(1)] = (int(found.group(2)), rows)
+            continue
+        if rows is None or not line.strip().startswith("|"):
+            continue
+        cells = [c.strip() for c in line.strip().strip("|").split("|")]
+        if len(cells) < 2 or set(cells[0]) <= set("-: ") or cells[0].lower() == "user":
+            continue
+        rows[re.sub(r":\d+$", "", cells[0].strip("`"))] = cells[1]
+    return tables
+
+
+def user_basis_problem(basis: str) -> str | None:
+    label, _, how = basis.partition(":")
+    label, how = label.strip().upper(), how.strip()
+    if label not in ("TARGET", "MEASURED", "SOURCED"):
+        return "the basis starts with TARGET, MEASURED or SOURCED" + (" (a guess is not a basis)" if label == "GUESS" else "")
+    if len(how) < 10:
+        return f"{label} needs what was looked at or the source, after a colon"
+    if label == "MEASURED" and not MEDIA.search(how):
+        return "MEASURED needs a built-player before/after of this user: name the stills or the clip"
+    return None
+
+
+def used_by_problems(body: str, files: list[str] | None) -> list[str]:
+    """A changed shader or material: every user the tool found has a row and a basis (w438)."""
+    changed = shared_assets(files)
+    if not changed:
+        return []
+    section = evidence_section(body or "", "Used by")
+    if section is None:
+        return [f"this PR changes {', '.join(changed[:3])}{' and more' if len(changed) > 3 else ''} with no '## Used by' "
+                f"section: run `python3 scripts/asset_usage.py --changed origin/develop --markdown` in the game repo, "
+                f"paste it, and give every user a basis. More users than the target: give the target its own "
+                f"shader or material instead (lessons/check-who-uses-a-shared-asset.md)"]
+    tables, problems = usage_tables(section), []
+    for asset in changed:
+        if asset not in tables:
+            problems.append(f"'## Used by' has no 'asset-usage: `{asset}` has N users' line: run the tool on it")
+            continue
+        count, rows = tables[asset]
+        if len(rows) != count:
+            problems.append(f"{asset}: the tool found {count} users and the table has {len(rows)} rows: paste its table whole")
+        for user, basis in rows.items():
+            why = user_basis_problem(basis)
+            if why:
+                problems.append(f"{asset}: {user}: {why}")
+    return problems
+
+
 def check(body: str, files: list[str] | None = None) -> tuple[list[str], list[str]]:
     """Every reason the evidence is not ready (empty = PASS), and notes that do not fail it."""
+    used_by = used_by_problems(body, files)
     section = evidence_section(body or "")
     if section is None:
         return (["no '## Evidence' section: say what each claim of this pull request rests on "
-                 "(the evidence-gate skill, checklists/merge.md)"], [])
-    problems, notes = [], []
+                 "(the evidence-gate skill, checklists/merge.md)"] + used_by, [])
+    problems, notes = used_by, []
     kinds = kinds_of(section)
     if not kinds:
         problems.append("no 'Kind:' line (visual, simulation, both, or other)")

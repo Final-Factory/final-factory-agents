@@ -4,6 +4,11 @@ For any change a player sees: VFX, shaders, animation, particles, camera feel, U
 is drawn. The recording and review recipe is the `watch-video` skill; this list is what has to be
 true before the change merges or is reported as fixed.
 
+0. **Who else draws with it.** Before you edit a shader, shader graph, subgraph, include or
+   material, run `python3 scripts/asset_usage.py <path>` in the game repo. Anything besides the
+   target on the list: give the target its own shader or material, or put every user in scope and
+   show a built-player before/after of each kind. The PR's `## Used by` section lists them
+   ([lesson](../lessons/check-who-uses-a-shared-asset.md); w410 darkened every range ring).
 1. **The intended look, in the person's words.** Quote what they said ("the other player appears
    outside of the ship behind it"). If they have not said, write it yourself and say it is yours.
    A review against your own description of a mistake will pass the mistake.

@@ -48,6 +48,22 @@ Not verified: the Bats' slot lag (simulation, follow-up PR)
   determinism run names its frame rates, with a host held near 20 fps against 60 fps clients
   ([verify at a slow host's frame rate](../lessons/verify-simulation-at-a-slow-hosts-frame-rate.md)).
   A reviewer checks the same three things.
+- **A changed shader, shader graph, subgraph, include or material** needs a `## Used by` section
+  beside `## Evidence`: the output of the game repo's `python3 scripts/asset_usage.py --changed
+  origin/develop --markdown`, with the tool's table whole and a basis on every row (`TARGET:`,
+  `MEASURED:` naming a built-player before/after, or `SOURCED:`). The game repo's CI job
+  `asset-usage.yml` checks the same list against the PR's own diff
+  ([check who uses a shared asset](../lessons/check-who-uses-a-shared-asset.md)).
+
+  ```markdown
+  ## Used by
+
+  asset-usage: `Assets/Art/Shaders/AltIconSprite.ShaderGraph` has 1 user (1 material); they are used by 1 prefab
+
+  | User | Basis |
+  |---|---|
+  | `Assets/Art/Materials/AsteroWorldSpriteMat.mat` | TARGET: the Alt-view icon template (Evidence above) |
+  ```
 - **"Not verified"** is always there, even when it says "nothing". It is the honest place for
   what you could not check.
 - Nothing in the section may be pending. Finish the review, then merge.

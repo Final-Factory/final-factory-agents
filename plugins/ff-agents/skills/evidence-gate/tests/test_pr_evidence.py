@@ -2,6 +2,7 @@
 
     python3 -m unittest discover -s plugins/ff-agents/skills/evidence-gate/tests -p 'test_*.py' -v
 """
+import re
 import sys
 import unittest
 from pathlib import Path
@@ -170,6 +171,50 @@ class ReplayTest(unittest.TestCase):
         self.assertIn("'Clips' does not say where the event is", reasons)
         self.assertNotIn("Built player", reasons)       # it had built players and Ben's words; nobody had looked
         self.assertNotIn("Intended look", reasons)
+
+
+class UsedByTest(unittest.TestCase):
+    """w438: a shader or material change lists everything that uses it. #1068 changed the sprite shader 25
+    materials share and checked only the Alt-view icons; every range ring in 0.50.0.77 filled dark."""
+
+    FILES_1068 = ["Assets/Art/Shaders/AltIconBacking.hlsl", "Assets/Art/Shaders/AltIconBacking.hlsl.meta",
+                  "Assets/Art/Shaders/AsteroWorldSprite.ShaderGraph",
+                  "Assets/Resources/ItemEntities/NetworkedStorageHoldEntity.prefab",
+                  "Assets/Scripts/ControllerSystems/ActiveItemIconScaleSystem.cs",
+                  "Assets/Scripts/FFSystems/Indicators/ActiveItemDisplaySystem.cs", "Assets/Tests/UI/CargoHoldAltViewIconTest.cs"]
+    FILES_1076 = ["Assets/Art/Materials/AsteroWorldSpriteMat.mat", "Assets/Art/Shaders/AltIconBacking.hlsl",
+                  "Assets/Art/Shaders/AltIconSprite.ShaderGraph", "Assets/Art/Shaders/AltIconSprite.ShaderGraph.meta",
+                  "Assets/Art/Shaders/AsteroWorldSprite.ShaderGraph", "Assets/Scripts/ControllerSystems/AltIconBacking.cs",
+                  "Assets/Tests/Presentation/AltIconBackingScopeTest.cs"]
+
+    def body(self, name):
+        return (HERE / "fixtures" / name).read_text(encoding="utf-8")
+
+    def test_1068_as_written_fails_only_on_the_missing_used_by(self):
+        problems = pe.check(self.body("pr-1068-alt-icon-backing.md"), self.FILES_1068)[0]
+        self.assertEqual(len(problems), 1, problems)
+        self.assertIn("AsteroWorldSprite.ShaderGraph with no '## Used by' section", problems[0])
+        self.assertEqual(pe.check(self.body("pr-1068-alt-icon-backing.md"), [f for f in self.FILES_1068
+                                                                             if "Art/Shaders" not in f])[0], [])
+
+    def test_1076_with_its_users_listed_passes(self):
+        self.assertEqual(pe.check(self.body("pr-1076-shaped-hover-darkness.md"), self.FILES_1076)[0], [])
+
+    def test_a_dropped_row_or_a_weak_basis_fails(self):
+        body = self.body("pr-1076-shaped-hover-darkness.md")
+        dropped = re.sub(r"^\| `Assets/Resources/Icons/IconMaterial/NoFuelMat.mat` \|.*\n", "", body, flags=re.MULTILINE)
+        self.assertIn("the tool found 24 users and the table has 23 rows", "\n".join(pe.check(dropped, self.FILES_1076)[0]))
+        guessed = re.sub(r"(\| `Assets/Art/Materials/InserterArrow.mat` \| )[^|]*\|", r"\1GUESS: arrows are opaque |", body)
+        self.assertIn("InserterArrow.mat: the basis starts with TARGET, MEASURED or SOURCED (a guess is not a basis)",
+                      "\n".join(pe.check(guessed, self.FILES_1076)[0]))
+        unmeasured = re.sub(r"(\| `Assets/Art/Materials/InserterArrow.mat` \| )[^|]*\|",
+                            r"\1MEASURED: looked at it in the editor scene |", body)
+        self.assertIn("MEASURED needs a built-player before/after",
+                      "\n".join(pe.check(unmeasured, self.FILES_1076)[0]))
+
+    def test_a_material_counts_as_visual(self):
+        self.assertTrue(pe.VISUAL_PATH.search("Assets/Art/Materials/Glow.mat"))
+        self.assertTrue(pe.VISUAL_PATH.search("Assets/Art/Shaders/AsteroWorldSprite.ShaderGraph"))
 
 
 class AuditTest(unittest.TestCase):

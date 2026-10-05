@@ -1,6 +1,6 @@
 ---
 name: evidence-gate
-description: "Before any consequential action (spending money, publishing or sending anything, changing a live setting, releasing, merging a simulation or player-visible change, deleting, or reporting a fix as done) and before recommending one, list the choices, say what each rests on (measured, sourced or guess), settle your own guesses by research, name how it could fail and when you will look, then proceed. A person is asked only for money, for what the rules reserve for them, or at a real fork. Holds the working-rule lessons, the visual, merge, release and FFBox desync PR checklists, and pr_evidence.py, which checks a PR's Evidence section. Use before acting on something you have not verified, when writing a brief or a report with numbers or recommendations, and after any miss (add a lesson)."
+description: "Before any consequential action (spending money, publishing or sending anything, changing a live setting, releasing, merging a simulation or player-visible change, deleting, or reporting a fix as done) and before recommending one, list the choices, say what each rests on (measured, sourced or guess), settle your own guesses by research, name how it could fail and when you will look, then proceed. A person is asked only for money, for what the rules reserve for them, or at a real fork. Holds the working-rule lessons, the visual, merge, release and FFBox desync PR checklists, and pr_evidence.py, which checks a PR's Evidence section and, for a changed shader or material, its Used by section. Use before acting on something you have not verified, when writing a brief or a report with numbers or recommendations, and after any miss (add a lesson)."
 ---
 
 # Evidence gate: research the decision before acting
@@ -143,6 +143,11 @@ One file each under `lessons/`: the rule, why (the incident, dated), how to appl
 - [Check the other system's live config](lessons/check-the-other-systems-live-config.md): a tool's
   sentence about what another system does is a guess until that system's own config says so (w412:
   "automatic investigations are not built yet" while FFBox's `intake.auto` was on).
+- [Check who uses a shared shader or material](lessons/check-who-uses-a-shared-asset.md): run the
+  game repo's `scripts/asset_usage.py` before the edit; more users than the target means a new
+  shader or material for it, or a built-player before/after of every user; the PR's `## Used by`
+  lists them and `pr_evidence.py` and CI fail without it (w410: one sprite-shader edit for the
+  Alt-view icons darkened every range ring in Build 77).
 - [Say DONE per request](lessons/say-done-per-request.md): end a report with `DONE: wNNN` only when
   every step of the request is finished, post-merge steps included; answer a wrap-up or "Is it
   done?" with DONE or what is left (w419: w342 stayed open with its work done).
