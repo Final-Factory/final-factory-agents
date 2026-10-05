@@ -79,6 +79,10 @@ report. Change nothing on a guess.
   settles its own guesses.
 - When you pass on someone's report, keep its labels. A guess never becomes a recommendation on
   the way up.
+- **A claim about what another system does comes from that system** ([lesson](lessons/check-the-other-systems-live-config.md)).
+  Before you relay "X is not built", "nothing will investigate this" or "that is off" from one
+  system's tool about another, read the other system's live config or state (for FFBox,
+  `ffbox_activity show config` / `show signatures`) and quote the key and value, or say unknown.
 - **Say what every id is, every time** ([lesson](lessons/say-what-an-id-is.md)). Before you send
   anything a person reads, scan it for request ids (w293), PR numbers (#972), commits, worker or
   session ids and sandbox names: each one gets its plain-English words beside it, on every
@@ -136,6 +140,9 @@ One file each under `lessons/`: the rule, why (the incident, dated), how to appl
 - [Name a decider only from the sender line](lessons/name-a-decider-only-from-the-sender-line.md):
   an approval, hold or decision gets the name on its message's `[from …]` line or the ledger's
   requester; none means "unconfirmed" and ask (w389: a bare message became "Release hold lifted (Ben)").
+- [Check the other system's live config](lessons/check-the-other-systems-live-config.md): a tool's
+  sentence about what another system does is a guess until that system's own config says so (w412:
+  "automatic investigations are not built yet" while FFBox's `intake.auto` was on).
 
 ## Adding a lesson
 
