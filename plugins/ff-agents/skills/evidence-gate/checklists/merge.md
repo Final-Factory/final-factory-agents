@@ -64,6 +64,10 @@ Not verified: the Bats' slot lag (simulation, follow-up PR)
   |---|---|
   | `Assets/Art/Materials/AsteroWorldSpriteMat.mat` | TARGET: the Alt-view icon template (Evidence above) |
   ```
+- **A fix for a Discord report** has its `Discord: https://discord.com/channels/<guild>/<thread>` line
+  (or the original message's `/<guild>/<channel>/<message>` link for a message in a channel) in the
+  description before it merges, one per report: FFBox tells the reporter from it and nothing else
+  ([a fix PR names its Discord report](../lessons/a-fix-pr-names-its-discord-report.md)).
 - **"Not verified"** is always there, even when it says "nothing". It is the honest place for
   what you could not check.
 - Nothing in the section may be pending. Finish the review, then merge.

@@ -151,6 +151,9 @@ One file each under `lessons/`: the rule, why (the incident, dated), how to appl
 - [Say DONE per request](lessons/say-done-per-request.md): end a report with `DONE: wNNN` only when
   every step of the request is finished, post-merge steps included; answer a wrap-up or "Is it
   done?" with DONE or what is left (w419: w342 stayed open with its work done).
+- [A fix PR names its Discord report](lessons/a-fix-pr-names-its-discord-report.md): a
+  `Discord: <thread or message link>` line before it merges, and `RESOLVED: already fixed by PR #N`;
+  FFBox tells the reporter from those only (w436 / #1076 went untold).
 
 ## Adding a lesson
 
