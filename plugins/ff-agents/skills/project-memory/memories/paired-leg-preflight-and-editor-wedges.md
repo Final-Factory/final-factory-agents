@@ -10,7 +10,7 @@ print `preflight-pass` (Burst enabled + compilation drained) before writing any
 `.ff-local-automation.json`. The automation launcher leaves
 `BurstCompiler.Options.EnableBurstCompilation` **persistently false** after every leg, so
 re-enable it first (eval `Unity.Burst.BurstCompiler.Options.EnableBurstCompilation = true;` via
-`scripts/unity-cli.sh command --project-path <p> eval_file file=<snippet>`), then preflight.
+`python3 scripts/unity-bridge.py eval_file --project-path <p> <snippet.cs>`; before w533, `scripts/unity-cli.sh`), then preflight.
 
 What skipping it cost, each seen once:
 

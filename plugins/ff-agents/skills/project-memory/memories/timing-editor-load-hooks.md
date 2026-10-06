@@ -36,7 +36,7 @@ don't need deep profiling to rank them. Deep profiling is only for looking insid
 - MCP for Unity v10.0.0 `TransportCommandDispatcher..cctor` (`CommandRegistry.AutoDiscoverCommands`,
   a reflection scan over every type): 4.9–6.1 s on CI, 0.7 s on a Mac. v10.2.0+ uses `TypeCache`
   (PR #1136).
-- `Unity.Pipeline.Editor.PipelineServerStartup..cctor` (com.unity.pipeline starts an HTTP server
+- `Unity.Pipeline.Editor.PipelineServerStartup..cctor` (package removed 2026-10-06, w533 / PR #1154; com.unity.pipeline started an HTTP server
   on :7800): 1.0–1.7 s on CI, 0.35 s on a Mac.
 - `Unity.Entities.BindingRegistry..cctor` (TypeManager init): 1.1–2.1 s on CI. It's needed anyway.
 - `RiderScriptEditor..cctor`: 0.88 s per reload on a Mac (install discovery), 0.01 s on CI.

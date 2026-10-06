@@ -20,7 +20,7 @@ description: "How to run a THREE-peer live lane (M3 built host, M5 built client 
   the reset and stalls at `EnteredPlayMode`. A clone that joins a still-loading host trips the host's pre-connect
   grace (`LocalMultiplayerAutomationBootstrap.cs:814-850`: any peer connecting and leaving before all
   `TargetClientCount` are in ends the automation session after 10 s). Fresh leg ids per attempt — a finalized
-  artifact with the same run/leg id blocks the relaunch's auto-write. Never `unity command recompile` while the
+  artifact with the same run/leg id blocks the relaunch's auto-write. Never request a recompile (MCP `refresh_unity`; before w533 `unity command recompile`) while the
   clone is in play mode (world-null wedge: `isPlaying` true, `Ecs` NREs every frame) — exit play first.
 - **(g) `flowcontrol.stall|N` returns only after N seconds** (`LocalMultiplayerAutomationCommandRunner.cs:577`),
   so a chain `stall → resync` lands the resync AFTER the window. Background the stall on A, then fire the host's

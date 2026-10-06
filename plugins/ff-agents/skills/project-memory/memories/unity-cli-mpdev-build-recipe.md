@@ -3,6 +3,12 @@ name: unity-cli-mpdev-build-recipe
 description: "Building the multiplayer-dev players from the unity CLI shim without the bridge: the shim takes the subcommand name directly (no --json flag; run_tests filter_type is testName|assembly|category); call the private BuildAllMultiplayerDevNoUpload by reflection inside a guarded EditorApplication.update callback with a marker file (it runs the localization harvest, fonts, both platforms, the Localization copy and the cicd copy, unlike BuildWindows/OsxMultiplayerDev alone); the no-version-update path never writes PlayerSettings.bundleVersion (set it by eval first or the plist/Info stays stale); a run that triggers a platform switch can reimport every shader graph and take ~140 min instead of 24; never git rebase --autostash while a build is running with uncommitted build inputs."
 ---
 
+> **SUPERSEDED (2026-10-06, w533):** `com.unity.pipeline`, its `unity` CLI and `scripts/unity-cli.sh` were removed
+> from the game repo (FinalFactory PR #1154). Use `python3 scripts/unity-bridge.py {status|eval_file|eval|ping}
+> --project-path <abs>` (MCP for Unity's own bridge; down whenever MCP is) or the MCP tools. When the bridge is
+> down there is no second channel: restart the exact editor ([[editor-ops]] recovery). The C# recipes below still
+> work through `unity-bridge.py eval_file`; the CLI commands and flags do not.
+
 > **SUPERSEDED for building (2026-09-23):** `BuildAllMultiplayerDevNoUpload` and the other Multiplayer Dev
 > menu methods were removed in `6c8dc3f99` (2026-09-12); every Build menu path now strips the multiplayer
 > define. Releases go through `ci-release`; the manual build + upload fallback is the `mp-beta-deploy` skill (Ben's word only). The shim

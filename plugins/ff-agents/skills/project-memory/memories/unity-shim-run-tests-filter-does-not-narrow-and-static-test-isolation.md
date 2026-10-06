@@ -3,6 +3,12 @@ name: unity-shim-run-tests-filter-does-not-narrow-and-static-test-isolation
 description: "`unity command … run_tests filter=X filter_type=testName` ran the WHOLE EditMode set (4036) and Temp/pipeline_test_status.json can be STALE from an earlier run — read the shim's own JSON (result.Summary + result.Results[].Status), never grep 'Total'; a second run in one domain showed 9 failures the fresh domain did not (static HeartbeatSystem._lastAppliedSessionResetEpoch + 8 TearDown 'SteamId cannot be null' log exceptions) — clear test-facing statics in SetUp and judge a suite from a fresh-domain run."
 ---
 
+> **SUPERSEDED (2026-10-06, w533):** `com.unity.pipeline`, its `unity` CLI and `scripts/unity-cli.sh` were removed
+> from the game repo (FinalFactory PR #1154). Use `python3 scripts/unity-bridge.py {status|eval_file|eval|ping}
+> --project-path <abs>` (MCP for Unity's own bridge; down whenever MCP is) or the MCP tools. When the bridge is
+> down there is no second channel: restart the exact editor ([[editor-ops]] recovery). The C# recipes below still
+> work through `unity-bridge.py eval_file`; the CLI commands and flags do not.
+
 # The shim's test-name filter does not narrow, the status file can be stale, and statics leak between runs (2026-09-12, 069 relay #8)
 
 - **Filtering.** Two runs through `~/.local/bin/unity` with `--filter <TestClass> --filter_type testName`

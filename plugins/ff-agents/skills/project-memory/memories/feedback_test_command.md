@@ -11,6 +11,9 @@ job's result. Do NOT invent custom shell polling loops.
 
 ### Exact fast-suite selection when the exposed `run_tests` is Unity Pipeline
 
+(History: `com.unity.pipeline` was removed on 2026-10-06, w533. The `eval_file` recipe below now
+runs through `python3 scripts/unity-bridge.py eval_file --project-path <abs> <file.cs>`.)
+
 The Unity Pipeline package's `run_tests` command accepts only `filter` and `filter_type`; it
 collects matching test names by case-insensitive substring. `assembly_names` is not a command
 argument there, and `filter: "FFEditorTests", filter_type: "assembly"` also selects
@@ -18,7 +21,7 @@ argument there, and `filter: "FFEditorTests", filter_type: "assembly"` also sele
 (FinalFactory `Library/PackageCache/com.unity.pipeline@58c16695e488/Editor/Commands/TestCommands.cs:22-29`,
 `Editor/Testing/PipelineTestRunner.cs:596-606`).
 
-For an exact remote fast suite, use the project-scoped Unity CLI's `eval_file` to invoke the
+For an exact remote fast suite, use `scripts/unity-bridge.py eval_file` to invoke the
 public MCPForUnity API directly. The file calls
 `MCPForUnity.Editor.Tools.RunTests.HandleCommand` with `mode: "EditMode"`, an
 `assemblyNames` `JArray` containing only `"FFEditorTests"`, and an `initTimeout` appropriate

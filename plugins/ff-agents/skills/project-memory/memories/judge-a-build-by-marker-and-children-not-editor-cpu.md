@@ -5,7 +5,7 @@ description: "During a player build BOTH editor channels (the unity CLI shim and
 
 # Judge a build by its marker and child processes, not the editor's CPU (2026-09-12, 069)
 
-- An `eval_file` build (`unity command --project-path <repo> eval_file file=…build_mpdev_all.cs`) writes a
+- An `eval_file` build (then `unity command … eval_file`; since w533 `scripts/unity-bridge.py eval_file`) writes a
   marker (`mpdev-build-status.txt`: `running <utc>` → `Succeeded errors=0` / failure text). While it runs the
   shim's `editor_status` and the MCP bridge both time out — that is expected, not a wedge.
 - The editor's own CPU is NOT a signal: attempt 2 showed 833% only because the 26 Bee/shader children were

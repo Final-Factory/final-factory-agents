@@ -177,7 +177,7 @@ gate result; a divergence still fails normally.
 🔑 **Throttling the editor to reproduce a timing bug needs a HOLDER, not a one-shot**: the game
 caps its own frame rate at boot (`DisplaySettingsController`, "Capping FPS on system start"), so
 re-apply `QualitySettings.vSyncCount = 0` + `Application.targetFrameRate = <n>` every ~10 s for
-the whole play session via `unity-cli eval_file`.
+the whole play session via `scripts/unity-bridge.py eval_file` (or MCP `execute_code`).
 
 ## Clone setup: FMOD symlink + wrong-dir traps {#clone-setup}
 
@@ -243,7 +243,7 @@ this project. (First run on stale code otherwise silently uses the old build.)
   disown`, and monitor the LOG FILE rather than the job — a tracked background task was reaped
   mid-phase-1 and reported as killed with no audit failure at all. (`setsid` does not exist on
   macOS.) Wait for BOTH editors to report ready + `playMode: stopped`
-  (`scripts/unity-cli.sh command --project-path <abs> editor_status`) before launching the next
+  (`python3 scripts/unity-bridge.py status --project-path <abs>`) before launching the next
   audit; a preceding paired session takes time to wind down.
 
 ## Quarantined-testcase gate flake: the flip rule {#quarantine-flip-rule}
@@ -352,7 +352,7 @@ non-interactive SSH session; fast-forward it with the exact command in
 had Burst DISABLED (the one-way automation-launcher switch, see
 [Burst is OFF by design](#burst-off-by-design) — this was the PERSISTENT setting, not the
 per-session runtime disable) and the 045 preflight fails closed on it — re-enable via
-`scripts/unity-cli.sh command --project-path <repo> eval_file file=<cs>` running
+`python3 scripts/unity-bridge.py eval_file --project-path <repo> <cs>` running
 `Unity.Burst.BurstCompiler.Options.EnableBurstCompilation = true;`, then the preflight reports
 "Burst queue is still compiling" for a few minutes — a retry loop on the audit script itself
 (90s cadence) is the simplest drain wait. (2) With `HOST_IP` auto-detected as the LAN address

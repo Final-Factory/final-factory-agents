@@ -1,6 +1,6 @@
 ---
 name: editor-ops
-description: Final Factory Unity editor operations via the MCP bridge — pinning the right editor instance, compile verification after code changes (the stale-assembly and .meta false-green traps), running the EditMode test suites, editor readiness/recovery when the bridge is down or the editor hangs, the Unity CLI recovery channel, long-background-run monitoring, and editor memory capture. Use BEFORE any task that needs the live editor - running tests, verifying a compile, entering play mode, recovering a stuck editor or bridge, or monitoring a long build/audit run.
+description: Final Factory Unity editor operations via the MCP bridge — pinning the right editor instance, compile verification after code changes (the stale-assembly and .meta false-green traps), running the EditMode test suites, editor readiness/recovery when the bridge is down or the editor hangs, scripts/unity-bridge.py for shell scripts, long-background-run monitoring, and editor memory capture. Use BEFORE any task that needs the live editor - running tests, verifying a compile, entering play mode, recovering a stuck editor or bridge, or monitoring a long build/audit run.
 ---
 
 
@@ -35,10 +35,12 @@ that the current runtime exposes; do not invoke one agent runtime's CLI from the
   does not mean Codex lacks Unity MCP; discover the available tools before declaring the bridge
   unavailable.
 
-The standalone `unity` CLI is for a remote editor, targeted recovery, or a runtime where the
-Unity MCP tools truly are unavailable after discovery. State which of those reasons applies.
-When MCP returns, re-pin the matching project and verify any CLI result through MCP before using
-it as the final compile, test, or play-mode verdict.
+There is no second editor channel any more: `com.unity.pipeline` and its `unity` CLI were removed
+from the game repo (w533, FinalFactory PR #1154, 2026-10-06; its server cost 1.0-1.7 s per CI editor
+launch). A shell script, a remote editor over SSH, or a runtime without Unity MCP tools uses
+`python3 scripts/unity-bridge.py {status|eval_file|eval|ping} --project-path <abs>`, which speaks
+the SAME MCP for Unity bridge, so it is down whenever MCP is. State why you used it, and verify the
+final compile, test or play-mode verdict through MCP.
 
 ## The MCP bridge is the primary editor-control channel
 
@@ -190,9 +192,9 @@ restarts. Verify, recover, and monitor readiness yourself:
    process-CPU check to distinguish "working hard" from "hung" before declaring either.
 3. **Bridge down, stale, or editor hung? Recover it.** Keep the user informed, but do not hand
    them the recovery work. First resolve the exact checkout through `--project-path`, the MCP
-   instance descriptor, or a validated Unity process command line. Use the targeted `unity` CLI
-   status/editor-status probes and the `[UnityMcpStdioAutoStart]` startup diagnostic to classify
-   the failure. Clear stuck MCP/test state or restore stdio transport when possible. If the exact
+   instance descriptor, or a validated Unity process command line. Use `scripts/unity-bridge.py status`
+   (exit 3 = no bridge registered or port refused, 4 = no answer in time) and the
+   `[UnityMcpStdioAutoStart]` startup diagnostic to classify the failure. Clear stuck MCP/test state or restore stdio transport when possible. If the exact
    editor remains nonresponsive, stop and restart only that validated project-owned Unity process,
    using the Unity version in `ProjectSettings/ProjectVersion.txt`; never kill by a broad Unity
    name/pattern and never touch Unity Hub or another checkout. Poll `mcpforunity://instances`, pin
@@ -239,16 +241,13 @@ there. For #1137's change the selection ran in 75 s against 376 s for the full f
 Verify the tests you ran pass before considering work complete. **Confirm Burst is enabled and
 idle before starting any run** — see the next subsection.
 
-**Check which `run_tests` implementation the current route exposes before calling a suite
-"fast."** Unity Pipeline's command uses only case-insensitive substring `filter`/
-`filter_type`; it ignores `assembly_names`, and an assembly filter for `FFEditorTests` also
-matches `FFEditorTestsSlow`. For an exact remote fast suite, use project-scoped CLI `eval_file`
-to call public `MCPForUnity.Editor.Tools.RunTests.HandleCommand` with `mode: "EditMode"`,
+**An exact remote fast suite without an MCP client session:** use
+`scripts/unity-bridge.py eval_file` to call public `MCPForUnity.Editor.Tools.RunTests.HandleCommand` with `mode: "EditMode"`,
 `assemblyNames: new JArray("FFEditorTests")`, and a suitable `initTimeout`, await its result,
 then poll `GetTestJob.HandleCommand` by `job_id` with `includeFailedTests: true`. MCPForUnity
 passes that exact array to `Filter.assemblyNames`. The full durable recipe is in
-[feedback_test_command](../project-memory/memories/feedback_test_command.md); do not edit either
-package to work around Pipeline.
+[feedback_test_command](../project-memory/memories/feedback_test_command.md); do not edit the
+package.
 
 - **Editor tests** (fast): `Assets/Tests/` — FFEditorTests
 - **Editor tests** (slow): `Assets/TestsSlow/` — FFEditorTestsSlow
@@ -391,8 +390,7 @@ builds. Enable Burst and let its queue drain before the run — see "Before ANY 
 
 **Why not file-based checks**: they're slow and error-prone in a lot of edge cases (e.g. a
 compile failure in the editor may never update the watched file, hanging the watcher forever).
-Recover MCP first. If the runtime truly has no Unity MCP tools, use the explicitly reported CLI
-fallback above and verify the result through MCP when a later session exposes it. If neither
+Recover MCP first. If the runtime truly has no Unity MCP tools, use `scripts/unity-bridge.py` (above) and verify the result through MCP when a later session exposes it. If neither
 channel can produce evidence, report exactly which compile/test proof remains unavailable.
 
 **Deterministic hooks back this ritual** — the game repo's `.claude/settings.json` +

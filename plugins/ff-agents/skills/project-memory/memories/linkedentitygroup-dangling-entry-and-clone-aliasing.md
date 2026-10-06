@@ -16,7 +16,7 @@ being unlinked kills the NEXT `Instantiate` of that parent: ECB playback throws
 (`EntityQueryOptions.IncludePrefab | IncludeDisabledEntities`) and report entries where
 `!EntityManager.Exists(entry)`; print the owner's marker components and the group length. Run it
 right after each step of the repro (select item → place → remove → re-select). In the editor via
-the `unity` CLI: `eval_file --file <scan>.cs` ([[editor-via-unity-cli-when-the-bridge-is-down]]).
+`python3 scripts/unity-bridge.py eval_file --project-path <abs> <scan>.cs` (the `unity` CLI before w533; [[editor-via-unity-cli-when-the-bridge-is-down]]).
 
 **Why the first fix (unlink on destroy, `3f2866af7`) was NOT enough — two more rules.**
 1. **Clone aliasing.** `Instantiate` remaps entity references only against entities inside the

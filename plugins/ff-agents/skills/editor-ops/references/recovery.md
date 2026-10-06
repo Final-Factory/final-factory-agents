@@ -76,7 +76,7 @@ hazards —
 no-auto-scene guard) — resolves the editor version from `ProjectSettings/ProjectVersion.txt`,
 and refuses to double-launch onto a project that already has a live editor (the `open -n`
 trap). Any unclean editor death (crash, SIGKILL) re-arms the modal for the NEXT boot, and the
-modal is native and pre-boot — no MCP/unity-cli channel exists yet to dismiss it — so ad-hoc
+modal is native and pre-boot — no MCP channel exists yet to dismiss it — so ad-hoc
 `nohup Unity -projectPath …` launches WILL eventually wedge. After the script launches, open
 the boot scene explicitly via `eval_file` as usual. Automation editors never hold deliberate
 unsaved scene work, so discarding the backups is always correct on this path.
@@ -89,16 +89,16 @@ access), so `sample` is the tool that works headlessly.
 ### A compile error present at BOOT lands in native Safe Mode — no automation channel can click it
 
 A compile error already on disk when the editor launches trips Unity's native **Safe Mode**
-dialog. Nothing can dismiss it programmatically: the MCP bridge and the `unity-cli` Pipeline
-server both start only after the project finishes loading, and `scripts/launch-editor.sh`
+dialog. Nothing can dismiss it programmatically: the MCP bridge starts only after the project
+finishes loading, and `scripts/launch-editor.sh`
 clears the scene-backup modal (above) but not this one. **Prevention: never relaunch the editor
 with a known compile error on disk — fix it first.**
 
 Recovery once a human has clicked **Enter Safe Mode**:
 
 1. Fix the error on disk.
-2. Safe Mode does **not** reliably auto-recompile on the change, and `unity recompile` fails
-   with `no pipeline descriptor` (the CLI's own channel isn't up yet either).
+2. Safe Mode does **not** reliably auto-recompile on the change, and the MCP bridge isn't up
+   yet to request one.
 3. What works is forcing a Refresh via a scripted keystroke:
    ```sh
    osascript -e 'tell application "Unity" to activate' -e 'delay 1' \
@@ -142,9 +142,9 @@ by ONE system modal at the same time.
 
 This one routinely masquerades as a "slow compile". The macOS signature of a RUNNING editor blocked
 by the **"open scene(s) have been modified externally — Reload/Ignore"** dialog: process alive
-at ~0% CPU in state `SN`, `Editor.log` still receiving worker-thread writes — specifically the
-pipeline server logging `Main thread operation timed out after 60000ms` on every request — and
-BOTH control channels (MCP bridge `execute_code` and `unity-cli`) timing out. When things
+at ~0% CPU in state `SN`, `Editor.log` still receiving worker-thread writes (before w533 the pipeline server logged
+`Main thread operation timed out after 60000ms` there on every request), and the MCP bridge
+(`execute_code`, `scripts/unity-bridge.py`) timing out. When things
 "take a long time", suspect this FIRST, before diagnosing compiles: look at the window (Orca
 computer-use, where accessibility has been granted) and click **Reload** (correct unless the
 editor holds deliberate unsaved scene work). If UI automation is unavailable, kill the
@@ -154,7 +154,7 @@ path-verified editor process and use the prevention recipe below on relaunch.
 
 1. Quit editors BEFORE any git operation that changes `.unity` files (merge, checkout, rebase).
    Clean quit from inside: `EditorApplication.delayCall += () => EditorApplication.Exit(0)` via
-   `execute_code` (needs `safety_checks=false`) or `unity-cli eval_file`.
+   `execute_code` (needs `safety_checks=false`) or `scripts/unity-bridge.py eval_file --no-safety-checks`.
 2. Delete `Library/LastSceneManagerSetup.txt` before relaunching — the editor then auto-opens
    NO scene, so no open scene exists for a disk change to invalidate.
 3. After the editor reports ready, open the boot scene explicitly from current disk state:
@@ -182,35 +182,29 @@ Two adjacent traps:
   in ONLY one of the two revisions (e.g. a type the newer rev added must be ABSENT after an
   older-rev checkout), then force `recompile` if wrong.
 
-The project carries `com.unity.pipeline` (exp), which runs a loopback HTTP server in the editor (ports 7800–7849,
-auto-starts, survives domain reloads) that a standalone `unity` CLI talks to with NO MCP
-involvement. On Windows this is `%LOCALAPPDATA%\Unity\bin\unity.exe`; **on macOS there is no
-official binary, but the game repo ships a working shim at `scripts/unity-cli.sh`** (plain
-bash, built from the package's own documented HTTP protocol —
-`Library/PackageCache/com.unity.pipeline@*/Documentation~/connectivity.md` in any checkout —
-port descriptor file + bearer token + JSON POSTs to `/api/exec`). It's not on PATH by
-default — symlink/copy it once per machine, e.g.
-`ln -s "$(pwd)/scripts/unity-cli.sh" ~/.local/bin/unity && chmod +x ~/.local/bin/unity`,
-then invoke it as `unity` like the Windows CLI.
+### Shell scripts reach the editor through `scripts/unity-bridge.py` (no second channel)
 
-Use this channel for a remote editor, targeted bridge recovery, or when the current runtime has
-no Unity MCP tools after discovery. `unity command --project-path <path> recompile` plus
-`recompile_status` returns structured `{status,failed,errors}` JSON, and `eval_file
-file=<path.cs>` runs C# against an explicitly selected project. It lets you answer "is the editor
-alive / compiling / in play mode?" while MCP is unavailable: `unity status`, `unity command
-editor_status`, `unity command eval 'return <expr>;'`
-(full statement with `return`+`;`; on Windows PS 5.1 eats embedded double quotes — keep code
-quote-free or use a file via `eval_file`; the Mac shim has no such quoting trap since it isn't
-PowerShell, but `eval_file` is still cleaner for anything nontrivial). Record why this fallback
-was needed. Once MCP is available again, re-pin the path-matching instance and confirm the final
-state there.
+`com.unity.pipeline` and its `unity` CLI / `scripts/unity-cli.sh` shim are gone (w533, FinalFactory
+PR #1154, 2026-10-06): its server started on every domain reload, 1.0-1.7 s per CI launch.
+`scripts/unity-cli.sh` is now a stub that exits 2. Scripts (`editor-preflight.sh`, the
+cross-machine audit) and any agent without MCP tools use
+`python3 scripts/unity-bridge.py <status|eval_file|eval|ping> --project-path <abs>`:
 
-⚠️ **Always target with `--project-path <abs path>`** — it is the ONLY working selector
-(routes correctly with multiple servers, hard-fails if that project isn't connected). On
-Windows, `--instance host:port` is IGNORED by command routing: with exactly one connected
-server your command runs there no matter what port you pass; with several, any `--instance`
-form — valid or bogus — refuses with a "multiple instances" error, as does omitting the flag
-(safe: it never guesses).
+- It talks to MCP for Unity's own TCP bridge. The port comes from
+  `~/.unity-mcp/unity-mcp-status-*.json`, matched by project path. `status` and `eval` run through
+  `execute_code`.
+- `status` prints `{projectPath,status,compiling,domainReloadInProgress,playMode}`.
+- `eval_file <file.cs>` prints the snippet's return value. Add `--no-safety-checks` for code that
+  `execute_code`'s blocklist refuses (e.g. `ExitPlaymode` matches `EditorApplication.Exit`).
+- Exit codes: 3 = no bridge for that project, 4 = no answer within `--timeout` (45 s by default;
+  the editor gives up after 30 s), 5 = the editor answered with an error.
+
+It is the SAME channel as MCP: when the bridge is down or the main thread is stuck, it answers
+nothing either. So classify the failure (process alive? CPU? a native modal, per the sections
+above?), then restart the exact editor: the sandbox's `unity` tool, or `scripts/launch-editor.sh`
+on a Mac. Before w533 the pipeline server timed out together with the bridge whenever the main
+thread was stuck (the scene-modified modal above), so it rarely bought anything.
+
 
 ### A long-uptime Steam client can wedge play-mode entry (~26h uptime)
 
