@@ -87,6 +87,11 @@ report. Change nothing on a guess.
   anything a person reads, scan it for request ids (w293), PR numbers (#972), commits, worker or
   session ids and sandbox names: each one gets its plain-English words beside it, on every
   appearance, not only the first.
+- **No human-time estimates** ([lesson](lessons/no-human-time-estimates.md)). Before you send a
+  report, plan or TL;DR, scan it for sizes in days, weeks, months or sprints ("1–2 weeks",
+  "weeks to months"). Rewrite each as scope (files and systems touched, surfaces, risk,
+  dependencies) or as a measured agent wall-clock time or cost from a named comparable run,
+  labelled measured. No comparable run: scope only.
 - **Name a decider only from the sender line** ([lesson](lessons/name-a-decider-only-from-the-sender-line.md)).
   Before you write that a person approved, held, lifted, overrode or decided something (a PR
   description, release notes, a ledger note, a report), copy the name from that message's
@@ -157,6 +162,9 @@ One file each under `lessons/`: the rule, why (the incident, dated), how to appl
 - [A fix names its player report](lessons/a-fix-names-its-player-report.md): a `Report: <id>`
   line in the PR, or the id as a request subject; a brief's ids claim nothing, and FFBox keeps the
   report open (w414 / #1064 left two Build 76 crash reports NEEDS-INFO).
+- [No human-time estimates](lessons/no-human-time-estimates.md): size work by scope, or by a
+  measured agent time from a named comparable run, never in human days or weeks (w545: the Steam
+  Deck report's "1–2 weeks" and "weeks to months"; Ben: "stop giving human time estimates").
 
 ## Adding a lesson
 
