@@ -406,6 +406,40 @@ well as macOS.
 This applies to BOTH editors in a paired run — the clone (`../<project root>_clone_0`) has the
 same stale-assembly trap (see the `determinism-audit` skill).
 
+## Unity slots: every Unity launch takes one
+
+**Every Unity process on a machine counts toward its editor limit** (`max_unity`), whoever
+started it: sandbox editors, the owner's own, `-batchmode` builds and test runs, the clone editor
+of a paired run, editors scripts start. AssetImportWorkers, bcl.exe and built players do not
+(w469, Lothsahn on 2026-10-05, after LothDesktop hit 63 of 64 GB with one editor and three
+batch builds while its limit of 3 counted one; FF Factory `docs/unity-lifecycle.md`, "Unity
+slots").
+
+- Your own editor goes through FF Factory's `unity start` (the `unity` tool). It is refused while
+  the machine is full, over 85% RAM, or while launches wait ahead of it; the refusal names who
+  holds the slots. `wake_me` and try again, or stop an editor you no longer need. Never kill
+  another process's Unity to make room.
+- **Every other launch waits for its slot.** Use `unity-slot run [--count N] [--label "<what>"] --
+  <command>` (on the PATH of every agent an FF Factory daemon runs) or the game repo's `python
+  scripts/unity_slot.py run [--count N] -- <command>`. Each waits in the machine's queue, runs the
+  command and frees the slot when it ends. `unity-slot status` (or `python scripts/unity_slot.py
+  status`) shows who holds and who waits.
+- **A run that needs several editors asks for all of them at once** (`--count 2` for a host plus
+  clone pair). Never take them one at a time: two runs each holding one would wait for each
+  other. The queue refuses a run that would deadlock; when that happens, release what you hold and
+  ask again for everything at once.
+- The repo's own scripts take their slot themselves: `build_player.sh` (both passes under one),
+  the build passes of the build audits, `run_agent_channel_smoke.sh --build`,
+  `bench/capture_raw.sh` (game repo `Documentation/Audit-Script-Index.md`, "Unity slots").
+  Launches nested inside a run pass straight through.
+- An editor you open by hand beside your own (the clone editor of a paired run, via
+  `launch-editor.sh`) needs a held slot: `unity-slot acquire --count 1 --label "clone editor"
+  --project <clone path>`, then `unity-slot release <id>` once it is closed (`--ttl`, default 120
+  min). Without that, the daemon still counts the editor and nothing else starts while the machine
+  is over.
+- With no slot arbiter on the machine (a daemon from before w469, a machine without FF Factory)
+  both commands run at once and say so.
+
 ## Long background runs (player builds, paired audits, multi-minute test jobs)
 
 Keep ownership until every run reaches a terminal state; the user must never have to ask for the

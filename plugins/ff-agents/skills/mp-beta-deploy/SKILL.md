@@ -99,7 +99,7 @@ Commit the release notes in the same push: `cicd/release-notes/<version>.md`, wr
 Build it on the M5 from the same source sha as the Mac player (rule above). The repo's entry points are
 `Editor.LocalMultiplayerVerificationBuild.PrepareWindowsMultiplayerBuild` and then
 `BuildWindowsMultiplayerDev` with `-ffVerificationBuildOutput <stage>/windows_FinalFactory/finalfactory.exe`
-(`Assets/Editor/LocalMultiplayerVerificationBuild.cs`), as two SEPARATE batchmode sessions with the editor
+(`Assets/Editor/LocalMultiplayerVerificationBuild.cs`; run each batchmode pass under `python scripts/unity_slot.py run --` so it takes a Unity slot, editor-ops "Unity slots"), as two SEPARATE batchmode sessions with the editor
 closed. The prepare pass switches the active target and adds `FF_ENABLE_MULTIPLAYER_BUILD` to
 `ProjectSettings.asset`; never commit that edit. Wait on a status file (`prepare rc=`, `build rc=`, `done`),
 never on the bridge. Run the two passes from one detached script (`nohup … &`) that refuses if the
