@@ -1,0 +1,72 @@
+// w533 probe only (never merged): dumps per-hook domain-reload timings from a profiler .raw.
+using System;
+using System.IO;
+using System.Text;
+using UnityEditor;
+using UnityEditorInternal;
+
+public static class W533ProfOrder
+{
+  public static void Run()
+  {
+    string[] args = Environment.GetCommandLineArgs();
+    string spec = null, outPath = null;
+    for (int i = 0; i < args.Length - 1; i++)
+    {
+      if (args[i] == "-w533Spec") spec = args[i + 1];
+      if (args[i] == "-dumpOut") outPath = args[i + 1];
+    }
+    var sb = new StringBuilder();
+    foreach (string entry in spec.Split(';'))
+    {
+      string[] parts = entry.Split('|');
+      sb.AppendLine($"W533 ===== {parts[0]}");
+      if (!File.Exists(parts[0])) { sb.AppendLine("W533 missing"); continue; }
+      Dump(parts[0], double.Parse(parts[1]), int.Parse(parts[2]), parts.Length > 3 ? parts[3] : null, sb);
+    }
+    File.WriteAllText(outPath, sb.ToString());
+    EditorApplication.Exit(0);
+  }
+
+  static void Dump(string raw, double minMs, int maxRel, string filter, StringBuilder sb)
+  {
+    bool ok = ProfilerDriver.LoadProfile(raw, false);
+    sb.AppendLine($"W533 load={ok} frames {ProfilerDriver.firstFrameIndex}..{ProfilerDriver.lastFrameIndex}");
+    for (int f = ProfilerDriver.firstFrameIndex; f <= ProfilerDriver.lastFrameIndex; f++)
+    {
+      using var v = ProfilerDriver.GetRawFrameDataView(f, 0);
+      if (v == null || !v.valid) continue;
+      int n = v.sampleCount;
+      var remaining = new int[512];
+      var stack = new string[512];
+      var anchorDepth = -1;
+      int depth = 0;
+      remaining[0] = int.MaxValue;
+      for (int s = 0; s < n; s++)
+      {
+        while (depth > 0 && remaining[depth] == 0)
+        {
+          depth--;
+          if (anchorDepth > depth) anchorDepth = -1;
+        }
+        remaining[depth]--;
+        string name = v.GetSampleName(s);
+        stack[depth] = name;
+        bool pass = filter == null;
+        for (int d = 0; d <= depth && !pass; d++) pass = stack[d] != null && stack[d].Contains(filter);
+        double ms = v.GetSampleTimeMs(s);
+        if (anchorDepth < 0 && (name == "SetupLoadedEditorAssemblies" || name == "AwakeInstancesAfterBackupRestoration"))
+        {
+          anchorDepth = depth;
+          sb.AppendLine($"W533 f{f} t={v.GetSampleStartTimeMs(s):F0} {ms,9:F1}ms == {name}");
+        }
+        else if (pass && anchorDepth >= 0 && depth - anchorDepth <= maxRel && ms >= minMs && !name.StartsWith("GC.") && name != "Mono.JIT")
+        {
+          sb.AppendLine($"W533 f{f} {ms,9:F1}ms {new string(' ', (depth - anchorDepth) * 2)}{name}");
+        }
+        int kids = v.GetSampleChildrenCount(s);
+        if (kids > 0 && depth < 510) { depth++; remaining[depth] = kids; }
+      }
+    }
+  }
+}
