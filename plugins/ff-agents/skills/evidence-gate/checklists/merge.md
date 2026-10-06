@@ -68,6 +68,9 @@ Not verified: the Bats' slot lag (simulation, follow-up PR)
   (or the original message's `/<guild>/<channel>/<message>` link for a message in a channel) in the
   description before it merges, one per report: FFBox tells the reporter from it and nothing else
   ([a fix PR names its Discord report](../lessons/a-fix-pr-names-its-discord-report.md)).
+- **A fix for a player's crash or desync report** has a `Report: <report id>` line per report it
+  fixes in the description (or the id among its request's subjects): FFBox shows the report fixed
+  only from that ([a fix names its player report](../lessons/a-fix-names-its-player-report.md)).
 - **"Not verified"** is always there, even when it says "nothing". It is the honest place for
   what you could not check.
 - Nothing in the section may be pending. Finish the review, then merge.

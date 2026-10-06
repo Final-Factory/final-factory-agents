@@ -154,6 +154,9 @@ One file each under `lessons/`: the rule, why (the incident, dated), how to appl
 - [A fix PR names its Discord report](lessons/a-fix-pr-names-its-discord-report.md): a
   `Discord: <thread or message link>` line before it merges, and `RESOLVED: already fixed by PR #N`;
   FFBox tells the reporter from those only (w436 / #1076 went untold).
+- [A fix names its player report](lessons/a-fix-names-its-player-report.md): a `Report: <id>`
+  line in the PR, or the id as a request subject; a brief's ids claim nothing, and FFBox keeps the
+  report open (w414 / #1064 left two Build 76 crash reports NEEDS-INFO).
 
 ## Adding a lesson
 
