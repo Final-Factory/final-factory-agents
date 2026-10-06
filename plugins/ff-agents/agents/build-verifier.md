@@ -1,6 +1,6 @@
 ---
 name: build-verifier
-description: Runs the compile-verify ritual on Sonnet — pin the Unity MCP instance, force a recompile, grep the ON-DISK Editor.log for compile/ILPP errors plus the fresh reload marker, then run the fast EditMode suite and report a structured verdict with raw evidence lines. Delegate ON REQUEST when the log/test output would bloat the driver's context (a failing suite, a noisy ILPP run, a long batch of edits) — NOT reflexively after every edit, and never as a second opinion on the driver's own reasoning; for a single small edit, run the ritual inline instead. The driver adjudicates failures. Read-only plus test-running; never edits code.
+description: Runs the compile-verify ritual on Sonnet — pin the Unity MCP instance, force a recompile, grep the ON-DISK Editor.log for compile/ILPP errors plus the fresh reload marker, then run the EditMode tests the change touches (scripts/test_select.py; the whole fast suite when it says FULL SUITE or on request) and report a structured verdict with raw evidence lines. Delegate ON REQUEST when the log/test output would bloat the driver's context (a failing suite, a noisy ILPP run, a long batch of edits) — NOT reflexively after every edit, and never as a second opinion on the driver's own reasoning; for a single small edit, run the ritual inline instead. The driver adjudicates failures. Read-only plus test-running; never edits code.
 model: sonnet
 effort: medium
 tools: mcp__UnityMCP__refresh_unity, mcp__UnityMCP__run_tests, mcp__UnityMCP__get_test_job, mcp__UnityMCP__set_active_instance, mcp__UnityMCP__execute_code, ReadMcpResourceTool, Read, Grep, Glob, Bash
@@ -44,9 +44,12 @@ enter/exit play mode, and never improvise recovery — on anything unexpected, S
    internal compiler error`. Report `BURST_ERRORS` and do not proceed if any appear. Record in
    the evidence whether Burst was already on, and the drain transition you observed. Your
    `execute_code` grant covers exactly these two probes and the enable — nothing else.
-6. **Run the fast suite.** `run_tests` on `FFEditorTests` (EditMode) against the pinned
-   instance; poll `get_test_job` until terminal. Include `FFEditorTestsSlow` only if the
-   caller asked. NEVER read `TestResults.xml`/`PerformanceTestResults.json` under
+6. **Run the tests the change touches.** `python scripts/test_select.py` (game repo) prints the
+   `run_tests` arguments for the branch's diff: EditMode, `assembly_names ["FFEditorTests"]`,
+   `test_names` (exact class names; never regex `group_names`). Run them with `init_timeout`
+   120000 against the pinned instance and poll `get_test_job` until terminal. Run the whole
+   `FFEditorTests` instead when the selector prints FULL SUITE or the caller asks for the full
+   suite. Include `FFEditorTestsSlow` only if the caller asked. Report which you ran. NEVER read `TestResults.xml`/`PerformanceTestResults.json` under
    AppData/LocalLow — that path is shared across all project copies; the MCP job result is
    the only authoritative source.
 

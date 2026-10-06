@@ -217,11 +217,27 @@ Open it when the editor or bridge misbehaves:
 ## Running tests
 
 Run tests through the MCP bridge with the instance pinned: start a run with `run_tests` and
-poll `get_test_job` for results. Run the fast EditMode suite (`FFEditorTests`) by default;
-pass both `FFEditorTests` and `FFEditorTestsSlow` (or all EditMode assemblies) only when all
-tests are explicitly requested. After making code changes, run the fast tests and verify they
-pass before considering work complete. Only run slow tests if explicitly asked. **Confirm Burst
-is enabled and idle before starting any run** — see the next subsection.
+poll `get_test_job` for results. **After a change, run the tests it touches, not the whole fast
+suite** (lothsahn, 2026-10-06, w546): `python scripts/test_select.py` in the game repo reads the
+branch's diff against `origin/develop` (plus uncommitted files) and prints the `run_tests`
+arguments: `assembly_names ["FFEditorTests"]` and `test_names`, the exact test class names.
+CI runs the whole suite on every pull request, so anything the selection leaves out is caught
+there. For #1137's change the selection ran in 75 s against 376 s for the full fast suite
+(measured, lothdesktop).
+
+- Pass `test_names`, never regex `group_names`. One class through a regex took the job 16.6 s
+  against 4.0 s by exact name, and regex runs held the main thread for minutes (measured).
+- Give `run_tests` an `init_timeout` of 120000. A call that answers "Timeout receiving Unity
+  response" may still have queued the run: poll `get_test_job`, or wait for the editor log's
+  "Restored Interaction Mode after test run", before asking again, or the runs stack up.
+- Run the full fast suite (`FFEditorTests`) when the selector prints FULL SUITE (the test
+  framework, asmdefs, `Packages/`, `ProjectSettings/`, `Assets/Resources/` configs, or a
+  selection above 60% of the suite's time) or when someone asks for it. Pass both
+  `FFEditorTests` and `FFEditorTestsSlow` (or all EditMode assemblies) only when all tests are
+  explicitly requested; run slow tests only if asked.
+
+Verify the tests you ran pass before considering work complete. **Confirm Burst is enabled and
+idle before starting any run** — see the next subsection.
 
 **Check which `run_tests` implementation the current route exposes before calling a suite
 "fast."** Unity Pipeline's command uses only case-insensitive substring `filter`/
@@ -385,7 +401,7 @@ to clear it:
 
 - **Stop block listing `.cs` files** = those files were edited with no `refresh_unity` since.
   Clear it by running the ritual above (refresh → fresh domain reload → `error CS` check →
-  fast suite if behavior changed), or state explicitly why verification isn't needed, then
+  the tests the change touches if behavior changed), or state explicitly why verification isn't needed, then
   finish. It reminds **once per edit** (game repo, w500): a new edit of a file re-arms it.
   Verified another way (a batchmode `-logFile` compile or a player build log with no
   `error CS`, or a green CI run at a commit holding the edits)? Record it once and the files
