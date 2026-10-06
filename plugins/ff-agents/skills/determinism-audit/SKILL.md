@@ -68,8 +68,11 @@ drives the second peer. The playtest skill owns input and visual evidence; this 
 fingerprint verdict.
 
 **A BEAST peer runs from an ffsb sandbox** (Ben 2026-09-23): create one with `mcp__ffsb__create_sandbox`, build
-the Windows player in it, and launch it from `F:/ffsb/<name>/Builds/<leg>/` — recipe in project-memory
-`feedback-beast-work-goes-through-a-sandbox`.
+the Windows player in it, and launch it through a player slot, never from its `Builds/<leg>/` folder:
+`python scripts/nightly/player_slots.py launch <build folder or exe> -- <args>` (`--detach` returns at once), or
+`"${FF_LAUNCH[@]}"` in bash after sourcing `scripts/nightly/player_launch.sh`. Built players run only from
+`<slot root>/slotK/player/`, the paths Windows Firewall allows once per machine (w513); FF Factory's guard refuses a
+direct launch from anywhere else. Recipe in project-memory `feedback-beast-work-goes-through-a-sandbox`.
 
 Compare the complete shared heartbeat window across every fingerprint field (currently 25). Do not discard the
 first failing heartbeats or raise a window bound to hide them. Typed JSON audit records require the

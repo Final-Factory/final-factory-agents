@@ -87,8 +87,12 @@ Ad-hoc work in the old checkout collides with it and is invisible to it.
      holds the `.entities` + `.entityheader` + `scene_info.bin` trio at the same size as a known-good
      build (the ships-only-`scene_info.bin` trap).
   4. Copy `ahttp.py` into the same `Builds/<leg>/` folder; `$E/peer.sh` reads its BEAST path from
-     `FF_BEAST_AHTTP` (e.g. `F:/ffsb/<name>/Builds/<leg>/ahttp.py`). Launch with `$E/beast-client-r2.sh`
-     (headless `-batchmode -nographics`, config copied beside the exe); pid from `tasklist`.
+     `FF_BEAST_AHTTP` (e.g. `F:/ffsb/<name>/Builds/<leg>/ahttp.py`). Launch the player through a slot,
+     never from `Builds/<leg>/` (w513: players run only from `<slot root>/slotK/player/`, the paths Windows
+     Firewall allows; FF Factory's guard refuses a direct launch): `python scripts/nightly/player_slots.py
+     launch --detach F:/ffsb/<name>/Builds/<leg> -- -batchmode -nographics ...` prints the pid and the slot
+     path. `$E/beast-client-r2.sh` must call that instead of starting the exe itself. Write its config
+     into the build folder before the launch: the slot mirrors the whole folder (`player_slots.py split_player`).
   A windowed honest-coop client still has to start in rydin's desktop session (see honest-coop-play);
   only the build/run location changes.
 - **Moving an existing sandbox to a newer commit: bundle it, never `git fetch` over ssh.** An
