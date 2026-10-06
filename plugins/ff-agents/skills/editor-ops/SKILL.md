@@ -386,7 +386,12 @@ to clear it:
 - **Stop block listing `.cs` files** = those files were edited with no `refresh_unity` since.
   Clear it by running the ritual above (refresh → fresh domain reload → `error CS` check →
   fast suite if behavior changed), or state explicitly why verification isn't needed, then
-  finish. It blocks once per turn-end, never loops.
+  finish. It reminds **once per edit** (game repo, w500): a new edit of a file re-arms it.
+  Verified another way (a batchmode `-logFile` compile or a player build log with no
+  `error CS`, or a green CI run at a commit holding the edits)? Record it once and the files
+  clear: `python scripts/hooks/cs-verified.py --how "<what>" --log <log>` or
+  `--ci-run <run id> --commit <sha>`. The script checks the evidence and refuses what does not
+  hold; never record a check you did not run.
 - **Missing-`.meta` warning after a refresh** = the named new `.cs` files were NEVER imported —
   the false-green trap above is live for them; force a reimport / `scope=all` refresh and
   confirm the `.meta` before trusting any result.
