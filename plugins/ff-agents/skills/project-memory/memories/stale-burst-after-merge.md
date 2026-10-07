@@ -175,5 +175,11 @@ the source branch, don't hunt a source bug first — clear the cache and re-run.
   RED by mutation, re-run the named tests with details and see them fail before trusting any green;
   for the final GREEN run Burst on with `EnableBurstCompileSynchronously = true` (toggling it through
   `execute_code` blocks the bridge for minutes while everything recompiles).
+- **And a without-the-change run of a cross-assembly edit** (2026-10-07, w503, m5/slot3): the RED switch was
+  one property in `FFComponents` (`JunctionSidePriority.HasLevels => false`) that `FFSystems` Burst jobs inline;
+  `FFSystems.dll` itself did not change. With Burst on (async) 23 of 24 new tests still passed, routing by the
+  old code; with `EnableBurstCompilation = false` 18 of 24 failed as they should. So a RED proof of simulation
+  code runs with Burst OFF first (it runs the code as compiled now), and the GREEN proof then runs with Burst on
+  and `EnableBurstCompileSynchronously = true`; a fresh editor start also compiles Burst from current code.
 
 See [[feedback_test_command]].
