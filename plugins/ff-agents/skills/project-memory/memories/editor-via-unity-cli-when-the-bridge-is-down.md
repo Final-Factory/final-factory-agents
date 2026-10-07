@@ -3,6 +3,13 @@ name: editor-via-unity-cli-when-the-bridge-is-down
 description: "The `unity` CLI shim (~/.local/bin/unity) is a full substitute for the UnityMCP bridge when it fails to connect (CONNECT_TIMEOUT while the editor is mid-build): recompile/recompile_status, eval/eval_file (Roslyn statements, no using directives), editor_play/editor_stop, get_console_logs, run_tests/test_status, and a guarded EditorApplication.update callback for MP-dev builds; plus the ItemConfig-before-LoadGame gate and the stale bundled status file."
 ---
 
+> **CHANNEL REMOVED (w533, 2026-10-07):** the game repo dropped `com.unity.pipeline` (PR #1154, merge
+> 746582e59 on develop), so the `unity` CLI, `scripts/unity-cli.sh` (now a stub that exits) and its
+> loopback server on ports 7800-7849 no longer exist. Shell access to an editor is
+> `python scripts/unity-bridge.py <ping|status|eval|eval_file> --project-path <abs>` over the MCP bridge,
+> and there is no second channel when that bridge is down (editor-ops `references/recovery.md`).
+> What follows is history.
+
 # Driving the editor through the `unity` CLI when the MCP bridge is down (2026-09-12, 069)
 
 **When.** The UnityMCP bridge reported `CONNECT_TIMEOUT` at session start for a whole session

@@ -240,15 +240,13 @@ Verify the tests you ran pass before considering work complete. **Confirm Burst 
 idle before starting any run** — see the next subsection.
 
 **Check which `run_tests` implementation the current route exposes before calling a suite
-"fast."** Unity Pipeline's command uses only case-insensitive substring `filter`/
-`filter_type`; it ignores `assembly_names`, and an assembly filter for `FFEditorTests` also
-matches `FFEditorTestsSlow`. For an exact remote fast suite, use project-scoped CLI `eval_file`
-to call public `MCPForUnity.Editor.Tools.RunTests.HandleCommand` with `mode: "EditMode"`,
-`assemblyNames: new JArray("FFEditorTests")`, and a suitable `initTimeout`, await its result,
-then poll `GetTestJob.HandleCommand` by `job_id` with `includeFailedTests: true`. MCPForUnity
-passes that exact array to `Filter.assemblyNames`. The full durable recipe is in
-[feedback_test_command](../project-memory/memories/feedback_test_command.md); do not edit either
-package to work around Pipeline.
+"fast."** Use MCP `run_tests` with `assembly_names: ["FFEditorTests"]` (MCPForUnity passes that
+exact array to `Filter.assemblyNames`). For a remote editor without MCP tools, run
+`scripts/unity-bridge.py eval_file` to call public `MCPForUnity.Editor.Tools.RunTests.HandleCommand`
+with `mode: "EditMode"`, `assemblyNames: new JArray("FFEditorTests")` and a suitable
+`initTimeout`, then poll `GetTestJob.HandleCommand` by `job_id` with `includeFailedTests: true`.
+(The old Unity Pipeline route, which ignored `assembly_names` and matched `FFEditorTestsSlow` too,
+was removed with `com.unity.pipeline` in w533.)
 
 - **Editor tests** (fast): `Assets/Tests/` — FFEditorTests
 - **Editor tests** (slow): `Assets/TestsSlow/` — FFEditorTestsSlow

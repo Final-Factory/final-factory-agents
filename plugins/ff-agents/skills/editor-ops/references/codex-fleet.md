@@ -107,8 +107,8 @@ installed Unity package version and verify the real editor connection. Machine-s
 paths belong in local configuration, not a shared Mac path committed for Windows.
 
 For a remote editor use its local worker's MCP connection, or the project-scoped
-`scripts/unity-cli.sh ... --project-path <absolute-checkout>` over SSH when the driver has no remote
-MCP tool connection. Explain the channel choice. Keep its structured recompile/test result and
+`python scripts/unity-bridge.py ... --project-path <absolute-checkout>` over SSH when the driver has no
+remote MCP tool connection (`scripts/unity-cli.sh` and its `com.unity.pipeline` server were removed in w533). Explain the channel choice. Keep its structured recompile/test result and
 verify a fresh compilation, Burst drain and imports. Never infer compilation from a green test or
 clear dirty verification state on a failed refresh. The editor-ops skill has the full ritual.
 
