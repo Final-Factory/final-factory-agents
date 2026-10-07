@@ -158,6 +158,10 @@ One file each under `lessons/`: the rule, why (the incident, dated), how to appl
   they draw, spinning and moving ones included, and a discriminating component is counted against
   every archetype that carries it (w586: w453 turned every `Placeable`'s box with its target, so
   comet fragments' boxes spun from 0.50.0.80).
+- [Measure against what the player sees](lessons/measure-against-what-the-player-sees.md): a
+  placement metric is checked against the drawn surface or outline, computed independently of the
+  code under test, never against the code's own answer (w587: w176's impacts scored 0.0 u against
+  the simulated hit point while they landed inside the hull).
 - [Say DONE per request](lessons/say-done-per-request.md): end a report with `DONE: wNNN` only when
   every step of the request is finished, post-merge steps included; answer a wrap-up or "Is it
   done?" with DONE or what is left (w419: w342 stayed open with its work done).

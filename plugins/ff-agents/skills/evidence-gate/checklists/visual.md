@@ -17,6 +17,12 @@ true before the change merges or is reported as fixed.
    kind left out under "Not verified"
    ([lesson](../lessons/check-every-kind-of-object-shared-presentation-draws.md); w453 turned
    every `Placeable`'s box with it, so comet fragments' boxes spun).
+0c. **Measure against what the player sees.** A placement metric's reference is the drawn thing
+   (the hull's surface or outline, the drawn position this frame), computed independently of the
+   code under test, never the place the code meant to put it (the simulated hit point, the fix's
+   own value). Sweep every kind of target and pose, and show the metric reading badly on the
+   "before" arm ([lesson](../lessons/measure-against-what-the-player-sees.md); w176 scored impacts
+   against the simulated hit, read 0.0 u, and they landed inside the hull).
 1. **The intended look, in the person's words.** Quote what they said ("the other player appears
    outside of the ship behind it"). If they have not said, write it yourself and say it is yours.
    A review against your own description of a mistake will pass the mistake.
