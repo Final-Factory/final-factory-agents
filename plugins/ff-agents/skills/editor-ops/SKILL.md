@@ -505,8 +505,8 @@ audit identity, including retries that never loaded a world.
 **Run a build from the player slot pool, never where it was built.** Windows Firewall keys its
 rules on the exe path, so a player started from a new folder (a sandbox's `Builds/pilot`, a temp
 output) stops at the "allow finalfactory.exe?" prompt. `python scripts/nightly/player_slots.py
-launch [--detach] <exe|folder|.app> -- <player args>` mirrors it into one of eight allowed slot
-paths and runs it there; bash scripts source `scripts/nightly/player_launch.sh` and use
+launch [--detach] <exe|folder|.app> -- <player args>` mirrors it into an allowed slot path and runs
+it there (On a worker-root install (LothDesktop since w576) each sandbox slotK has its own two player folders, `players/slotK-0` and `slotK-1`: `launch` picks them from the sandbox it runs in, and `--peer 1` puts a same-build client in `slotK-1` (project-memory `feedback-built-players-run-from-the-slot-pool`).); bash scripts source `scripts/nightly/player_launch.sh` and use
 `"${FF_LAUNCH[@]}" "$PLAYER" -- …`. The audit, feel and bench scripts and `ffnightly.py` already
 do (project-memory `feedback-built-players-run-from-the-slot-pool`).
 

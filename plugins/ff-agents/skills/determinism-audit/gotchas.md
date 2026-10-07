@@ -143,7 +143,7 @@ Any dev player works: `FF_BUILD_DIR=<dir holding finalfactory.exe> ... --skip-bu
 `Editor.ShaderBenchBuild` bench build), `--host-extra "-ffAutomationSave <name>"` runs it on a real save,
 `--port N` avoids a busy one. A pass prints `NO DIVERGENCE` and `PASS [playerSimPos]`. The script starts
 both players from a player slot (`FF_LAUNCH`, `scripts/nightly/player_launch.sh`), so a new build folder
-raises no firewall prompt; start any player by hand the same way (`player_slots.py launch`).
+raises no firewall prompt; start any player by hand the same way (`player_slots.py launch`). On a worker-root install (LothDesktop since w576) each sandbox slotK has its own two player folders, `players/slotK-0` and `slotK-1`: `launch` picks them from the sandbox it runs in, and `--peer 1` puts a same-build client in `slotK-1` (project-memory `feedback-built-players-run-from-the-slot-pool`).
 
 The shared audit folder bites the fast suite too: `NetworkDeterminismAuditReportTest` fails with an
 IOException (`...partial` "being used by another process") while any automation player writes there.

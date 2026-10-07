@@ -72,7 +72,8 @@ the Windows player in it, and launch it through a player slot, never from its `B
 `python scripts/nightly/player_slots.py launch <build folder or exe> -- <args>` (`--detach` returns at once), or
 `"${FF_LAUNCH[@]}"` in bash after sourcing `scripts/nightly/player_launch.sh`. Built players run only from
 `<slot root>/slotK/player/`, the paths Windows Firewall allows once per machine (w513); FF Factory's guard refuses a
-direct launch from anywhere else. Recipe in project-memory `feedback-beast-work-goes-through-a-sandbox`.
+direct launch from anywhere else. On a worker-root install (LothDesktop since w576) each sandbox slotK has its own two player folders, `players/slotK-0` and `slotK-1`: `launch` picks them from the sandbox it runs in, and `--peer 1` puts a same-build client in `slotK-1` (project-memory `feedback-built-players-run-from-the-slot-pool`). A cross-build pair (host on one build, client on another) gets one
+folder each with no flag. Recipe in project-memory `feedback-beast-work-goes-through-a-sandbox`.
 
 Compare the complete shared heartbeat window across every fingerprint field (currently 25). Do not discard the
 first failing heartbeats or raise a window bound to hide them. Typed JSON audit records require the

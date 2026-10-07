@@ -1,6 +1,6 @@
 ---
 name: feedback-built-players-run-from-the-slot-pool
-description: Lothsahn 2026-09-29 — never launch a built player from a sandbox or builds/ path; start it through the player slot pool (player_slots.py launch, or FF_LAUNCH in bash), so no new exe path ever raises the Windows Firewall prompt on a lab machine
+description: Lothsahn 2026-09-29 — never launch a built player from a sandbox or builds/ path; start it through the player slot pool (player_slots.py launch, or FF_LAUNCH in bash), so no new exe path ever raises the Windows Firewall prompt on a lab machine; on a worker-root install each sandbox slotK has its own pair, slotK-0 and slotK-1 (w576)
 metadata:
   type: feedback
 ---
@@ -14,6 +14,17 @@ python scripts/nightly/player_slots.py launch [--detach] <finalfactory.exe | its
 # bash script: source scripts/nightly/player_launch.sh, then
 "${FF_LAUNCH[@]}" "$PLAYER" -- <player args> &
 ```
+
+**Worker-root installs (lothsahn, 2026-10-07, w576; LothDesktop first):** no shared pool. Each sandbox slotK
+(K = 1..N, N the machine's sandbox count) owns exactly two player folders, `<root>\players\slotK-0` (peer 0, the
+host) and `slotK-1` (peer 1, the client), each with its own firewall rules; the installer's `--max-sandboxes N` makes
+the sandboxes' count, the pairs and the rules together, and a re-run with a new N adds or removes pairs. The same
+`launch` / `FF_LAUNCH` picks the pair from the sandbox it runs in (`FF_UNITY_HOLDER`, else the working folder; slot
+config `layout: sandbox-pairs`, game repo PR #1165):
+- one build: host and client share `slotK-0`, unless the client is started with `--peer 1` (or `FF_PLAYER_PEER=1`);
+- two different builds (a cross-build desync check): one folder each, no flag needed;
+- outside a sandbox (the nightly lab, a person's shell) there is no player folder: the launch is refused, naming why;
+- FF Factory's guard refuses a direct start from another sandbox's pair.
 
 **Why:** Windows Firewall keys its allow rules on the exact exe path. A player started from a new
 folder (w17's `D:\work\ffsb\bug-1553894544\builds\pilot`, 2026-09-29) raises the "allow

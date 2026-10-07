@@ -115,7 +115,7 @@ python scripts/nightly/player_slots.py launch --detach "<build>/finalfactory.exe
 ⚠️ **Never run a built player from its build folder** (a sandbox's `Builds/…`, `builds/<sha>-win`,
 a temp dir): every new exe path raises the Windows Firewall "allow finalfactory.exe?" prompt and
 stalls the run. `player_slots.py launch` (game repo, `scripts/nightly/`) runs it from a player slot,
-one of eight firewall-allowed paths, and takes `finalfactory.exe`, its folder, a `.app` or the binary
+a firewall-allowed path (On a worker-root install (LothDesktop since w576) each sandbox slotK has its own two player folders, `players/slotK-0` and `slotK-1`: `launch` picks them from the sandbox it runs in, and `--peer 1` puts a same-build client in `slotK-1` (project-memory `feedback-built-players-run-from-the-slot-pool`).), and and takes `finalfactory.exe`, its folder, a `.app` or the binary
 inside one. `--detach` prints `{"pid", "player", "slot"}` and returns; without it the launcher waits
 and returns the player's exit code. Stop the player by that pid. Mark it by its `-ffAutomationLabel`
 or `-logFile`, not its build path (the command line names the slot). Bash scripts: source

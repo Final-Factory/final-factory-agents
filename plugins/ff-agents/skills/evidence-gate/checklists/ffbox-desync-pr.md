@@ -60,7 +60,8 @@ heartbeat-frame wall median. Develop against the branch.
    runtime desync detector, the fingerprint sampler) needs two peers:
    `scripts/bench/run_mp_frame_bench.sh <player.exe> <outDir> 180 <save>` then
    `scripts/bench/analyze_frames.py`. Start every player through the slot pool
-   (`scripts/nightly/player_slots.py launch`).
+   (`scripts/nightly/player_slots.py launch`; in a worker-root sandbox that is its own pair, slotK-0 and slotK-1,
+   and `--peer 1` gives a same-build client its own folder).
 4. Interleave: develop, branch, develop, branch, at least 3 runs each. On a shared machine hold the
    GPU bench lock for each run and note what else ran.
 5. `python scripts/bench/ab_summary.py <runs dir> <prefix> develop branch` (solo runs): mean ± standard
