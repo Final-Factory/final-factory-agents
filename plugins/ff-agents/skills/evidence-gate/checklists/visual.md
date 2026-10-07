@@ -9,6 +9,14 @@ true before the change merges or is reported as fixed.
    target on the list: give the target its own shader or material, or put every user in scope and
    show a built-player before/after of each kind. The PR's `## Used by` section lists them
    ([lesson](../lessons/check-who-uses-a-shared-asset.md); w410 darkened every range ring).
+0b. **What else goes through the code.** A change to shared presentation code (selection and
+   hover boxes, highlights, outlines, icons, health bars, panels) is checked on every kind of
+   object that code draws, moving, rotating and spinning ones included, not only the case you
+   fixed. A component that picks out one kind is counted in a running game against every
+   archetype that carries it. Film at least one other kind in the before/after, and name any
+   kind left out under "Not verified"
+   ([lesson](../lessons/check-every-kind-of-object-shared-presentation-draws.md); w453 turned
+   every `Placeable`'s box with it, so comet fragments' boxes spun).
 1. **The intended look, in the person's words.** Quote what they said ("the other player appears
    outside of the ship behind it"). If they have not said, write it yourself and say it is yours.
    A review against your own description of a mistake will pass the mistake.

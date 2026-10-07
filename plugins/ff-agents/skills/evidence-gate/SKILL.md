@@ -153,6 +153,11 @@ One file each under `lessons/`: the rule, why (the incident, dated), how to appl
   shader or material for it, or a built-player before/after of every user; the PR's `## Used by`
   lists them and `pr_evidence.py` and CI fail without it (w410: one sprite-shader edit for the
   Alt-view icons darkened every range ring in Build 77).
+- [Check every kind of object shared presentation draws](lessons/check-every-kind-of-object-shared-presentation-draws.md):
+  a change to the selection boxes, highlights, icons or panels is verified on every kind of object
+  they draw, spinning and moving ones included, and a discriminating component is counted against
+  every archetype that carries it (w586: w453 turned every `Placeable`'s box with its target, so
+  comet fragments' boxes spun from 0.50.0.80).
 - [Say DONE per request](lessons/say-done-per-request.md): end a report with `DONE: wNNN` only when
   every step of the request is finished, post-merge steps included; answer a wrap-up or "Is it
   done?" with DONE or what is left (w419: w342 stayed open with its work done).
