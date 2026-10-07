@@ -1,6 +1,6 @@
 ---
 name: evidence-gate
-description: "Before any consequential action (spending money, publishing or sending anything, changing a live setting, releasing, merging a simulation or player-visible change, deleting, or reporting a fix as done) and before recommending one, list the choices, say what each rests on (measured, sourced or guess), settle your own guesses by research, name how it could fail and when you will look, then proceed. A person is asked only for money, for what the rules reserve for them, or at a real fork. Holds the working-rule lessons, the visual, merge, release and FFBox desync PR checklists, and pr_evidence.py, which checks a PR's Evidence section and, for a changed shader or material, its Used by section. Use before acting on something you have not verified, when writing a brief or a report with numbers or recommendations, and after any miss (add a lesson)."
+description: "Before any consequential action (spending money, publishing or sending anything, changing a live setting, releasing, merging a simulation or player-visible change, deleting, or reporting a fix as done) and before recommending one, list the choices, say what each rests on (measured, sourced or guess), settle your own guesses by research, name how it could fail and when you will look, then proceed. A person is asked only for money, for what the rules reserve for them, or at a real fork. Holds the working-rule lessons, the done, visual, merge, release and FFBox desync PR checklists, and pr_evidence.py, which checks a PR's Evidence section and, for a changed shader or material, its Used by section. Use before acting on something you have not verified, when writing a brief or a report with numbers or recommendations, and after any miss (add a lesson)."
 ---
 
 # Evidence gate: research the decision before acting
@@ -100,6 +100,9 @@ report. Change nothing on a guess.
 
 ## Checklists: read the one for what you are doing
 
+- [Done](checklists/done.md): before `DONE: wNNN` or saying a request is finished: merged, the
+  steps after the merge, your disk leftovers removed (builds, Captures, worktrees, player slots),
+  labels and ids.
 - [Visual changes](checklists/visual.md)
 - [Merges](checklists/merge.md), with `pr_evidence.py` for the pull request's `## Evidence` section
 - [Releases](checklists/release.md)
@@ -171,6 +174,10 @@ One file each under `lessons/`: the rule, why (the incident, dated), how to appl
 - [A fix names its player report](lessons/a-fix-names-its-player-report.md): a `Report: <id>`
   line in the PR, or the id as a request subject; a brief's ids claim nothing, and FFBox keeps the
   report open (w414 / #1064 left two Build 76 crash reports NEEDS-INFO).
+- [Clean up after yourself](lessons/clean-up-after-yourself.md): remove the builds, Captures,
+  worktrees, save copies and player slots you made before DONE; low disk is fixed by removing FF
+  Factory's own leftovers or filing clean-up work, never by asking a person (w596/w626: the m3
+  under its guard with ~78 GB of leftovers, and a worker asked Ben and Lothsahn for a go).
 - [No human-time estimates](lessons/no-human-time-estimates.md): size work by scope, or by a
   measured agent time from a named comparable run, never in human days or weeks (w545: the Steam
   Deck report's "1–2 weeks" and "weeks to months"; Ben: "stop giving human time estimates").
