@@ -25,7 +25,9 @@ and `lab.pair-*.json`.
   one file, never a query per file.
 - Binary stdin through that ssh fails (`tar … | ssh` gives "Bad address"). Make a tar, `scp` it,
   unpack with a script.
-- The slot pool there is `D:\work\ff-players`; `python - acquire … < player_slots.py` works.
+- LothDesktop is a worker-root install since 2026-10-07 (w576): its player folders are
+  `D:\work\ffw\players\slotK-0`/`slotK-1` per sandbox and `slotnightly-0`/`-1` for the nightly lab, picked by
+  `player_slots.py` from the sandbox it runs in (`D:\work\ff-players` is gone); `python - acquire … < player_slots.py` works.
 
 **The M3.**
 

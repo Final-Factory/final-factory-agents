@@ -6,8 +6,8 @@ metadata:
 ---
 
 **Rule (Lothsahn, 2026-09-29, w31):** every built player an agent or script starts runs from a
-player slot, `<root>\slotK\player\finalfactory.exe` (`D:\work\ff-players` on lothdesktop,
-`F:\ff-players` on BEAST, `~/nevergames/ff-players` on Macs). Never run the exe where it was built.
+player slot, `<root>\slotK\player\finalfactory.exe` (`F:\ff-players` on BEAST, `~/nevergames/ff-players` on
+Macs; LothDesktop is a worker-root install with per-sandbox pairs, below). Never run the exe where it was built.
 
 ```sh
 python scripts/nightly/player_slots.py launch [--detach] <finalfactory.exe | its folder | .app | .app binary> -- <player args>
@@ -17,13 +17,15 @@ python scripts/nightly/player_slots.py launch [--detach] <finalfactory.exe | its
 
 **Worker-root installs (lothsahn, 2026-10-07, w576; LothDesktop first):** no shared pool. Each sandbox slotK
 (K = 1..N, N the machine's sandbox count) owns exactly two player folders, `<root>\players\slotK-0` (peer 0, the
-host) and `slotK-1` (peer 1, the client), each with its own firewall rules; the installer's `--max-sandboxes N` makes
+host) and `slotK-1` (peer 1, the client), each with one inbound firewall rule; the installer's `--max-sandboxes N` makes
 the sandboxes' count, the pairs and the rules together, and a re-run with a new N adds or removes pairs. The same
 `launch` / `FF_LAUNCH` picks the pair from the sandbox it runs in (`FF_UNITY_HOLDER`, else the working folder; slot
 config `layout: sandbox-pairs`, game repo PR #1165):
 - one build: host and client share `slotK-0`, unless the client is started with `--peer 1` (or `FF_PLAYER_PEER=1`);
 - two different builds (a cross-build desync check): one folder each, no flag needed;
-- outside a sandbox (the nightly lab, a person's shell) there is no player folder: the launch is refused, naming why;
+- outside every sandbox (the nightly lab's scheduled task, which has no FF_* variables) it uses the nightly pair,
+  `slotnightly-0` and `slotnightly-1` (lothsahn: "Let's use slotnightly-0 and slotnightly-1"); the sandbox is
+  `FF_SANDBOX_ID`, else `FF_UNITY_HOLDER`, else the working folder;
 - FF Factory's guard refuses a direct start from another sandbox's pair.
 
 **Why:** Windows Firewall keys its allow rules on the exact exe path. A player started from a new

@@ -16,7 +16,8 @@
    The dash has one charge at the start in multiplayer: a second `ability.afterburner` 8 s later is rejected.
 3. **A remote ship's dash leaves the client's screen.** The dash covers about 325 units (725 px at default zoom).
    Fly the other player to the far side first and dash it back across the view.
-4. **Never pass a slot's own folder to `player_slots.py launch`.** The fingerprint of `D:\work\ff-players\slotK\player`
+4. **Never pass a slot's own folder to `player_slots.py launch`.** The fingerprint of a slot's own `player` folder (`<slot root>\slotK\player`; on LothDesktop now
+   `D:\work\ffw\players\slotK-P\player`)
    differs from the slot's marker, so the pool copies the build into another slot (minutes, 2 GB). Pass the
    original build folder, or accept the copy and keep passing the SAME path so later launches reuse it.
 5. **`launch --detach ... | tail` does not return.** The detached player inherits the pipe. Redirect stdout and
