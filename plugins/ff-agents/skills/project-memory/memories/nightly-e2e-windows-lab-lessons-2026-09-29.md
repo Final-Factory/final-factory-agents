@@ -1,6 +1,6 @@
 ---
 name: nightly-e2e-windows-lab-lessons-2026-09-29
-description: "What moving the 075 nightly e2e lab to a Windows PC (lothdesktop) taught, 2026-09-29: a Unity Library copied from another clone has a stale script-to-class map (URP build NRE, missing scripts, FMOD settings dropped from the player) until every MonoScript is force-reimported; a bash script that git-switches its own checkout splices old and new text unless its body is one function; -nographics EditMode runs fail four GPU-bound fast-suite tests; a lab PC's own mods folder is shared with the players."
+description: "What moving the 075 nightly e2e lab to a Windows PC (lothdesktop) taught, 2026-09-29: a Unity Library copied from another clone has a stale script-to-class map (URP build NRE, missing scripts, FMOD settings dropped from the player) until every MonoScript is force-reimported (an FF Factory sandbox's first Library too: FMOD Setup Wizard at every start, no banks in the player); a bash script that git-switches its own checkout splices old and new text unless its body is one function; -nographics EditMode runs fail four GPU-bound fast-suite tests; a lab PC's own mods folder is shared with the players."
 metadata:
   type: project
 ---
@@ -25,6 +25,18 @@ Fix: one batchmode `-executeMethod` that force-reimports every MonoScript under 
 (`AssetDatabase.FindAssets("t:MonoScript", new[] { "Assets" })`, `ImportAsset(path, ForceUpdate)` inside
 `StartAssetEditing`/`StopAssetEditing`). It takes effect from the next domain load: 3602 scripts, a few minutes.
 `scripts/nightly/install_schedule.sh` does this after it copies a Library.
+
+**An FF Factory sandbox's first Library has the same stale map** (w604, lothdesktop slot6, 2026-10-07): 55 scripts
+deriving from `MonoBehaviour`/`ScriptableObject`/`ScriptableRendererFeature` had no class (the FFRendering features,
+FMOD's `Platform*` classes, Graphy, Quantum Console). Extra symptoms there: the editor log says `No script asset for
+PlatformDefault` (and the other FMOD platforms), every editor start rewrites
+`Assets/Plugins/FMOD/Resources/FMODStudioSettings.asset` without its ~770 lines of platform objects and the "FMOD
+Setup Wizard" window comes back, and a bench player built in that state never leaves the title load (FMOD init
+fails, `FpsPanel.Update` NullReferenceException every frame, Graphy "wasn't initialized"). Check before the first
+build of a fresh sandbox: count MonoScripts with `GetClass() == null` whose file names a Unity-object type, then
+force-reimport them in one `StartAssetEditing` batch, `git checkout` the FMOD settings asset, restart the editor,
+and confirm 0 `No script asset for Platform`, 0 `missing RendererFeatures`, and `Master.bank` in the build's
+`StreamingAssets`. Found by rediscovering it: grep project-memory for the symptom before debugging a build.
 
 **A script that updates its own checkout must be parsed before it runs.** `nightly.sh` runs
 `git switch --detach origin/develop` on the clone it lives in. Bash reads a plain script as it executes, so it
