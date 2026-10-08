@@ -1,7 +1,7 @@
 ---
 name: scout
 description: Cheap read-only single-answer lookups — "where/how is X defined", symbol usages, a config value, which file owns Y. Haiku-tier. Delegate focused investigations here instead of searching inline so the main context stays lean.
-model: haiku
+model: claude-haiku-5-5
 effort: low
 tools: Read, Grep, Glob, Bash
 ---

@@ -1,7 +1,7 @@
 ---
 name: Explore
 description: Read-only codebase search and fan-out exploration — locating code, tracing symbols, mapping naming conventions across many files. Shadows the built-in Explore so background searches run on Haiku instead of the session model. Use for "where/how is X", usage sweeps, and broad reads where you only need the conclusion, not full file dumps.
-model: haiku
+model: claude-haiku-5-5
 effort: low
 tools: Read, Grep, Glob, Bash
 ---
