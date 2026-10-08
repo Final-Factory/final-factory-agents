@@ -18,3 +18,6 @@ holds, or the report says what is left instead of DONE.
    asked about ([clean up after yourself](../lessons/clean-up-after-yourself.md)).
 4. **Labels and ids.** Each number and recommendation is labelled measured, sourced or guess, and
    every id has its plain words beside it ([say what an id is](../lessons/say-what-an-id-is.md)).
+5. **Open waits.** Every `wNNN: still open:` line that names a person (a reboot, a login, a decision, an
+   approval) was declared with `waiting_on_person` before the turn ended, and no `wake_me` stands in
+   for it ([a wait on a person is declared, not polled](../lessons/a-person-wait-is-declared-not-polled.md)).
