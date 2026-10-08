@@ -1,6 +1,6 @@
 ---
 name: evidence-gate
-description: "Before any consequential action (spending money, publishing or sending anything, changing a live setting, releasing, merging a simulation or player-visible change, deleting, or reporting a fix as done) and before recommending one, list the choices, say what each rests on (measured, sourced or guess), settle your own guesses by research, name how it could fail and when you will look, then proceed. A person is asked only for money, for what the rules reserve for them, or at a real fork. Holds the working-rule lessons, the done, visual, merge, release and FFBox desync PR checklists, and pr_evidence.py, which checks a PR's Evidence section and, for a changed shader or material, its Used by section. Use before acting on something you have not verified, when writing a brief or a report with numbers or recommendations, and after any miss (add a lesson)."
+description: "Before any consequential action (spending money, publishing or sending anything, changing a live setting, releasing, merging a simulation or player-visible change, deleting, or reporting a fix as done) and before recommending one, list the choices, say what each rests on (measured, sourced or guess), settle your own guesses by research, name how it could fail and when you will look, then proceed. A person is asked only for money, for what the rules reserve for them, or at a real fork. Holds the working-rule lessons, the done, visual, UI, merge, release and FFBox desync PR checklists, and pr_evidence.py, which checks a PR's Evidence section (for a UI change its content, style, per-still and real-rate clip lines) and, for a changed shader or material, its Used by section. Use before acting on something you have not verified, when writing a brief or a report with numbers or recommendations, and after any miss (add a lesson)."
 ---
 
 # Evidence gate: research the decision before acting
@@ -104,6 +104,9 @@ report. Change nothing on a guess.
   steps after the merge, your disk leftovers removed (builds, Captures, worktrees, player slots),
   labels and ids.
 - [Visual changes](checklists/visual.md)
+- [UI changes](checklists/ui.md): screens, panels, tabs, HUD, layouts: a late-game save, every
+  sub-view, the whole content, the classic look side by side, a real-rate clip, one written line
+  per still against the requester's words; `Content:`, `Full content:`, `Style:`, `Shots:` in the PR.
 - [Merges](checklists/merge.md), with `pr_evidence.py` for the pull request's `## Evidence` section
 - [Releases](checklists/release.md)
 - [FFBox desync PRs](checklists/ffbox-desync-pr.md) (Lothsahn's standing policy, 2026-10-04): classify
@@ -161,6 +164,10 @@ One file each under `lessons/`: the rule, why (the incident, dated), how to appl
   they draw, spinning and moving ones included, and a discriminating component is counted against
   every archetype that carries it (w586: w453 turned every `Placeable`'s box with its target, so
   comet fragments' boxes spun from 0.50.0.80).
+- [Verify UI with full content, like a player](lessons/verify-ui-with-full-content-like-a-player.md):
+  every screen and sub-view in a late-game save, whole, on the classic look, still in a real-rate
+  clip, each still checked against the requester's words (w718: the w644 hub, #1251, passed a tour
+  of "opens, fits, 9 px" stills; on Ben's Deck it was navy, Crafting one row, no tech grid).
 - [Measure against what the player sees](lessons/measure-against-what-the-player-sees.md): a
   placement metric is checked against the drawn surface or outline, computed independently of the
   code under test, never against the code's own answer (w587: w176's impacts scored 0.0 u against

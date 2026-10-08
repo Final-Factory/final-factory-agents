@@ -221,6 +221,9 @@ return "frame=" + UnityEngine.Time.frameCount;                       // ALWAYS v
 > `watch_video --mode vfx` against a written description of the intended look, and step through the
 > frames. The PR links the clips and the review report. Once Ben has approved a look, compare
 > against that approved clip. Screenshots alone don't count. Recipe: `ff-agents:watch-video`.
+> A screen, panel or layout also goes through `ff-agents:unity-ui` and the evidence-gate's
+> `checklists/ui.md`: a late-game save, every sub-view, its whole content, the classic look side
+> by side, a real-rate clip for flicker (w718).
 
 **Where review media goes** (w309, Lothsahn 2026-10-03): publish the stills, clips and review report with FF Factory's `publish_review` tool (`mcp__sandbox__publish_review` in a BEAST sandbox, `mcp__machine__publish_review` on a machine; `topic`, `files`, `note`). It puts them in the review folder on BEAST (`F:\ffsb\_review\<topic>\`) and answers the paths to put in your report and the PR. Never ssh, scp or copy review files across machines. A session without the tool (FF Factory not yet updated) keeps them in its worktree, lists the local paths, and says they are not published.
 
