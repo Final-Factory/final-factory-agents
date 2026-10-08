@@ -45,6 +45,7 @@ Not verified: the Bats' slot lag (simulation, follow-up PR)
   `Full content:`, `Style:` (the classic panel compared, and the result), `Shots:` (the
   one-line-per-still notes) and a flicker result on `Clips:` or `Flicker:`. A clip of 1 to 9 fps,
   or "a sequence of the shots", fails ([ui.md](ui.md); w718: #1251 passed every other rule).
+  Where a line does not apply (a name tag's colour has no grid), write `n/a:` and why.
 - **Kind `simulation`** needs "Tests", "Determinism audit" (with the heartbeat count, per the
   `determinism-audit` skill) and "Save compatibility" (the repo's hard rule).
 - **A new or moved system, or code that runs per frame or on one peer only** (a request leg, a
