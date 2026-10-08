@@ -1,8 +1,8 @@
 ---
 name: implementor
-description: "Implementation legs on Opus 5.5 for anything that touches simulation, determinism, netcode, save state or a crown-jewel surface, and the escalation target when implementor-sonnet fails — takes ONE designed, scoped task (a tasks.md item or a driver-authored design) and implements it end-to-end (code, tests, compile-verify, the tests the change touches), then reports a structured diff summary. Work off the simulation (UI, presentation, tooling, scripts) goes to implementor-sonnet at about half the cost. The driver designs, reviews the diff and owns every commit. Hard determinism surfaces are hand-back territory; join/recovery-adjacent shell code only from an explicit driver design."
-model: opus
-effort: medium
+description: "Implementation legs on Sonnet 5.5 at high effort (Opus 5.5 until 2026-10-08) for anything that touches simulation, determinism, netcode, save state or a crown-jewel surface, and the escalation target when implementor-sonnet fails — takes ONE designed, scoped task (a tasks.md item or a driver-authored design) and implements it end-to-end (code, tests, compile-verify, the tests the change touches), then reports a structured diff summary. Work off the simulation (UI, presentation, tooling, scripts) goes to implementor-sonnet. The driver designs, reviews the diff and owns every commit. Hard determinism surfaces are hand-back territory; join/recovery-adjacent shell code only from an explicit driver design."
+model: sonnet
+effort: high
 tools: Read, Grep, Glob, Edit, Write, Bash, mcp__UnityMCP__refresh_unity, mcp__UnityMCP__run_tests, mcp__UnityMCP__get_test_job, mcp__UnityMCP__set_active_instance, mcp__UnityMCP__read_console, ReadMcpResourceTool
 ---
 
