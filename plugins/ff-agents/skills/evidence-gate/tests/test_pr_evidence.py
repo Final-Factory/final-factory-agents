@@ -173,6 +173,57 @@ class ReplayTest(unittest.TestCase):
         self.assertNotIn("Intended look", reasons)
 
 
+class UiTest(unittest.TestCase):
+    """w718: the w644 hub (#1251) passed every visual rule and a tour of stills; on Ben's Deck nearly every tab was
+    broken (navy, Crafting cut to one row, no tech grid, the Blueprints preview off screen and flickering)."""
+
+    FILES_1251 = ["Assets/Scripts/UI/Structured/StructuredHub.cs", "Assets/Scripts/UI/UiController.cs",
+                  "Assets/Scripts/Steam/SteamInputBridge.cs", "Assets/Tests/UI/Structured/StructuredHubTests.cs"]
+    UI_LINES = """Content: late-game audit save w718-lategame.zip (212 techs, 140 recipes, 24 blueprints, 9 fleets)
+Full content: every tab's grid, list and tree whole or scrolling; fill 78-96 % per pane (ui_check fill)
+Style: against the classic Inventory and Crafting, same save, 1280x800: background delta E 2.1 (ui_check style)
+Shots: proofs/shots.md, one line per still against Ben's words
+"""
+
+    def body(self):
+        return (HERE / "fixtures" / "pr-1251-deck-hub.md").read_text(encoding="utf-8")
+
+    def test_1251_passes_without_its_files_and_fails_the_ui_rules_with_them(self):
+        self.assertEqual(pe.check(self.body())[0], [])
+        reasons = "\n".join(pe.check(self.body(), self.FILES_1251)[0])
+        for name in ("Content", "Full content", "Style", "Shots"):
+            self.assertIn(f"UI change with no '{name}:' line", reasons)
+        self.assertIn("'Clips' is a slideshow ('1 fps')", reasons)
+        self.assertIn("no flicker result", reasons)
+
+    def test_a_ui_section_with_full_content_style_shots_and_a_real_clip_passes(self):
+        body = edit(GOOD, "Kind: visual, simulation", "Kind: ui, simulation")
+        body = edit(body, "Clips: proofs/before.mp4, proofs/after.mp4 (the hand-over is at frames 118-190)",
+                    self.UI_LINES + "Clips: proofs/before.mp4, proofs/after.mp4, 60 fps (each tab idle at 0-4 s, "
+                    "hover at 4-8 s); ui_check flicker: 0 regions")
+        self.assertEqual(self.problems(body), [])
+        self.assertEqual(self.problems(body, ["Assets/Scripts/UI/Structured/StructuredHub.cs"]), [])
+
+    def test_kind_ui_alone_brings_the_visual_rules(self):
+        body = edit(GOOD, "Kind: visual, simulation", "Kind: ui, simulation")
+        body = edit(body, "Built player: yes\n", "")
+        self.assertIn("'Built player: yes' is missing", "\n".join(self.problems(body)))
+
+    def test_a_ui_file_without_a_visual_kind_is_caught(self):
+        body = edit(GOOD, "Kind: visual, simulation", "Kind: simulation")
+        self.assertIn("say Kind: visual (ui for a screen)",
+                      "\n".join(self.problems(body, ["Assets/Scripts/UI/Structured/StructuredHub.cs"])))
+
+    def test_a_slideshow_is_named(self):
+        for text in ("1 fps sequences of the tours' shots", "a sequence of the stills", "slideshow of screenshots"):
+            self.assertTrue(pe.SLIDESHOW.search(text), text)
+        for text in ("60 fps", "30 fps, 12 s", "frames 118-190"):
+            self.assertFalse(pe.SLIDESHOW.search(text), text)
+
+    def problems(self, body, files=None):
+        return pe.check(body, files)[0]
+
+
 class UsedByTest(unittest.TestCase):
     """w438: a shader or material change lists everything that uses it. #1068 changed the sprite shader 25
     materials share and checked only the Alt-view icons; every range ring in 0.50.0.77 filled dark."""
@@ -219,7 +270,7 @@ class UsedByTest(unittest.TestCase):
 
 class AuditTest(unittest.TestCase):
     def test_a_pass_counts_only_when_it_was_posted_before_the_merge(self):
-        files = [{"path": "Assets/Scripts/UI/Crafting/QuickCraftPanel.cs"}]
+        files = [{"path": "Assets/Scripts/FFSystems/Presentation/RiderSystem.cs"}]
         prs = [
             {"number": 1, "title": "checked, then merged", "mergedAt": "2026-10-02T06:10:53Z", "body": GOOD, "files": files,
              "comments": [{"body": "evidence-gate: PASS (pr_evidence.py)", "createdAt": "2026-10-02T06:01:00Z"}]},

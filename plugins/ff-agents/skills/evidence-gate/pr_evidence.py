@@ -4,7 +4,8 @@
 The evidence-gate skill (checklists/merge.md) says what the section holds. This script checks the
 part a script can check: every claim has a basis and none is a guess, nothing is pending, a visual
 change names a built player, the event's place in the clip and the intended look, a simulation
-change names its tests, its determinism audit and its save compatibility, and a change to a shader
+change names its tests, its determinism audit and its save compatibility, a UI change names its content, its
+full-content and style checks, its per-still notes and a real-rate clip (checklists/ui.md), and a change to a shader
 or material lists everything that uses it ("## Used by", from the game repo's scripts/asset_usage.py)
 with a basis for each. It cannot tell whether anyone looked carefully. Standard library only; `gh` for everything that reads GitHub.
 
@@ -25,7 +26,7 @@ import sys
 from pathlib import Path
 
 MARKER = "evidence-gate:"
-KINDS = ("visual", "simulation", "other")
+KINDS = ("visual", "ui", "simulation", "other")
 BASES = ("MEASURED", "SOURCED", "DECIDED", "GUESS")
 PENDING = re.compile(r"\b(pending|not yet|tbd|todo|to be (done|verified|reviewed|recorded|checked)|"
                      r"will be (reviewed|verified|recorded|checked))\b", re.IGNORECASE)
@@ -34,6 +35,11 @@ VIDEO = re.compile(r"\.(mp4|webm|mov|mkv)\b", re.IGNORECASE)
 PLACE = re.compile(r"\bframes?\b[^\n]{0,20}\d|\b\d+(\.\d+)?\s*(s|sec|secs|seconds)\b|\b\d+:\d{2}(\.\d+)?\b", re.IGNORECASE)
 VISUAL_PATH = re.compile(r"/(Presentation|UI|VFX|Vfx|Shaders?)/|\.(shader|shadergraph|shadersubgraph|vfx|hlsl|cginc|mat|anim|"
                          r"controller|uxml|uss)$", re.IGNORECASE)
+# A screen, panel or HUD element (w718, checklists/ui.md): checked with full content, against the classic look, in motion.
+UI_PATH = re.compile(r"/UI/|\.(uxml|uss)$")
+# "1 fps sequences of the tours' shots" (#1251): stills played as a video cannot show flicker.
+SLIDESHOW = re.compile(r"\b[1-9]\s*fps\b|\b(sequences?|slide ?shows?)\s+of\s+(the\s+)?(\w+'?s?\s+)?(shots|stills|screenshots)\b",
+                       re.IGNORECASE)
 # A shared look: changing one changes everything that draws with it (w438, lessons/check-who-uses-a-shared-asset.md).
 SHARED_ASSET = re.compile(r"\.(shader|shadergraph|shadersubgraph|hlsl|cginc|mat)$", re.IGNORECASE)
 USAGE_LINE = re.compile(r"asset-usage:\s*`?([^`\s]+?)`?\s+has\s+(\d+)\s+users?\b", re.IGNORECASE)
@@ -151,6 +157,31 @@ def used_by_problems(body: str, files: list[str] | None) -> list[str]:
     return problems
 
 
+def ui_problems(section: str) -> list[str]:
+    """A screen, panel or HUD change: full content, the classic look, a still-by-still look and a real-rate clip (w718)."""
+    problems = []
+    wanted = {
+        "Content": "the save or world the stills were taken in and what fills it (a late-game save: techs, recipes, "
+                   "blueprints, fleets, objectives). An empty tab is not verified",
+        "Full content": "whether every screen shows its whole grid, list, tree and preview (ui_check.py fill per pane)",
+        "Style": "the classic panel it was compared with, same save and size, and the result (ui_check.py style)",
+        "Shots": "where the one-line-per-still notes against the requester's words are (ui_check.py shots)",
+    }
+    for name, what in wanted.items():
+        line = field(section, name)
+        if not line or len(line[1]) < 15:
+            problems.append(f"UI change with no '{name}:' line: {what} (checklists/ui.md)")
+    clips = field(section, "Clips")
+    if clips and SLIDESHOW.search(clips[1]):
+        problems.append(f"'Clips' is a slideshow ('{SLIDESHOW.search(clips[1]).group(0)}'): record each screen at 30 fps "
+                        f"or more, idle and while hovering and selecting, so flicker can show (DeckTour `record`)")
+    flick = field(section, "Flicker")
+    if not re.search(r"flicker", (clips[1] if clips else "") + (flick[1] if flick else ""), re.IGNORECASE):
+        problems.append("UI change with no flicker result: run ui_check.py flicker on the clip's frames and say how "
+                        "many regions it found, on the 'Clips:' line or a 'Flicker:' line")
+    return problems
+
+
 def check(body: str, files: list[str] | None = None) -> tuple[list[str], list[str]]:
     """Every reason the evidence is not ready (empty = PASS), and notes that do not fail it."""
     used_by = used_by_problems(body, files)
@@ -185,6 +216,10 @@ def check(body: str, files: list[str] | None = None) -> tuple[list[str], list[st
     if not unverified or not unverified[1]:
         problems.append("no 'Not verified:' line: name what you could not check, or write 'nothing'")
 
+    ui = "ui" in kinds or ("visual" in kinds and any(UI_PATH.search(f) for f in files or [] if not NOT_GAME_CODE.search(f)))
+    if ui and "visual" not in kinds:
+        kinds.append("visual")
+
     if "visual" in kinds:
         look = field(section, "Intended look")
         if not look or len(look[1]) < 15:
@@ -207,6 +242,9 @@ def check(body: str, files: list[str] | None = None) -> tuple[list[str], list[st
             problems.append("'Looked: yes, ...' is missing: someone steps through the event's frames against the "
                             "intended look. A measurement or a watch_video verdict is not a look")
 
+    if ui:
+        problems += ui_problems(section)
+
     if "simulation" in kinds:
         tests = field(section, "Tests")
         if not tests or not re.search(r"\d", tests[1]):
@@ -227,8 +265,8 @@ def check(body: str, files: list[str] | None = None) -> tuple[list[str], list[st
     if files:
         code = [f for f in files if not NOT_GAME_CODE.search(f)]
         visual = [f for f in code if VISUAL_PATH.search(f)]
-        if visual and "visual" not in kinds and not any("no visible change" in c.lower() and has_basis(b) for c, b in rows):
-            problems.append(f"the changed files look visual ({', '.join(visual[:3])}): say Kind: visual, or add a claim "
+        if visual and not {"visual", "ui"} & set(kinds) and not any("no visible change" in c.lower() and has_basis(b) for c, b in rows):
+            problems.append(f"the changed files look visual ({', '.join(visual[:3])}): say Kind: visual (ui for a screen), or add a claim "
                             f"row 'No visible change' with its basis")
         simulation = [f for f in code if SIMULATION_PATH.search(f) and "/Presentation/" not in f]
         if simulation and "simulation" not in kinds and not any("no simulation" in c.lower() and has_basis(b) for c, b in rows):
@@ -305,7 +343,7 @@ def main(argv=None) -> int:
 
     if args.body_file:
         body = Path(args.body_file).read_text(encoding="utf-8")
-        files = Path(args.files_file).read_text(encoding="utf-8").split() if args.files_file else None
+        files = Path(args.files_file).read_text(encoding="utf-8").splitlines() if args.files_file else None
     elif args.repo and args.pr:
         pr = json.loads(gh("pr", "view", str(args.pr), "--repo", args.repo, "--json", "body,files"))
         body, files = pr.get("body") or "", [f["path"] for f in pr.get("files") or []]

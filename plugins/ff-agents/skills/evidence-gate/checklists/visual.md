@@ -2,7 +2,10 @@
 
 For any change a player sees: VFX, shaders, animation, particles, camera feel, UI, where something
 is drawn. The recording and review recipe is the `watch-video` skill; this list is what has to be
-true before the change merges or is reported as fixed.
+true before the change merges or is reported as fixed. **A screen, panel, tab, HUD element or
+layout also follows [the UI checklist](ui.md)**: a late-game save, every sub-view, the whole
+content, the classic look side by side, a real-rate clip for flicker (w718: the w644 hub passed
+on stills and broke on Ben's Deck).
 
 0. **Who else draws with it.** Before you edit a shader, shader graph, subgraph, include or
    material, run `python3 scripts/asset_usage.py <path>` in the game repo. Anything besides the
@@ -30,7 +33,8 @@ true before the change merges or is reported as fixed.
    way a player does: the real hit, the real deconstruct, the real second rider. An editor rig or
    a hand-set state shows that the code runs, not that the game looks right. If a built player is
    impossible, say so: the change is then "changed, not yet seen in the built game", not "fixed".
-3. **Before and after clips at 60 fps** that cover the effect's whole life (`record_clip`).
+3. **Before and after clips at 60 fps** that cover the effect's whole life (`record_clip`). Stills
+   played one a second are not a clip: they cannot show a pop, a flicker or a jump.
 4. **The clip contains the event.** Name the frames or seconds where it happens. A clip without
    the event proves nothing, and a review of it is void.
 5. **Look yourself.** Step through the event's frames (`frames.jpg`) against each line of the
