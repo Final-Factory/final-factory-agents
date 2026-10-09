@@ -122,8 +122,11 @@ installed runtimes:
   Codex validation path. Do not describe the plugin as unvalidated merely because the CLI has no
   separate `validate` verb.
 
-After those checks pass, stage only the intended files, commit, and push. The driver owns the
-actual commit and push.
+After those checks pass, stage only the intended files, commit on a branch, push it and open a pull
+request into `master` (`Request: wNNN` in its description when it comes from a request). Merge it
+yourself once the `validate` check is green; don't push to `master` directly (w741: 80 of 92 commits
+since 2026-09-25 went straight to master with no check run on them). The driver owns the commit,
+the push and the merge.
 
 The manifests are UTF-8 with literal em-dashes. `bumpVersion.sh` uses sed, which rewrites only
 the matched bytes; never reimplement a version edit by parsing and re-serializing the JSON,

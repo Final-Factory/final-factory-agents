@@ -60,6 +60,16 @@ released one now fails itself.
   - SOURCED: w712's brief offered "a deliberate full-screen modal with a solid enough background";
     Ben never asked for a new colour, and nothing compared one with the game's panels.
 
+**Corrected, 2026-10-09 (w732).** Not every overlap is a defect. Ben's words were that the
+slide-out panels "still intersect with the hotbar"; w732's brief turned that into "0 overlapping HUD
+element rects", the worker moved the slide-outs above the toggles, and Ben corrected it: they open
+where they used to and draw on top of the hotbar (the worker's words). A slide-out opened over the
+hotbar, or the Inventory and Crafting windows that have always opened over it
+(`specs/w644-deck-release/uiscale.md`), is design. `hud-clusters.json` now lists that pair under
+`byDesign` with the person's words, and `ui_layout.py` prints it as BY DESIGN instead of failing it.
+Add a pair there only from a person's own correction, never to make a check pass. Fix what your
+change displaced (here #1264's `HudCornerSpacing`) before you move anything else.
+
 **How to apply.** [The UI checklist](../checklists/ui.md), items 11 to 14, and the `unity-ui`
 skill's `layout-census.md`:
 

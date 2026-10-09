@@ -39,6 +39,11 @@ Fixed in 0.50.0.46 by `Step0_50_0_45PlayerSimulationVelocity`.
   `feedback-upgrade-steps-over-fast-loads` for why slow once is fine). A step versioned above the
   build re-runs on every load until the version bump, so a data-changing step is idempotent or
   flag-guarded (the `SaveState.ChargeIsStoredEnergy` pattern; `built-pair-lab-traps-2026-09-27`).
+  **A step goes stale while its PR waits**: it runs only on saves stamped below its version, so a
+  release that ships first stamps its saves at or above it and they are skipped. Before the merge,
+  and again before a bump, re-version any step added since the last release above that release, and
+  test a save at the last release's version (67043c1ff moved w393 to .77; a53d8acdb moved w455 from
+  .80 to .82 after two releases shipped).
 - **Tests** (all exist on develop since 0.50.0.46):
   - `SaveLayoutSnapshotTest` (fast suite) fails on any saved-layout change. Fix it by adding the
     step, then regenerate via `Final Factory/Serialization/Regenerate Save Layout Snapshot`; the

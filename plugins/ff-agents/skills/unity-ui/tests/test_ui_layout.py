@@ -71,6 +71,31 @@ class KeptOverlapTest(unittest.TestCase):
         self.assertEqual(ul.moved_blocks(hud(slideout=True), hud(slideout=True)), set())
 
 
+class ByDesignTest(unittest.TestCase):
+    def run_check(self, before, after, spec):
+        with tempfile.TemporaryDirectory() as tmp:
+            b, a, c = Path(tmp) / "before.json", Path(tmp) / "after.json", Path(tmp) / "clusters.json"
+            b.write_text(json.dumps(before), encoding="utf-8")
+            a.write_text(json.dumps(after), encoding="utf-8")
+            c.write_text(json.dumps(spec), encoding="utf-8")
+            return ul.main(["check", "--before", str(b), "--after", str(a), "--clusters", str(c)])
+
+    def test_the_slide_out_over_the_hotbar_is_by_design_in_the_shipped_spec(self):
+        # w732: Ben said the slide-outs open where they used to and draw on top of the hotbar.
+        spec = json.loads(ul.DEFAULT_CLUSTERS.read_text(encoding="utf-8"))
+        self.assertIsNotNone(ul.by_design((f"{GP}/ActionBarParent", f"{GP}/QuckControls"), spec))
+        self.assertEqual(self.run_check(hud(), hud(slideout=True), spec), 0)
+
+    def test_without_the_entry_the_same_overlap_still_fails(self):
+        spec = json.loads(ul.DEFAULT_CLUSTERS.read_text(encoding="utf-8"))
+        spec["byDesign"] = []
+        self.assertEqual(self.run_check(hud(), hud(slideout=True), spec), 1)
+
+    def test_an_entry_covers_only_its_own_pair(self):
+        spec = {"byDesign": [{"blocks": ["QuckControls", "ActionBarParent"]}]}
+        self.assertIsNone(ul.by_design((f"{GP}/InvAndCraft", f"{GP}/ActionBarParent"), spec))
+
+
 class ClusterTest(unittest.TestCase):
     SPEC = {"clusters": [{"name": "bottom-right HUD", "anchor": "MinimapParent",
                           "members": ["QuickButtons", "OptionToggles", "Hotbars"]}]}

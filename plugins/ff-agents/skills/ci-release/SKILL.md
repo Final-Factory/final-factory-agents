@@ -53,7 +53,7 @@ ffbox host for both editions (`main,demo`), and the host grants each edition onl
 - and that version has not been built on that branch before.
 
 Each granted edition is one `Editor.ReleaseBuild` session. The job starts from the target cache the
-nightly "Rebuild caches" workflow wrote (releases write no cache), so a main player pays Burst for
+nightly "Rebuild caches" workflow wrote, so a main player pays Burst for
 everything pushed since that night: about 10–20 min, more on a busy box or after a big day. The demo
 after it should be much shorter. The host grants each edition on its own, so a re-run of a job whose
 main player is already GOOD builds only the demo. The host then checks it: the exe, the entity scenes, the
@@ -72,6 +72,14 @@ Lothsahn and Ben promote to Steam branches by hand. The host also posts notices 
 (`release.channel`; 0.50.0.42's all landed there, none in #agent-testing) and, once all four players are GOOD, opens a PR
 `ffbox/release-<version>-regenerated` for any tracked files the build regenerated (localization
 harvest, font atlases).
+
+Since 2026-10-06 a release also writes its target cache back (#1153, ee0f34d3b) and the run ends
+with two more jobs, "Branch tip for the cache refresh" and "Refresh the branch entry after the
+release" (dc38316bd, w578), about 15 min after the uploads: the run still shows in progress after
+main and the demo are up, and that is normal. The regenerated-files PR settles itself: the lane
+merges it when clean and closes it when conflicted (ffbox 5a25bf1, w562; Lothsahn: "please
+automatically merge these if there are no conflicts, and close them if there are"); master's waits
+for Ben. Don't merge, close or chase it.
 
 Design and code: ffbox repo `design/ffbuild_release_design.txt`, `scripts/release_lane.py`,
 `scripts/ffsteam.py`; README "Release players and the Steam upload"; config.md "release".
@@ -193,7 +201,12 @@ master** (the notice: "set live on <branch> (BuildID …)"; the ledger's `upload
 `uploads.main.live_builds`). Then say plainly where it is not: a develop build reaches
 `pre-release` only as a master release, and no build is on the default branch until Ben or Lothsahn
 moves it there. BUILDING or WAITING is normal (measured 22-78 min from the
-bump); only LATE is an ffbox problem for its owner. **Never move a Steam branch, never ask a worker to,
+bump; about 100 min after a shader or render-pipeline change misses the shader cache: 0.50.0.81's
+URP light layers, Builds 81-82 and master 82 at 95-108 min); only LATE is an ffbox problem for its owner.
+`release-status.py` reads only the branch's last 100 commits (`scripts/release-status.py:111`):
+"No bump commit … in the last 100 commits" for an older release means out of range, not never made
+(0.50.0.89 was 135 commits back after 8 hours). Use `git log --first-parent --grep '^<version>$'
+origin/<branch>` and `gh run list -c <sha>` instead. **Never move a Steam branch, never ask a worker to,
 and never tell Ben a branch must be moved for the build to count**: report where it landed.
 
 ## 3. Patch notes: the required last step
@@ -242,7 +255,7 @@ release"), in `release.decided`, and in the ffbox journal (`journalctl -u ffwatc
 | upload skipped: `the tests did not pass: …` | A `Test in …` job of the release's run failed. The players were built but not uploaded. Fix the test, then bump again. |
 | upload waiting, players GOOD | The run's tests have not finished yet; the host asks GitHub once a minute. Normal. |
 | declined: `does not change the version` | The pushed commit is not a bump. Bump and push again. |
-| declined: `not on <branch>'s first-parent history` | The bump arrived only through a merge's second parent. Bump directly on the branch. |
+| declined: `not on <branch>'s first-parent history` | The bump arrived only through a merge's second parent. Bump directly on the branch. A master release is the exception that works: a develop→master merge PR (#1158, merge 6eac4d00d) changes the version against its first parent, so the merge commit is the bump; `release-status.py` finds it there (162de7b37). |
 | declined: `already built at <sha>` / `already built` | That version exists already. Bump again; a version is built once. |
 | declined: `job identity not confirmed` | The host could not confirm the job with GitHub (the GitHub App needs Actions:Read and Contents:Read). Tell the ffbox owner. |
 | a worker FAILED: `asset import error` | A Linux editor cannot import something (e.g. a video with transcoding on). Fix the asset settings, then bump again. |
