@@ -36,7 +36,7 @@ PLACE = re.compile(r"\bframes?\b[^\n]{0,20}\d|\b\d+(\.\d+)?\s*(s|sec|secs|second
 VISUAL_PATH = re.compile(r"/(Presentation|UI|VFX|Vfx|Shaders?)/|\.(shader|shadergraph|shadersubgraph|vfx|hlsl|cginc|mat|anim|"
                          r"controller|uxml|uss)$", re.IGNORECASE)
 # A screen, panel or HUD element (w718, checklists/ui.md): checked with full content, against the classic look, in motion.
-UI_PATH = re.compile(r"/UI/|\.(uxml|uss)$")
+UI_PATH = re.compile(r"/UI/|\.(uxml|uss)$|^Assets/Scenes/[^/]+\.unity$")
 # "1 fps sequences of the tours' shots" (#1251): stills played as a video cannot show flicker.
 SLIDESHOW = re.compile(r"\b[1-9]\s*fps\b|\b(sequences?|slide ?shows?)\s+of\s+(the\s+)?(\w+'?s?\s+)?(shots|stills|screenshots)\b",
                        re.IGNORECASE)
@@ -164,7 +164,8 @@ def ui_problems(section: str) -> list[str]:
         "Content": "the save or world the stills were taken in and what fills it (a late-game save: techs, recipes, "
                    "blueprints, fleets, objectives). An empty tab is not verified",
         "Full content": "whether every screen shows its whole grid, list, tree and preview (ui_check.py fill per pane)",
-        "Style": "the classic panel it was compared with, same save and size, and the result (ui_check.py style)",
+        "Style": "every touched panel's colour and alpha against a classic reference panel, as the 'Style:' line "
+                 "ui_layout.py check prints (delta E and alpha per panel)",
         "Shots": "where the one-line-per-still notes against the requester's words are (ui_check.py shots)",
     }
     for name, what in wanted.items():
@@ -175,10 +176,54 @@ def ui_problems(section: str) -> list[str]:
     if clips and SLIDESHOW.search(clips[1]):
         problems.append(f"'Clips' is a slideshow ('{SLIDESHOW.search(clips[1]).group(0)}'): record each screen at 30 fps "
                         f"or more, idle and while hovering and selecting, so flicker can show (DeckTour `record`)")
+    problems += layout_problems(section)
     flick = field(section, "Flicker")
     if not re.search(r"flicker", (clips[1] if clips else "") + (flick[1] if flick else ""), re.IGNORECASE):
         problems.append("UI change with no flicker result: run ui_check.py flicker on the clip's frames and say how "
                         "many regions it found, on the 'Clips:' line or a 'Flicker:' line")
+    return problems
+
+
+INTENDED = re.compile(r"\bintended\s*\(([^)]+)\)\s*:", re.IGNORECASE)
+
+
+def layout_problems(section: str) -> list[str]:
+    """The rest of the screen (w733): no new overlap, no anchored cluster drifting, every touched panel's colour and
+    alpha within reach of the classic panel's. The lines are the ones `unity-ui/ui_layout.py check` prints; a
+    difference the requester asked for passes only with `intended (who): "their words"` on its line."""
+    problems = []
+    overlaps = field(section, "Overlaps")
+    if not overlaps:
+        problems.append("UI change with no 'Overlaps:' line: run the layout census before and after with the whole HUD "
+                        "showing and every slide-out open, and paste ui_layout.py check's line (unity-ui, layout-census.md)")
+    else:
+        new = re.search(r"(\d+)\s+new\b", overlaps[1])
+        if not new:
+            problems.append("'Overlaps:' does not say how many overlaps are new: paste ui_layout.py check's line")
+        elif int(new.group(1)) > 0 and not INTENDED.search(overlaps[1]):
+            problems.append(f"'Overlaps:' has {new.group(1)} new overlap(s) between HUD blocks: fix them, or quote the "
+                            f"requester asking for it as intended (who): \"...\"")
+    alignment = field(section, "Alignment")
+    if not alignment:
+        problems.append("UI change with no 'Alignment:' line: the anchored clusters' drift before and after "
+                        "(ui_layout.py check, hud-clusters.json)")
+    else:
+        drift = re.search(r"max drift\s+(\d+(?:\.\d+)?)\s*px", alignment[1], re.IGNORECASE)
+        if not drift:
+            problems.append("'Alignment:' does not give the max drift in px: paste ui_layout.py check's line")
+        elif float(drift.group(1)) > 2 and not INTENDED.search(alignment[1]):
+            problems.append(f"'Alignment:' drifts {drift.group(1)} px (more than 2): an anchored HUD piece moved against "
+                            f"its anchor. Fix it, or quote the requester as intended (who): \"...\"")
+    style = field(section, "Style")
+    if style and len(style[1]) >= 15:
+        deltas = [float(d) for d in re.findall(r"delta E\s+(\d+(?:\.\d+)?)", style[1], re.IGNORECASE)]
+        if not deltas or not re.search(r"\balpha\b", style[1], re.IGNORECASE):
+            problems.append("'Style:' has no measured delta E and alpha: compare every touched panel with a classic "
+                            "reference panel (ui_layout.py check --touched <window> --shot/--ref-shot) and paste its line. "
+                            "A sentence like 'keeps its translucent look' is not a measurement (w733: #1272)")
+        elif max(deltas) > 10 and not INTENDED.search(style[1]):
+            problems.append(f"'Style:' has a panel at delta E {max(deltas):.1f} from the classic panel (more than 10): "
+                            f"restore the game's panel look, or quote the requester as intended (who): \"...\"")
     return problems
 
 
@@ -286,8 +331,45 @@ def gh(*args: str) -> str:
     return done.stdout
 
 
-def verdict_text(problems: list[str], notes: list[str]) -> str:
-    lines = [f"{MARKER} {'FAIL' if problems else 'PASS'} (pr_evidence.py, the evidence-gate skill)"]
+PLUGIN_JSON = Path(__file__).resolve().parents[2] / ".claude-plugin" / "plugin.json"
+RELEASED_JSON = "repos/Final-Factory/final-factory-agents/contents/plugins/ff-agents/.claude-plugin/plugin.json"
+
+
+def own_version() -> str:
+    try:
+        return json.loads(PLUGIN_JSON.read_text(encoding="utf-8")).get("version", "unknown")
+    except (OSError, ValueError):
+        return "unknown"
+
+
+def released_version() -> str | None:
+    """The ff-agents version on the harness repo's master, or None when GitHub cannot be asked."""
+    done = subprocess.run(["gh", "api", RELEASED_JSON, "-H", "Accept: application/vnd.github.raw"],
+                          capture_output=True, text=True, encoding="utf-8")
+    if done.returncode:
+        return None
+    try:
+        return json.loads(done.stdout).get("version")
+    except ValueError:
+        return None
+
+
+def version_tuple(v: str) -> tuple:
+    return tuple(int(p) if p.isdigit() else 0 for p in re.split(r"[.+-]", v or "0"))
+
+
+def stale_problem(mine: str, released: str | None) -> str | None:
+    """w733: #1272 got a PASS at 22:47 from a copy older than the 1.21.0 that would have failed it (released 21:53)."""
+    if released and mine != "unknown" and version_tuple(mine) < version_tuple(released):
+        return (f"this pr_evidence.py is ff-agents {mine}, but {released} is released: its rules are older than the "
+                f"team's. Run registerAgents.sh in your final-factory-agents checkout, restart the session, and run "
+                f"the new one (lessons/a-ui-change-leaves-the-rest-of-the-screen-as-it-was.md)")
+    return None
+
+
+def verdict_text(problems: list[str], notes: list[str], version: str | None = None) -> str:
+    lines = [f"{MARKER} {'FAIL' if problems else 'PASS'} (pr_evidence.py, ff-agents {version or own_version()}, "
+             f"the evidence-gate skill)"]
     lines += [f"- {p}" for p in problems] + [f"- note: {n}" for n in notes]
     return "\n".join(lines)
 
@@ -320,6 +402,7 @@ def main(argv=None) -> int:
     ap.add_argument("--body-file", help="check this description instead of asking GitHub")
     ap.add_argument("--files-file", help="with --body-file: the changed paths, one per line")
     ap.add_argument("--audit", action="store_true", help="list merged pull requests and their verdicts")
+    ap.add_argument("--offline", action="store_true", help="skip the check that this copy is the released version")
     ap.add_argument("--since", help="--audit: merged on or after this date (YYYY-MM-DD)")
     ap.add_argument("--base", default="develop", help="--audit: the base branch (default develop)")
     ap.add_argument("--limit", type=int, default=100, help="--audit: at most this many pull requests")
@@ -354,6 +437,13 @@ def main(argv=None) -> int:
         ap.error("give --repo and --pr, or --body-file, or --audit")
 
     problems, notes = check(body, files)
+    if not args.offline:
+        released = released_version()
+        stale = stale_problem(own_version(), released)
+        if stale:
+            problems.insert(0, stale)
+        elif released is None:
+            notes.append("could not ask GitHub for the released ff-agents version")
     text = verdict_text(problems, notes)
     print(text)
     if args.comment:
