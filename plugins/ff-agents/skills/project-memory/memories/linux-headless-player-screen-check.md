@@ -28,6 +28,7 @@ and every centred panel cut on both sides. That is exactly what a resolution bug
 - End the player with `timeout -s TERM <s>` around the launch (or the game's `-ffSoloQuitAfterSeconds`, see
   [visual-check-players-must-quit-themselves](visual-check-players-must-quit-themselves.md)); the harness refuses
   killing a Unity-named process by hand.
+- This is a stand-in for the Deck, not the Deck: say so with the real-Deck line ([evidence-gate deck list](../../evidence-gate/checklists/deck.md), w770).
 - An X11 full-screen stretch maps input along with the image, so missed clicks from a gamescope/Proton scaling
   mismatch do not reproduce this way.
 

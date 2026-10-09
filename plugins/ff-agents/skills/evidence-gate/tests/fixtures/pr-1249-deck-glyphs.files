@@ -1,0 +1,10 @@
+Assets/Scripts/Diagnostics/DeckTour.cs
+Assets/Scripts/Steam/ControllerPrompts.cs
+Assets/Scripts/Steam/SteamHardware.cs
+Assets/Scripts/Steam/SteamInputBridge.cs
+Assets/Scripts/Steam/SteamInputLive.cs
+Assets/Scripts/Steam/SteamInputNative.cs
+Assets/Tests/SteamInput/DeckPromptFallbackTests.cs
+Assets/Tests/SteamInput/DeckPromptFallbackTests.cs.meta
+docs/SteamInput.md
+specs/w684-deck-glyph-fallback/fallback-tour.json
