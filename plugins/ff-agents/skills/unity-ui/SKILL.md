@@ -70,6 +70,9 @@ census (`<shot>.json`: small, clipped, off-screen and overlapping text, covered 
   starts from clean prefs, so it cannot show Steam's layout choice, the Proton first-frame resolution, the Steam client
   version or touch. Say "verified on a real Deck" or "not verified on a real Deck"
   ([evidence-gate deck list](../evidence-gate/checklists/deck.md)).
+- **A stored size, without forcing one (w771).** `-ffDeckTourSize none -ffDeckTourPrefs '<json>'` starts the tour from
+  seeded `ResolutionWidth`, `ResolutionHeight` and `FullscreenMode` and never calls `Screen.SetResolution`; read `screen`
+  in `report.json`, not the census ([deck.md](../evidence-gate/checklists/deck.md)).
 - **Content.** Tour a late-game world. Load one with `{"setup": "ffauto:ui.loadgame|<save name>"}`
   (the save copied into the saves folder under a name of your own, removed afterwards). To fill a
   new world: `ffauto:cheats.enable`, then `ffauto:player.devunlock` (every technology and a starter

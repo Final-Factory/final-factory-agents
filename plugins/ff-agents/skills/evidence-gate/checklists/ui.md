@@ -133,7 +133,8 @@ screen; on desktop three labels stopped fitting, the two windows left their defa
 
 19. **The Deck tour is a stand-in (w770).** It forces its own window size and a scripted Deck, so it cannot show Steam's
     layout choice, the Proton first-frame resolution, the Steam client version or touch. A Deck UI change says "verified on
-    a real Deck" or "not verified on a real Deck" ([deck.md](deck.md)).
+    a real Deck" or "not verified on a real Deck" ([deck.md](deck.md)). For a stored bad size use `-ffDeckTourSize none
+    -ffDeckTourPrefs` (w771): more coverage, still not a Deck.
 
 In the pull request (`## Evidence`, [merge.md](merge.md)) a UI change adds:
 

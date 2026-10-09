@@ -121,10 +121,10 @@ Deck, whose blind spots nobody named. A tour that passes tells you the stand-in 
 | `Real Deck:` line on a Deck-facing PR | **Built**: `pr_evidence.py` `deck_problems`, fixtures of both cases | Needs only the PR text and its file list, which this repo already reads. |
 | Checklist and ask template | **Built**: [deck.md](../checklists/deck.md), linked from the done, merge and UI lists | What a person must look at cannot be a script. |
 | Keyboard-template simulation | **Already in the game repo** (w768, PR #1300: `-ffDeckTourFallback`, the `key` step, `specs/w768-deck-template-glyphs/template-tour.json`) | Nothing to add here; the checklist points at it. |
-| Deck tour that does not force the size and starts from stored prefs | **Not built: a game-repo change; proposal below** | `DeckTour.cs` calls `Screen.SetResolution` from `Update` and `HoldSize` for any size, default 1280x800. |
+| Deck tour that does not force the size and starts from stored prefs | **Built in the game repo (w771, PR #1304)**: `-ffDeckTourSize none`, `-ffDeckTourPrefs <json>` | Measured on a Mac dev player: 800x1280 stays stuck before #1301, repaired to full screen on develop. The first-frame portrait read stays Deck-only. |
 | Touch, Steam client version, whether the official layout is offered | **Checklist line only** | They exist only on the device. |
 
-**Proposal for the game repo** (not made here):
+**The proposal for the game repo, as made (w771; the first-frame step was not built):**
 `-ffDeckTourSize none` (or `-ffDeckTourNoResize`) skips the forced `Screen.SetResolution` in `Update`
 and `HoldSize`; `-ffDeckTourPrefs <json>` writes `ResolutionWidth`, `ResolutionHeight` and
 `FullscreenMode` (and a `DarkModeSkybox`-less first launch) before `PlayerSettingsController.Start`;
