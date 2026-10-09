@@ -60,13 +60,23 @@ anyone says done.
 the hotbar, while each PR checked its own panel; #1272 turned the Blueprints window opaque navy).
 The census recipe and `ui_layout.py` are in the `unity-ui` skill, `layout-census.md`.
 
-11. **No new overlap.** A layout census before and after, same save and size, with the whole HUD
-    showing (hotbar and ability row, minimap and its side buttons, every slide-out opened, top bar,
-    objectives, a selected building and the Station strip) and your screen open on top.
-    `ui_layout.py check` lists overlapping HUD blocks; a pair that was not there before fails, and so
-    does one left between blocks your change moved (`0 new, 0 kept`). A pair a person said is
-    design (a slide-out drawn over the hotbar, w732) is in `hud-clusters.json` `byDesign` with their
-    words and prints BY DESIGN; restore what your change displaced rather than moving other blocks.
+11. **No new overlap between always-on HUD, and opened panels done properly.** A layout census
+    before and after, same save and size, with the whole HUD showing (hotbar and ability row,
+    minimap and its side buttons, every slide-out opened, top bar, objectives, a selected building
+    and the Station strip) and your screen open on top. `ui_layout.py check` lists overlapping
+    always-on HUD blocks; a pair that was not there before fails, and so does one left between
+    blocks your change moved (`0 new, 0 kept`). **A panel the player opens on purpose and can close
+    may cover the HUD** (Ben, w732: "Put the slide out back just make it appear over the hot bar.
+    The user can then close it to show the hotbar again"; w742: "the blueprint panel showing over
+    objectives is fine since its a temporarily opened panel"): Blueprints, Inventory, the slide-out
+    flyouts, the Station panel, the hub. It is not an overlap failure, but the `Opened panels:` line
+    must show it on top (0 under the HUD), clickable (0 not clickable: nothing under it catches the
+    clicks), inside the screen (0 cut off) and the HUD back after closing (`--closed`, "HUD restored
+    on close: yes"). What still fails: overlaps between always-on HUD blocks (hotbar and minimap
+    buttons, ability row and hotbar, Objectives and minimap), a panel drawn under the HUD or cut off
+    by the screen edge, drift (item 12) and colour (item 13). What counts as opened is
+    `hud-clusters.json` `openedPanels`: add a window only when the player opens and closes it, never
+    to make a check pass. Restore what your change displaced rather than moving other blocks.
     Re-take the census on the merged result when another UI PR landed in between (#1280 checked
     its merges by compile and tests only).
 12. **No drift.** Every anchored cluster (`hud-clusters.json`: the minimap with the quick buttons,
@@ -92,14 +102,16 @@ In the pull request (`## Evidence`, [merge.md](merge.md)) a UI change adds:
 Content: late-game audit save w718-lategame.zip (212 techs, 140 recipes, 24 blueprints, 9 fleets, 6 objectives)
 Full content: every tab's grid/list/tree whole or scrolling, fill 78-96 % (ui_check fill); Info lists 6 objectives
 Style: BlueprintPanelChild (touched) vs InvAndCraft/InventoryPanel: delta E 2.1 (on screen), alpha 1.00 vs 1.00, same art
-Overlaps: 4 block pairs before, 4 after, 0 new, 0 kept between blocks the change moved (ui_layout.py, whole screen, block depth 2)
+Overlaps: 4 block pairs before, 4 after, 0 new, 0 kept between blocks the change moved (ui_layout.py, whole screen, block depth 2); 1 opened-panel pair(s) over the HUD, not counted here
+Opened panels: 1 opened panel pair(s) over the HUD (allowed: Ben, w732 and w742), 0 under the HUD, 0 not clickable, 0 cut off by the screen edge, HUD restored on close: yes (3 covered HUD element(s) checked in closed.json)
 Alignment: max drift 0 px over the clusters (bottom-right HUD, top-left HUD); tolerance 2 px
 Shots: /srv/fff/review/wNNN/shots.md (one line per still against Ben's words)
 Clips: after-1280.mp4, 60 fps; idle and hover per tab at 0-4 s, 4-8 s ...; ui_check flicker: 0 regions
 ```
 
 `pr_evidence.py` fails a UI change without these lines, with a clip of 1 to 9 fps, with a new
-overlap, a drift over 2 px, a `Style:` line without a measured delta E and alpha, or a delta E over
+overlap, an opened panel under the HUD, not clickable, cut off or leaving the HUD unrestored (the
+`Opened panels:` line, required when the `Overlaps:` line counts an opened-panel pair), a drift over 2 px, a `Style:` line without a measured delta E and alpha, or a delta E over
 10. A difference the requester asked for passes with their words on its line:
 `intended (Ben): "..."`. A scene file (`Assets/Scenes/*.unity`) counts as UI.
 

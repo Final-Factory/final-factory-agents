@@ -51,7 +51,7 @@ the second correction itself adds the check in the same request as the fix.
 
 **The person's latest words win.** When a lesson or a check disagrees with what a person just told
 you, follow the person, say so in the report, and fix the lesson or the check in the same request,
-quoting their words, never a paraphrase (w732: `hud-clusters.json` `byDesign`).
+quoting their words, never a paraphrase (w732: `hud-clusters.json` `byDesign`, a one-pair exemption; w742 made it the general `openedPanels` rule).
 
 **Why.** Ben, 2026-10-02: "Your memory should be stored in this repos harness so it is enshrined
 forever for anyone who forks it." Ben, 2026-10-09 (w741): "If you learn something after struggling

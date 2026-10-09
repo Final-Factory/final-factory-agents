@@ -1,6 +1,6 @@
 ---
 name: a-ui-change-leaves-the-rest-of-the-screen-as-it-was
-description: "A UI change proves it left the rest of the screen as it was: a whole-screen layout census before and after (whole HUD showing, every slide-out open) with no new overlap between HUD blocks, no anchored cluster drifting more than 2 px, and every touched panel's measured colour and alpha within reach of a classic panel's; checked by the released pr_evidence.py, not an older copy."
+description: "A UI change proves it left the rest of the screen as it was: a whole-screen layout census before and after (whole HUD showing, every slide-out open) with no new overlap between always-on HUD blocks, no anchored cluster drifting more than 2 px, and every touched panel's measured colour and alpha within reach of a classic panel's. A panel the player opens on purpose and can close may cover the HUD, if it draws on top, is clickable, stays on screen and gives the HUD back (Ben, w732 and w742). Checked by the released pr_evidence.py, not an older copy."
 date: 2026-10-09
 ---
 
@@ -10,11 +10,26 @@ date: 2026-10-09
 census (`unity-ui`, `layout-census.md`) before and after, same save and size, with the whole HUD
 showing and every slide-out open, and run `ui_layout.py check`:
 
-- no new overlap between HUD blocks, and none left between blocks you moved;
+- no new overlap between always-on HUD blocks, and none left between blocks you moved;
+- every panel the player opens on purpose and can close (Blueprints, Inventory, the slide-out flyouts, the Station
+  panel, the hub) may cover the HUD, and then must be **on top, fully visible and clickable, with nothing under it
+  catching the clicks, inside the screen, and the HUD back when it is closed**;
 - no anchored cluster (the minimap and its side buttons, the hotbar, the top bar) drifting more than
   2 px against its anchor;
 - every panel you touched, measured on screen against a classic panel: delta E 10 or less, the same
   art, the same see-through.
+
+**Ben's rule (w732 and w742).** Two corrections of the same kind, so it is in the checker now:
+
+- "Put the slide out back just make it appear over the hot bar. The user can then close it to show the hotbar
+  again" (Ben, w732, 2026-10-09).
+- "the blueprint panel showing over objectives is fine since its a temporarily opened panel" (Ben, w742,
+  2026-10-09, on the Blueprints window covering the Objectives card).
+
+What passes: an opened panel over the hotbar, the Objectives card or the minimap buttons. What still fails: an overlap
+between always-on HUD blocks (hotbar and minimap buttons, ability row and hotbar, Objectives and minimap), alignment
+drift of an anchored cluster, an opened panel drawn **under** the HUD or cut off by the screen edge, one whose
+clicks reach the HUD beneath it, one that leaves the HUD moved when closed, and a colour mismatch.
 
 Paste its three lines into the PR. Run the released `pr_evidence.py`: a copy older than the
 released one now fails itself.
@@ -60,24 +75,32 @@ released one now fails itself.
   - SOURCED: w712's brief offered "a deliberate full-screen modal with a solid enough background";
     Ben never asked for a new colour, and nothing compared one with the game's panels.
 
-**Corrected, 2026-10-09 (w732).** Not every overlap is a defect. Ben's words were that the
-slide-out panels "still intersect with the hotbar"; w732's brief turned that into "0 overlapping HUD
-element rects", the worker moved the slide-outs above the toggles, and Ben corrected it: they open
-where they used to and draw on top of the hotbar (the worker's words). A slide-out opened over the
-hotbar, or the Inventory and Crafting windows that have always opened over it
-(`specs/w644-deck-release/uiscale.md`), is design. `hud-clusters.json` now lists that pair under
-`byDesign` with the person's words, and `ui_layout.py` prints it as BY DESIGN instead of failing it.
-Add a pair there only from a person's own correction, never to make a check pass. Fix what your
-change displaced (here #1264's `HudCornerSpacing`) before you move anything else.
+**How the rule got here.** w733 counted every overlap as a defect. Ben's words in w732 were that the slide-out
+panels "still intersect with the hotbar"; w732's brief turned that into "0 overlapping HUD element rects", the worker
+moved the slide-outs above the toggles, and Ben corrected it with the first quote above. w732 then hard-coded the one
+pair (an open slide-out over the build bar), and `ui_layout.py` 1.23.x got a one-pair `byDesign` entry in
+`hud-clusters.json`. Then w733's own demo flagged the Blueprints window over the Objectives card on #1272, and Ben
+answered with the second quote. A pair-by-pair list was the wrong shape: the rule is about *what kind of thing* is on
+top. Since w742 (`ff-agents` 1.24.0) `hud-clusters.json` classifies elements (`openedPanels.paths`: slide-outs, the
+windows, the structure panels, the Station panel, the hub; everything else is always-on HUD), `byDesign` is gone,
+and `ui_layout.py` checks the opened panel instead of exempting it (`Opened panels:` line). MEASURED (the tests,
+`unity-ui/tests/test_ui_layout.py`, on the rects the w733 censuses recorded): the Blueprints window over the Objectives
+card is 0 new overlaps, and #1272's navy window still fails the colour (the stills are synthetic, set to the measured
+on-screen gap: delta E 23.8, 2.1 before); #1264's minimap drift still fails at 22 px on the buttons and 98 px on the
+hotbar block. Limits: the census sees only what draws, so an invisible raycast catcher under a panel needs
+the event-system probe (#1287's `DeckTour` counted 66 of 66 click points reaching the panel); a window that is
+not on the `openedPanels` list counts as HUD until someone adds it, which is deliberate (a new always-on element must
+not be waved through by name).
 
 **How to apply.** [The UI checklist](../checklists/ui.md), items 11 to 14, and the `unity-ui`
 skill's `layout-census.md`:
 
-- Census before and after with the whole HUD up and every slide-out open; `ui_layout.py check
-  --touched <your window> --shot after.png --ref-shot <classic still>`.
-- Paste its `Overlaps:`, `Alignment:` and `Style:` lines. `pr_evidence.py` fails a UI PR without
+- Census before and after with the whole HUD up and every slide-out open, and one more with your panel closed
+  again; `ui_layout.py check --touched <your window> --closed closed.json --shot after.png --ref-shot <classic still>`.
+- Paste its `Overlaps:`, `Opened panels:`, `Alignment:` and `Style:` lines. `pr_evidence.py` fails a UI PR without
   them, with a new overlap, a drift over 2 px or a delta E over 10, unless the line quotes the
-  requester asking for it: `intended (Ben): "..."`.
+  requester asking for it: `intended (Ben): "..."`. An opened panel under the HUD, not clickable, cut off or not
+  restored fails with no `intended` way out.
 - Run it yourself before every UI merge and post its verdict (`--comment`); nothing in CI runs it
   yet (w733: a job is written, waiting for someone whose token may push workflow files).
 - When a check changes mid-task, re-register (`registerAgents.sh`), restart, and run it again before

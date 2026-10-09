@@ -7,6 +7,20 @@ its screen rect, colour, alpha, sprite and drawing order to a JSON file. `ui_lay
 file) compares two of them: new overlaps between HUD blocks, drift of anchored clusters, and the
 colour and alpha of every panel that changed against a classic reference panel.
 
+**Two kinds of element** (w742, Ben: "Put the slide out back just make it appear over the hot bar. The user can then
+close it to show the hotbar again" and "the blueprint panel showing over objectives is fine since its a temporarily
+opened panel"):
+
+- **Always-on HUD**: the hotbar, the ability row, the minimap and its buttons, the slide-out toggles, the Objectives
+  card, the top bar. These never overlap each other, and the anchored clusters never drift.
+- **Opened panels**: a window or slide-out the player opens on purpose and can close (Blueprints, Inventory, Crafting,
+  the structure panels, the slide-out flyouts, the Station panel, the hub). They may cover the HUD. They must draw on
+  top, be fully visible and clickable with nothing under them catching the clicks, and closing them must give the HUD
+  back.
+
+`hud-clusters.json` `openedPanels.paths` is the list of what counts as an opened panel (path components, `*` globs).
+Anything not on it is HUD. Add an entry only for something the player opens and closes; never to make a check pass.
+
 ## Take one
 
 1. Play mode in the sandbox editor (pin it first; `editor-ops`), Game view at the target size
@@ -19,6 +33,8 @@ colour and alpha of every panel that changed against a classic reference panel.
 3. Run the snippet with `OUT` set to a file in your temp folder (`before.json` on the base commit,
    `after.json` on yours; the same save, size and open screens). Take a screenshot at the same
    moment (`ScreenCapture.CaptureScreenshot`) for `ui_layout.py --shot`.
+4. **Close the panel you opened and take `closed.json`** (same snippet, same save): `--closed` checks that the HUD it
+   covered is back where it was.
 
 In a built player there is no `execute_code`: log the rects that matter with Deck-tour steps
 `{"setup": "rect:<object name>"}` (one line each in the tour log), and `ui_layout.py` reads the
@@ -104,19 +120,33 @@ project's `UnityEngine.UI.dll` (w733).
 
 ```sh
 python "<this skill's base directory>/ui_layout.py" check --before before.json --after after.json \
-    [--shot after.png --ref-shot before.png] [--ref "Inventory"] [--clusters clusters.json]
+    [--closed closed.json] [--shot after.png --ref-shot before.png] [--ref "Inventory"] [--clusters clusters.json]
 ```
 
-It prints the three lines the pull request carries (`Overlaps:`, `Alignment:`, `Style:`) and exits
+It prints the lines the pull request carries (`Overlaps:`, `Opened panels:`, `Alignment:`, `Style:`) and exits
 1 when any fails:
 
-- **Overlaps**: pairs of HUD blocks whose visible parts overlap (blocks are the elements' ancestors
-  `--block-depth` levels under the canvas, 2 by default: `GamePanels/ActionBarParent`, `GamePanels/MinimapParent`, a window). A pair
-  in `after` that was not in `before` is a new overlap and fails. A pair that was there before and is
-  still there, between blocks the change moved, is kept, and fails too: you moved them, so the
-  overlap is yours (7f75224fa moved the hotbar and the slide-out toggles and left the Blueprint
-  slide-out over the hotbar). A pair listed under `byDesign` in `hud-clusters.json` (a person said those blocks may overlap: w732, the slide-outs draw on top of the hotbar) prints BY DESIGN and does not fail. Overlaps inside one block (an icon on its button) are design and are
-  not counted.
+- **Overlaps**: pairs of always-on HUD blocks whose visible parts overlap (blocks are the elements' ancestors
+  `--block-depth` levels under the canvas, 2 by default: `GamePanels/ActionBarParent`, `GamePanels/MinimapParent`).
+  A pair in `after` that was not in `before` is a new overlap and fails. A pair that was there before and is still
+  there, between blocks the change moved, is kept, and fails too: you moved them, so the overlap is yours (7f75224fa
+  moved the hotbar and the slide-out toggles and left the Blueprint slide-out over the hotbar). Overlaps inside one block
+  (an icon on its button) are design and are not counted. Elements of an opened panel are not counted at all: the line
+  ends `N opened-panel pair(s) over the HUD, not counted here`.
+- **Opened panels**: for each opened panel that covers HUD, the `Opened panels:` line says how many pairs and then
+  fails, with no way out, when the panel is
+  - **under** a HUD element it covers (the census's `canvasOrder`, then `depth`, say which is drawn later; w732's first
+    version drew the slide-out under the hotbar's key glyphs);
+  - **not clickable**: a HUD element that takes clicks (`raycast`) under the panel with no raycasting element of the
+    panel above it covering the overlap (90 %), so a click would reach the hotbar;
+  - **cut off** by the screen edge (an element 2 px or more past it that no mask clips);
+  - **not restored**: with `--closed closed.json`, a census taken after closing the panel again, every HUD element the
+    panel covered must be there and within 2 px of where it was. Without `--closed` the line says `not checked`, and
+    `pr_evidence.py` does not accept that for a PR with opened-panel pairs.
+
+  The census only sees what draws (alpha 0.02 and up). An invisible full-screen raycast catcher under a panel is
+  invisible to it: with a panel open over the hotbar, also run the event-system probe (`DeckTour` `hud` block in PR
+  #1287 counted 66 of 66 click points reaching the panel).
 - **Alignment**: each cluster in `clusters.json` (default: [hud-clusters.json](hud-clusters.json),
   the bottom-right HUD) measures every member's edges against its anchor and the gaps between
   members. A change of more than 2 px between before and after fails. A member missing on one side

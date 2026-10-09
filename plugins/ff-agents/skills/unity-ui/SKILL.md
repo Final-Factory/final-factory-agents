@@ -131,8 +131,9 @@ python "<this skill's base directory>/ui_layout.py" check --before before.json -
     --touched <your window> --shot after.png --ref-shot classic.png --ref-census classic.json
 ```
 
-It prints the `Overlaps:`, `Alignment:` and `Style:` lines for the PR and exits 1 on a new overlap
-between HUD blocks, a cluster ([hud-clusters.json](hud-clusters.json)) drifting more than 2 px, or a
+It prints the `Overlaps:`, `Opened panels:`, `Alignment:` and `Style:` lines for the PR and exits 1 on a new overlap
+between always-on HUD blocks (a panel the player opens and closes may cover the HUD: Ben, w732 and w742; it
+must be on top, clickable, inside the screen and give the HUD back, `--closed`), a cluster ([hud-clusters.json](hud-clusters.json)) drifting more than 2 px, or a
 touched panel more than delta E 10 from the classic Inventory on screen, or with different art or
 see-through. Measured in the editor at 1280x800, classic layout (w733): #1264 (121b8691b) moved the
 quick buttons from 7 to 24 px off the minimap, the toggles 31 px and the hotbar 98 px, and nothing

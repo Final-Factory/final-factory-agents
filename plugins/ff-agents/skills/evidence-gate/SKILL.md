@@ -107,9 +107,10 @@ report. Change nothing on a guess.
 - [UI changes](checklists/ui.md): screens, panels, tabs, HUD, layouts: a late-game save, every
   sub-view, the whole content, the classic look side by side, a real-rate clip, one written line
   per still against the requester's words, and the rest of the screen unchanged (a layout census
-  before and after: no new overlap, no cluster drift over 2 px, every touched panel's colour and
-  alpha against a classic panel); `Content:`, `Full content:`, `Style:`, `Shots:`, `Overlaps:`,
-  `Alignment:` in the PR.
+  before and after: no new overlap between always-on HUD blocks, no cluster drift over 2 px, every
+  touched panel's colour and alpha against a classic panel; a panel the player opens may cover
+  the HUD if it is on top, clickable and gives the HUD back); `Content:`, `Full content:`,
+  `Style:`, `Shots:`, `Overlaps:`, `Alignment:` (and `Opened panels:`) in the PR.
 - [Merges](checklists/merge.md), with `pr_evidence.py` for the pull request's `## Evidence` section
 - [Releases](checklists/release.md)
 - [FFBox desync PRs](checklists/ffbox-desync-pr.md) (Lothsahn's standing policy, 2026-10-04): classify
@@ -174,7 +175,8 @@ One file each under `lessons/`: the rule, why (the incident, dated), how to appl
   clip, each still checked against the requester's words (w718: the w644 hub, #1251, passed a tour
   of "opens, fits, 9 px" stills; on Ben's Deck it was navy, Crafting one row, no tech grid).
 - [A UI change leaves the rest of the screen as it was](lessons/a-ui-change-leaves-the-rest-of-the-screen-as-it-was.md):
-  a layout census before and after with the whole HUD up: no new overlap, no anchored cluster
+  a layout census before and after with the whole HUD up: no new overlap between always-on HUD
+  blocks (a panel the player opens may cover the HUD: Ben, w742), no anchored cluster
   drifting over 2 px, every touched panel measured against a classic one; run the released
   `pr_evidence.py` (w733: the minimap buttons drifted, a slide-out covered the hotbar, and #1272's
   navy passed a check older than the release that would have failed it).
