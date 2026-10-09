@@ -177,12 +177,10 @@ One file each under `lessons/`: the rule, why (the incident, dated), how to appl
   every screen and sub-view in a late-game save, whole, on the classic look, still in a real-rate
   clip, each still checked against the requester's words (w718: the w644 hub, #1251, passed a tour
   of "opens, fits, 9 px" stills; on Ben's Deck it was navy, Crafting one row, no tech grid; w764: ten photos of
-  a real Deck found eight faults the tour's census had no count for, so a player's photos are tests).
-- [A simulated Deck is not a Deck](lessons/a-simulated-deck-is-not-a-deck.md): a Deck-facing change is "verified on a
-  real Deck" (who, Steam client and SteamOS versions, what they saw) or "not verified on a real Deck", never a bare done
-  on a tour; `pr_evidence.py` fails the PR without a `Real Deck:` line ([checklist](checklists/deck.md); w770: w684's
-  glyph fix passed a Deck tour and Ben's Deck showed no glyphs, "omg my steam firmware was just way out of date lol";
-  w767's resolution bug, "like the aspect ratio is all messed up", is invisible to a tour that forces its size).
+  a real Deck found eight faults the tour's census had no count for, so a player's photos are tests; w770: a Deck-facing change is "verified on a real Deck" (who, Steam client and SteamOS
+  versions, what they saw) or "not verified on a real Deck", never a bare done on a tour, and `pr_evidence.py` fails the PR
+  without a `Real Deck:` line, [checklist](checklists/deck.md): w684's glyph fix passed a tour and Ben's Deck showed none,
+  w767's resolution bug is invisible to a tour that forces its size).
 - [A UI change leaves the rest of the screen as it was](lessons/a-ui-change-leaves-the-rest-of-the-screen-as-it-was.md):
   a layout census before and after with the whole HUD up: no new overlap between always-on HUD
   blocks (a panel the player opens may cover the HUD: Ben, w742), no anchored cluster

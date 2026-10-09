@@ -42,7 +42,7 @@ a PC. `pr_evidence.py` fails a Deck-facing PR without a `Real Deck:` line.
   display does not list) and a Deck-like display, and start it with **no** `-ffDeckTourSize`.
   The game's `StartupDisplayResolutionTest` pins the rules; the recipe for a native Linux player
   under Xvfb with its own `XDG_CONFIG_HOME` prefs is in the memory above. The tour itself cannot
-  do this yet (see the proposals in lessons/a-simulated-deck-is-not-a-deck.md).
+  do this yet (see the proposals in lessons/verify-ui-with-full-content-like-a-player.md#a-simulated-deck-is-not-a-deck-w770).
 - Neither replaces the Deck. They shrink what you ask the person to look at.
 
 ## The real-Deck check: what to ask, through the orchestrator
