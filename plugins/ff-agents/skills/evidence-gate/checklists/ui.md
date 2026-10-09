@@ -60,7 +60,8 @@ The census recipe and `ui_layout.py` are in the `unity-ui` skill, `layout-census
 11. **No new overlap.** A layout census before and after, same save and size, with the whole HUD
     showing (hotbar and ability row, minimap and its side buttons, every slide-out opened, top bar,
     objectives, a selected building and the Station strip) and your screen open on top.
-    `ui_layout.py check` lists overlapping HUD blocks; a pair that was not there before fails.
+    `ui_layout.py check` lists overlapping HUD blocks; a pair that was not there before fails, and so
+    does one left between blocks your change moved (`0 new, 0 kept`).
 12. **No drift.** Every anchored cluster (`hud-clusters.json`: the minimap with the quick buttons,
     the slide-out toggles and the hotbar; the top bar with the objectives) keeps its edges and gaps
     against its anchor within 2 px. Changing a cluster on purpose: say so, and update the file.
@@ -84,7 +85,7 @@ In the pull request (`## Evidence`, [merge.md](merge.md)) a UI change adds:
 Content: late-game audit save w718-lategame.zip (212 techs, 140 recipes, 24 blueprints, 9 fleets, 6 objectives)
 Full content: every tab's grid/list/tree whole or scrolling, fill 78-96 % (ui_check fill); Info lists 6 objectives
 Style: BlueprintPanelChild (touched) vs InvAndCraft/InventoryPanel: delta E 2.1 (on screen), alpha 1.00 vs 1.00, same art
-Overlaps: 4 block pairs before, 4 after, 0 new (ui_layout.py, whole screen, block depth 2)
+Overlaps: 4 block pairs before, 4 after, 0 new, 0 kept between blocks the change moved (ui_layout.py, whole screen, block depth 2)
 Alignment: max drift 0 px over the clusters (bottom-right HUD, top-left HUD); tolerance 2 px
 Shots: /srv/fff/review/wNNN/shots.md (one line per still against Ben's words)
 Clips: after-1280.mp4, 60 fps; idle and hover per tab at 0-4 s, 4-8 s ...; ui_check flicker: 0 regions

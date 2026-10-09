@@ -8,7 +8,8 @@ alpha, sprite and drawing order) taken before and after a change, same save, siz
                        [--ref InventoryPanel] [--shot after.png --ref-shot before.png] [--block-depth 2]
 
   Overlaps   HUD blocks (an element's ancestor --block-depth levels under its canvas, 2: GamePanels/X) whose visible
-             parts overlap. A pair in `after` that is not in `before` is a new overlap: FAIL.
+             parts overlap. A pair in `after` that is not in `before` is a new overlap: FAIL. A pair that was
+             there before and is still there, between blocks the change moved, is kept: FAIL too.
   Alignment  every cluster (an anchor and its members, by object name) measured edge by edge against
              its anchor; a change over --tolerance px (2) between before and after: FAIL.
   Style      every panel (an Image over 2 % of the screen) that is new or changed colour, alpha or
@@ -134,6 +135,23 @@ def overlaps(census: dict, depth: int = 2, min_px: float = 16.0) -> dict:
 def short(path: str, keep: int = 3) -> str:
     parts = path.split("/")
     return "/".join(parts[-keep:]) if len(parts) > keep else path
+
+
+def moved_blocks(before: dict, after: dict, depth: int = 2, tolerance: float = 2.0) -> set[str]:
+    """Blocks with an element (matched by path, present on both sides) whose visible rect moved more than tolerance.
+    An overlap the change leaves between blocks it moved is the change's to fix, even if it was there before
+    (w733: 7f75224fa moved the slide-out toggles and the hotbar apart and left the Blueprint slide-out over the
+    hotbar, 14689 -> 3948 px2)."""
+    old = {e["path"]: e.get("visible") or e["rect"] for e in before["elements"]}
+    moved = set()
+    for e in after["elements"]:
+        r = old.get(e["path"])
+        if r is None or any(i in e["path"] for i in IGNORE):
+            continue
+        now = e.get("visible") or e["rect"]
+        if max(abs(a - b) for a, b in zip(r, now)) > tolerance:
+            moved.add(block_of(e["path"], depth))
+    return moved
 
 
 # ---------------------------------------------------------------------------------------------------------------
@@ -331,11 +349,16 @@ def run_check(args) -> int:
 
     ob, oa = overlaps(before, args.block_depth), overlaps(after, args.block_depth)
     new = {k: v for k, v in oa.items() if k not in ob}
-    print(f"Overlaps: {len(ob)} block pairs before, {len(oa)} after, {len(new)} new (ui_layout.py, whole screen, "
-          f"block depth {args.block_depth})")
+    moved = moved_blocks(before, after, args.block_depth, args.tolerance)
+    kept = {k: v for k, v in oa.items() if k in ob and (k[0] in moved or k[1] in moved)}
+    print(f"Overlaps: {len(ob)} block pairs before, {len(oa)} after, {len(new)} new, {len(kept)} kept between blocks "
+          f"the change moved (ui_layout.py, whole screen, block depth {args.block_depth})")
     for (a, b), v in sorted(new.items(), key=lambda kv: -kv[1]["px"])[:15]:
         print(f"  NEW: {short(a)}  x  {short(b)}: {v['px']:.0f} px2, e.g. {short(v['example'][0], 2)} under {short(v['example'][1], 2)}")
-    failed |= bool(new)
+    for (a, b), v in sorted(kept.items(), key=lambda kv: -kv[1]["px"])[:15]:
+        print(f"  KEPT: {short(a)}  x  {short(b)}: {ob[(a, b)]['px']:.0f} -> {v['px']:.0f} px2: the change moved one of "
+              f"them and left them overlapping")
+    failed |= bool(new) or bool(kept)
 
     worst, lines = drift(cluster_edges(before, spec), cluster_edges(after, spec), args.tolerance)
     names = ", ".join(c["name"] for c in spec.get("clusters", []))

@@ -112,8 +112,11 @@ It prints the three lines the pull request carries (`Overlaps:`, `Alignment:`, `
 
 - **Overlaps**: pairs of HUD blocks whose visible parts overlap (blocks are the elements' ancestors
   `--block-depth` levels under the canvas, 2 by default: `GamePanels/ActionBarParent`, `GamePanels/MinimapParent`, a window). A pair
-  in `after` that was not in `before` is a new overlap and fails. Overlaps inside one block (an icon
-  on its button) are design and are not counted.
+  in `after` that was not in `before` is a new overlap and fails. A pair that was there before and is
+  still there, between blocks the change moved, is kept, and fails too: you moved them, so the
+  overlap is yours (7f75224fa moved the hotbar and the slide-out toggles and left the Blueprint
+  slide-out over the hotbar). Overlaps inside one block (an icon on its button) are design and are
+  not counted.
 - **Alignment**: each cluster in `clusters.json` (default: [hud-clusters.json](hud-clusters.json),
   the bottom-right HUD) measures every member's edges against its anchor and the gaps between
   members. A change of more than 2 px between before and after fails. A member missing on one side
