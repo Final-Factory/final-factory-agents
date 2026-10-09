@@ -22,6 +22,10 @@ to mean finished.
 - Before merging, run `pr_evidence.py` on the pull request ([the merge checklist](../checklists/merge.md)).
   It fails on anything pending in the `## Evidence` section, and `--comment` leaves the verdict
   on the pull request before the merge.
+- Let the verdict gate the merge mechanically: `pr_evidence.py ... --comment && gh pr merge ...`.
+  On 2026-10-09 (w793, #1329) the check and the merge ran as two lines of one command; the check
+  said FAIL (its copy was one ff-agents release old) and the merge went through anyway. The newer
+  copy then said PASS, but the record before the merge was a FAIL.
 - If the review cannot run where you are (no key on this machine, no built player), move the work
   to where it can, or hold the pull request and say what is missing and when it will merge. Don't
   merge and promise the review afterwards.
