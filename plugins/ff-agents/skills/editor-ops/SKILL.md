@@ -508,6 +508,14 @@ it there (On a worker-root install (LothDesktop since w576) each sandbox slotK h
 `"${FF_LAUNCH[@]}" "$PLAYER" -- …`. The audit, feel and bench scripts and `ffnightly.py` already
 do (project-memory `feedback-built-players-run-from-the-slot-pool`).
 
+**A player build from a live editor can wait on a modal for good.** The first Addressables content build of a
+project in a non-batch editor asks "Addressables Build Report ... Would you like to turn it on?" (Addressables
+`BuildScriptBase.NotifyUserAboutBuildReport`); nobody answers it in a sandbox, the editor sits at 0% CPU and the
+bridge times out (w780: 20 minutes, a fresh sandbox, `ShaderBenchBuild` through `execute_code`). The game repo's
+`Editor.ShaderBenchBuild` now pre-answers it; for any other in-editor build, list the editor's windows first:
+`osascript -e 'tell application "System Events" to tell (first process whose unix id is <editor pid>) to get {name, role description} of every window'`
+and read a `dialog`'s text with `get value of every static text of window 1`.
+
 Release builds and Steam uploads are NOT made from an editor: they go through CI on the ffbox build
 server, via the `ci-release` skill. Never make a release with `Build > Build and Upload All` or
 steamcmd. ffbox sets a develop release live on `development` and a master release on
