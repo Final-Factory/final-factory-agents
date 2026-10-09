@@ -104,6 +104,21 @@ with the whole HUD showing and every slide-out open, shows no new overlap betwee
 anchored cluster moved more than 2 px, and every touched panel within delta E 10 and the same
 see-through as a classic panel, checked by the released `pr_evidence.py`.
 
+**A change made for the Deck reaches the desktop too** (w761: #1282, "classic Deck layout", raised about 300 texts
+from 14 to 15/16 pt on every screen and made the classic packer place the I-key Inventory and Crafting windows on every
+screen; on desktop three labels stopped fitting, the two windows left their default spots, swapped sides at
+2560x1440 and jumped when the mouse crossed a building; Ben's rule: the desktop default does not change unless asked).
+
+15. **Desktop before and after, even for a Deck change.** 1920x1080 and 2560x1440, the desktop's default UI scale,
+    the classic layout: the I-key Inventory and Crafting, a building with its windows, the Blueprints, Technology
+    and Mods windows. Each window's rect matches the base commit's unless the requester asked for the move (quote
+    them). With a window open, move the pointer over two buildings so the hover card shows (it reserves room, and a
+    packer that keeps off it moves windows while they are open), and drag one window and reopen the others.
+16. **A font-size change: every text compared.** Census before and after on every screen you can reach, then
+    `text_diff.py` (unity-ui `layout-census.md`); look at each flagged text at full size. A label's fit is checked in
+    the font it shows at runtime (`LocalizationHelper.ApplyFont`: Khyay for every Latin locale), not the font its
+    prefab names.
+
 In the pull request (`## Evidence`, [merge.md](merge.md)) a UI change adds:
 
 ```markdown
