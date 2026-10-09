@@ -204,6 +204,9 @@ One file each under `lessons/`: the rule, why (the incident, dated), how to appl
   worktrees, save copies and player slots you made before DONE; low disk is fixed by removing FF
   Factory's own leftovers or filing clean-up work, never by asking a person (w596/w626: the m3
   under its guard with ~78 GB of leftovers, and a worker asked Ben and Lothsahn for a go).
+  Same lesson, Unity slots: your own `-batchmode` builds end before DONE (`unity-slot status`); a start refused for a
+  stuck batch holder gets `unity clear_batch`, not a multi-hour wait or a request to end it by hand (w791: two builds
+  held slots for hours).
 - [No human-time estimates](lessons/no-human-time-estimates.md): size work by scope, or by a
   measured agent time from a named comparable run, never in human days or weeks (w545: the Steam
   Deck report's "1–2 weeks" and "weeks to months"; Ben: "stop giving human time estimates").

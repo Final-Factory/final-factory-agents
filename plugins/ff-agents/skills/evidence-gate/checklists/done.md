@@ -21,6 +21,9 @@ holds, or the report says what is left instead of DONE.
    slot nobody holds). The report says what went and how many GB it freed. If the disk is still
    short, the report says so, and FF Factory's own leftovers you found are already removed, not
    asked about ([clean up after yourself](../lessons/clean-up-after-yourself.md)).
+   **Unity batch builds** you started (`-batchmode`, a build or test run) have ended: `unity-slot status` shows none of
+   yours, and a stuck one is cleared with `unity` `clear_batch`, not left running
+   ([clean up after yourself](../lessons/clean-up-after-yourself.md), w791).
 5. **Labels and ids.** Each number and recommendation is labelled measured, sourced or guess, and
    every id has its plain words beside it ([say what an id is](../lessons/say-what-an-id-is.md)).
 6. **Open waits.** Every `wNNN: still open:` line that names a person (a reboot, a login, a decision, an
