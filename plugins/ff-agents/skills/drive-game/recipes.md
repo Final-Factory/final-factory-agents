@@ -248,3 +248,34 @@ Proven over tutorial objectives 63→78, to a finished tutorial.
   `CraftButton` count and click it again if 0 (clicking blindly can close an open panel).
 - Craft-button count labels can be STALE right after resources change — a click can succeed even when
   the label still reads 0; trust the queue probe, not the label.
+
+## Heartbeat-exact build and deconstruct bench in the editor (w762, 2026-10-09)
+
+Proven on lothdesktop, develop 0.50.0.90, flat single-player world. It was used to compare a change
+against its revert: 200 Struts, 8 player Construction Bots, seed `w762-bench`. Build took 775 heartbeats
+and deconstruction 790-791, repeatable to 1 heartbeat across runs.
+
+- **Flat new game without the panel**: `TitleScreenManager` is internal, so call `StartNewGame` by
+  reflection, with `UI.NewGame.NewGameSettings.CreateFromOldEnums(seed, ObjectivesMode.Off,
+  AttackFrequency.Standard, EnemyDifficulty.Standard, FFNetcode.Lobby.LobbyCreationParameters.SinglePlayerGame)`
+  and then `settings.FlatMap = true`. Wait for `IsMainMenuActive` and the `ItemConfig` singleton first (the
+  boot gate above).
+- **`ffauto:construction.place|<bp>|x|z` centres the blueprint on (x, z)**; it does not put its corner
+  there. A 20×10 Strut grid placed at `0|10` covered tiles x −9..10, z 6..15, so a `construction.cut`
+  rectangle worked out from the corner missed 116 of 200. After placing, read `Placeable.GridTile`
+  min/max and cut that rectangle with a margin. (`scripts/nightly/make_blueprint.py` writes the grid.)
+- **The placed blueprint stays in the player's hand.** Its copies are `PlayerPlaced` + `OutOfPlay` with
+  no `ConstructionTaskData`, so count *built* = `!OutOfPlay && !ConstructionTaskData` and *remaining* =
+  `!OutOfPlay || ConstructionTaskData`. A count of every `PlayerPlaced` entity never reaches 0.
+- **Never `Thread.Sleep` in `execute_code` to wait.** It blocks the editor main thread, so no heartbeat
+  runs during the sleep.
+- **Heartbeat-exact timing**: from one `execute_code`, register an
+  `UnityEditor.EditorApplication.update` callback that runs a small state machine: menu → new game →
+  setup `ffauto` commands → settle N heartbeats → place → built == N (record the heartbeat, cut) →
+  remaining == 0 (record). Each step writes progress to `UnityEditor.SessionState.SetString`. The
+  callback unregisters itself when it is done or when `!Application.isPlaying`, and wraps its body in
+  try/catch, logging to SessionState. Poll SessionState between turns (`wake_me`). To replace an armed
+  hook, remove the `EditorApplication.update` delegates whose `Method.DeclaringType` comes from an older
+  `MCPDynamic` assembly. Each `execute_code` compiles a new assembly, so a later call can find them.
+- Revert the change under test with `git diff <merge>^1 <merge> -- <files> | git apply -R`, recompile,
+  run the same hook again, then re-apply it.
