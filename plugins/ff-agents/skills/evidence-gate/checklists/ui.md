@@ -70,8 +70,8 @@ The census recipe and `ui_layout.py` are in the `unity-ui` skill, `layout-census
     same art, the same see-through. A sentence ("keeps its translucent look") is not a check.
 14. **The released checks.** A session loads its plugins when it starts. Before you merge, run the
     released `pr_evidence.py`; its verdict names its version and fails when GitHub has a newer
-    one. Re-register and restart when it does. The game repo's `Evidence gate (UI)` CI job runs the
-    released one on every PR touching `/UI/` or a scene; merge only when it is green.
+    one. Re-register and restart when it does. Post its verdict on the PR (`--comment`) before
+    you merge: no CI job runs it yet.
 
 **The line that would have caught both w733 misses:** a whole-screen layout census before and after,
 with the whole HUD showing and every slide-out open, shows no new overlap between HUD blocks, no

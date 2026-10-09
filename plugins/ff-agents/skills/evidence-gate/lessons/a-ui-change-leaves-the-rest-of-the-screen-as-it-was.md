@@ -62,7 +62,7 @@ skill's `layout-census.md`:
 - Paste its `Overlaps:`, `Alignment:` and `Style:` lines. `pr_evidence.py` fails a UI PR without
   them, with a new overlap, a drift over 2 px or a delta E over 10, unless the line quotes the
   requester asking for it: `intended (Ben): "..."`.
-- The game repo's `Evidence gate (UI)` CI job (`.github/workflows/evidence-gate.yml`) runs the
-  released `pr_evidence.py` on every PR touching `/UI/` or a scene; red means not merged.
+- Run it yourself before every UI merge and post its verdict (`--comment`); nothing in CI runs it
+  yet (w733: a job is written, waiting for someone whose token may push workflow files).
 - When a check changes mid-task, re-register (`registerAgents.sh`), restart, and run it again before
   merging. `pr_evidence.py` names its version in its verdict and fails when GitHub has a newer one.
