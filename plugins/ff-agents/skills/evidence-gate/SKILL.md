@@ -157,6 +157,9 @@ One file each under `lessons/`: the rule, why (the incident, dated), how to appl
 - [Verify simulation at a slow host's frame rate](lessons/verify-simulation-at-a-slow-hosts-frame-rate.md):
   per-frame code writes no simulation state; prove a move with a frame-without-heartbeat test and a
   multiplayer run whose host is held near 20 fps (w342/w356: a Steam Deck host forked alone).
+- [A stuck batch build is cleared by the daemon, not waited out](lessons/a-stuck-batch-build-is-cleared-not-waited-out.md):
+  a Unity start refused for a `-batchmode` holder gets `unity clear_batch`, never a multi-hour wait or a request to end it by hand;
+  your own batch builds run under `unity-slot run` with a `-logFile` and are gone before DONE (w791: two builds held slots for hours).
 - [Name a decider only from the sender line](lessons/name-a-decider-only-from-the-sender-line.md):
   an approval, hold or decision gets the name on its message's `[from …]` line or the ledger's
   requester; none means "unconfirmed" and ask (w389: a bare message became "Release hold lifted (Ben)").
