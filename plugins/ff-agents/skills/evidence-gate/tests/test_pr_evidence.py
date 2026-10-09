@@ -277,6 +277,47 @@ class LayoutTest(unittest.TestCase):
         self.assertIn("'Alignment:' drifts 14 px", self.reasons(self.ui_body(Alignment=drift)))
         self.assertEqual(self.reasons(self.ui_body(Alignment="max drift 2 px over the clusters (bottom-right HUD)")), "")
 
+    OPENED_OVERLAPS = ("4 block pairs before, 4 after, 0 new, 0 kept between blocks the change moved (ui_layout.py, whole "
+                       "screen, block depth 2); 1 opened-panel pair(s) over the HUD, not counted here")
+    OPENED_LINE = ("1 opened panel pair(s) over the HUD (allowed: Ben, w732 and w742), 0 under the HUD, 0 not clickable, "
+                   "0 cut off by the screen edge, HUD restored on close: yes (3 covered HUD element(s) checked in closed.json)")
+
+    def opened_body(self, line=None, **lines):
+        body = self.ui_body(Overlaps=self.OPENED_OVERLAPS, **lines)
+        return body if line is None else body.replace("Alignment:", f"Opened panels: {line}\nAlignment:", 1)
+
+    def test_a_panel_the_player_opens_over_the_hud_passes_when_on_top_clickable_on_screen_and_restored(self):
+        # w742 (Ben): "the blueprint panel showing over objectives is fine since its a temporarily opened panel"; w732: the
+        # slide-out over the hotbar. Neither needs an 'intended' quote now.
+        self.assertEqual(self.reasons(self.opened_body(self.OPENED_LINE)), "")
+
+    def test_an_opened_panel_pair_needs_the_opened_panels_line(self):
+        self.assertIn("no 'Opened panels:' line", self.reasons(self.opened_body()))
+
+    def test_an_opened_panel_that_is_under_the_hud_or_not_clickable_or_cut_off_fails_without_an_intended_way_out(self):
+        for bad, what in (("0 under the HUD", "1 under the HUD"), ("0 not clickable", "2 not clickable"),
+                          ("0 cut off", "1 cut off")):
+            line = self.OPENED_LINE.replace(bad, what) + ' intended (Ben): "anything"'
+            self.assertIn("a panel the player opens may cover the HUD but must draw on top", self.reasons(self.opened_body(line)))
+
+    def test_an_opened_panel_must_show_the_hud_back_on_close(self):
+        line = self.OPENED_LINE.replace("restored on close: yes (3 covered HUD element(s) checked in closed.json)",
+                                        "restored on close: not checked: pass --closed, a census taken after closing the panel")
+        self.assertIn("does not show the HUD restored on close", self.reasons(self.opened_body(line)))
+        no_order = self.OPENED_LINE + "; draw order not in the census: on-top and clickable NOT measured"
+        self.assertIn("draw order was not measured", self.reasons(self.opened_body(no_order)))
+
+    def test_1272_over_objectives_is_no_overlap_failure_but_its_colour_still_is(self):
+        navy = ("GamePanels/BlueprintPanelChild/SolidBackdrop (new) vs GamePanels/InvAndCraft/InventoryPanel: delta E "
+                "23.8 (on screen), alpha 0.98 vs 1.00, art 'flat fill' vs 'background-main'")
+        reasons = self.reasons(self.opened_body(self.OPENED_LINE, Style=navy))
+        self.assertNotIn("overlap", reasons)
+        self.assertIn("delta E 23.8 from the classic panel", reasons)
+
+    def test_1264s_drift_still_fails_beside_opened_panels(self):
+        drift = "max drift 98 px over the clusters (bottom-right HUD, top-left HUD); tolerance 2 px"
+        self.assertIn("'Alignment:' drifts 98 px", self.reasons(self.opened_body(self.OPENED_LINE, Alignment=drift)))
+
     def test_the_scene_counts_as_ui(self):
         self.assertTrue(pe.UI_PATH.search("Assets/Scenes/main.unity"))
         self.assertIn("no 'Overlaps:' line", self.reasons(GOOD, ["Assets/Scenes/main.unity"]))

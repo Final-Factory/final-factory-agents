@@ -4,12 +4,17 @@
 Compares two layout censuses (layout-census.md: every visible UI element with its screen rect, colour,
 alpha, sprite and drawing order) taken before and after a change, same save, size and open screens:
 
-    ui_layout.py check --before before.json --after after.json [--clusters hud-clusters.json]
+    ui_layout.py check --before before.json --after after.json [--closed closed.json] [--clusters hud-clusters.json]
                        [--ref InventoryPanel] [--shot after.png --ref-shot before.png] [--block-depth 2]
 
-  Overlaps   HUD blocks (an element's ancestor --block-depth levels under its canvas, 2: GamePanels/X) whose visible
-             parts overlap. A pair in `after` that is not in `before` is a new overlap: FAIL. A pair that was
-             there before and is still there, between blocks the change moved, is kept: FAIL too.
+  Overlaps   always-on HUD blocks (an element's ancestor --block-depth levels under its canvas, 2: GamePanels/X)
+             whose visible parts overlap. A pair in `after` that is not in `before` is a new overlap: FAIL. A pair that
+             was there before and is still there, between blocks the change moved, is kept: FAIL too. Elements of a
+             panel the player opens on purpose and can close (hud-clusters.json `openedPanels`: Blueprints, Inventory,
+             the slide-outs, the Station panel, the hub) are not HUD: they may cover it (w742, Ben).
+  Opened     what an opened panel over the HUD must still do: draw on top of what it covers, take the clicks over
+  panels     every raycast target it covers, stay inside the screen, and (with --closed, a census taken after closing
+             it) leave the covered HUD exactly where it was. Any failure: FAIL.
   Alignment  every cluster (an anchor and its members, by object name) measured edge by edge against
              its anchor; a change over --tolerance px (2) between before and after: FAIL.
   Style      every panel (an Image over 2 % of the screen) that is new or changed colour, alpha or
@@ -18,7 +23,7 @@ alpha, sprite and drawing order) taken before and after a change, same save, siz
              --shot/--ref-shot inside each panel's rect when given, which is what a player sees), an
              alpha off by more than 0.2 on the same art, or different art without screenshots: FAIL.
 
-It prints the `Overlaps:`, `Alignment:` and `Style:` lines the pull request carries (pr_evidence.py
+It prints the `Overlaps:`, `Opened panels:`, `Alignment:` and `Style:` lines the pull request carries (pr_evidence.py
 reads them) and exits 1 when any check fails, 2 on bad input.
 
     ui_layout.py overlaps <census.json>        the overlapping block pairs of one census
@@ -30,6 +35,7 @@ Standard library only; Pillow for --shot sampling.
 from __future__ import annotations
 
 import argparse
+import fnmatch
 import json
 import math
 import re
@@ -109,26 +115,61 @@ def solid(e) -> bool:
     return e.get("selectable") or "Text" in e.get("kind", "") or e.get("alpha", 1.0) >= 0.25
 
 
-def overlaps(census: dict, depth: int = 2, min_px: float = 16.0) -> dict:
-    """{(blockA, blockB): {"px": area, "example": (pathA, pathB)}} for blocks whose solid elements overlap."""
+def strip_clone(name: str) -> str:
+    return re.sub(r"\s*\(Clone\)$", "", name)
+
+
+def opened_prefix(path: str, patterns: list[str]) -> str | None:
+    """The part of `path` up to the end of the first match of an `openedPanels` pattern, or None when the element is
+    always-on HUD. A pattern is path components (fnmatch globs); it matches a run of components anywhere in the path,
+    so "InventoryPanel" does not match "TopInfoPanel/..." and "*EntityPanel" matches every structure panel."""
+    parts = [strip_clone(p) for p in path.split("/")]
+    best = None
+    for pattern in patterns:
+        want = pattern.strip("/").split("/")
+        for i in range(len(parts) - len(want) + 1):
+            if all(fnmatch.fnmatchcase(parts[i + j], want[j]) for j in range(len(want))):
+                end = i + len(want)
+                best = end if best is None else min(best, end)
+                break
+    return None if best is None else "/".join(path.split("/")[:best])
+
+
+def opened_patterns(spec: dict | None) -> list[str]:
+    return list(((spec or {}).get("openedPanels") or {}).get("paths", []))
+
+
+def _pairs(census: dict, depth: int, min_px: float, same_block: bool):
+    """Every two solid elements whose visible rects overlap enough to count: (a, block a, b, block b, px2, rect)."""
     items = [(e, block_of(e["path"], depth)) for e in census["elements"] if solid(e) and area(e.get("visible") or e["rect"]) >= 4]
-    pairs: dict[tuple[str, str], dict] = {}
     for i in range(len(items)):
         a, ba = items[i]
         ra = a.get("visible") or a["rect"]
         for j in range(i + 1, len(items)):
             b, bb = items[j]
-            if ba == bb or ba.startswith(bb + "/") or bb.startswith(ba + "/"):
+            if not same_block and (ba == bb or ba.startswith(bb + "/") or bb.startswith(ba + "/")):
                 continue
             rb = b.get("visible") or b["rect"]
             if rb[0] >= ra[2] or rb[2] <= ra[0] or rb[1] >= ra[3] or rb[3] <= ra[1]:
                 continue
-            px = area(inter(ra, rb))
+            both = inter(ra, rb)
+            px = area(both)
             if px < max(min_px, 0.05 * min(area(ra), area(rb))):
                 continue
-            key = tuple(sorted((ba, bb)))
-            entry = pairs.setdefault(key, {"px": 0.0, "example": (a["path"], b["path"])})
-            entry["px"] += px
+            yield a, ba, b, bb, px, both
+
+
+def overlaps(census: dict, depth: int = 2, min_px: float = 16.0, opened: list[str] | None = None) -> dict:
+    """{(blockA, blockB): {"px": area, "example": (pathA, pathB)}} for always-on HUD blocks whose solid elements overlap.
+    With `opened` (the openedPanels patterns) an element of a panel the player opens does not count: it may cover the
+    HUD (see opened_over_hud, which checks that it does so properly)."""
+    pairs: dict[tuple[str, str], dict] = {}
+    for a, ba, b, bb, px, _ in _pairs(census, depth, min_px, same_block=False):
+        if opened and (opened_prefix(a["path"], opened) or opened_prefix(b["path"], opened)):
+            continue
+        key = tuple(sorted((ba, bb)))
+        entry = pairs.setdefault(key, {"px": 0.0, "example": (a["path"], b["path"])})
+        entry["px"] += px
     return pairs
 
 
@@ -137,14 +178,84 @@ def short(path: str, keep: int = 3) -> str:
     return "/".join(parts[-keep:]) if len(parts) > keep else path
 
 
-def by_design(pair: tuple[str, str], spec: dict) -> dict | None:
-    """The hud-clusters.json byDesign entry for a block pair, if a person said those blocks may overlap (w732: Ben, the
-    slide-outs draw on top of the hotbar). Matched on the blocks' own names, in either order."""
-    names = {pair[0].split("/")[-1], pair[1].split("/")[-1]}
-    for entry in spec.get("byDesign", []):
-        if set(entry.get("blocks", [])) == names:
-            return entry
-    return None
+def above(a: dict, b: dict) -> bool | None:
+    """Whether a is drawn over b (canvas sorting order, then the canvas renderer's absolute depth), None when the
+    census did not record the order (a tour log)."""
+    if "depth" not in a or "depth" not in b:
+        return None
+    return (a.get("canvasOrder", 0), a["depth"]) > (b.get("canvasOrder", 0), b["depth"])
+
+
+def opened_over_hud(census: dict, patterns: list[str], depth: int = 2, min_px: float = 16.0) -> dict:
+    """What a panel the player opened does to the HUD it covers (w742, Ben: "Put the slide out back just make it appear
+    over the hot bar. The user can then close it to show the hotbar again" and "the blueprint panel showing over
+    objectives is fine since its a temporarily opened panel"). Covering the HUD is allowed; the panel must
+
+      under      draw on top of every HUD element it covers (a panel UNDER the HUD shows the HUD through it),
+      blocked    take the clicks over every raycast target it covers (a raycasting element of the panel above it),
+      cut        stand inside the screen (an element past the edge that no mask clips).
+
+    Returns {"pairs": {(panel, hud block): {...}}, "under": [...], "blocked": [...], "cut": [...], "covered": {path: rect},
+    "measured": bool} with one line per problem."""
+    out = {"pairs": {}, "under": [], "blocked": [], "cut": [], "covered": {}, "measured": True}
+    if not patterns:
+        return out
+    solids = [e for e in census["elements"] if solid(e) and area(e.get("visible") or e["rect"]) >= 4]
+    panel = [(e, opened_prefix(e["path"], patterns)) for e in solids]
+    panel = [(e, p) for e, p in panel if p]
+    panel_paths = {e["path"] for e, _ in panel}
+    for a, ba, b, bb, px, region in _pairs(census, depth, min_px, same_block=True):
+        if (a["path"] in panel_paths) == (b["path"] in panel_paths):
+            continue
+        if a["path"] not in panel_paths:
+            a, b = b, a
+        label = opened_prefix(a["path"], patterns)
+        hud_block = block_of(b["path"], depth)
+        entry = out["pairs"].setdefault((label, hud_block), {"px": 0.0, "example": (a["path"], b["path"])})
+        entry["px"] += px
+        out["covered"][b["path"]] = b.get("visible") or b["rect"]
+        order = above(a, b)
+        if order is None:
+            out["measured"] = False
+            continue
+        if not order:
+            out["under"].append(f"{short(label, 2)} under {short(hud_block, 1)}: {short(a['path'], 2)} is drawn below "
+                                f"{short(b['path'], 2)} (canvas {a.get('canvasOrder', 0)}/{b.get('canvasOrder', 0)}, depth "
+                                f"{a['depth']}/{b['depth']})")
+            continue
+        if b.get("raycast"):
+            catchers = [c for c, _ in panel if c.get("raycast") and above(c, b)
+                        and area(inter(c.get("visible") or c["rect"], region)) >= 0.9 * area(region)]
+            if not catchers:
+                out["blocked"].append(f"{short(hud_block, 1)}: {short(b['path'], 2)} takes clicks under {short(label, 2)}: "
+                                      f"no raycast target of the panel covers it")
+    w, h = census.get("screen") or [0, 0]
+    if w and h:
+        for e, label in panel:
+            r, v = e["rect"], e.get("visible") or e["rect"]
+            over = max(-r[0], -r[1], r[2] - w, r[3] - h)
+            clipped = [max(r[0], 0), max(r[1], 0), min(r[2], w), min(r[3], h)]
+            if over > 2 and max(abs(x - y) for x, y in zip(clipped, v)) <= 1:
+                out["cut"].append(f"{short(label, 2)}: {short(e['path'], 2)} reaches {over:.0f} px past the screen edge "
+                                  f"(rect {[round(x) for x in r]} on {w}x{h})")
+    out["under"] = sorted(set(out["under"]))
+    out["blocked"] = sorted(set(out["blocked"]))
+    out["cut"] = sorted(set(out["cut"]))
+    return out
+
+
+def restored(closed: dict, covered: dict, tolerance: float = 2.0) -> list[str]:
+    """The HUD elements an opened panel covered, in the census taken after closing it: each must be there, drawn, at
+    the same place (the HUD is back as it was)."""
+    now = {e["path"]: e.get("visible") or e["rect"] for e in closed["elements"] if solid(e)}
+    problems = []
+    for path, rect in sorted(covered.items()):
+        r = now.get(path)
+        if r is None:
+            problems.append(f"{short(path, 2)} is gone from the screen after closing the panel")
+        elif max(abs(x - y) for x, y in zip(r, rect)) > tolerance:
+            problems.append(f"{short(path, 2)} is not where it was after closing the panel")
+    return problems
 
 
 def moved_blocks(before: dict, after: dict, depth: int = 2, tolerance: float = 2.0) -> set[str]:
@@ -355,25 +466,43 @@ def style(before: dict | None, after: dict, ref_fragment: str, shot=None, ref_sh
 def run_check(args) -> int:
     before, after = load(args.before), load(args.after)
     spec = json.loads(Path(args.clusters).read_text(encoding="utf-8"))
+    patterns = opened_patterns(spec)
     failed = False
 
-    ob, oa = overlaps(before, args.block_depth), overlaps(after, args.block_depth)
+    ob, oa = overlaps(before, args.block_depth, opened=patterns), overlaps(after, args.block_depth, opened=patterns)
     new = {k: v for k, v in oa.items() if k not in ob}
     moved = moved_blocks(before, after, args.block_depth, args.tolerance)
     kept = {k: v for k, v in oa.items() if k in ob and (k[0] in moved or k[1] in moved)}
-    allowed = {k: by_design(k, spec) for k in list(new) + list(kept) if by_design(k, spec)}
-    new = {k: v for k, v in new.items() if k not in allowed}
-    kept = {k: v for k, v in kept.items() if k not in allowed}
+    over = opened_over_hud(after, patterns, args.block_depth)
     print(f"Overlaps: {len(ob)} block pairs before, {len(oa)} after, {len(new)} new, {len(kept)} kept between blocks "
-          f"the change moved (ui_layout.py, whole screen, block depth {args.block_depth})")
+          f"the change moved (ui_layout.py, whole screen, block depth {args.block_depth}); {len(over['pairs'])} "
+          f"opened-panel pair(s) over the HUD, not counted here")
     for (a, b), v in sorted(new.items(), key=lambda kv: -kv[1]["px"])[:15]:
         print(f"  NEW: {short(a)}  x  {short(b)}: {v['px']:.0f} px2, e.g. {short(v['example'][0], 2)} under {short(v['example'][1], 2)}")
     for (a, b), v in sorted(kept.items(), key=lambda kv: -kv[1]["px"])[:15]:
         print(f"  KEPT: {short(a)}  x  {short(b)}: {ob[(a, b)]['px']:.0f} -> {v['px']:.0f} px2: the change moved one of "
               f"them and left them overlapping")
-    for (a, b), entry in sorted(allowed.items()):
-        print(f"  BY DESIGN: {short(a, 1)}  x  {short(b, 1)}: {entry.get('why', '')} ({entry.get('who', 'no source')})")
     failed |= bool(new) or bool(kept)
+
+    problems = over["under"] + over["blocked"] + over["cut"]
+    if args.closed:
+        gone = restored(load(args.closed), over["covered"], args.tolerance) if over["covered"] else []
+        problems += gone
+        back = f"{'no' if gone else 'yes'} ({len(over['covered'])} covered HUD element(s) checked in {Path(args.closed).name})"
+    else:
+        gone, back = [], "not checked: pass --closed, a census taken after closing the panel"
+    print(f"Opened panels: {len(over['pairs'])} opened panel pair(s) over the HUD (allowed: Ben, w732 and w742), "
+          f"{len(over['under'])} under the HUD, {len(over['blocked'])} not clickable, {len(over['cut'])} cut off by the "
+          f"screen edge, HUD restored on close: {back}"
+          + ("" if over["measured"] else "; draw order not in the census: on-top and clickable NOT measured"))
+    for (a, b), v in sorted(over["pairs"].items(), key=lambda kv: -kv[1]["px"])[:15]:
+        print(f"  OPENED OVER HUD: {short(a, 2)}  x  {short(b, 1)}: {v['px']:.0f} px2, e.g. {short(v['example'][0], 2)} over "
+              f"{short(v['example'][1], 2)}")
+    for kind, lines in (("UNDER", over["under"]), ("NOT CLICKABLE", over["blocked"]), ("CUT OFF", over["cut"]),
+                        ("NOT RESTORED", gone)):
+        for line in lines[:15]:
+            print(f"  {kind}: {line}")
+    failed |= bool(problems)
 
     worst, lines = drift(cluster_edges(before, spec), cluster_edges(after, spec), args.tolerance)
     names = ", ".join(c["name"] for c in spec.get("clusters", []))
@@ -392,8 +521,10 @@ def run_check(args) -> int:
 
 
 def run_overlaps(args) -> int:
-    pairs = overlaps(load(args.census), args.block_depth)
-    print(f"{len(pairs)} overlapping block pairs (block depth {args.block_depth})")
+    census = load(args.census)
+    spec = json.loads(Path(args.clusters).read_text(encoding="utf-8"))
+    pairs = overlaps(census, args.block_depth, opened=opened_patterns(spec))
+    print(f"{len(pairs)} overlapping block pairs between always-on HUD blocks (block depth {args.block_depth})")
     for (a, b), v in sorted(pairs.items(), key=lambda kv: -kv[1]["px"]):
         print(f"  {short(a)}  x  {short(b)}: {v['px']:.0f} px2, e.g. {short(v['example'][0], 2)} / {short(v['example'][1], 2)}")
     return 0
@@ -416,6 +547,7 @@ def main(argv=None) -> int:
     c = sub.add_parser("check", help="before against after: overlaps, alignment, style")
     c.add_argument("--before", required=True)
     c.add_argument("--after", required=True)
+    c.add_argument("--closed", help="a census taken after closing the opened panel again: the HUD it covered must be back")
     c.add_argument("--clusters", default=str(DEFAULT_CLUSTERS))
     c.add_argument("--ref", default="InventoryPanel", help="path fragment of the classic reference panel")
     c.add_argument("--shot", help="a screenshot taken with the after census")
@@ -426,6 +558,7 @@ def main(argv=None) -> int:
     c.add_argument("--tolerance", type=float, default=2.0)
     o = sub.add_parser("overlaps", help="the overlapping block pairs of one census")
     o.add_argument("census")
+    o.add_argument("--clusters", default=str(DEFAULT_CLUSTERS))
     k = sub.add_parser("clusters", help="cluster edges of one census or tour log")
     k.add_argument("census")
     k.add_argument("--clusters", default=str(DEFAULT_CLUSTERS))

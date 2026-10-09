@@ -187,6 +187,35 @@ def ui_problems(section: str) -> list[str]:
 INTENDED = re.compile(r"\bintended\s*\(([^)]+)\)\s*:", re.IGNORECASE)
 
 
+def opened_panel_problems(section: str, pairs: int) -> list[str]:
+    """A panel the player opens on purpose may cover the HUD (Ben, w732 and w742: "the blueprint panel showing over
+    objectives is fine since its a temporarily opened panel"), but it must be on top, take its clicks, stay on screen
+    and give the HUD back when closed. These are the facts `ui_layout.py check` prints on its 'Opened panels:' line;
+    there is no 'intended' way out of them."""
+    line = field(section, "Opened panels")
+    if not line:
+        return [f"'Overlaps:' counts {pairs} opened-panel pair(s) over the HUD but there is no 'Opened panels:' line: "
+                f"paste ui_layout.py check's line (panel on top, clickable, on screen, HUD back on close; "
+                f"--closed <census taken after closing it>)"]
+    text, problems = line[1], []
+    for pattern, what in ((r"(\d+)\s+under the HUD", "drawn UNDER the HUD it covers"),
+                          (r"(\d+)\s+not clickable", "leaving clicks to the HUD under it"),
+                          (r"(\d+)\s+cut off", "cut off by the screen edge")):
+        found = re.search(pattern, text, re.IGNORECASE)
+        if not found:
+            problems.append(f"'Opened panels:' does not say how many panels are {what}: paste ui_layout.py check's line")
+        elif int(found.group(1)) > 0:
+            problems.append(f"'Opened panels:' has {found.group(1)} panel(s) {what}: a panel the player opens may cover "
+                            f"the HUD but must draw on top, be clickable and stay on screen (checklists/ui.md, item 11)")
+    if re.search(r"NOT measured", text):
+        problems.append("'Opened panels:' says the draw order was not measured: take the census in the editor "
+                        "(layout-census.md records canvasOrder, depth and raycast), not from a tour log")
+    if not re.search(r"restored on close:\s*yes", text, re.IGNORECASE):
+        problems.append("'Opened panels:' does not show the HUD restored on close ('HUD restored on close: yes'): take a "
+                        "census after closing the panel and pass it as --closed")
+    return problems
+
+
 def layout_problems(section: str) -> list[str]:
     """The rest of the screen (w733): no new overlap, no anchored cluster drifting, every touched panel's colour and
     alpha within reach of the classic panel's. The lines are the ones `unity-ui/ui_layout.py check` prints; a
@@ -211,6 +240,9 @@ def layout_problems(section: str) -> list[str]:
             problems.append(f"'Overlaps:' keeps {kept.group(1)} overlap(s) between blocks the change moved: they were "
                             f"there before, but you moved them and left them overlapping (w733: 7f75224fa left the "
                             f"Blueprint slide-out over the hotbar). Fix them, or quote the requester as intended (who): \"...\"")
+        opened = re.search(r"(\d+)\s+opened-panel", overlaps[1])
+        if opened and int(opened.group(1)) > 0:
+            problems += opened_panel_problems(section, int(opened.group(1)))
     alignment = field(section, "Alignment")
     if not alignment:
         problems.append("UI change with no 'Alignment:' line: the anchored clusters' drift before and after "
