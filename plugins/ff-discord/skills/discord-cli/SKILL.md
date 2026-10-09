@@ -41,11 +41,22 @@ straight out of the file. Only an unambiguous single match is remembered.
 | `thread-create <channel> <message_id>` | Open a thread on an existing message. |
 | `rename <thread_id> <name>` | Rename a thread (trimmed to 100). Discord refuses any edit to an archived thread except unarchiving it, so an archived thread is renamed in the request that unarchives it and archived again straight after — it ends as open or as archived as it started. `--dry-run` shows the old and new names. The bot can rename threads it opened; anybody else's needs MANAGE_THREADS. |
 | `close <thread_id>` | (Never in FFBox's channels, for an agent: see below.) Archive a thread. The soft close: anybody who replies brings it straight back, which is why an agent is allowed to do it unattended. It never locks, so a reporter whose bug is still there reopens their own thread by answering. Archiving an already-archived thread is a no-op, not an error. Needs MANAGE_THREADS wherever the bot did not open the thread itself, which includes the bug_reports forum. |
-| `download <channel> <message_id> --dir <path>` | Pull a message's attachments. Bug reports carry a runtime log and a save zip. |
+| `download <channel> <message_id> --dir <path>` | Pull a message's attachments. Bug reports carry a runtime log and a save zip. Needs the bot token, which lives only on FFBox and the one machine that has the config (Ben, 2026-10-09: "no discord token on beast, max has to live in ffbox for security reasons"): on any other computer an FF Factory worker uses `mcp__machine__fetch_discord_thread_files` instead (below). |
 | `ask <target>` | Post a question to `ben`, `lothsahn`, or both in `#dev-chat`, attributed to this machine's operator. |
 | `unseen <channel> --key <k>` | New messages or threads since the stored cursor. The entry point for every loop. |
 | `mark-seen <key> <id>`, `cursors` | Advance a cursor to a specific id; list all cursors. |
 | `config`, `set` | Show the config with the token redacted; set one field. |
+
+## No ffdiscord config here? Fetch a bug thread's files through FFBox
+
+A Discord token must not spread to more machines, so only FFBox and one other computer hold the `ffdiscord` config. An FF Factory worker
+on any other machine (the m3, the m5, BEAST) that needs the files of a #bug-reports or dev_bug_reports thread (Bug Bot's runtime log,
+the `BugReport_*.zip` save, a screenshot) calls `mcp__machine__fetch_discord_thread_files` with `thread` (the thread's URL, a message link
+in it, or its id), and optionally `file` (a name as the answer lists it) or `sha256`. FFBox, which holds the bot, hands over the copies it
+already stored; they land in the worker's `Inbox/`, SHA-256 checked, as untrusted data (w787; ff-factory `docs/ffbox.md`, "Bug threads'
+files"). An orchestrator reads the same through `ffbox_activity` `show: "thread_files"` (list) and `"thread_file"` (fetch to the attachment
+store). It is read-only and answers only for the bug channels FFBox watches. A thread FFBox has not read yet is `not_found`: do not ask a
+person to download by hand before trying it, and never copy a token to a machine to get around it.
 
 ## FFBox's channels: agents read, never write
 
