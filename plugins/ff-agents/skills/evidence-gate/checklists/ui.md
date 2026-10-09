@@ -16,6 +16,14 @@ anyone says done.
    ("Crafting: every row of the selected category's recipe grid", "Technology: the tech tree grid
    with its nodes", "Blueprints: the list, and a selected blueprint's preview whole on screen",
    "Factory info: its stats filling the pane"). This list is what each still is checked against.
+   **Only the person's words are targets.** A brief's reading of them ("top and bottom edges
+   aligned with the minimap frame") is a guess until the person says it; build only what the words
+   say, and where the person says "like before" or "as it was", the target is the *before* still:
+   measure it (gap, pitch, edge offsets) and pin those numbers in the test, so the fix restores them
+   and invents no new alignment. w732: Ben said "hugging the minimap nicely (with a little padding)";
+   the brief said "top and bottom edges aligned", the fix stretched both button columns over the frame's
+   height (toggle gaps 5 -> 32 units), and Ben: "I don't want the minimal icons to fill the vertical
+   space. I want them to stack with a little padding like before."
 2. **Realistic, full content.** A late-game world: many recipes and techs unlocked, a tech tree
    partly researched, 10 or more blueprints, a fleet, objectives in progress, a full inventory,
    long names. A new game, a test save with empty tabs, or a dev-built world of one-off buildings

@@ -92,6 +92,15 @@ the event-system probe (#1287's `DeckTour` counted 66 of 66 click points reachin
 not on the `openedPanels` list counts as HUD until someone adds it, which is deliberate (a new always-on element must
 not be waved through by name).
 
+**A third correction in the same corner (w732, 2026-10-09).** After the two above, the fix for "the minimap buttons ...
+no longer hugging the minimap nicely (with a little padding), ... not quite aligned" also spread the button columns over
+the minimap frame's height, because the brief wrote "top and bottom edges aligned with the minimap frame" and the test
+pinned it. Ben: "I don't want the minimal icons to fill the vertical space. I want them to stack with a little padding like
+before. I dont like how the left most row is separated vertically in between each button." The check that would have caught
+it is [ui.md](../checklists/ui.md) item 1: only the person's words are targets, and "like before" means the measured *before*
+still; `HudCornerLayoutTest` now pins the 6.5 gap and an even padding of at most 7 units between buttons (measured: 14.1 and
+32.1 in the stretched scene, 5 as the scene lays them out), and fails the stretched scene.
+
 **How to apply.** [The UI checklist](../checklists/ui.md), items 11 to 14, and the `unity-ui`
 skill's `layout-census.md`:
 
