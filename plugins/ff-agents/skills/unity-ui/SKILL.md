@@ -141,6 +141,16 @@ moved after it; opening the Blueprint slide-out puts it over the hotbar (a new o
 closed HUD); #1272's backdrop is delta E 23.8 from the classic Inventory on screen, where the window
 was 2.1 before it.
 
+## 5c. A font-size change, and the desktop under a Deck change
+
+A text size change is checked text by text: the census records each text's lines, overflow and ellipsis, and
+`text_diff.py` lists every text with the same string that fits before and not after ([layout-census.md](layout-census.md)).
+Check fit in the runtime font: a localized text is drawn in `LocalizationHelper.ApplyFont`'s font (Khyay for Latin
+locales), not the one its prefab names. A layout or size change made for the Deck is checked on desktop too
+(1920x1080 and 2560x1440 at the default 0.90): the I-key windows open where they did, stay put while the pointer
+crosses buildings, and a dragged window does not get another laid over it (w761, the evidence-gate UI checklist
+items 15 and 16).
+
 ## Related notes
 
 - `project-memory` → `ui-screenshot-worst-case-before-done` (Ben, 2026-09-22): longest text,

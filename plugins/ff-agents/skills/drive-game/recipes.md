@@ -39,9 +39,13 @@ foreach (var b in buttons) { var l = b.GetComponentInChildren<TMPro.TMP_Text>(tr
 // then pump Steps so the panel opens/animates
 ```
 
-**⚠️ Boot gate before ANY new game:** never invoke
-`StartNewGame` until `FFCore.Extensions.Ecs.Ready && Ecs.HasSingleton<FFCore.Config.ItemConfig>()`
-returns true (namespace is `FFCore.Config`, NOT `FFComponents`). A `TitleScreenManager.Instance != null`
+**⚠️ Boot gate before ANY new game or load:** never invoke
+`StartNewGame` or `SaveGameManager.LoadGame` until `FFCore.Extensions.Ecs.Ready &&
+Ecs.HasSingleton<FFCore.Config.ItemConfig>() && Ecs.HasSingleton<FFCore.Config.MapGenerationData>()`
+returns true (namespace is `FFCore.Config`, NOT `FFComponents`). `ItemConfig` alone is not enough: a load
+started when it was there and `MapGenerationData` was not ended at "Could Not Load Save" with
+`GetSingleton<FFCore.Config.MapGenerationData>() requires that exactly one entity exists` (w761, the
+editor stepped 30 frames after entering play mode); the same load a moment later worked. A `TitleScreenManager.Instance != null`
 probe passes far too early (frame ~20 on a fresh boot); starting a game mid-boot strands the world —
 missing `ItemConfig`/`MapGenerationData` singletons, an NRE in `TitleScreenManager.PrepareSceneForGame`,
 and `MePlayer` never appears, with no loud failure at the call site.

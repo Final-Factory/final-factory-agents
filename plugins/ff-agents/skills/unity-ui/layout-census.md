@@ -86,6 +86,8 @@ var n = 0;
 foreach (var g in UnityEngine.Object.FindObjectsByType<UnityEngine.UI.Graphic>(UnityEngine.FindObjectsSortMode.None))
 {
   if (!g.isActiveAndEnabled || g.canvas == null || g.canvas.rootCanvas.renderMode == UnityEngine.RenderMode.WorldSpace) { continue; }
+  // w761: a Graphic without a CanvasRenderer (the Technology window's "Connectors") throws in GetInheritedAlpha.
+  if (g.GetComponent<UnityEngine.CanvasRenderer>() == null) { continue; }
   var alpha = g.color.a * g.canvasRenderer.GetInheritedAlpha();
   if (alpha < 0.02f || g.canvasRenderer.cull) { continue; }
   var r = onScreen(g.rectTransform);
@@ -100,13 +102,25 @@ foreach (var g in UnityEngine.Object.FindObjectsByType<UnityEngine.UI.Graphic>(U
   var sel = g.GetComponent<UnityEngine.UI.Selectable>();
   var mask = g.GetComponent<UnityEngine.UI.Mask>();
   var maskOnly = mask != null && mask.isActiveAndEnabled && !mask.showMaskGraphic;
+  // w761: how each text lays out, for text_diff.py (a text that wraps or overflows after a font-size change).
+  var fit = "";
+  var tmp = g as TMPro.TMP_Text;
+  if (tmp != null)
+  {
+    var ci = System.Globalization.CultureInfo.InvariantCulture;
+    var rv = tmp.GetRenderedValues(true);
+    fit = ",\"fontSize\":" + tmp.fontSize.ToString("F1", ci) + ",\"font\":\"" + esc(tmp.font != null ? tmp.font.name : "") +
+      "\",\"lines\":" + tmp.textInfo.lineCount + ",\"overflowing\":" + (tmp.isTextOverflowing ? "true" : "false") +
+      ",\"truncated\":" + (tmp.isTextTruncated ? "true" : "false") + ",\"renderedW\":" + rv.x.ToString("F1", ci) +
+      ",\"rectW\":" + tmp.rectTransform.rect.width.ToString("F1", ci) + ",\"wrap\":\"" + tmp.textWrappingMode + "\"";
+  }
   sb.Append(n++ == 0 ? "" : ",\n");
   sb.Append("{\"path\":\"" + esc(path(g.transform)) + "\",\"kind\":\"" + g.GetType().Name + "\",\"rect\":" + box(r) +
     ",\"visible\":" + box(v) + ",\"color\":\"#" + UnityEngine.ColorUtility.ToHtmlStringRGBA(g.color) + "\",\"alpha\":" +
     alpha.ToString("F3", System.Globalization.CultureInfo.InvariantCulture) + ",\"sprite\":\"" + esc(sprite) +
     "\",\"raycast\":" + (g.raycastTarget ? "true" : "false") + ",\"selectable\":" + (sel != null && sel.IsInteractable() ? "true" : "false") +
     ",\"maskOnly\":" + (maskOnly ? "true" : "false") + ",\"canvasOrder\":" + g.canvas.rootCanvas.sortingOrder + ",\"depth\":" + g.canvasRenderer.absoluteDepth +
-    (text != null ? ",\"text\":\"" + esc(text) + "\"" : "") + "}");
+    (text != null ? ",\"text\":\"" + esc(text) + "\"" : "") + fit + "}");
 }
 sb.Append("\n]}\n");
 System.IO.File.WriteAllText(OUT, sb.ToString());
@@ -114,7 +128,31 @@ return n + " elements at " + sw + "x" + sh + " -> " + OUT;
 ```
 
 Compiled against Unity 6000.3.19f1's `UnityEngine.CoreModule`, `UnityEngine.UIModule` and the
-project's `UnityEngine.UI.dll` (w733).
+project's `UnityEngine.UI.dll` (w733), with TextMesh Pro for the text-fit fields (w761: `fontSize`, `font`,
+`lines`, `overflowing`, `truncated`, `renderedW`, `rectW`, `wrap` on every TMP text, for `text_diff.py`).
+
+`execute_code` calls time out after about 30 s while the editor keeps running them. To take many censuses, register
+the snippet once as a delegate (`System.AppDomain.CurrentDomain.SetData("census", (System.Func<string, string>)(OUT => { ... }))`)
+and call it from later snippets (`GetData`); it lasts until the next domain reload (a script compile; entering play
+mode keeps it in this project) (w761).
+
+## Text that no longer fits (a font-size change)
+
+A change to text sizes (the w727 Deck floor raised about 300 texts from 14 to 15/16 pt on every screen) is checked by
+comparing every text's layout before and after, same save, same screens:
+
+```sh
+python "<this skill's base directory>/text_diff.py" before.json after.json      # one pair
+python "<this skill's base directory>/text_diff.py" --dir <censuses> b- a-       # every b-<state>.json vs a-<state>.json
+```
+
+It lists texts with the same string whose line count grew, that overflow or are cut (ellipsis) only after, or that
+are now wider than their box without wrapping. Look at each one at full size: w761 found "Component / s" and
+"Intermediat / es" in the Mass Driver's filter, "Rename fold..." in Blueprints and a two-line "Game Version" in Mods
+on desktop, all from the Deck floor. **Check the fit in the font the text shows at runtime**: a localized text is
+drawn in `LocalizationHelper.ApplyFont`'s font (Khyay for every Latin locale), not the font its prefab names; the
+filter labels were authored in Liberation Sans, where they fit, and wrapped in Khyay. A prefab test that lays out the
+label in both fonts is the game repo's `RaisedLabelsFitTest`.
 
 ## Compare two
 

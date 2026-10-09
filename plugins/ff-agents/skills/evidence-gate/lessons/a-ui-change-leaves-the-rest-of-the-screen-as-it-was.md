@@ -114,3 +114,24 @@ skill's `layout-census.md`:
   yet (w733: a job is written, waiting for someone whose token may push workflow files).
 - When a check changes mid-task, re-register (`registerAgents.sh`), restart, and run it again before
   merging. `pr_evidence.py` names its version in its verdict and fails when GitHub has a newer one.
+
+## The other screen too (w761, 2026-10-09)
+
+**Rule.** A UI change made for one screen (the Deck) is checked on the others (desktop 1920x1080 and 2560x1440 at
+the default UI scale) before it is done, with the same whole-screen census, and with a per-text comparison when it
+changes font sizes. A layout rule or a text size has no screen in it unless the code gives it one.
+
+**Why.** #1282 ("classic Deck layout", w723/w727) was checked at 1280x800 and passed there. It also raised about
+300 texts from 14 to 15/16 pt on every screen and made the classic packer place the player's own Inventory and
+Crafting windows on every screen. The nightly regression check (w761, MEASURED in editor censuses, before
+4762a5bc3 vs develop ca58de9c8): on desktop the Mass Driver's filter labels broke mid-word ("Component / s"),
+Blueprints showed "Rename fold...", Mods' "Game Version" took two lines; the I-key Inventory moved to the left edge
+at 1920x1080, the two windows swapped sides at 2560x1440, the Inventory jumped 317 px when the mouse crossed a
+building (the hover card's soft zone grew) and Crafting opened under an Inventory the player had dragged. The PR's
+own "Not verified" line had said "desktop text is 1 point bigger where it was 14": nobody compared what that did.
+The labels fitted in the font their prefab names (Liberation Sans) and not in the one the game draws them in
+(`LocalizationHelper.ApplyFont`: Khyay).
+
+**How to apply.** `checklists/ui.md` items 15 and 16; `unity-ui` `text_diff.py` for the per-text comparison; in the
+game repo, `SelectionColumnPanelsTests` pins which screens the packer places the player's windows on and
+`RaisedLabelsFitTest` lays labels out in both fonts.
