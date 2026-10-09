@@ -131,6 +131,10 @@ screen; on desktop three labels stopped fitting, the two windows left their defa
     (a faded card still held 330 units, so the window sat under nothing and was cut to three rows). A window the player
     placed is HUD to the windows the layout places: they keep off it.
 
+19. **The Deck tour is a stand-in (w770).** It forces its own window size and a scripted Deck, so it cannot show Steam's
+    layout choice, the Proton first-frame resolution, the Steam client version or touch. A Deck UI change says "verified on
+    a real Deck" or "not verified on a real Deck" ([deck.md](deck.md)).
+
 In the pull request (`## Evidence`, [merge.md](merge.md)) a UI change adds:
 
 ```markdown

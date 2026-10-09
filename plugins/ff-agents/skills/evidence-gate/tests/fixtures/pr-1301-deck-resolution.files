@@ -1,0 +1,5 @@
+Assets/Scripts/Behaviours/Settings/DisplaySettingsController.cs
+Assets/Scripts/Behaviours/Settings/PlayerSettingsController.cs
+Assets/Tests/UI/StartupDisplayResolutionTest.cs
+Assets/Tests/UI/StartupDisplayResolutionTest.cs.meta
+Documentation/Display-Startup.md

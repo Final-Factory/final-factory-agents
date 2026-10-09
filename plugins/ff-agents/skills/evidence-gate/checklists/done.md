@@ -26,6 +26,12 @@ holds, or the report says what is left instead of DONE.
 6. **Open waits.** Every `wNNN: still open:` line that names a person (a reboot, a login, a decision, an
    approval) was declared with `waiting_on_person` before the turn ended, and no `wake_me` stands in
    for it ([a wait on a person is declared, not polled](../lessons/a-person-wait-is-declared-not-polled.md)).
-7. **Learned.** The report has `Learned: <file or PR>` or `Learned: nothing new`. A correction or a
+7. **A Deck-facing fix names its real-Deck status** (w770). A change a Steam Deck player meets (glyphs, Steam Input,
+   launch resolution, Deck UI, touch) is reported "verified on a real Deck" (who, Steam client and SteamOS versions,
+   what they saw) or "not verified on a real Deck: <what stays open>", never a bare done on a tour
+   ([the Deck list](deck.md), [a simulated Deck is not a Deck](../lessons/verify-ui-with-full-content-like-a-player.md#a-simulated-deck-is-not-a-deck-w770)). When the
+   request is a player's report from their own Deck, DONE waits for their check: end with `wNNN: still open: waiting on
+   <name> to check on the Deck` and declare it with `waiting_on_person`.
+8. **Learned.** The report has `Learned: <file or PR>` or `Learned: nothing new`. A correction or a
    reopen gets the check that would have caught it ([lessons belong in the harness
    repo](../lessons/lessons-belong-in-the-harness-repo.md)).

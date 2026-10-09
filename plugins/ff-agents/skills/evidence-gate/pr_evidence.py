@@ -7,7 +7,7 @@ change names a built player, the event's place in the clip and the intended look
 change names its tests, its determinism audit and its save compatibility, a UI change names its content, its
 full-content and style checks, its per-still notes and a real-rate clip (checklists/ui.md), and a change to a shader
 or material lists everything that uses it ("## Used by", from the game repo's scripts/asset_usage.py)
-with a basis for each. It cannot tell whether anyone looked carefully. Standard library only; `gh` for everything that reads GitHub.
+with a basis for each, and a Deck-facing change says 'Real Deck: verified ...' or 'not verified on a real Deck' (checklists/deck.md). It cannot tell whether anyone looked carefully. Standard library only; `gh` for everything that reads GitHub.
 
     pr_evidence.py --repo OWNER/NAME --pr N               check one pull request (exit 1 on FAIL)
     pr_evidence.py --repo OWNER/NAME --pr N --comment     the same, and post the verdict on it
@@ -43,6 +43,11 @@ SLIDESHOW = re.compile(r"\b[1-9]\s*fps\b|\b(sequences?|slide ?shows?)\s+of\s+(th
 # A shared look: changing one changes everything that draws with it (w438, lessons/check-who-uses-a-shared-asset.md).
 SHARED_ASSET = re.compile(r"\.(shader|shadergraph|shadersubgraph|hlsl|cginc|mat)$", re.IGNORECASE)
 USAGE_LINE = re.compile(r"asset-usage:\s*`?([^`\s]+?)`?\s+has\s+(\d+)\s+users?\b", re.IGNORECASE)
+# A change a Steam Deck player meets (w770, checklists/deck.md): a tour on a PC cannot show Steam's layout choice, the
+# Proton first-frame resolution, the Steam client version or touch.
+DECK_PATH = re.compile(r"^Assets/Scripts/Steam/|^Assets/StreamingAssets/SteamInput/|Settings/(Display|Player)SettingsController\.cs$|"
+                       r"/Settings/DisplaySettings\.cs$|^cicd/.*\.vdf$|ControllerGlyphs")
+DECK_WORDS = re.compile(r"\bDeck\b|Steam ?Input|SteamOS|Proton|gamescope")
 MEDIA = re.compile(r"\.(png|jpe?g|gif|mp4|webm|mov|mkv)\b|built player", re.IGNORECASE)
 SIMULATION_PATH = re.compile(r"^Assets/Scripts/(FFSystems|FFComponents|FFCore|FFNetcode|FFConfiguration|FFTechnology)/"
                              r"|NetworkOperations")
@@ -182,6 +187,38 @@ def ui_problems(section: str) -> list[str]:
         problems.append("UI change with no flicker result: run ui_check.py flicker on the clip's frames and say how "
                         "many regions it found, on the 'Clips:' line or a 'Flicker:' line")
     return problems
+
+
+def deck_problems(section: str, files: list[str] | None) -> tuple[list[str], list[str]]:
+    """A Deck-facing change says 'verified' on a real Deck, with who and the versions, or 'not verified on a real Deck'."""
+    touched = [f for f in files or [] if DECK_PATH.search(f) and not NOT_GAME_CODE.search(f)]
+    if not touched and not DECK_WORDS.search(section):
+        return [], []
+    line = field(section, "Real Deck")
+    if not line or not line[1]:
+        return ([f"Deck-facing change with no 'Real Deck:' line: 'verified' (who, the Steam client and SteamOS versions, "
+                 f"what they saw on the Deck) or 'not verified on a real Deck: <what stays open>'. A Deck tour on a PC "
+                 f"cannot show Steam's layout choice, the Proton first-frame resolution, the Steam client or touch "
+                 f"(checklists/deck.md; w684 -> w768, w767)"], [])
+    who, value = line
+    unverified = re.match(r"not verified on a real deck\b[\s:,-]*", value, re.IGNORECASE)
+    if unverified:
+        return [], [f"not verified on a real Deck: {value[unverified.end():][:160] or 'no reason given'}"]
+    if not re.match(r"verified\b", value, re.IGNORECASE):
+        return ([f"'Real Deck:' starts with 'verified' or 'not verified on a real Deck', not '{value[:30]}'"], [])
+    problems = []
+    text = f"{who} {value}"
+    if not who and "(" not in value:
+        problems.append("'Real Deck: verified' does not say who looked: Real Deck (Ben, date): verified ...")
+    for what, pattern in (("Steam client", r"Steam client[^;,)\n]*\d"), ("SteamOS", r"SteamOS[^;,)\n]*\d")):
+        if not re.search(pattern, text, re.IGNORECASE):
+            problems.append(f"'Real Deck: verified' does not give the Deck's {what} version: an out-of-date Deck hid the "
+                            f"layout in w768 (checklists/deck.md, step 0)")
+    if len(value) < 60:
+        problems.append("'Real Deck: verified' does not say what was looked at on the Deck")
+    if re.search(r"\b(tour|simulat|emulat|scripted)", value, re.IGNORECASE) and not re.search(r"\breal\b|\bphoto", value, re.IGNORECASE):
+        problems.append("'Real Deck: verified' reads like the Deck tour; a tour is a stand-in, not a real Deck")
+    return problems, []
 
 
 INTENDED = re.compile(r"\bintended\s*\(([^)]+)\)\s*:", re.IGNORECASE)
@@ -329,6 +366,10 @@ def check(body: str, files: list[str] | None = None) -> tuple[list[str], list[st
 
     if ui:
         problems += ui_problems(section)
+
+    deck, deck_notes = deck_problems(section, files)
+    problems += deck
+    notes += deck_notes
 
     if "simulation" in kinds:
         tests = field(section, "Tests")

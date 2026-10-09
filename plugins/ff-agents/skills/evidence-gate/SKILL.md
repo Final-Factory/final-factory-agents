@@ -1,6 +1,6 @@
 ---
 name: evidence-gate
-description: "Before any consequential action (spending money, publishing or sending anything, changing a live setting, releasing, merging a simulation or player-visible change, deleting, or reporting a fix as done) and before recommending one, list the choices, say what each rests on (measured, sourced or guess), settle your own guesses by research, name how it could fail and when you will look, then proceed. A person is asked only for money, for what the rules reserve for them, or at a real fork. Holds the working-rule lessons, the done, visual, UI, merge, release and FFBox desync PR checklists, and pr_evidence.py, which checks a PR's Evidence section (for a UI change its content, style, per-still and real-rate clip lines) and, for a changed shader or material, its Used by section. Use before acting on something you have not verified, when writing a brief or a report with numbers or recommendations, and after any miss (add a lesson)."
+description: "Before any consequential action (spending money, publishing or sending anything, changing a live setting, releasing, merging a simulation or player-visible change, deleting, or reporting a fix as done) and before recommending one, list the choices, say what each rests on (measured, sourced or guess), settle your own guesses by research, name how it could fail and when you will look, then proceed. A person is asked only for money, for what the rules reserve for them, or at a real fork. Holds the working-rule lessons, the done, visual, UI, Steam Deck, merge, release and FFBox desync PR checklists, and pr_evidence.py, which checks a PR's Evidence section (for a UI change its content, style, per-still and real-rate clip lines) and, for a changed shader or material, its Used by section. Use before acting on something you have not verified, when writing a brief or a report with numbers or recommendations, and after any miss (add a lesson)."
 ---
 
 # Evidence gate: research the decision before acting
@@ -111,6 +111,9 @@ report. Change nothing on a guess.
   touched panel's colour and alpha against a classic panel; a panel the player opens may cover
   the HUD if it is on top, clickable and gives the HUD back); `Content:`, `Full content:`,
   `Style:`, `Shots:`, `Overlaps:`, `Alignment:` (and `Opened panels:`) in the PR.
+- [Steam Deck changes](checklists/deck.md) (w770): glyphs, Steam Input, launch resolution, Deck UI, touch: what a Deck
+  tour cannot show, the cheap stand-ins, the real-Deck request to write for your orchestrator (first step: the Deck's
+  Steam client and SteamOS are up to date), and the `Real Deck:` line in the PR.
 - [Merges](checklists/merge.md), with `pr_evidence.py` for the pull request's `## Evidence` section
 - [Releases](checklists/release.md)
 - [FFBox desync PRs](checklists/ffbox-desync-pr.md) (Lothsahn's standing policy, 2026-10-04): classify
@@ -174,7 +177,10 @@ One file each under `lessons/`: the rule, why (the incident, dated), how to appl
   every screen and sub-view in a late-game save, whole, on the classic look, still in a real-rate
   clip, each still checked against the requester's words (w718: the w644 hub, #1251, passed a tour
   of "opens, fits, 9 px" stills; on Ben's Deck it was navy, Crafting one row, no tech grid; w764: ten photos of
-  a real Deck found eight faults the tour's census had no count for, so a player's photos are tests).
+  a real Deck found eight faults the tour's census had no count for, so a player's photos are tests; w770: a Deck-facing change is "verified on a real Deck" (who, Steam client and SteamOS
+  versions, what they saw) or "not verified on a real Deck", never a bare done on a tour, and `pr_evidence.py` fails the PR
+  without a `Real Deck:` line, [checklist](checklists/deck.md): w684's glyph fix passed a tour and Ben's Deck showed none,
+  w767's resolution bug is invisible to a tour that forces its size).
 - [A UI change leaves the rest of the screen as it was](lessons/a-ui-change-leaves-the-rest-of-the-screen-as-it-was.md):
   a layout census before and after with the whole HUD up: no new overlap between always-on HUD
   blocks (a panel the player opens may cover the HUD: Ben, w742), no anchored cluster

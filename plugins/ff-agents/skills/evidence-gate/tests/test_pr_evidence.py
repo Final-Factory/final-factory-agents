@@ -191,7 +191,7 @@ Alignment: max drift 0 px over the clusters (bottom-right HUD, top-left HUD); to
         return (HERE / "fixtures" / "pr-1251-deck-hub.md").read_text(encoding="utf-8")
 
     def test_1251_passes_without_its_files_and_fails_the_ui_rules_with_them(self):
-        self.assertEqual(pe.check(self.body())[0], [])
+        self.assertEqual([p for p in pe.check(self.body())[0] if "Real Deck" not in p], [])
         reasons = "\n".join(pe.check(self.body(), self.FILES_1251)[0])
         for name in ("Content", "Full content", "Style", "Shots"):
             self.assertIn(f"UI change with no '{name}:' line", reasons)
@@ -395,3 +395,61 @@ class AuditTest(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class RealDeckTest(unittest.TestCase):
+    """w770: a change a Steam Deck player meets says 'verified' on a real Deck or 'not verified on a real Deck'."""
+
+    VERIFIED = ("Real Deck (Ben, 2026-10-09): verified, Steam client 1759 and SteamOS 3.7: Settings > Controls shows A/B/X/Y "
+                "on the hotbar and the keybindings screen, and the game fills the whole screen after a fresh install")
+
+    def fixture(self, name):
+        body = (HERE / "fixtures" / f"{name}.md").read_text(encoding="utf-8")
+        files = (HERE / "fixtures" / f"{name}.files").read_text(encoding="utf-8").splitlines()
+        return body, files
+
+    def deck_reasons(self, body, files=None):
+        return [p for p in pe.check(body, files)[0] if "Real Deck" in p]
+
+    def test_1249_the_w684_glyph_fix_had_only_a_deck_tour_and_now_fails_without_the_line(self):
+        body, files = self.fixture("pr-1249-deck-glyphs")
+        self.assertEqual(len(pe.check(body, files)[0]), 1)
+        self.assertIn("Deck-facing change with no 'Real Deck:' line", "\n".join(pe.check(body, files)[0]))
+
+    def test_1301_the_w767_resolution_fix_checked_on_a_linux_player_fails_without_the_line(self):
+        body, files = self.fixture("pr-1301-deck-resolution")
+        self.assertEqual(len(pe.check(body, files)[0]), 1)
+        self.assertIn("Deck-facing change with no 'Real Deck:' line", "\n".join(pe.check(body, files)[0]))
+
+    def test_a_changed_steam_file_alone_makes_it_deck_facing(self):
+        body = edit(GOOD, "Kind: visual, simulation", "Kind: other")
+        self.assertEqual(self.deck_reasons(body), [])
+        self.assertTrue(self.deck_reasons(body, ["Assets/Scripts/Steam/ControllerPrompts.cs"]))
+        self.assertTrue(self.deck_reasons(body, ["Assets/Scripts/Behaviours/Settings/DisplaySettingsController.cs"]))
+        self.assertEqual(self.deck_reasons(body, ["Assets/Tests/SteamInput/DeckPromptFallbackTests.cs"]), [])
+
+    def test_the_decks_name_in_the_evidence_makes_it_deck_facing(self):
+        body = edit(GOOD, "Not verified: nothing", "Not verified: touch on the Steam Deck")
+        self.assertTrue(self.deck_reasons(body))
+
+    def test_not_verified_on_a_real_deck_passes_and_is_noted(self):
+        body, files = self.fixture("pr-1301-deck-resolution")
+        body = edit(body, "Kind: visual\n", "Kind: visual\n\nReal Deck: not verified on a real Deck: Proton's first frame and touch\n")
+        problems, notes = pe.check(body, files)
+        self.assertEqual(problems, [])
+        self.assertIn("not verified on a real Deck: Proton's first frame and touch", notes)
+
+    def test_verified_needs_who_both_versions_and_what_was_seen(self):
+        body, files = self.fixture("pr-1301-deck-resolution")
+        for line, fragment in (
+                ("verified", "does not give the Deck's Steam client version"),
+                ("verified (Ben): the Deck looked right; SteamOS 3.7", "Steam client version"),
+                ("verified (Ben): Steam client 1759, SteamOS 3.7", "does not say what was looked at"),
+                ("verified (Ben): the Deck tour at 1280x800, Steam client 1759, SteamOS 3.7, nothing clipped anywhere", "reads like the Deck tour"),
+                ("mostly fine", "starts with 'verified' or 'not verified on a real Deck'")):
+            reasons = "\n".join(self.deck_reasons(edit(body, "Kind: visual\n", f"Kind: visual\n\nReal Deck: {line}\n"), files))
+            self.assertIn(fragment, reasons, line)
+
+    def test_a_full_verified_line_passes(self):
+        body, files = self.fixture("pr-1301-deck-resolution")
+        self.assertEqual(pe.check(edit(body, "Kind: visual\n", f"Kind: visual\n\n{self.VERIFIED}\n"), files)[0], [])
