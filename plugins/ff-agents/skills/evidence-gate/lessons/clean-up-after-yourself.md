@@ -1,6 +1,6 @@
 ---
 name: clean-up-after-yourself
-description: "A worker removes what it made on disk before it reports a request done (builds, Captures, recordings, extra worktrees and clones, save copies, player slots, temp), and low disk on a machine is fixed by removing FF Factory's own leftovers or filing clean-up work, never by asking a person for a go."
+description: "A worker removes what it made on disk before it reports a request done (builds, Captures, recordings, extra worktrees and clones, save copies, player slots, temp), and low disk on a machine is fixed by removing FF Factory's own leftovers or filing clean-up work, never by asking a person for a go. The same for Unity slots: its own -batchmode builds are gone before DONE, and a slot held by a stuck batch build is cleared with unity clear_batch, not waited out."
 date: 2026-10-07
 ---
 
@@ -44,3 +44,29 @@ workers left their slots, worktrees and installs behind when they finished.
 - Since FF Factory PR #200 (w626) a machine's daemon also removes these leftovers by itself
   whenever its free space is below the soft threshold (FF Factory `docs/self-recovery.md`, "FF
   Factory's own leftovers"). That is the net under this rule, not a reason to skip it.
+
+## Unity batch builds and the slots they hold (w791)
+
+**Rule.** A `-batchmode` Unity build you start runs under `unity-slot run` (the game repo's build scripts
+already do) with a `-logFile`, and is gone before DONE: `unity-slot status` shows none of yours. When
+`mcp__machine__unity` refuses a start because a batch build holds the slot for more than an hour, call it with
+`action: "clear_batch"`: the daemon's reaper (`machine/unityReaper.ts` in FF Factory) ends the sandboxes' batch
+builds whose owner is gone (10 min without log or CPU progress, or 90 min old) or that hang with a live owner
+(an hour old, 30 min without progress), removes the stale `Temp/UnityLockfile`, and says for every build it keeps
+why. A build it calls healthy is waited on with `wake_me`; the limits do not move on request. Nobody ends Unity by
+hand (the hook refuses it) and no person is asked to approve it.
+
+**Why.** 2026-10-09 (w791): twice a batch build held a sandbox's Unity slot for hours until a person approved
+ending it through the ops worker. LothDesktop pid 3856, a nightly prepare build of slot4, hung 209 min on "More
+than one copy of bee_backend running in slot4" with its script alive and blocked w769's worker (the Steam Deck
+hint draw-order fix); m5 pid 81390, a worker's Mac build, was 15 h old with parent pid 1. Ben's rule: the harness
+learns from a repeated problem.
+
+**How to apply.**
+
+- Measured on 15 healthy nightly builds (4.5 to 36.9 min, median 8.4): a build under an hour old is not stuck.
+- An answer of "protocol 8 ... cannot clear" means the daemon is old: say so in the report; the orchestrator asks
+  for the deploy.
+- Do not start a batch build in a sandbox whose interactive editor runs (two copies of bee_backend lock each
+  other); `unity stop` first.
+- FF Factory side: `docs/unity-lifecycle.md`, "Orphaned and hung batch builds are ended".

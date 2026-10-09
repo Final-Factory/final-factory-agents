@@ -69,6 +69,13 @@ Fix: kill the editor (precondition-check its `-projectPath` first), delete
 `Temp/__Backupscenes` and any stale `Temp/UnityLockfile`, then relaunch. Boot proceeds normally
 and the bridge registers.
 
+**After a crash the bridge's port may belong to another editor (w719).** The crashed editor's
+`~/.unity-mcp/unity-mcp-status-<hash>.json` keeps its old port (e.g. 6401). If another sandbox's editor
+has bound that port since, `scripts/unity-bridge.py status --project-path <yours>` connects to it and
+answers for THAT project (read `projectPath` in the reply before sending anything), and
+`mcpforunity://instances` stays empty until your new editor writes `reason: port_busy`, then binds
+another port (6400) and turns `ready`. Wait for `ready` with your project path; never act on the old port.
+
 **PREVENTION IS MANDATORY (Ben's call: on macOS, launch automation editors ONLY through the
 game repo's `scripts/launch-editor.sh`).** Before launching it clears all three boot-wedge
 hazards —
