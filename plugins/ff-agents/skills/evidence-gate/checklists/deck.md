@@ -24,8 +24,9 @@ a PC. `pr_evidence.py` fails a Deck-facing PR without a `Real Deck:` line.
    under Proton can read the panel as portrait 800x1280, and a size asked for then comes back
    wrong; a frame later it reads 1280x800 (`Documentation/Display-Startup.md`). The tour forces
    its own windowed size every second (`DeckTour.cs`, the `Update` and `HoldSize` that call
-   `Screen.SetResolution`), and starts from clean prefs, so it never sees a stored bad size or a
-   bad first frame. w767: black bars each side, UI running off the screen, taps missing.
+   `Screen.SetResolution`) unless started with `-ffDeckTourSize none`, so by default it never
+   sees a stored bad size, and it never sees a bad first frame at all (a PC does not read the
+   panel as portrait). w767: black bars each side, UI running off the screen, taps missing.
 3. **The Steam client and SteamOS version.** A Deck on an old client did not list our official
    layout at all; after Ben updated, "the controller layout shows". A passing check on an old
    client proves the old client.
@@ -38,12 +39,17 @@ a PC. `pr_evidence.py` fails a Deck-facing PR without a `Real Deck:` line.
 
 - **Keyboard template:** run the w768 template tour (keys arriving with no action set) and look
   for Deck glyphs, not keys, in the stills. Built, in the game repo.
-- **Stored bad size:** seed the player's prefs with a bad size (portrait 800x1280, a size the
-  display does not list) and a Deck-like display, and start it with **no** `-ffDeckTourSize`.
-  The game's `StartupDisplayResolutionTest` pins the rules; the recipe for a native Linux player
-  under Xvfb with its own `XDG_CONFIG_HOME` prefs is in the memory above. The tour itself cannot
-  do this yet (see the proposals in lessons/verify-ui-with-full-content-like-a-player.md#a-simulated-deck-is-not-a-deck-w770).
-- Neither replaces the Deck. They shrink what you ask the person to look at.
+- **Stored bad size** (built since w771, game PR #1304): start the tour with `-ffDeckTourSize none
+  -ffDeckTourPrefs '{"ResolutionWidth":800,"ResolutionHeight":1280,"FullscreenMode":"ExclusiveFullScreen"}'`
+  (`specs/w771-deck-tour-prefs/run_stored_prefs.sh <app> <outdir>` in the game repo; `docs/UI-Architecture.md`,
+  "Stored-prefs mode"). Nothing forces the window, so the stills show what the player's own startup did with the
+  stored size. Read `screen` and `prefs.atEnd` in `report.json` and the whole still: the census counts passed
+  (0 off-screen, 0 clipped) on a cropped 800x1280 window. Measured on a Mac player: stuck at 800x1280 before
+  #1301, repaired to the display's full screen on develop. The tour puts the machine's real prefs back on quit.
+  It tests the repair of a stored size, not the Proton first-frame read: a PC never reads the panel as portrait.
+  The game's `StartupDisplayResolutionTest` pins the rules; the recipe for a native Linux player under Xvfb with
+  its own `XDG_CONFIG_HOME` prefs is in the memory above.
+- **This mode adds coverage; it does not replace the real-Deck check.** A simulated Deck is not a Deck, and neither stand-in replaces one. They shrink what you ask the person to look at.
 
 ## The real-Deck check: what to ask, through the orchestrator
 
