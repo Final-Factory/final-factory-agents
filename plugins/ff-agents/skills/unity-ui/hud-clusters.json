@@ -17,6 +17,7 @@
       "BlueprintPanelChild",
       "BlueprintInformationPanel",
       "TechUnlockedPanel",
+      "TechnologySelectionPanel",
       "RespawnPanel",
       "FleetInfoPanel",
       "AddMapMarkerPanel",

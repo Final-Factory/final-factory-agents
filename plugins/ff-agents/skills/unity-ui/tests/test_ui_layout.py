@@ -65,6 +65,15 @@ class OverlapTest(unittest.TestCase):
     def test_the_inventory_over_the_objectives_card_is_an_overlap_only_until_it_is_classified_as_opened(self):
         self.assertIn((f"{GP}/InvAndCraft", f"{GP}/ObjectivesPanel"), ul.overlaps(hud()))
 
+    def test_the_full_screen_technology_panel_is_an_opened_panel_not_hud(self):
+        # w752: the shipped list lacked it, so ui_layout.py counted the Technology screen as always-on HUD (4 kept
+        # overlaps with the minimap, the hotbar and the quick buttons, and "HUD restored on close: no" because the panel
+        # itself was gone after closing).
+        census = hud()
+        census["elements"].append(el("TechnologySelectionPanel/MainPanel", [0, 56, 1280, 800]))
+        self.assertTrue(ul.opened_prefix(f"{GP}/TechnologySelectionPanel/MainPanel", OPENED))
+        self.assertEqual(ul.overlaps(census, opened=OPENED), {})
+
     def test_the_blueprint_slide_out_over_the_hotbar_is_found(self):
         pairs = ul.overlaps(hud(slideout=True))
         self.assertIn((f"{GP}/ActionBarParent", f"{GP}/QuckControls"), pairs)
