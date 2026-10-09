@@ -119,6 +119,18 @@ screen; on desktop three labels stopped fitting, the two windows left their defa
     the font it shows at runtime (`LocalizationHelper.ApplyFont`: Khyay for every Latin locale), not the font its
     prefab names.
 
+17. **A player's photos, state for state (w764).** When the report is photos of a real device, each one is laid beside
+    your still of the same screen in the same state before the first fix, and the state is set up in the built player
+    (the objectives card up while a Command Core opens, Info after a real save and load, the pointer over a station with
+    the inventory open, a long research queue, the Custom screen scrolled). A problem the photo shows that the tour's census
+    does not count ("Count" cut to "Coun" / "t", a tile list showing 2.4 rows, a window under another) gets its count in
+    the same change (`DeckTourChecks`: `midWord`, `shortLists`; the failing case is the test fixture). `ui_check.py shots`
+    lists both beside `clipped`; each one is a finding until you have looked.
+18. **Hidden means gone, and stays gone.** A fade or hide is checked 3 s after it was applied, not 0.3 s (the objectives
+    card's own fade-in brought it back over a Command Core's column in half a second), and what is hidden takes no room
+    (a faded card still held 330 units, so the window sat under nothing and was cut to three rows). A window the player
+    placed is HUD to the windows the layout places: they keep off it.
+
 In the pull request (`## Evidence`, [merge.md](merge.md)) a UI change adds:
 
 ```markdown

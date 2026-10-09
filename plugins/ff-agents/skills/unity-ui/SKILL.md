@@ -81,6 +81,12 @@ census (`<shot>.json`: small, clipped, off-screen and overlapping text, covered 
   draw in a development player and show up as overlaps and flicker; `ui_layout.py` ignores them,
   `ui_check.py` does not. Hold keys by `seconds`, not frames: a frame count is gone in a blink at
   200 fps (#1258).
+- **The photos' states (w764).** `specs/w764-deck-thread/` in the game repo drives the tours that reproduce a player's
+  Deck photos: `make_tour.py` parts `hub`, `docked`, `classic`, `persist` (a window dragged with the `drag` step, then the
+  building opened again), `reload` (a save and load, then Info), `menus` (New Game > Custom); worlds `audit` (the saved
+  w644 world), `new` (a new game with the objectives card and a Command Core, wait about 75 s for the narration hold) and
+  `menu`; `run_matrix.sh` runs them on two builds at 1280x800 / 0.80 and 1920x1080 / 0.90. The census has `midWord` (a word
+  cut across two lines) and `shortLists` (a scrolling list that shows under 2.5 rows) beside `clipped`.
 - **Every sub-view.** Per tab: select an item, hover one, open its preview or second page, scroll
   the list to the end (`at` + `press right_trigger`, `stick`). A tour that only presses R1 tests the
   tab strip.
