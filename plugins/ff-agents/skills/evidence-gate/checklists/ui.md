@@ -34,7 +34,9 @@ anyone says done.
 6. **Style parity with the classic panel.** Put the new screen and the classic one side by side,
    same save, same size. Colours (`ui_check.py style`: background delta E 10 or more flags it),
    frame art, fonts, icon sizes; item 13 measures it per touched panel. Reuse the classic skin; a colour typed into code is a finding
-   unless the requester asked for it, quoted. "Before" is the classic screen with the same content,
+   unless the requester asked for it, quoted; an approved mock is not an approved skin (#1251 built
+   the hub from the round-3 mocks; Ben: "you made the inventory panel hub thing dark blue, why did you
+   change that? it should show the right colors"). "Before" is the classic screen with the same content,
    not develop with nothing open.
 7. **No flicker: a real-rate clip.** Each screen idle for 3 s or more, and while hovering,
    selecting and scrolling, recorded at 30 fps or more (the Deck tour's `record` step, or
@@ -42,7 +44,8 @@ anyone says done.
    a clip, and "layout change, no animation" is not a reason to skip it: a layout that fights
    itself flickers.
 8. **The target, as the player has it.** A built player, the target resolution and UI scale
-   (Deck: 1280x800 at its locked 0.90; desktop: 1920x1080 at the default), the player's input (the
+   (Deck: 1280x800 at 0.80, its default since w727, and 0.90, in both layouts; desktop: 1920x1080
+   at the default 0.90), the player's input (the
    Deck tour's scripted Deck), both layouts where both exist, as a multiplayer client too where the
    screen differs there. A real Deck when one can be reached; otherwise "Not verified: Deck
    hardware".
@@ -61,7 +64,11 @@ The census recipe and `ui_layout.py` are in the `unity-ui` skill, `layout-census
     showing (hotbar and ability row, minimap and its side buttons, every slide-out opened, top bar,
     objectives, a selected building and the Station strip) and your screen open on top.
     `ui_layout.py check` lists overlapping HUD blocks; a pair that was not there before fails, and so
-    does one left between blocks your change moved (`0 new, 0 kept`).
+    does one left between blocks your change moved (`0 new, 0 kept`). A pair a person said is
+    design (a slide-out drawn over the hotbar, w732) is in `hud-clusters.json` `byDesign` with their
+    words and prints BY DESIGN; restore what your change displaced rather than moving other blocks.
+    Re-take the census on the merged result when another UI PR landed in between (#1280 checked
+    its merges by compile and tests only).
 12. **No drift.** Every anchored cluster (`hud-clusters.json`: the minimap with the quick buttons,
     the slide-out toggles and the hotbar; the top bar with the objectives) keeps its edges and gaps
     against its anchor within 2 px. Changing a cluster on purpose: say so, and update the file.

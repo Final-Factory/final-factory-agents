@@ -12,6 +12,10 @@ adds what a release rests on and the first check after it.
    ("Changed how riders are drawn on a moving station") or leave it out, and tell whoever asked
    for the release which fixes nobody has seen in a built game.
    `pr_evidence.py --audit --since <date of the previous release>` lists them.
+   Read every PR's "Not verified:" line in the range: a native or platform call nobody ran on that
+   platform goes to whoever asked for the release and into the notes (Build 88 crashed every Steam
+   Deck at start-up from `SetInputActionManifestFilePath` under Proton, listed "Not verified" in
+   #1249; fixed in #1261).
 3. **Saves still load.** The hard rule, as `ci-release` section 0 has it: the golden-fixture and
    layout tests pass in the release run, and a layout change has its upgrade step.
 4. **Who asked is on record.** The request for the release, and any hold or lift of a hold, names
@@ -32,7 +36,10 @@ adds what a release rests on and the first check after it.
    (Windows, Mac): the crash and desync reports players' games uploaded for the new version
    (FFBox's intake holds them; an orchestrator sees them with `ffbox_activity`), and new threads
    in the bug channels that name it (`ffdiscord read`). Reading is all you do there; FFBox owns
-   those channels.
+   those channels. Some failures upload nothing: a crash under Proton never reaches Unity's crash
+   handler (Build 88: the player's Player.log in a thread was the only trace), and a slower frame
+   files no report (Build 80: idle per-frame work cost about 2.2 ms a frame in a desktop dev player, #1137). Read the
+   threads for start-up crashes and slowness, not just the uploads.
 8. **Stop and report** when a save does not load, a platform is missing, or reports for the new
    version are clearly above the previous one's. Give the evidence and the previous BuildID.
    Rolling back or promoting a branch is the owner's call; never move a Steam branch by hand.

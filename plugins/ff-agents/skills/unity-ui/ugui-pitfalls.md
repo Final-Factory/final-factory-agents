@@ -11,8 +11,8 @@ manual pages for these components are the source for the rules: "Auto Layout", "
   `ScreenFactor(w, h) * uiScale`. `ScreenFactor` is the geometric mean of w/1920 and h/1080 at and
   above 1080p; below it the UI grows a little instead of shrinking (`SmallScreenGrowth` 0.2), so text
   stays 9.5 px tall at 1280x800 (Valve's rule is 9 px).
-- **The Deck has much less room in layout units.** 1280x800 at 0.90: factor about 0.953, canvas
-  about 1343x839 units. 1920x1080 at 0.90: about 2133x1200. Anything sized for desktop (a 700-unit
+- **The Deck has much less room in layout units.** 1280x800 at 0.80 (the Deck default since w727):
+  factor about 0.847, canvas about 1511x944 units; at 0.90: about 0.953, 1343x839 units. 1920x1080 at 0.90: about 2133x1200. Anything sized for desktop (a 700-unit
   window, a fixed grid height) takes a far bigger share of a Deck screen. Compute in units:
   `canvasRect.rect` of the root canvas, or `Screen.height / canvas.scaleFactor`.
 - **16:10 is not 16:9.** Anchored layouts built at 16:9 get extra height and less width at 16:10;
@@ -36,6 +36,17 @@ manual pages for these components are the source for the rules: "Auto Layout", "
   added, `rect` still holds the old size until Unity's layout rebuild late in the frame. Measure
   after `LayoutRebuilder.ForceRebuildLayoutImmediate(rect)` or on the next frame, never right after
   the change (the hub's `Grow` rebuilds once before it measures for this reason).
+
+- **A layout rect is not what is drawn.** Measure the union of the drawn graphics, not a parent's
+  rect: the minimap's layout rect reaches 6.5 units past its drawn frame, so #1264 spaced the quick
+  buttons from it and the gap went from 6.48 to 22.75 units (w732, `specs/w732-hud-corner/HANDOFF.md`
+  on `origin/sandbox/slot2-w732`). The tour's `HudLayout` measures drawn extents.
+- **A layout fix that throws looks like no change.** #1264's first commit threw in a static
+  initializer (`Debug.isDebugBuild`), so the fix never ran and its stills matched the before. Read the
+  player log for exceptions before trusting an "after"; give the fix an off switch
+  (`-ffNoHudCornerSpacing`) and show the measured difference against it.
+- **A prefab-instance child placed by a `GridLayoutGroup`** ignores its own position: change the
+  group's spacing and the parent rect.
 
 ## Layout groups, LayoutElement, ContentSizeFitter
 
@@ -105,6 +116,19 @@ manual pages for these components are the source for the rules: "Auto Layout", "
 - **Overflow modes hide loss.** `Ellipsis` and `Truncate` cut text without an error; auto-size
   shrinks it below the 9 px rule. The census reports clipped text and capital height; a long
   localized string (German, Russian) is the usual trigger, so check one long-text locale.
+- **The Deck text floor is 16, and it comes back.** `UiScaler.MinLegibleFontSize` is 16 (Liberation
+  Sans; Khyay holds at 15); `TextLegibilityTest` fails any text under it. A merge of develop brings
+  scene texts back under it (#1151, 79adbb3db, 0908270df): after every merge into a UI branch run
+  `Tools/UI/Raise Text To The Deck Legibility Floor` (`TextLegibilityCensus.cs:172`) and the test.
+  `ControllerGlyphSize.FloorFontSize` is `MinLegibleFontSize` (`ControllerGlyphSize.cs:39`), so
+  raising the text floor resizes the controller glyphs (floor 20 px).
+- **Don't shrink a row with `localScale`.** It takes its text under 16 and its glyphs under 20 px
+  (three PRs: #1275, #1281, #1284). Size from the font's cap height instead (#1284); a minimum font
+  size did not hold (it measured 8.1 px).
+- **Ticking numbers need fixed-pitch digits and boxes** (`<mspace=…em>`, a fixed width; #1279,
+  `StationInfoLayout.cs:72` in #1282, `TechProgressPanel.cs:169`), or the row jitters as the value changes.
+- **Ellipsis with a taller fallback font blanks the text** (Chinese): give the box about 5 units
+  above the line (02593e3c3).
 - **Text size is known after a mesh update.** `ForceMeshUpdate()` before reading `textInfo`,
   `preferredHeight` or line counts on a text changed this frame.
 

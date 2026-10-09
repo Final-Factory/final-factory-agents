@@ -137,6 +137,16 @@ def short(path: str, keep: int = 3) -> str:
     return "/".join(parts[-keep:]) if len(parts) > keep else path
 
 
+def by_design(pair: tuple[str, str], spec: dict) -> dict | None:
+    """The hud-clusters.json byDesign entry for a block pair, if a person said those blocks may overlap (w732: Ben, the
+    slide-outs draw on top of the hotbar). Matched on the blocks' own names, in either order."""
+    names = {pair[0].split("/")[-1], pair[1].split("/")[-1]}
+    for entry in spec.get("byDesign", []):
+        if set(entry.get("blocks", [])) == names:
+            return entry
+    return None
+
+
 def moved_blocks(before: dict, after: dict, depth: int = 2, tolerance: float = 2.0) -> set[str]:
     """Blocks with an element (matched by path, present on both sides) whose visible rect moved more than tolerance.
     An overlap the change leaves between blocks it moved is the change's to fix, even if it was there before
@@ -351,6 +361,9 @@ def run_check(args) -> int:
     new = {k: v for k, v in oa.items() if k not in ob}
     moved = moved_blocks(before, after, args.block_depth, args.tolerance)
     kept = {k: v for k, v in oa.items() if k in ob and (k[0] in moved or k[1] in moved)}
+    allowed = {k: by_design(k, spec) for k in list(new) + list(kept) if by_design(k, spec)}
+    new = {k: v for k, v in new.items() if k not in allowed}
+    kept = {k: v for k, v in kept.items() if k not in allowed}
     print(f"Overlaps: {len(ob)} block pairs before, {len(oa)} after, {len(new)} new, {len(kept)} kept between blocks "
           f"the change moved (ui_layout.py, whole screen, block depth {args.block_depth})")
     for (a, b), v in sorted(new.items(), key=lambda kv: -kv[1]["px"])[:15]:
@@ -358,6 +371,8 @@ def run_check(args) -> int:
     for (a, b), v in sorted(kept.items(), key=lambda kv: -kv[1]["px"])[:15]:
         print(f"  KEPT: {short(a)}  x  {short(b)}: {ob[(a, b)]['px']:.0f} -> {v['px']:.0f} px2: the change moved one of "
               f"them and left them overlapping")
+    for (a, b), entry in sorted(allowed.items()):
+        print(f"  BY DESIGN: {short(a, 1)}  x  {short(b, 1)}: {entry.get('why', '')} ({entry.get('who', 'no source')})")
     failed |= bool(new) or bool(kept)
 
     worst, lines = drift(cluster_edges(before, spec), cluster_edges(after, spec), args.tolerance)

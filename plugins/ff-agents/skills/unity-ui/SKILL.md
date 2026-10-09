@@ -18,9 +18,15 @@ fit", none "does it show everything and look like the game" (evidence-gate,
   is the structured layout (`Assets/Scripts/UI/Structured/`: `StructuredDock`, `StructuredHub`,
   `StationPanel`, `StructuredTabStrip`) and `UI/Components/WindowFit`, `KeepOnScreen`.
 - **Canvas scale is not the screen.** `UiScaler.ScaleFactor` (`Assets/Scripts/UI/UiScaler.cs`)
-  sets every HUD canvas's `scaleFactor` from the screen and the UI-scale setting (default 0.90,
-  locked on the Deck's own screen). Below 1920x1080 the UI stops shrinking with the screen: at
-  1280x800 the canvas is about 1343x839 layout units against 2133x1200 at 1920x1080 (both at 0.90).
+  sets every HUD canvas's `scaleFactor` from the screen and the UI-scale setting (default 0.90 on
+  desktop; 0.80 on a Deck, `InterfaceSettingsController.DeckUiScale`, w727, locked only in the
+  structured layout: the classic layout has its slider back, w723). Below 1920x1080 the UI stops
+  shrinking with the screen: at 1280x800 the canvas is about 1511x944 layout units at 0.80 and
+  1343x839 at 0.90, against 2133x1200 at 1920x1080 at 0.90. Verify a Deck screen at 0.80 and 0.90,
+  in both layouts (`specs/w644-deck-release/uiscale.md`: the classic layout holds to about 1.0).
+- **Don't lock or hide a setting to make a layout pass.** w644 hid the Deck's UI-scale slider so the
+  layout laid out at one scale; Ben gave it back to classic-layout Deck players (w723: "if a steam
+  deck user isnt using structured layout then they should be able to use UI scale again").
   A window laid out for desktop gets about 70 % of its height on a Deck. Check sizes in canvas
   units at the real scale factor, never against a desktop Game view.
 - **Reuse the existing look.** The classic windows' frame sprite and colours come from the scene's
@@ -67,6 +73,14 @@ census (`<shot>.json`: small, clipped, off-screen and overlapping text, covered 
   <item>|<count>` for a full inventory. `devunlock` researches everything, so a tree that is partly
   done (the common late-game case) needs a real save. A tab that is empty in the save is "not
   verified", never PASS.
+- **A clean start.** Remembered window positions (`PanelLayout`, PlayerPrefs `PanelPosition.<role>`,
+  `PanelLayout.cs:95,123`) make a window "placed by the player", which the layout then skips; a Mac
+  player shares PlayerPrefs with the Steam install. Clear them, or say which were set, before a tour
+  (GUESS whether any merged still was affected; w741's sweep found the keys, not a bad still).
+- **Development overlays are not the game.** The Debug Info counters, "Agent control ON" and Graphy
+  draw in a development player and show up as overlaps and flicker; `ui_layout.py` ignores them,
+  `ui_check.py` does not. Hold keys by `seconds`, not frames: a frame count is gone in a blink at
+  200 fps (#1258).
 - **Every sub-view.** Per tab: select an item, hover one, open its preview or second page, scroll
   the list to the end (`at` + `press right_trigger`, `stick`). A tour that only presses R1 tests the
   tab strip.

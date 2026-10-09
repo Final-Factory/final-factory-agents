@@ -1,5 +1,13 @@
 {
-  "about": "Anchored HUD clusters for ui_layout.py (w733). Each member is the union of everything drawn under that object; its edges are measured against the anchor's, and a change over the tolerance between before and after fails. Names are object names in main.unity (HudCornerSpacing.cs names the bottom-right ones). OptionToggles is the column of slide-out toggles; its parent QuckControls also holds the slide-outs themselves, which move when opened, so it is not a member. The edges key limits a cluster to the edges that should hold (a panel whose height follows its content keeps only its left and top). Add a cluster when you change one.",
+  "about": "Anchored HUD clusters for ui_layout.py (w733). Each member is the union of everything drawn under that object; its edges are measured against the anchor's, and a change over the tolerance between before and after fails. Names are object names in main.unity (HudCornerSpacing.cs names the bottom-right ones). OptionToggles is the column of slide-out toggles; its parent QuckControls also holds the slide-outs themselves, which move when opened, so it is not a member. The edges key limits a cluster to the edges that should hold (a panel whose height follows its content keeps only its left and top). Add a cluster when you change one. byDesign lists block pairs a person said may overlap, with their words: ui_layout.py prints them and does not fail them; add one only from the person's own correction, never to make a check pass.",
+  "byDesign": [
+    {
+      "blocks": ["QuckControls", "ActionBarParent"],
+      "why": "An opened slide-out (the toggles' button panels) opens where it always did and draws on top of the hotbar's right-hand slots.",
+      "who": "Ben, w732, 2026-10-09, correcting a fix that moved them above the toggles (the worker's words: 'they open where they used to and draw on top of the hotbar')",
+      "still": "The slide-out must draw above the hotbar and take its clicks; w732's draw-order test checks that in the game repo."
+    }
+  ],
   "clusters": [
     {
       "name": "bottom-right HUD",

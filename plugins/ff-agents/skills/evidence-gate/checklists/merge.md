@@ -88,8 +88,12 @@ Not verified: the Bats' slot lag (simulation, follow-up PR)
 ## Check it, then merge
 
 ```sh
-python "<this skill's base directory>/pr_evidence.py" --repo Final-Factory/FinalFactory --pr 913
-python "<this skill's base directory>/pr_evidence.py" --repo Final-Factory/FinalFactory --pr 913 --comment
+# The newest installed copy (sort -V: `ls | tail -1` picks 1.20.6 over 1.20.41; w712 posted a stale PASS that way).
+PE="$(ls -d ~/.claude/plugins/cache/final-factory-agents/ff-agents/*/ | sort -V | tail -1)skills/evidence-gate/pr_evidence.py"
+python3 "$PE" --repo Final-Factory/FinalFactory --pr 913
+python3 "$PE" --repo Final-Factory/FinalFactory --pr 913 --comment
+# FAIL "older than the released ff-agents": update, then run it again (no restart needed for the script).
+claude plugin marketplace update final-factory-agents && claude plugin update ff-agents@final-factory-agents
 ```
 
 It prints PASS or FAIL with the reasons, and exits 1 on FAIL. `--comment` posts the verdict on the

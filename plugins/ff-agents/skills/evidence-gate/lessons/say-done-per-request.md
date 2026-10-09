@@ -20,6 +20,14 @@ showed no desyncs. But the ledger read "its brief asks for a step after the merg
 open, and its worker went on to w414 in the same session. Nothing in a worker's report said
 "this request is done", so w342 neither stalled nor closed, and it showed as active.
 
+**And every check the brief's "Done" names.** 2026-10-08 (w704, logistics bots): the brief's Done
+said "SP and MP verified by a run (say what was run)". PR #1263 merged with "Not verified: a live
+built-player SP/MP game", the worker wrote DONE, and Ben reopened the request when the live
+single-player scenario then read 0 of 100 delivered. Asked again, the worker answered that the
+failing run "is from the first run, before I found the cause"; `git merge-base --is-ancestor`
+shows the build it ran (8bba83e65) already held both fix commits, and the real cause was the
+scenario's fixture (no power, and supply bots that carry 0 before the research; PR #1270).
+
 **How to apply.**
 
 - The ledger refuses a DONE, and tells you what is missing, while a PR of the request is still
@@ -33,3 +41,8 @@ open, and its worker went on to w414 in the same session. Nothing in a worker's 
   deploy). Until then the line is still the clearest way to say a request is finished.
 - FF Factory's own docs: `docs/orchestrators.md`, "Ledger cleanup" (the DONE marker, the wrap-up,
   the "Is it done?" follow-up).
+- Read the brief's Done line item by item before the DONE line. A check it names that you did not
+  run is "still open", even when the PR's "Not verified" says so honestly.
+- A failed check is explained by evidence, never dismissed: "that run predated the fix" needs
+  `git merge-base --is-ancestor <fix> <build commit>` to say so, and "the fixture is wrong" needs
+  the fixture fixed and the check rerun green.

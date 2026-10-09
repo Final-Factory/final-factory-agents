@@ -161,6 +161,13 @@ Proven driving the full early tutorial with the editor occluded (Step-pumped).
 - **Tech/research**: `TechButton` HUD button opens the Technologies panel (the tutorial pre-selects the
   target tech); click the `Research`-labelled button, then `Dismiss` on the unlock dialog. Research
   completes instantly if banked points ≥ cost.
+- **Logistics bots (requester and provider holds)** (w704): `ffauto:setting.requesterhold|<item>|<amount>|<x>|<z>`
+  sets a Requester Cargo Hold's request (`docs/ffauto-command-reference.md`); the structure snapshot
+  shows each hold's request, en-route amount and its bot's state. A live check needs a powered tower,
+  provider and hold (the blueprint carries solar panels) and `player.devunlock` (a new game's supply bots
+  carry 0 until the research), or it reads 0 delivered with nothing wrong in the code. Copy
+  `scripts/nightly/scenarios/{SP,MP}-w704-requesters-fill.json`. How bots hold a task (`AssignedBot`):
+  the game repo's `Documentation/ConstructionBots-Multiplayer-Issues.md`, "Who holds a task".
 
 ## Research, recipes, filters, fleet hand-off, and objective probing
 

@@ -370,8 +370,9 @@ def stale_problem(mine: str, released: str | None) -> str | None:
     """w733: #1272 got a PASS at 22:47 from a copy older than the 1.21.0 that would have failed it (released 21:53)."""
     if released and mine != "unknown" and version_tuple(mine) < version_tuple(released):
         return (f"this pr_evidence.py is ff-agents {mine}, but {released} is released: its rules are older than the "
-                f"team's. Run registerAgents.sh in your final-factory-agents checkout, restart the session, and run "
-                f"the new one (lessons/a-ui-change-leaves-the-rest-of-the-screen-as-it-was.md)")
+                f"team's. Update it (`claude plugin marketplace update final-factory-agents && claude plugin update "
+                f"ff-agents@final-factory-agents`, or registerAgents.sh in your checkout) and run the newest copy, "
+                f"found with `sort -V` (checklists/merge.md)")
     return None
 
 

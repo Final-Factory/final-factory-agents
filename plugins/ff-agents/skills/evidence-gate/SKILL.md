@@ -100,8 +100,8 @@ report. Change nothing on a guess.
 
 ## Checklists: read the one for what you are doing
 
-- [Done](checklists/done.md): before `DONE: wNNN` or saying a request is finished: merged, the
-  steps after the merge, your disk leftovers removed (builds, Captures, worktrees, player slots),
+- [Done](checklists/done.md): before `DONE: wNNN` or saying a request is finished: merged, every
+  check the brief's Done names, the steps after the merge, the `Learned:` line, your disk leftovers removed (builds, Captures, worktrees, player slots),
   labels and ids.
 - [Visual changes](checklists/visual.md)
 - [UI changes](checklists/ui.md): screens, panels, tabs, HUD, layouts: a late-game save, every
@@ -146,8 +146,10 @@ One file each under `lessons/`: the rule, why (the incident, dated), how to appl
   formatting, their voice.
 - [Say what an id is, every time](lessons/say-what-an-id-is.md): w293, #972, a sha or a sandbox
   name means nothing to a person; put what it is beside it, every time.
-- [Lessons belong in the harness repo](lessons/lessons-belong-in-the-harness-repo.md): not in a
-  machine's or an orchestrator's memory folder.
+- [Lessons belong in the harness repo, written before DONE](lessons/lessons-belong-in-the-harness-repo.md):
+  every DONE carries `Learned:`; a correction or reopen gets a check; the strongest home first (tool,
+  checklist, skill, the doc beside the code); a second correction of a kind is filed by the
+  orchestrator (w741: five rounds of Deck UI corrections before a check changed).
 - [Verify simulation at a slow host's frame rate](lessons/verify-simulation-at-a-slow-hosts-frame-rate.md):
   per-frame code writes no simulation state; prove a move with a frame-without-heartbeat test and a
   multiplayer run whose host is held near 20 fps (w342/w356: a Steam Deck host forked alone).
@@ -201,14 +203,28 @@ One file each under `lessons/`: the rule, why (the incident, dated), how to appl
   person can move you on, call `waiting_on_person` and end the turn naming who and what; a `wake_me` check-in
   shows the request Working (w665: Working for 10 h while it waited for Ben to reboot the m3).
 
-## Adding a lesson
+## Adding a lesson: before every DONE
 
-After a miss that reached a person, or a near miss a check caught, add the lesson **and** the
-checklist line or tool check that would have caught it, in the same change, through
-`publish-skills`. A lesson that only says "be careful" is not finished. Keep this list short:
-past about twenty, merge or retire entries. Lessons about one system (Unity, ECS, a tool trap)
-go to `project-memory`; lessons about how to decide, verify and report go here; marketing ones go
-to ff-marketing's `lessons/`.
+Every request ends with a `Learned:` line in the DONE report: the file or PR you added, or
+`nothing new` (FF Factory's ledger refuses a DONE without it). Something was learned when a person
+corrected you or reopened the request (always: add the check that would have caught it), a check
+failed on you before it passed or you redid a step three times, `git log --since=14.days` on your
+files shows another fix of the same kind, or you found a fact a future agent would have needed.
+
+1. **Search first** and extend an entry rather than add one.
+2. **The strongest home**: a tool check with the failing case as a fixture, then a checklist line,
+   then the task's skill, then the doc beside the code in the game repo; a lesson here only for the
+   dated why. Lessons about one system go to `project-memory`, marketing to ff-marketing.
+3. **Quote the person**, never a paraphrase. Their latest words beat a lesson or a check: follow
+   them and fix the lesson.
+4. **Through `publish-skills`**, as a pull request. CI caps this list at 26: a new lesson merges or
+   retires one. A rule a tool now enforces shrinks to its why.
+
+A person's **second correction of the same kind** is a harness bug: their orchestrator tallies
+corrections by kind and files the harness work on the second; a worker that sees it adds the check
+with the fix. The rule, the homes and the Deck UI story: [lessons belong in the harness
+repo](lessons/lessons-belong-in-the-harness-repo.md). The design and its sources:
+[design-w741.md](design-w741.md).
 
 The reasoning behind this skill, the incident it came from and the prior art: [design.md](design.md).
 The week's cases replayed against it: [replay-2026-10-02.md](replay-2026-10-02.md).
