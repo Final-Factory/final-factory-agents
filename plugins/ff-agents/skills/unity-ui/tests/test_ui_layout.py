@@ -51,6 +51,26 @@ class OverlapTest(unittest.TestCase):
         self.assertIn((f"{GP}/ActionBarParent", f"{GP}/QuckControls"), pairs)
 
 
+class KeptOverlapTest(unittest.TestCase):
+    def test_an_overlap_left_between_blocks_the_change_moved_is_kept(self):
+        before = hud(slideout=True)
+        after = hud(slideout=True)
+        for e in after["elements"]:
+            if "ActionBarParent" in e["path"]:
+                e["rect"] = e["visible"] = [e["rect"][0] - 30, e["rect"][1], e["rect"][2] - 30, e["rect"][3]]
+        moved = ul.moved_blocks(before, after)
+        self.assertIn(f"{GP}/ActionBarParent", moved)
+        self.assertNotIn(f"{GP}/MinimapParent", moved)
+        with tempfile.TemporaryDirectory() as tmp:
+            b, a = Path(tmp) / "before.json", Path(tmp) / "after.json"
+            b.write_text(json.dumps(before), encoding="utf-8")
+            a.write_text(json.dumps(after), encoding="utf-8")
+            self.assertEqual(ul.main(["check", "--before", str(b), "--after", str(a)]), 1)
+
+    def test_an_old_overlap_the_change_did_not_touch_is_not_kept(self):
+        self.assertEqual(ul.moved_blocks(hud(slideout=True), hud(slideout=True)), set())
+
+
 class ClusterTest(unittest.TestCase):
     SPEC = {"clusters": [{"name": "bottom-right HUD", "anchor": "MinimapParent",
                           "members": ["QuickButtons", "OptionToggles", "Hotbars"]}]}

@@ -183,7 +183,7 @@ class UiTest(unittest.TestCase):
 Full content: every tab's grid, list and tree whole or scrolling; fill 78-96 % per pane (ui_check fill)
 Style: BlueprintPanelChild (touched) vs InvAndCraft/InventoryPanel: delta E 2.1 (on screen), alpha 1.00 vs 1.00, same art
 Shots: proofs/shots.md, one line per still against Ben's words
-Overlaps: 4 block pairs before, 4 after, 0 new (ui_layout.py, whole screen, block depth 2)
+Overlaps: 4 block pairs before, 4 after, 0 new, 0 kept between blocks the change moved (ui_layout.py, whole screen, block depth 2)
 Alignment: max drift 0 px over the clusters (bottom-right HUD, top-left HUD); tolerance 2 px
 """
 
@@ -267,8 +267,12 @@ class LayoutTest(unittest.TestCase):
         self.assertNotIn("delta E 21.6 from the classic panel", self.reasons(self.ui_body(Style=asked)))
 
     def test_a_new_overlap_or_a_drift_fails(self):
-        overlap = "4 block pairs before, 5 after, 1 new (ui_layout.py, whole screen, block depth 2)"
+        overlap = "4 block pairs before, 5 after, 1 new, 0 kept between blocks the change moved (ui_layout.py)"
         self.assertIn("1 new overlap(s) between HUD blocks", self.reasons(self.ui_body(Overlaps=overlap)))
+        kept = "1 block pairs before, 1 after, 0 new, 1 kept between blocks the change moved (ui_layout.py)"
+        self.assertIn("keeps 1 overlap(s) between blocks the change moved", self.reasons(self.ui_body(Overlaps=kept)))
+        old = "4 block pairs before, 4 after, 0 new (ui_layout.py, whole screen, block depth 2)"
+        self.assertIn("how many overlaps were kept", self.reasons(self.ui_body(Overlaps=old)))
         drift = "max drift 14 px over the clusters (bottom-right HUD); tolerance 2 px"
         self.assertIn("'Alignment:' drifts 14 px", self.reasons(self.ui_body(Alignment=drift)))
         self.assertEqual(self.reasons(self.ui_body(Alignment="max drift 2 px over the clusters (bottom-right HUD)")), "")

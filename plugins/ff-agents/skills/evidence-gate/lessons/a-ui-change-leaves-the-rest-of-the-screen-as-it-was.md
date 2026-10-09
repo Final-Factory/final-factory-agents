@@ -10,7 +10,7 @@ date: 2026-10-09
 census (`unity-ui`, `layout-census.md`) before and after, same save and size, with the whole HUD
 showing and every slide-out open, and run `ui_layout.py check`:
 
-- no new overlap between HUD blocks;
+- no new overlap between HUD blocks, and none left between blocks you moved;
 - no anchored cluster (the minimap and its side buttons, the hotbar, the top bar) drifting more than
   2 px against its anchor;
 - every panel you touched, measured on screen against a classic panel: delta E 10 or less, the same
@@ -36,6 +36,12 @@ released one now fails itself.
   - Opening the Blueprint slide-out puts it over hotbar slots: a new overlap `ActionBarParent` x
     `QuckControls` (3948 px2) against the closed HUD, which has none. It is older than #1264 (at
     a42cc5a34 the same slide-out covers slots 8 to 0).
+  - w732 named the commit: 7f75224fa (#1264's `HudCornerSpacing`). Alone it does nothing (its
+    static initializer throws on `Debug.isDebugBuild`); with 099337640, the next commit of the
+    same PR, it runs. 7f75224fa^ against 099337640: the same 98 px drift, and the slide-out over the
+    hotbar shrinks from 14689 to 3948 px2 but stays, between the two blocks the change moved. A
+    check that fails only new overlaps lets that through, so ui_layout.py (1.22.1) also fails an
+    overlap kept between blocks the change moved.
 - **The colour check that did not run.** #1272 (w712, the Blueprints window on the Deck) added a
   `SolidBackdrop` Image at `(0.05, 0.09, 0.14, 0.98)`, #0D1724 nearly opaque, where the game's
   windows use the translucent `background-main` sprite. MEASURED (`ui_layout.py check`, censuses and

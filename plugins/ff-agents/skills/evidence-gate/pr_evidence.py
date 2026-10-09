@@ -203,6 +203,14 @@ def layout_problems(section: str) -> list[str]:
         elif int(new.group(1)) > 0 and not INTENDED.search(overlaps[1]):
             problems.append(f"'Overlaps:' has {new.group(1)} new overlap(s) between HUD blocks: fix them, or quote the "
                             f"requester asking for it as intended (who): \"...\"")
+        kept = re.search(r"(\d+)\s+kept\b", overlaps[1])
+        if not kept:
+            problems.append("'Overlaps:' does not say how many overlaps were kept between blocks the change moved: "
+                            "paste the line ui_layout.py (ff-agents 1.22.1 or later) prints")
+        elif int(kept.group(1)) > 0 and not INTENDED.search(overlaps[1]):
+            problems.append(f"'Overlaps:' keeps {kept.group(1)} overlap(s) between blocks the change moved: they were "
+                            f"there before, but you moved them and left them overlapping (w733: 7f75224fa left the "
+                            f"Blueprint slide-out over the hotbar). Fix them, or quote the requester as intended (who): \"...\"")
     alignment = field(section, "Alignment")
     if not alignment:
         problems.append("UI change with no 'Alignment:' line: the anchored clusters' drift before and after "
