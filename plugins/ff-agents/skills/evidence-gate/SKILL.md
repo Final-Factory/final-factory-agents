@@ -173,7 +173,8 @@ One file each under `lessons/`: the rule, why (the incident, dated), how to appl
 - [Verify UI with full content, like a player](lessons/verify-ui-with-full-content-like-a-player.md):
   every screen and sub-view in a late-game save, whole, on the classic look, still in a real-rate
   clip, each still checked against the requester's words (w718: the w644 hub, #1251, passed a tour
-  of "opens, fits, 9 px" stills; on Ben's Deck it was navy, Crafting one row, no tech grid).
+  of "opens, fits, 9 px" stills; on Ben's Deck it was navy, Crafting one row, no tech grid; w764: ten photos of
+  a real Deck found eight faults the tour's census had no count for, so a player's photos are tests).
 - [A UI change leaves the rest of the screen as it was](lessons/a-ui-change-leaves-the-rest-of-the-screen-as-it-was.md):
   a layout census before and after with the whole HUD up: no new overlap between always-on HUD
   blocks (a panel the player opens may cover the HUD: Ben, w742), no anchored cluster

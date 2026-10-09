@@ -71,6 +71,17 @@ manual pages for these components are the source for the rules: "Auto Layout", "
   pixel, as `WindowFit.Slack`), never every frame: a write every frame also rebuilds the canvas every
   frame (w644 #1244 measured it).
 
+- **One owner per alpha, too (w764).** A `CanvasGroup` hidden once by one script is shown again by a component that
+  fades its own group in every frame (`ObjectivesPanel.LateUpdate` against `StructuredDock.Faded`: the card was back in
+  half a second). Give the owner a hold (`ObjectivesPanel.HeldHidden`), or hide it every frame after it.
+- **A hidden element must give back its room.** The classic layout kept a faded objectives card in the list of HUD the
+  windows keep off, so a window sat 330 units down and was cut to three rows under a card nobody saw.
+- **A box that is HUD only sometimes must not be HUD always (w764).** The classic layout kept off the station's info
+  box as HUD that is never covered even when it was only a hover over a station with nothing selected; a 628-unit window
+  has no clear place beside it, so the packer fell back to the place that covers least and the Inventory and Crafting
+  windows swapped sides each time the pointer crossed a station. Decide what a piece is by what the player has done
+  (a station selected), not by whether it is drawn.
+
 ## Grids
 
 - **`GridLayoutGroup` never shrinks its cells.** Cells are `cellSize` exactly; the group's

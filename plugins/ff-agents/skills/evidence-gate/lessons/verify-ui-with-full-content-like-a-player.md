@@ -55,7 +55,21 @@ flickering icons, Factory info using a fraction of its pane. Why the tour missed
 - **No Deck hardware.** MEASURED: listed under "Not verified". GUESS how much of the miss is the
   real Deck (Proton, real Steam Input, a multiplayer client) rather than content.
 
+- **It happened again with every check in place (w764, 2026-10-09).** MEASURED: the next Build, 90, had the full tour
+  and the rules above, and a player (Discord, "New Steam Deck GUI notes") posted ten photos of a real Deck with eight
+  faults none of them listed: the Technology tab's tile list two rows and a bit ("too small to actually be useful"), the
+  Fleet header "Count" cut to "Coun" over "t", the Info tab empty after a load, the objectives card drawn over a Command
+  Core's fields, windows laid over one another, the Mass Driver's "Intermediates" cut by a scroll bar. The census had no
+  count for a cut word or a list's visible rows, and the tours never loaded a save with completed objectives, never kept
+  the objectives card up while a Command Core opened, and never hovered a station with the inventory open. Each fault
+  reproduced in the dev player the first time the state the photo shows was set up; none needed Deck hardware.
+
 **How to apply.** [The UI checklist](../checklists/ui.md), and the `unity-ui` skill for the recipe:
+
+- **A player's photos are tests (w764).** Put each photo beside your still of the same screen in the same state before the
+  first fix; reproduce it in the built player (set up the state it shows); where the census stays quiet about what the photo
+  shows, add the count to the census in the same change (since w764: `midWord` and `shortLists` in `DeckTourChecks`, with
+  the failing case as a test fixture).
 
 - Write the requester's words per screen first, with what "full content" means for each.
 - Tour a late-game save; open every sub-view; `waitFor` content.
