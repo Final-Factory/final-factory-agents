@@ -25,8 +25,8 @@ ffwatch loads these same skills and roles through `--plugin-dir`, so this is the
 containers follow. See "On the build server" in `reference.md` §AUTOFIX flow.
 
 **FFBox owns #bug-reports and dev_bug_reports** (Lothsahn, 2026-09-30): outside an FFBox turn,
-do not run a pass on them at all. Any other agent may read their threads and download their files,
-never post, react or close there (the CLI refuses; `discord-cli` "FFBox's channels"), and puts
+do not run a pass on them at all. Any other agent may read their threads and download their files (on a machine without the ffdiscord config:
+`mcp__machine__fetch_discord_thread_files`, see `discord-cli`), never post, react or close there (the CLI refuses; `discord-cli` "FFBox's channels"), and puts
 `Discord: https://discord.com/channels/<guild id>/<thread id>` in the PR of a fix instead. Merging
 an `ffbox/*` branch is never followed by a "fixed" or "merged" post: FFBox announces it.
 
