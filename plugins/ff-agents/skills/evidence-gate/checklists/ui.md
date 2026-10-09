@@ -131,6 +131,13 @@ screen; on desktop three labels stopped fitting, the two windows left their defa
     (a faded card still held 330 units, so the window sat under nothing and was cut to three rows). A window the player
     placed is HUD to the windows the layout places: they keep off it.
 
+20. **Every state the player can toggle, after a re-open, in the structured layout (w792).** A panel's toggles and tabs are
+    switched on and off in the built player in each layout, and the docked pass closes and re-selects the building first: the
+    dock changes a window's layout components when it docks (fitters off), and a row first laid out before the dock looks right
+    while one docked first does not. Ben's Build 92 photo: the Ship Yard's Max buttons over the Requested field after exactly
+    that order, which every earlier still (opened with the toggle already on) missed. The tour's `rowOverlaps` is 0 in every
+    state.
+
 19. **The Deck tour is a stand-in (w770).** It forces its own window size and a scripted Deck, so it cannot show Steam's
     layout choice, the Proton first-frame resolution, the Steam client version or touch. A Deck UI change says "verified on
     a real Deck" or "not verified on a real Deck" ([deck.md](deck.md)). For a stored bad size use `-ffDeckTourSize none
