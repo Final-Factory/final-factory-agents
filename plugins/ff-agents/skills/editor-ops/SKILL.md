@@ -213,6 +213,7 @@ Open it when the editor or bridge misbehaves:
 - A fresh editor boot with no scene looks wedged, not hung
 - A failed batch build leaves `Temp/UnityLockfile`: the next build says the project is open
 - An ffsb sandbox shared by two sessions: `switch_branch` refuses, and a commit without switching
+- The branch-switch hook also refuses `git checkout <branch>` in a scratch clone
 
 ## Running tests
 

@@ -61,6 +61,13 @@ manual pages for these components are the source for the rules: "Auto Layout", "
   root). Under a group it fights the group for the size (Unity warns "Parent has a type of layout
   group component"). For a child under a group, give the group control and set the child's
   `LayoutElement` instead.
+- **The structured dock turns off every `ContentSizeFitter` under a window it docks** (`DockedWindow.ForceWidth`, inactive
+  ones too, only those inside a `Selectable` spared), so a row child whose width came from a fitter keeps its prefab width,
+  often 0. w792: the Ship Yard's `Requests` group (width 0 + fitter) stayed 0 wide when "Request Specific Units" was switched
+  on after the dock, and the Max button drew over the Requested field on a real Deck (Build 92). Give a row child its width in
+  the prefab or a `LayoutElement` the row group reads; never a fitter on a 0-wide child inside a docked window. The check:
+  the Deck tour's `rowOverlaps` count (`DeckTourChecks.RowOverlaps`, drawn pieces of neighbours in one row) and a test that
+  docks the real prefab with `StructuredDock.DockedWindow.ForceWidth` (game repo `ShipYardRowsTests`).
 - **Fitters size one pass late.** A fitter's object is the right size only after a layout pass;
   chained fitters (a fitter whose size depends on another fitter's child) can take more than one
   frame to settle and jitter meanwhile.
