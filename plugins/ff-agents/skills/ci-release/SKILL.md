@@ -243,6 +243,16 @@ it. A save that does not load, a missing platform, or reports clearly above the 
 whoever asked for the release at once, with the evidence and the previous BuildID. Use `wake_me` so the
 check happens when it is due.
 
+**A worker has no report listing** (w750, w763 and w782 each reported "couldn't read FFBox's intake"):
+`ffbox_activity` is the orchestrator's, and `fetch_ffbox_report` needs an id. What a worker can read, on
+a machine with the ffdiscord config (`python scripts/discord/ffdiscord.py` in the game repo): FFBox
+posts every diagnosed crash or desync to `#desync-and-crash-analysis` (channel `1553176064908464209`,
+`read <id> --limit 5`; each post names the report id, kind, platform paths, the symbols' version and a
+NOT-A-BUG tag), and the newest `#bug-reports` threads (`threads 1069745561672106015 --limit 8`, then
+`thread <id>`) name the version a player runs. Count those by version and platform, say they are a
+proxy for the intake and not its table, and read-only: never post in either channel. Developer-machine
+reports (`/Users/benryding/...`, player-slot paths) are not players'.
+
 ## When it goes wrong
 
 The host's reason for a declined or failed job is in the job log ("ask the host whether this push is a
