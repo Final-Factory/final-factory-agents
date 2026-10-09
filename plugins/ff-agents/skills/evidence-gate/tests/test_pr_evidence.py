@@ -181,8 +181,10 @@ class UiTest(unittest.TestCase):
                   "Assets/Scripts/Steam/SteamInputBridge.cs", "Assets/Tests/UI/Structured/StructuredHubTests.cs"]
     UI_LINES = """Content: late-game audit save w718-lategame.zip (212 techs, 140 recipes, 24 blueprints, 9 fleets)
 Full content: every tab's grid, list and tree whole or scrolling; fill 78-96 % per pane (ui_check fill)
-Style: against the classic Inventory and Crafting, same save, 1280x800: background delta E 2.1 (ui_check style)
+Style: BlueprintPanelChild (touched) vs InvAndCraft/InventoryPanel: delta E 2.1 (on screen), alpha 1.00 vs 1.00, same art
 Shots: proofs/shots.md, one line per still against Ben's words
+Overlaps: 4 block pairs before, 4 after, 0 new (ui_layout.py, whole screen, block depth 2)
+Alignment: max drift 0 px over the clusters (bottom-right HUD, top-left HUD); tolerance 2 px
 """
 
     def body(self):
@@ -222,6 +224,64 @@ Shots: proofs/shots.md, one line per still against Ben's words
 
     def problems(self, body, files=None):
         return pe.check(body, files)[0]
+
+
+class LayoutTest(unittest.TestCase):
+    """w733: a UI change proves it left the rest of the screen as it was. #1272 (the Blueprints window on the Deck)
+    turned the window opaque navy and passed an evidence check older than the rules that would have failed it; the
+    same night the minimap's side buttons drifted off it and a slide-out covered the hotbar."""
+
+    FILES_1272 = ["Assets/Scenes/main.unity", "Assets/Scripts/UI/Blueprints/BlueprintPanelFit.cs",
+                  "Assets/UI/Components/BlueprintButton.prefab"]
+
+    def body_1272(self):
+        return (HERE / "fixtures" / "pr-1272-blueprints-navy.md").read_text(encoding="utf-8")
+
+    def ui_body(self, **lines):
+        body = edit(GOOD, "Kind: visual, simulation", "Kind: ui, simulation")
+        body = edit(body, "Clips: proofs/before.mp4, proofs/after.mp4 (the hand-over is at frames 118-190)",
+                    UiTest.UI_LINES + "Clips: proofs/before.mp4, proofs/after.mp4, 60 fps (each tab idle at 0-4 s); "
+                    "ui_check flicker: 0 regions")
+        for name, value in lines.items():
+            body = re.sub(rf"^{name}:.*$", f"{name}: {value}", body, flags=re.MULTILINE)
+        return body
+
+    def reasons(self, body, files=None):
+        return "\n".join(pe.check(body, files)[0])
+
+    def test_1272_as_written_fails_on_the_layout_and_style_lines(self):
+        reasons = self.reasons(self.body_1272(), self.FILES_1272)
+        self.assertIn("no 'Overlaps:' line", reasons)
+        self.assertIn("no 'Alignment:' line", reasons)
+        self.assertIn("no 'Style:' line", reasons)
+
+    def test_a_style_sentence_is_not_a_measurement(self):
+        body = self.ui_body(Style="frame art unchanged, the panel keeps its translucent look at 1920x1080")
+        self.assertIn("'Style:' has no measured delta E and alpha", self.reasons(body))
+
+    def test_1272s_navy_fails_on_delta_e(self):
+        line = ("GamePanels/BlueprintPanelChild/SolidBackdrop (new) vs GamePanels/InvAndCraft/InventoryPanel: delta E "
+                "21.6 (on screen), alpha 0.98 vs 1.00, art 'flat fill' vs 'background-main'")
+        self.assertIn("delta E 21.6 from the classic panel", self.reasons(self.ui_body(Style=line)))
+        asked = line + '; intended (Ben): "make the blueprint panel solid dark navy"'
+        self.assertNotIn("delta E 21.6 from the classic panel", self.reasons(self.ui_body(Style=asked)))
+
+    def test_a_new_overlap_or_a_drift_fails(self):
+        overlap = "4 block pairs before, 5 after, 1 new (ui_layout.py, whole screen, block depth 2)"
+        self.assertIn("1 new overlap(s) between HUD blocks", self.reasons(self.ui_body(Overlaps=overlap)))
+        drift = "max drift 14 px over the clusters (bottom-right HUD); tolerance 2 px"
+        self.assertIn("'Alignment:' drifts 14 px", self.reasons(self.ui_body(Alignment=drift)))
+        self.assertEqual(self.reasons(self.ui_body(Alignment="max drift 2 px over the clusters (bottom-right HUD)")), "")
+
+    def test_the_scene_counts_as_ui(self):
+        self.assertTrue(pe.UI_PATH.search("Assets/Scenes/main.unity"))
+        self.assertIn("no 'Overlaps:' line", self.reasons(GOOD, ["Assets/Scenes/main.unity"]))
+
+    def test_an_old_copy_says_so_and_the_verdict_names_its_version(self):
+        self.assertIn("ff-agents 1.20.44, but 1.21.0 is released", pe.stale_problem("1.20.44", "1.21.0"))
+        self.assertIsNone(pe.stale_problem("1.22.0", "1.22.0"))
+        self.assertIsNone(pe.stale_problem("1.22.0", None))
+        self.assertIn("ff-agents 9.9.9", pe.verdict_text([], [], "9.9.9"))
 
 
 class UsedByTest(unittest.TestCase):

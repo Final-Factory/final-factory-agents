@@ -33,7 +33,7 @@ anyone says done.
    ("clipped", "off screen") is a finding until you have looked and written why it is not one.
 6. **Style parity with the classic panel.** Put the new screen and the classic one side by side,
    same save, same size. Colours (`ui_check.py style`: background delta E 10 or more flags it),
-   frame art, fonts, icon sizes. Reuse the classic skin; a colour typed into code is a finding
+   frame art, fonts, icon sizes; item 13 measures it per touched panel. Reuse the classic skin; a colour typed into code is a finding
    unless the requester asked for it, quoted. "Before" is the classic screen with the same content,
    not develop with nothing open.
 7. **No flicker: a real-rate clip.** Each screen idle for 3 s or more, and while hovering,
@@ -53,17 +53,48 @@ anyone says done.
 10. **Show the person.** When the person asked for the look, the PR and the report put the stills
     of every screen in front of them (`publish_review`), so they see the hub before a player does.
 
+**The rest of the screen** (w733: the minimap's side buttons drifted off it and a slide-out covered
+the hotbar, while each PR checked its own panel; #1272 turned the Blueprints window opaque navy).
+The census recipe and `ui_layout.py` are in the `unity-ui` skill, `layout-census.md`.
+
+11. **No new overlap.** A layout census before and after, same save and size, with the whole HUD
+    showing (hotbar and ability row, minimap and its side buttons, every slide-out opened, top bar,
+    objectives, a selected building and the Station strip) and your screen open on top.
+    `ui_layout.py check` lists overlapping HUD blocks; a pair that was not there before fails.
+12. **No drift.** Every anchored cluster (`hud-clusters.json`: the minimap with the quick buttons,
+    the slide-out toggles and the hotbar; the top bar with the objectives) keeps its edges and gaps
+    against its anchor within 2 px. Changing a cluster on purpose: say so, and update the file.
+13. **Every touched panel looks like the game's.** `--touched <window>` checks each panel you
+    changed, and every panel the census sees change, against a classic reference panel
+    (`--ref`, the Inventory by default) on screen (`--shot`/`--ref-shot`): delta E 10 or less, the
+    same art, the same see-through. A sentence ("keeps its translucent look") is not a check.
+14. **The released checks.** A session loads its plugins when it starts. Before you merge, run the
+    released `pr_evidence.py`; its verdict names its version and fails when GitHub has a newer
+    one. Re-register and restart when it does. The game repo's `Evidence gate (UI)` CI job runs the
+    released one on every PR touching `/UI/` or a scene; merge only when it is green.
+
+**The line that would have caught both w733 misses:** a whole-screen layout census before and after,
+with the whole HUD showing and every slide-out open, shows no new overlap between HUD blocks, no
+anchored cluster moved more than 2 px, and every touched panel within delta E 10 and the same
+see-through as a classic panel, checked by the released `pr_evidence.py`.
+
 In the pull request (`## Evidence`, [merge.md](merge.md)) a UI change adds:
 
 ```markdown
 Content: late-game audit save w718-lategame.zip (212 techs, 140 recipes, 24 blueprints, 9 fleets, 6 objectives)
 Full content: every tab's grid/list/tree whole or scrolling, fill 78-96 % (ui_check fill); Info lists 6 objectives
-Style: against the classic Inventory and Crafting, same save, 1280x800: background delta E 2.1 (ui_check style)
+Style: BlueprintPanelChild (touched) vs InvAndCraft/InventoryPanel: delta E 2.1 (on screen), alpha 1.00 vs 1.00, same art
+Overlaps: 4 block pairs before, 4 after, 0 new (ui_layout.py, whole screen, block depth 2)
+Alignment: max drift 0 px over the clusters (bottom-right HUD, top-left HUD); tolerance 2 px
 Shots: /srv/fff/review/wNNN/shots.md (one line per still against Ben's words)
 Clips: after-1280.mp4, 60 fps; idle and hover per tab at 0-4 s, 4-8 s ...; ui_check flicker: 0 regions
 ```
 
-`pr_evidence.py` fails a UI change without these lines, or with a clip of 1 to 9 fps.
+`pr_evidence.py` fails a UI change without these lines, with a clip of 1 to 9 fps, with a new
+overlap, a drift over 2 px, a `Style:` line without a measured delta E and alpha, or a delta E over
+10. A difference the requester asked for passes with their words on its line:
+`intended (Ben): "..."`. A scene file (`Assets/Scenes/*.unity`) counts as UI.
 
-Lesson behind this list:
-[verify UI with full content, like a player](../lessons/verify-ui-with-full-content-like-a-player.md).
+Lessons behind this list:
+[verify UI with full content, like a player](../lessons/verify-ui-with-full-content-like-a-player.md),
+[a UI change leaves the rest of the screen as it was](../lessons/a-ui-change-leaves-the-rest-of-the-screen-as-it-was.md).

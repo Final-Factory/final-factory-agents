@@ -1,0 +1,16 @@
+{
+  "about": "Anchored HUD clusters for ui_layout.py (w733). Each member is the union of everything drawn under that object; its edges are measured against the anchor's, and a change over the tolerance between before and after fails. Names are object names in main.unity (HudCornerSpacing.cs names the bottom-right ones). OptionToggles is the column of slide-out toggles; its parent QuckControls also holds the slide-outs themselves, which move when opened, so it is not a member. The edges key limits a cluster to the edges that should hold (a panel whose height follows its content keeps only its left and top). Add a cluster when you change one.",
+  "clusters": [
+    {
+      "name": "bottom-right HUD",
+      "anchor": "MinimapParent",
+      "members": ["QuickButtons", "OptionToggles", "Hotbars"]
+    },
+    {
+      "name": "top-left HUD",
+      "anchor": "TopInfoPanel",
+      "members": ["ObjectivesPanel"],
+      "edges": ["left", "top"]
+    }
+  ]
+}

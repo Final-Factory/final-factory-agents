@@ -1,6 +1,6 @@
 ---
 name: unity-ui
-description: "Build and verify Final Factory's Unity uGUI screens (panels, windows, tabs, HUD, popups, the structured layout and Steam Deck sizing) so they work the way a player sees them. Covers the project's UI map, uGUI layout rules and the pitfalls that broke the w644 Deck hub (layout groups, ContentSizeFitter, anchors, scroll views, grids, canvas scaling at 1280x800, layout fights that flicker, hard-coded colours), the editor rect audit, the Deck tour with full content, and the pixel checks (scripts/deck_audit/ui_check.py: flicker, fill, style, the per-still sheet). Use before changing or reviewing any UI, and before calling a UI change verified."
+description: "Build and verify Final Factory's Unity uGUI screens (panels, windows, tabs, HUD, popups, the structured layout and Steam Deck sizing) so they work the way a player sees them. Covers the project's UI map, uGUI layout rules and the pitfalls that broke the w644 Deck hub (layout groups, ContentSizeFitter, anchors, scroll views, grids, canvas scaling at 1280x800, layout fights that flicker, hard-coded colours), the editor rect audit, the Deck tour with full content, and the pixel checks (scripts/deck_audit/ui_check.py: flicker, fill, style, the per-still sheet), and the whole-screen layout census with ui_layout.py (new overlaps between HUD blocks, anchored clusters drifting over 2 px, every touched panel's colour and alpha against a classic panel). Use before changing or reviewing any UI, and before calling a UI change verified."
 ---
 
 # Unity UI: build it, then verify it like a player
@@ -103,6 +103,28 @@ Then the evidence-gate's [UI checklist](../evidence-gate/checklists/ui.md) and, 
 `Content:`, `Full content:`, `Style:`, `Shots:` lines and a flicker result (`pr_evidence.py`
 fails a UI change without them). Publish the stills, clips and the sheet with `publish_review`, and
 put the stills of every screen in front of the person who asked for the look.
+
+## 5b. Check the rest of the screen, before and after
+
+A change to one panel can move or cover another: the minimap's side buttons drifted off it and a
+slide-out lay over the hotbar while each PR checked its own panel, and #1272's new backdrop turned
+the Blueprints window opaque navy (w733). Take the layout census
+([layout-census.md](layout-census.md)) on the base commit and on yours, same save and size, with
+the whole HUD showing, every slide-out open and your screen on top, plus a screenshot of each, then:
+
+```sh
+python "<this skill's base directory>/ui_layout.py" check --before before.json --after after.json \
+    --touched <your window> --shot after.png --ref-shot classic.png --ref-census classic.json
+```
+
+It prints the `Overlaps:`, `Alignment:` and `Style:` lines for the PR and exits 1 on a new overlap
+between HUD blocks, a cluster ([hud-clusters.json](hud-clusters.json)) drifting more than 2 px, or a
+touched panel more than delta E 10 from the classic Inventory on screen, or with different art or
+see-through. Measured in the editor at 1280x800, classic layout (w733): #1264 (121b8691b) moved the
+quick buttons from 7 to 24 px off the minimap, the toggles 31 px and the hotbar 98 px, and nothing
+moved after it; opening the Blueprint slide-out puts it over the hotbar (a new overlap against the
+closed HUD); #1272's backdrop is delta E 23.8 from the classic Inventory on screen, where the window
+was 2.1 before it.
 
 ## Related notes
 

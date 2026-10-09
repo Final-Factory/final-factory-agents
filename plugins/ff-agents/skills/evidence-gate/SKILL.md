@@ -106,7 +106,10 @@ report. Change nothing on a guess.
 - [Visual changes](checklists/visual.md)
 - [UI changes](checklists/ui.md): screens, panels, tabs, HUD, layouts: a late-game save, every
   sub-view, the whole content, the classic look side by side, a real-rate clip, one written line
-  per still against the requester's words; `Content:`, `Full content:`, `Style:`, `Shots:` in the PR.
+  per still against the requester's words, and the rest of the screen unchanged (a layout census
+  before and after: no new overlap, no cluster drift over 2 px, every touched panel's colour and
+  alpha against a classic panel); `Content:`, `Full content:`, `Style:`, `Shots:`, `Overlaps:`,
+  `Alignment:` in the PR.
 - [Merges](checklists/merge.md), with `pr_evidence.py` for the pull request's `## Evidence` section
 - [Releases](checklists/release.md)
 - [FFBox desync PRs](checklists/ffbox-desync-pr.md) (Lothsahn's standing policy, 2026-10-04): classify
@@ -168,6 +171,11 @@ One file each under `lessons/`: the rule, why (the incident, dated), how to appl
   every screen and sub-view in a late-game save, whole, on the classic look, still in a real-rate
   clip, each still checked against the requester's words (w718: the w644 hub, #1251, passed a tour
   of "opens, fits, 9 px" stills; on Ben's Deck it was navy, Crafting one row, no tech grid).
+- [A UI change leaves the rest of the screen as it was](lessons/a-ui-change-leaves-the-rest-of-the-screen-as-it-was.md):
+  a layout census before and after with the whole HUD up: no new overlap, no anchored cluster
+  drifting over 2 px, every touched panel measured against a classic one; run the released
+  `pr_evidence.py` (w733: the minimap buttons drifted, a slide-out covered the hotbar, and #1272's
+  navy passed a check older than the release that would have failed it).
 - [Measure against what the player sees](lessons/measure-against-what-the-player-sees.md): a
   placement metric is checked against the drawn surface or outline, computed independently of the
   code under test, never against the code's own answer (w587: w176's impacts scored 0.0 u against
