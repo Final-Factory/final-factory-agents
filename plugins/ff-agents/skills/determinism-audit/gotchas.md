@@ -31,6 +31,7 @@ load-bearing for future runs even where the original defect is fixed.
 - [Mute the real audio path — `-batchmode -nographics` does not touch FMOD](#automation-mute) (049)
 - [Fixture determinism can be CPU-load-dependent even with no cross-peer comparison — unverified](#fixture-load-dependence) (055 R35)
 - [Host-frame profiling: a probe, not a determinism gate](#perf-probe) (055 flag lane 3)
+- [A big save: the full capture keeps the client out; the runtime detector and a capped host](#big-save-pair) (w780)
 
 ## Full-window rule: never diagnose from a partial window {#full-window-rule}
 
@@ -441,3 +442,28 @@ enemy-economy fixture — the real-map arm the ~9 UPS finding came from. Run it 
 (a concurrent sweep skews it), reusing a sweep build via `FF_BUILD_DIR`; on BEAST the SYSTEM
 account's `/tmp` is `C:/Windows/Temp`. This is a probe, not a gate — it is deliberately not in the
 audit manifest.
+
+## A big save: the full capture keeps the client out; the runtime detector and a capped host {#big-save-pair}
+
+w780, 2026-10-09, °Life°'s Build 91 save (177,779 entities, 577 haulers), m5, built Mac players.
+
+- **The full-capture paired audit cannot get a client in.** `run_build_multiplayer_audit.sh` with
+  `-ffAutomationSave` on this save: with capture on, the host took about 10 s per heartbeat (single
+  `HaulersDetail`/`Fingerprint` lines up to 900 KB), so it logged `Pending Client-1 connection approved!`
+  only after the client's `Timed out waiting for the server to approve the connection request` and
+  `ClosedByRemote`. Twice, the second time with `FF_CLIENT_LAUNCH_DELAY_SECONDS=30` (the w257 knob):
+  the delay helps a slow first heartbeat, not a host that stays slow. Exit 3, `missing report(s)`.
+- **What worked instead:** the same built players as a host + client pair on the save with
+  `-ffAutomationDeterminismAudit false`, the client started 30 s after `host-ready`. The runtime desync
+  detector compares every 8th heartbeat in any multiplayer session (`RuntimeDesyncDetection.SampleIntervalHeartbeats`)
+  and logs only on a fork (`[DesyncDetector] Multiplayer desync detected`); count the shared heartbeats from the
+  client's `[MP pacing] ... applied=` lines. Silence is the verdict only with those counts beside it. Say in the PR
+  that this is the detector, not the per-surface audit (pr_evidence.py wants the heartbeat count on the
+  `Determinism audit:` line).
+- **`-ffBench` overrides the slow-host cap.** `ContentShaderBench` sets `Application.targetFrameRate = -1` every
+  frame while it records (attach and save modes), so `-ffFeelProbe -ffFeelFps 20 -ffFeelVsync 0` on a bench host
+  ran it at 62 fps. Run the 20 fps host without `-ffBench`, with `-ffAutomationPostConnectDelayMs` for the dwell, and
+  read its `[MP pacing] frames=` (about 185 per 10 s at 18.5 fps) before calling it a slow-host leg.
+- Both peers outlive their dwell with the audit off (the publish step fails: `The determinism audit is disabled`);
+  stop them yourself at the end of the window.
+
