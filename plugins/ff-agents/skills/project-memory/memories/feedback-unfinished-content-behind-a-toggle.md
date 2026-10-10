@@ -1,5 +1,5 @@
 ---
-name: unfinished-content-goes-behind-a-toggle
+name: feedback-unfinished-content-behind-a-toggle
 description: "New game content or a feature that is not ready for players merges to develop behind a feature toggle (FFCore.Features.FeatureToggles), off for players, instead of waiting on a branch or being hidden by deleting it. Simulation toggles are fixed per game and the host's set wins; Presentation toggles are local. The game repo's FeatureToggleLifecycleTest enforces dates, use and self-contained gating."
 date: 2026-10-10
 ---
