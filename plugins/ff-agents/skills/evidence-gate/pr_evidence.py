@@ -185,7 +185,7 @@ def ui_problems(section: str, brief: str | None = None) -> tuple[list[str], list
                         f"or more, idle and while hovering and selecting, so flicker can show (DeckTour `record`)")
     problems += layout_problems(section)
     moved, notes = moved_problems(section, brief)
-    problems += moved
+    problems += moved + pinned_problems(section)
     flick = field(section, "Flicker")
     if not re.search(r"flicker", (clips[1] if clips else "") + (flick[1] if flick else ""), re.IGNORECASE):
         problems.append("UI change with no flicker result: run ui_check.py flicker on the clip's frames and say how "
@@ -257,16 +257,21 @@ def opened_panel_problems(section: str, pairs: int) -> list[str]:
     return problems
 
 
-# w826: every element a UI change moved, as `ui_layout.py moves` lists it, marked with the requester's words or a reason.
-MOVE_ENTRY = re.compile(r"^\s*[-*]\s+(\d{3,4}\s*x\s*\d{3,4})\s+(.+?):\s", re.IGNORECASE)
-ASKED = re.compile(r"\basked\s*\(([^)]+)\)\s*:\s*[\"\u201c](.{8,}?)[\"\u201d]", re.IGNORECASE)
-JUSTIFIED = re.compile(r"\bnot asked\s*:\s*justified\s*:\s*(.{20,})", re.IGNORECASE)
+# w826, w894: every element a UI change moved, as `ui_layout.py moves` lists it, asked for in the requester's words.
+MOVE_ENTRY = re.compile(r"^\s*[-*]\s+(\d{3,4}\s*x\s*\d{3,4})(?:\s+(undocked|docked))?\s+(.+?):\s", re.IGNORECASE)
+ASKED = re.compile(r"\basked\s*\(([^)]+)\)\s*:\s*[\"“](.{8,}?)[\"”]", re.IGNORECASE)
+JUSTIFIED = re.compile(r"\bnot asked\s*:\s*justified\b", re.IGNORECASE)
 REVERTED = re.compile(r"\bnot asked\s*:\s*reverted\b", re.IGNORECASE)
-STANDARD_SIZES = ("1920x1080", "1280x800")
+STATE = re.compile(r"\b(\d{3,4})\s*x\s*(\d{3,4})(?:\s+(undocked|docked))?", re.IGNORECASE)
+# The screens every layout change is censused on (w894: the Deck's docked layout is where Station Info and the hover card
+# were stacked top left, and no census looked at it).
+REQUIRED_STATES = ("1920x1080", "1280x800 undocked", "1280x800 docked")
+PINS = Path(__file__).resolve().parent.parent / "unity-ui" / "hud-pins.json"
+STOP = ('Ben, 2026-10-10 (w895): "stop moving panels around that I don\'t ask you to move around. It\'s driving me crazy."')
 
 
 def normalized(text: str) -> str:
-    text = text.replace("\u2019", "'").replace("\u2018", "'").replace("\u201c", '"').replace("\u201d", '"')
+    text = text.replace("’", "'").replace("‘", "'").replace("“", '"').replace("”", '"')
     return re.sub(r"\s+", " ", text).strip().lower()
 
 
@@ -277,33 +282,57 @@ def in_brief(quote: str, brief: str) -> bool:
     marks counts whole (the person wrote it)."""
     text = normalized(brief)
     spoken = re.findall(r'"([^"]+)"', text) or [text]
-    pieces = [normalized(p) for p in re.split(r"\.\.\.|\u2026", quote)]
+    pieces = [normalized(p) for p in re.split(r"\.\.\.|…", quote)]
     return all(any(p in s for s in spoken) for p in pieces if len(p) >= 3)
 
 
+def brief_in_body(body: str) -> str | None:
+    """The requester's words the PR carries: its 'Brief (who): ...' lines and a '## Brief' section (w894)."""
+    lines = [m.group(0) for m in re.finditer(r"^\s*Brief\s*(?:\([^)]*\))?\s*:.*$", body or "", re.IGNORECASE | re.MULTILINE)]
+    section = evidence_section(body or "", "Brief")
+    text = "\n".join(lines + ([section] if section else []))
+    return text if text.strip() else None
+
+
+def pins() -> list[dict]:
+    try:
+        return json.loads(PINS.read_text(encoding="utf-8")).get("pins", [])
+    except (OSError, ValueError):
+        return []
+
+
+def states_of(text: str) -> set[str]:
+    return {f"{m.group(1)}x{m.group(2)}" + (f" {m.group(3).lower()}" if m.group(3) else "") for m in STATE.finditer(text)}
+
+
+def missing_states(text: str) -> list[str]:
+    found = states_of(text)
+    return [want for want in REQUIRED_STATES if not any(f == want or f.startswith(want + " ") for f in found)]
+
+
 def moved_problems(section: str, brief: str | None = None) -> tuple[list[str], list[str]]:
-    """Every element the change moved is accounted for (w826, Ben: "i didnt tell you to move that"). The `Moved:` line
-    is `ui_layout.py moves` over the two standard sizes; each list line under it carries `asked (who): "their words"`
-    or `not asked: justified: <why>`. A move marked `not asked: reverted` does not count: a reverted move is not in
-    the after census, so re-take it."""
+    """Nothing moved that the requester did not ask to move (w826; w894, Ben: "stop moving panels around that I don't ask
+    you to move around"). The `Moved:` line is `ui_layout.py moves` at 1920x1080, 1280x800 undocked and 1280x800 docked;
+    each list line names one element and carries `asked (who): "their words"`, found word for word inside the brief's
+    quotations (--brief, or the PR's 'Brief (who):' lines), naming the element when it is pinned (hud-pins.json). There
+    is no other way to pass: `not asked: justified` was used for every unasked move it let through (#1397 moved Station
+    Info and the hover card in the dock and passed). `not asked: reverted` does not count: re-take the after census."""
     lines = section.split("\n")
     head = next((i for i, l in enumerate(lines) if re.match(r"^\s*Moved\s*:", l, re.IGNORECASE)), None)
     if head is None:
-        return (["UI change with no 'Moved:' line: census before and after at 1920x1080 and at 1280x800 (UI 0.8), run "
-                 "ui_layout.py moves --pair before-1920 after-1920 --pair before-1280 after-1280, paste its line and "
-                 "mark every move asked (who): \"their words\" or not asked: justified: <why> (checklists/ui.md, "
-                 "item 22; w826: #1282 moved the Station Info box to the top left and nobody had asked)"], [])
+        return (["UI change with no 'Moved:' line: census before and after at 1920x1080, 1280x800 (UI 0.8) and 1280x800 "
+                 "docked, run ui_layout.py moves with the three pairs, paste its lines and mark every move asked (who): "
+                 "\"their words\" from the brief, or put it back (checklists/ui.md, item 22; w826, w894)"], [])
     text = lines[head]
-    problems, notes = [], []
+    problems = []
     count = re.search(r"Moved\s*:\s*(\d+)\s+element move", text, re.IGNORECASE)
     if not count:
         return (["'Moved:' does not say how many element moves the census found: paste ui_layout.py moves' line"], [])
-    sizes = {re.sub(r"\s", "", m).lower() for m in re.findall(r"\b\d{3,4}\s*x\s*\d{3,4}\b", text)}
-    missing = [s for s in STANDARD_SIZES if s not in sizes]
+    missing = missing_states(text)
     if missing:
-        problems.append(f"'Moved:' does not cover {' and '.join(missing)}: compare before and after at both standard sizes "
-                        f"(1920x1080 at the default UI scale, 1280x800 at 0.8). A move made for one screen is a move on "
-                        f"the other too (w761, w826)")
+        problems.append(f"'Moved:' does not cover {', '.join(missing)}: compare before and after on every standard screen "
+                        f"and layout (ui_layout.py moves labels each pair; w894: the Deck's docked layout moved Station "
+                        f"Info and the hover card to the top left and no census looked at it)")
     entries = []
     for line in lines[head + 1:]:
         if not line.strip():
@@ -312,35 +341,75 @@ def moved_problems(section: str, brief: str | None = None) -> tuple[list[str], l
             break
         found = MOVE_ENTRY.match(line)
         if found:
-            entries.append((re.sub(r"\s", "", found.group(1)).lower(), found.group(2).strip(), line))
+            state = re.sub(r"\s", "", found.group(1)).lower() + (f" {found.group(2).lower()}" if found.group(2) else "")
+            entries.append((state, found.group(3).strip(), line))
+    pinned = pins()
     accounted = 0
-    for size, name, line in entries:
-        asked, justified = ASKED.search(line), JUSTIFIED.search(line)
-        if REVERTED.search(line) and not asked and not justified:
+    for state, name, line in entries:
+        bare = re.sub(r"\([^)]*\)", "", name)
+        if "," in bare or re.search(r"\band\b", bare):
+            problems.append(f"'Moved:' {state} {name}: one element per line, as ui_layout.py moves prints it (#1397 folded "
+                            f"Station Info and the hover card into one line with the inventory)")
+        asked = ASKED.search(line)
+        if REVERTED.search(line) and not asked:
             continue
-        if asked:
-            accounted += 1
-            if size != "1280x800" and re.search(r"\bdeck\b", asked.group(2), re.IGNORECASE):
-                problems.append(f"'Moved:' {size} {name}: the quote asks for the Deck (\"{asked.group(2)[:60]}\"), not "
-                                f"for this screen. A Deck request does not move the desktop HUD: put it back at {size} "
-                                f"or quote words about this screen (w826: #1282 moved the Station Info box on desktop "
-                                f"too; Ben: \"i didnt tell you to move that\")")
-            if brief is not None and not in_brief(asked.group(2), brief):
-                problems.append(f"'Moved:' {size} {name}: the quote is not in the brief word for word: "
-                                f"\"{asked.group(2)[:80]}\". Only the requester's own words are a target (checklists/ui.md, item 1)")
-        elif justified:
-            accounted += 1
-            notes.append(f"moved, not asked: {size} {name}: {justified.group(1)[:140]}. Put it in the report's first lines "
-                         f"for the requester")
-        else:
-            problems.append(f"'Moved:' {size} {name} is not marked: asked (who): \"their words\" when the requester "
-                            f"asked for this element to move there, otherwise put it back (then re-take the census) or "
-                            f"mark it not asked: justified: <why>")
+        if JUSTIFIED.search(line) and not asked:
+            problems.append(f"'Moved:' {state} {name} is marked not asked: justified. A move nobody asked for is put back, "
+                            f"then the after census is taken again; ask the requester first if it cannot be. {STOP}")
+            continue
+        if not asked:
+            problems.append(f"'Moved:' {state} {name} is not marked: asked (who): \"their words\" when the requester asked "
+                            f"for this element to move there, otherwise put it back and take the after census again")
+            continue
+        accounted += 1
+        quote = asked.group(2)
+        if not state.startswith("1280x800") and re.search(r"\bdeck\b", quote, re.IGNORECASE):
+            problems.append(f"'Moved:' {state} {name}: the quote asks for the Deck (\"{quote[:60]}\"), not for this screen. "
+                            f"A Deck request does not move the desktop HUD (w826)")
+        if brief is None:
+            problems.append(f"'Moved:' {state} {name}: no brief to check the quote against: put the requester's words in "
+                            f"a 'Brief (who): \"...\"' line of the PR, or run with --brief <the brief from read_work> (w894: "
+                            f"#1392 quoted words that are not in its brief)")
+        elif not in_brief(quote, brief):
+            problems.append(f"'Moved:' {state} {name}: the quote is not in the brief's quotations word for word: "
+                            f"\"{quote[:80]}\". Only the requester's own words are a target (checklists/ui.md, item 1)")
+        pin = next((pn for pn in pinned if re.search(rf"(^|/){re.escape(pn['element'])}\b", name)), None)
+        if pin and not any(n in normalized(quote) for n in pin["names"]):
+            problems.append(f"'Moved:' {state} {name} is pinned ({pin['name']}: {pin['where']}) and the quote does not name "
+                            f"it ({' / '.join(pin['names'])}). A pinned element moves only when the requester says so by "
+                            f"name, and then hud-pins.json changes with their words")
     if accounted < int(count.group(1)):
-        problems.append(f"'Moved:' counts {count.group(1)} move(s) but only {accounted} list line(s) are marked asked or "
-                        f"justified: paste every line ui_layout.py moves prints under it and mark each (a reverted move "
-                        f"is not in the after census: re-take it)")
-    return problems, notes
+        problems.append(f"'Moved:' counts {count.group(1)} move(s) but only {accounted} list line(s) are asked for: paste "
+                        f"every line ui_layout.py moves prints and put back each one nobody asked for")
+    return problems, []
+
+
+def pinned_problems(section: str) -> list[str]:
+    """The places Ben fixed himself (unity-ui hud-pins.json), checked on every screen and layout whatever the PR's parent
+    showed (w894: the dock had stacked Station Info and the hover card top left since w772, so a before/after diff saw no
+    move). The line is `ui_layout.py pins` over the after censuses. No way out in a PR: a pin changes only when the
+    person asks, in a harness PR."""
+    line = field(section, "Pinned")
+    if not line:
+        return ["UI change with no 'Pinned:' line: run ui_layout.py pins on the after censuses (1920x1080, 1280x800 "
+                "undocked and docked, a station selected so Station Info and the hover card show) and paste its line "
+                "(checklists/ui.md, item 22; w894)"]
+    text, problems = line[1], []
+    broken = re.search(r"(\d+)\s+broken", text)
+    shown = re.search(r"(\d+)\s+not shown", text)
+    if not broken or not shown:
+        return ["'Pinned:' does not say how many pins are broken and not shown: paste ui_layout.py pins' line"]
+    if int(broken.group(1)):
+        problems.append(f"'Pinned:' has {broken.group(1)} broken pin(s): an element Ben placed himself is not where he put "
+                        f"it (Station Info over the abilities, the hover card over the minimap, the Player Inventory off "
+                        f"the left edge). Put it back. {STOP}")
+    if int(shown.group(1)):
+        problems.append(f"'Pinned:' has {shown.group(1)} pin(s) not shown: take the censuses with a station selected and "
+                        f"the hover card up, so every pin is measured")
+    missing = missing_states(text)
+    if missing:
+        problems.append(f"'Pinned:' does not cover {', '.join(missing)}: census every standard screen and layout")
+    return problems
 
 
 def layout_problems(section: str) -> list[str]:
@@ -455,7 +524,7 @@ def check(body: str, files: list[str] | None = None, brief: str | None = None) -
                             "intended look. A measurement or a watch_video verdict is not a look")
 
     if ui:
-        ui_found, ui_notes = ui_problems(section, brief)
+        ui_found, ui_notes = ui_problems(section, brief if brief is not None else brief_in_body(body))
         problems += ui_found
         notes += ui_notes
 

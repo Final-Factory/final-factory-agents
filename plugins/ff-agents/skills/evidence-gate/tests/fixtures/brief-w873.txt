@@ -1,0 +1,9 @@
+w873 (ledger brief, 2026-10-10, as read_work printed it)
+
+Ben, in his own words (2026-10-10): "The station controls panel shouldn't appear over the objectives by default. It needs a better spot,maybe just down where the old copy and deconstruct buttons were next to the abilities.
+
+Change the copy station to copy and deconstruct station to deconstruct to shorten it. Then move hide panels to that row. That should compact the width of the panel. And just remove the header to get rid of vertical space. Make sure it looks good on desktop and steam deck"
+
+Constraints:
+- Don't move any other UI that Ben didn't ask to move.
+- No overlaps with the hotbar, abilities, objectives, Station Info strip (w813) or the Deck docked layout (w772, w815).

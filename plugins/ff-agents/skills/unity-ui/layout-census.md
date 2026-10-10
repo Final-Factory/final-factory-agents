@@ -154,32 +154,48 @@ drawn in `LocalizationHelper.ApplyFont`'s font (Khyay for every Latin locale), n
 filter labels were authored in Liberation Sans, where they fit, and wrapped in Khyay. A prefab test that lays out the
 label in both fonts is the game repo's `RaisedLabelsFitTest`.
 
-## What moved (w826)
+## What moved, and the pins (w826, w894)
 
-Ben, after two UI changes moved HUD pieces he had not asked about: "you did more with the overall layout than i wanted"
-(the objectives card pushed under the Station strip) and "why is station info at the top left? i didnt tell you to move
-that" (#1282). Overlap, drift and colour checks do not see a move that leaves nothing overlapping, so every move is listed:
+**Hard rule: move only what the person asked to move.** Never move, re-anchor, restack or regroup an existing panel, HUD
+element or hover panel unless the brief quotes the person asking for that exact element to move. Ben, four times in two
+days: "you did more with the overall layout than i wanted"; "why is station info at the top left? i didnt tell you to move
+that"; "it seems like you keep moving it to the top on the deck. I don't want that"; "put it back over the minimap, stop
+moving panels around that I don't ask you to move around". Overlap, drift and colour checks do not see a move that leaves
+nothing overlapping, so every move is listed, and the places he fixed are pinned:
 
 ```sh
-python "<this skill's base directory>/ui_layout.py" moves --pair before-1920.json after-1920.json \
-    --pair before-1280.json after-1280.json [--move-px 4]
+python "<this skill's base directory>/ui_layout.py" moves --pair b-1920.json a-1920.json \
+    --pair b-1280.json a-1280.json --pair b-docked.json a-docked.json [--move-px 4]
+python "<this skill's base directory>/ui_layout.py" pins a-1920.json a-1280.json a-docked.json
 ```
 
-- Take the four censuses with the same save and the same steps: 1920x1080 at UI 0.9, 1280x800 at UI 0.8. In the editor,
-  pick the Game view size by reflection and set `InterfaceSettingsController.UiScaleOverride` plus
-  `UiScaler.Instance.UpdateUiScale(x)`; that does not write the shared PlayerPrefs, which `ApplyUiScale` does. In a built
-  player, a Deck-tour `shot` writes `<name>.layout.json`, the same census, at `-ffDeckTourSize` and `-ffDeckTourUiScale`.
-- It compares each element's rect (the RectTransform's, not the clipped part), groups what moved into the highest
-  object whose every element moved by the same amount, and prints one line per HUD block (`GamePanels/X`) with its
-  outer rect before and after and the largest part that moved inside it. A block with nothing left on screen is listed
-  as gone; a new block is named, not counted. Elements that share a path are paired in reading order.
-- Each line ends `mark: ?`. Replace it with `asked (Ben): "his words"` or `not asked: justified: <why>`, or put the
-  element back and take the after census again. `pr_evidence.py` fails an unmarked line, a `Moved:` line without both
-  sizes, a Deck quote on a 1920x1080 line, and with `--brief` a quote that is not inside the brief's quotation marks.
-- Measured in the editor (classic layout, a new game with the tutorial objectives, a station from w813's blueprint
-  selected; `tests/fixtures/w826-1282-*.json`): between 4762a5bc3 and 102e46bed (#1282) it prints 7 lines, the Station
-  Info box first (x -312, y -736 px at 1920x1080), then the strip's buttons and the hover card that grew with the text
-  floor, and the Player Inventory 23 px lower at 1280x800. A census against itself prints 0.
+- Take six censuses with the same save and the same steps: 1920x1080 at UI 0.9, 1280x800 at UI 0.8, and 1280x800 docked,
+  each before and after, **with a station selected** so Station Info and the building hover card are up. In the editor,
+  pick the Game view size by reflection, set `InterfaceSettingsController.UiScaleOverride` plus
+  `UiScaler.Instance.UpdateUiScale(x)` (not `ApplyUiScale`, which writes the shared PlayerPrefs), and for the dock set
+  `UI.Structured.StructuredLayout.Forced = true` and select the building again (`ffauto:ui.selecttile|x|z`). In a built
+  player, a Deck-tour `shot` writes `<name>.layout.json`, the same census, at `-ffDeckTourSize` and `-ffDeckTourUiScale`,
+  with `{"layout": "docked"}` for the dock (one layout per launch: checklist item 23).
+- `moves` compares each element's rect (the RectTransform's, not the clipped part), groups what moved into the highest
+  object whose every element moved by the same amount, and prints one line per HUD block (`GamePanels/X`) with its screen
+  and layout (`docked` when `StructuredDock` or `StructuredStation` is on screen, else `undocked`), its outer rect before
+  and after and the largest part that moved inside it. A block with nothing left on screen is listed as gone; a new block
+  is named, not counted. It refuses a pair whose two censuses are of different layouts.
+- Each line ends `mark: ?`. Replace it with `asked (Ben): "his words"`, from inside the brief's quotation marks and
+  naming that element on that screen, or put the element back and take the after census again. `pr_evidence.py`
+  (with `--brief`, or `Brief (Ben): "..."` lines in the PR) fails anything else: "not asked: justified", a quote not in
+  the brief, a Deck quote on a desktop line, a pinned element whose quote does not name it, one line for several
+  elements, and a missing screen or layout.
+- `pins` checks [hud-pins.json](hud-pins.json) in every census, against no baseline: Station Info's bottom edge 0 to 6 %
+  of the height above the ability row and over it (or, where the dock hides the row, in the bottom 30 % of the screen
+  and the middle half of its width); the hover card the same over the minimap (or bottom right); the Player Inventory's
+  left edge at least 2 % of the width from the screen's edge. A pin whose element is not on screen is "not shown" and
+  fails too: take the census with it up. A pin changes only when Ben asks, in a harness PR with his words.
+- Measured in the editor, a new game with the tutorial objectives and a station from w813's blueprint selected:
+  between 4762a5bc3 and 102e46bed (#1282) `moves` prints 7 lines, Station Info first (x -312, y -736 px at 1920x1080;
+  `tests/fixtures/w826-1282-*.json`). On develop 9798f308c (`tests/fixtures/w894-develop-*.json`) `pins` breaks Station
+  Info (bottom edge at 264 of 800 px) and the hover card (right edge at 358 of 1280 px) at 1280x800 docked, where w772's
+  dock cluster stacks them top left, and keeps all three pins at 1920x1080 and 1280x800 undocked.
 
 ## A HUD piece the requester asked to draw over an opened panel (w835)
 

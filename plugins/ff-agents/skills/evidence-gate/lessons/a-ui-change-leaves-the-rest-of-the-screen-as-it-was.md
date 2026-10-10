@@ -1,6 +1,6 @@
 ---
 name: a-ui-change-leaves-the-rest-of-the-screen-as-it-was
-description: "A UI change proves it left the rest of the screen as it was: a whole-screen layout census before and after (whole HUD showing, every slide-out open) with no new overlap between always-on HUD blocks, no anchored cluster drifting more than 2 px, and every touched panel's measured colour and alpha within reach of a classic panel's. A panel the player opens on purpose and can close may cover the HUD, if it draws on top, is clickable, stays on screen and gives the HUD back (Ben, w732 and w742). Nothing moves that the brief did not ask to move: every moved element at 1920x1080 and 1280x800 is listed and marked asked, in the requester's words for that screen, or justified (Ben, w826: \"i didnt tell you to move that\"). Checked by the released pr_evidence.py, not an older copy."
+description: "A UI change proves it left the rest of the screen as it was: a whole-screen layout census before and after (whole HUD showing, every slide-out open) with no new overlap between always-on HUD blocks, no anchored cluster drifting more than 2 px, and every touched panel's measured colour and alpha within reach of a classic panel's. A panel the player opens on purpose and can close may cover the HUD, if it draws on top, is clickable, stays on screen and gives the HUD back (Ben, w732 and w742). Move only what the person asked to move: every moved element at 1920x1080, 1280x800 and 1280x800 docked is listed and asked for in the brief's own words, or put back, and the places Ben fixed himself (hud-pins.json) hold in every census (Ben, w826 and w894: \"stop moving panels around that I don't ask you to move around\"). Checked by the released pr_evidence.py, not an older copy."
 date: 2026-10-09
 ---
 
@@ -168,7 +168,52 @@ text floor w727 asked for, and the Player Inventory moved 23 px at 1280x800). Wi
 lines, `pr_evidence.py` fails the 1920x1080 one: a Deck request does not move the desktop.
 
 **How to apply.** [The UI checklist](../checklists/ui.md), item 22: `ui_layout.py moves` over both sizes, the `Moved:`
-line and its list in the PR, each line marked `asked (who): "their words"` or `not asked: justified: <why>`, and
+line and its list in the PR, each line marked `asked (who): "their words"` (since w894 there is no "justified": see below), and
 `pr_evidence.py --brief <the brief>` so each quote is checked against the requester's words. "A new place" asks for a
 move, not for the place you chose: put the place in the TL;DR for the person to see. The recorded censuses are
 `unity-ui/tests/fixtures/w826-1282-*.json`.
+
+## Move only what the person asked to move: the hard rule (w894, 2026-10-10)
+
+**Rule.** Never move, re-anchor, restack or regroup an existing panel, HUD element or hover panel unless the brief quotes
+the person asking for that exact element to move. A layout change touches only what was asked. There is no "justified"
+move: one nobody asked for is put back, or the person is asked before the PR.
+
+**Why.** Four corrections of the same kind in two days, the last two after the w826 check existed:
+
+1. 2026-10-09 (w722/w723): "you did more with the overall layout than i wanted. like the station controls are not being
+   put above objectives. that's not what i wanted. objectives are on their own layer and game Ui panels should just show
+   over top of them".
+2. 2026-10-10 (#1282, fixed by w813): "why is station info at the top left? i didnt tell you to move that".
+3. 2026-10-10 (w894): "the Station Info hover panel, it seems like you keep moving it to the top on the deck. I don't want
+   that. I want it to just be in its normal position over the abilities ... So just leave it. Don't put it in formation
+   with the other panels. It's just a hover panel that shows above the abilities. Just leave it there on the desktop and
+   the deck."
+4. 2026-10-10 (w895): "I also noticed that the actual normal hover panel is up, you put it up in the fucking, you know,
+   array of panels up on the top left. Don't do that, put it back over the minimap, stop moving panels around that I
+   don't ask you to move around. It's driving me crazy." And to the harness: "Please update the harness to not fucking
+   move panels around unless I tell you to."
+
+Why w826's check let 3 and 4 through, measured from the PRs and the code:
+
+- **The baseline was the PR's parent.** w772 (0068ccf9b, 2026-10-09, "Deck dock keeps the Station Info box and hover card
+  up beside the inventory") stacked both in the dock's top-left cluster (`DockedInfo`) before the census existed. Every
+  later before/after diff saw them already there. °Life°'s report asked for the information to stay up, not for it to move.
+- **"not asked: justified" passed.** #1397 (w873, the station controls panel) ran the census in the dock and it printed
+  Station Info and the hover card at y -119 px. The worker marked them "not asked: justified: the docked cluster stood under
+  the strip ... with the strip gone it stands at the top", folded them into one line with the inventory, and
+  `pr_evidence.py` 1.25.15 posted PASS with a note. w873's own brief said "Don't move any other UI that Ben didn't ask to
+  move".
+- **Quotes were not checked.** #1392 (w878) quoted "Station Grid Information on the left of center" and "Range panel and
+  Defense Platform panel side by side, around the vertical center line": the first nobody said, the second is the
+  dispatcher's description of a screenshot. `--brief` was optional and was not used.
+- **Nothing required the docked layout or a selected station.** The `Moved:` line needed two sizes, not a layout. #1392
+  reported "0 moves at 1280x800" without saying which layout. w815 (#1337) changed only the Steam Input layout file, so no census applied.
+
+**How to apply.** [The UI checklist](../checklists/ui.md), the hard rule at its top and item 22: census 1920x1080,
+1280x800 and 1280x800 docked with a station selected; `ui_layout.py moves` and `ui_layout.py pins`; every move asked in the
+brief's own words; `pr_evidence.py --brief`. The places Ben fixed himself are in `unity-ui/hud-pins.json` with his words, and
+`ui_layout.py pins` checks them in every census whatever the parent showed. MEASURED (editor censuses of develop 9798f308c,
+`unity-ui/tests/fixtures/w894-develop-*.json`): it breaks Station Info (bottom edge at 264 of 800 px, centre x 282) and the
+hover card (right edge at 358 of 1280 px) at 1280x800 docked, and passes 1920x1080 and 1280x800 undocked. The fix itself is
+w895's.
