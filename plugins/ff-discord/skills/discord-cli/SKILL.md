@@ -22,6 +22,30 @@ machine. Fix it with `sh registerAgents.sh --plugin ff-discord` from a final-fac
 checkout, then start a new shell. To run a working copy instead of the installed one, set
 `FFDISCORD_CLI` to the path of an `ffdiscord.py`.
 
+### Windows (git-bash)
+
+Git Bash does not put `~/.local/bin` on PATH, so a fresh Git Bash says `ffdiscord: command not found`
+even after the launcher is installed. Either add it once and open a new shell,
+
+```bash
+echo 'export PATH="$HOME/.local/bin:$PATH"' >> ~/.bashrc
+```
+
+or call the launcher by path, which needs nothing set up and works in any Git Bash:
+
+```bash
+sh "$(ls -d ~/.claude/plugins/cache/*/ff-discord/*/skills/discord-cli/bin/ffdiscord | sort -V | tail -1)" read dev_chat --limit 1 --json
+```
+
+The launcher does not trust `python3` on PATH: on Windows that is usually the Microsoft Store
+"App Execution Alias" (`...\WindowsApps\python3.exe`), which exists with no Python installed and
+only prints `Python was not found`. It runs each candidate (`python3`, `python`, `py -3`, then
+`%LOCALAPPDATA%\Programs\Python\Python3*`, `C:\Python3*`, `C:\Program Files\Python3*`, newest
+first) and uses the first that exits 0 on a one-liner; a Python installed from the Store itself is
+tried last. When none runs it exits 127 and lists every candidate it tried (w912). Set
+`FFDISCORD_PYTHON` to a full `python.exe` path to force one. `ffdiscord.cmd` (cmd, PowerShell)
+does the same lookup.
+
 Every command takes `--json` for machine-readable output. Channel arguments accept a raw
 snowflake, a configured alias, or `#channel-name`. An alias that is IN the config with a
 blank id is looked up by name on the server once and the id is written back, so
