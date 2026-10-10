@@ -226,6 +226,10 @@ One file each under `lessons/`: the rule, why (the incident, dated), how to appl
   person can move you on, call `waiting_on_person` and end the turn naming who and what; a `wake_me` check-in
   shows the request Working (w665: Working for 10 h while it waited for Ben to reboot the m3).
 
+- [Never hand a person a step a tool can do](lessons/never-hand-a-person-a-step-a-tool-can-do.md): an
+  installer rerun, a daemon update or any command on a machine goes through the ops worker or ssh,
+  never to Ben or lothsahn (w855: the dispatcher asked Ben to rerun biscuit's installer for w847).
+
 ## Adding a lesson: before every DONE
 
 Every request ends with a `Learned:` line in the DONE report: the file or PR you added, or
