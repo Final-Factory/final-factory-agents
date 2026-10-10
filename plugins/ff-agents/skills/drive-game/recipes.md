@@ -283,3 +283,40 @@ and deconstruction 790-791, repeatable to 1 heartbeat across runs.
   `MCPDynamic` assembly. Each `execute_code` compiles a new assembly, so a later call can find them.
 - Revert the change under test with `git diff <merge>^1 <merge> -- <files> | git apply -R`, recompile,
   run the same hook again, then re-apply it.
+
+## Marketing and store stills from a built player (w827, 2026-10-10)
+
+Proven on BEAST for Ben's Steam event cover (Build 92 release, 800x450). The finished covers were published
+as att_czxzut77aptx, att_bewwrewxiy7h and att_8u6r6t4e4kw9.
+
+- **A clean frame from a release player**: no HUD, and no "Development Build" text or fps counter. Run
+  `python scripts/nightly/player_slots.py launch --detach <player dir> -- -ffAgentControl true
+  -ffAgentControlDev true -ffAutomationRole solo -ffAutomationSave <save name> -screen-width 2560
+  -screen-height 1440 -screen-fullscreen 0 -logFile <tmp log>`. `-ffAgentControlDev true` grants the dev
+  tier even in a release build (`AgentChannelHost.ResolveCapabilities`, the flag is checked before
+  `Debug.isDebugBuild`). Copy the save into the saves folder under a name of your own first, and delete
+  your copy at the end.
+- **The agent channel**: the port and token are in `<persistentDataPath>/AgentControl/session-<pid>.json`
+  (`scripts/nightly/lab.py` `Peer` shows the requests).
+  - `POST /v1/command {"actor":"local-player","command":"ffauto:ui.hide|true"}` hides the whole UI
+    canvas. Without the `ffauto:` prefix the command is rejected.
+  - `ffauto:camera.zoom|<distance>` sets the zoom. A smaller distance is closer, and the default framing
+    is already wide.
+  - `GET /v1/screenshot?maxEdge=1920` returns a PNG of the real frame. `maxEdge` must be 320..1920.
+  - `ffauto:observe.state|nearby|x|z|r` caps the radius at 64 tiles, so scan a grid in 120-tile steps
+    to find structures (for example, whether a save has mobile stations or holo pads).
+- **Check the version you shot.** BEAST's Steam install reported `gameVersion` 0.50.0.83 on `/v1/hello`
+  while develop was at 92. Say which build the frame came from.
+- **Close the player with `(Get-Process -Id <pid>).CloseMainWindow()` in PowerShell.** The harness hook
+  blocks `taskkill` from Bash. Then run `player_slots.py prune`.
+- **The game's own key art is in the repo**: `Assets/Art/Textures/Final Factory_Artworks_02/{Building,Exploration}/PNG/*_Art_01.png`
+  (9000x2700). Ben OK'd it for event covers: "you can also just generate something based on the
+  illustrations for the game". A 4800x2700 crop is 16:9. The option recommended for the Build 92 event was a crop
+  of Base Art, stations flying under thrust.
+  - Logo: `Assets/Art/Branding/CenteredLogo.png`, white with its own drop shadow. Don't use
+    `logoOnly.png`: its letters are semi-transparent.
+  - Display font: Bebas Neue, in `Assets/Graph And Chart - Lite Edition/Themes/Common/Fonts/bebas_neue/`.
+- **A Steam event cover is 800x450.** Composite at 1920x1080 with PIL, darkening the text side with a
+  gradient, then downscale with LANCZOS. Look at a 400x225 copy for legibility.
+  - Publish the first good option at once, then iterate on the person's own event text. Ben changed the
+    headline mid-request, to "Being Reborn" instead of "Big Update".
