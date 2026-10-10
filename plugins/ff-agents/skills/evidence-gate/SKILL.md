@@ -139,7 +139,7 @@ One file each under `lessons/`: the rule, why (the incident, dated), how to appl
   is a second opinion.
 - [No merge before the review](lessons/no-merge-before-the-review.md): "pending" is not done.
 - [Merge your own pull request](lessons/merge-your-own-pr.md): verified and green means merge;
-  hold only for exceptional risk or a timing reason, and say which and when.
+  hold only for exceptional risk or a timing reason, and say which and when. mechanics: check `git branch --show-current` after a wait, gate `gh pr merge` on a passing check, post the verdict only from the newest ff-agents (w807).
 - [A release lands where SETLIVE says](lessons/a-release-lands-where-setlive-says.md): develop on
   `development`, master on `pre-release`; run `release-status.py`, never recall it.
 - [A release is done when its notes are posted](lessons/a-release-is-done-when-its-notes-are-posted.md):
@@ -218,10 +218,6 @@ One file each under `lessons/`: the rule, why (the incident, dated), how to appl
 - [A wait on a person is declared, not polled](lessons/a-person-wait-is-declared-not-polled.md): when only a
   person can move you on, call `waiting_on_person` and end the turn naming who and what; a `wake_me` check-in
   shows the request Working (w665: Working for 10 h while it waited for Ben to reboot the m3).
-
-- [Check your branch after a wait](lessons/check-your-branch-after-a-wait.md): a sandbox can be moved to another
-  worker's branch while you wait; `git branch --show-current` before the first write (w807 merged develop onto
-  w817's branch and had to reset it).
 
 ## Adding a lesson: before every DONE
 
