@@ -37,7 +37,7 @@ holds, or the report says what is left instead of DONE.
    <name> to check on the Deck` and declare it with `waiting_on_person`.
 8. **Steps handed to a person.** Every "someone has to run X" in the report or a question was checked
    against the tools: nothing the ops worker or ssh can do is left to a person
-   ([never hand a person a step a tool can do](../lessons/never-hand-a-person-a-step-a-tool-can-do.md), w855).
+   ([never hand a person a step a tool can do, first section](../lessons/a-person-wait-is-declared-not-polled.md), w855).
 9. **Learned.** The report has `Learned: <file or PR>` or `Learned: nothing new`. A correction or a
    reopen gets the check that would have caught it ([lessons belong in the harness
    repo](../lessons/lessons-belong-in-the-harness-repo.md)).
