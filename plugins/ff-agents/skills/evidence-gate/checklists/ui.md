@@ -164,6 +164,17 @@ screen; on desktop three labels stopped fitting, the two windows left their defa
     top left? i didnt tell you to move that". MEASURED (w826, editor censuses of 4762a5bc3 and 102e46bed): the check lists
     `GamePanels/BuildInfoPanel` at x -312, y -736 px at 1920x1080 and x -30, y -476 px at 1280x800.
 
+22. **A layout change lists every HUD element it moved (w813).** Measure the base build (the commit before the first PR
+    of the layout work) and yours with the same tour, and put a table in the PR: each element whose place differs, with the
+    person's quote or "not asked". w722 / w723 moved the Station Info box to the top-left corner as a side effect of
+    packing windows around the strip; nobody asked, and it shipped until Ben, 2026-10-10: "why is station info at the top
+    left? i didnt tell you to move that". The evidence for a moved element is a still of it before and after, not the
+    tests of the layout around it.
+23. **A tour that switches layouts is not a classic still (w813).** In the built player the structured dock stays open
+    when the tour switches back to classic with a building selected, so a "classic" still shot after a docked pass was the
+    dock (the census names it: `StructuredDock`, `StructuredStation`). Run one layout per player launch, and read the census
+    names of the first still before trusting a set of them.
+
 19. **The Deck tour is a stand-in (w770).** It forces its own window size and a scripted Deck, so it cannot show Steam's
     layout choice, the Proton first-frame resolution, the Steam client version or touch. A Deck UI change says "verified on
     a real Deck" or "not verified on a real Deck" ([deck.md](deck.md)). For a stored bad size use `-ffDeckTourSize none
