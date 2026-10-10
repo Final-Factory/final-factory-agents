@@ -203,6 +203,18 @@ master** (the notice: "set live on <branch> (BuildID …)"; the ledger's `upload
 moves it there. BUILDING or WAITING is normal (measured 22-78 min from the
 bump; about 100 min after a shader or render-pipeline change misses the shader cache: 0.50.0.81's
 URP light layers, Builds 81-82 and master 82 at 95-108 min); only LATE is an ffbox problem for its owner.
+**A target's first release on a branch starts cold and takes far longer** (0.50.0.94, the first Linux
+release, run 38042874970, w863): no `<branch>@<unity>@linux.tar` existed (the nightly builds only osx,
+win64 and the mode-2 `linux64` overlay), so the Linux main player phase took 8106 s, the build step 165
+of its then 170 minutes, and the build LANDED 163 min after the bump, with Windows and Mac GOOD and
+waiting on Linux for 90 minutes. Wait it out: a running `Release (linux)` is not stuck until the step
+timeout (230/220 min since FinalFactory #1388, under ffbox's 240-minute job watchdog). The release
+writes the target cache back, so the next one on that branch is warm; master's first Linux release
+will be cold too.
+**After the first Linux upload, read the app's `launch` entries** (`steamcmd +login anonymous
++app_info_print 1383150`): on 0.50.0.94 the Linux depot 1383153 had a manifest on `development` but no
+launch option had `oslist linux`, which is a partner-site setting, so a person's to add. Report it to
+whoever asked for the release; never touch the partner site.
 `release-status.py` reads only the branch's last 100 commits (`scripts/release-status.py:111`):
 "No bump commit … in the last 100 commits" for an older release means out of range, not never made
 (0.50.0.89 was 135 commits back after 8 hours). Use `git log --first-parent --grep '^<version>$'
