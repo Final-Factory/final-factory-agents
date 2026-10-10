@@ -540,7 +540,12 @@ def reference(census: dict, fragment: str):
 
 def sample(shot, rect):
     """The median colour of a screenshot inside a rect (image pixels, top-left origin)."""
-    from PIL import Image  # noqa: PLC0415
+    try:
+        from PIL import Image  # noqa: PLC0415
+    except ImportError:
+        # w807: a bare "ModuleNotFoundError: No module named 'PIL'" cost a turn on a Mac with no Pillow anywhere.
+        raise SystemExit("ui_layout.py needs Pillow to sample --shot/--ref-shot: python3 -m venv <your temp dir>/pil && "
+                         "<your temp dir>/pil/bin/pip install pillow, then run this script with <your temp dir>/pil/bin/python")
     with Image.open(shot) as image:
         x0, y0, x1, y1 = (int(round(v)) for v in rect)
         x0, y0 = max(0, x0), max(0, y0)

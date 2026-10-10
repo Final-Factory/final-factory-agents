@@ -219,6 +219,10 @@ One file each under `lessons/`: the rule, why (the incident, dated), how to appl
   person can move you on, call `waiting_on_person` and end the turn naming who and what; a `wake_me` check-in
   shows the request Working (w665: Working for 10 h while it waited for Ben to reboot the m3).
 
+- [Check your branch after a wait](lessons/check-your-branch-after-a-wait.md): a sandbox can be moved to another
+  worker's branch while you wait; `git branch --show-current` before the first write (w807 merged develop onto
+  w817's branch and had to reset it).
+
 ## Adding a lesson: before every DONE
 
 Every request ends with a `Learned:` line in the DONE report: the file or PR you added, or
