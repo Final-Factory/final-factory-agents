@@ -65,7 +65,9 @@ heartbeat-frame wall median. Develop against the branch.
 1. Two bench players, one from `origin/develop` and one from the branch, the same way on the same
    machine: `Unity -batchmode -quit -projectPath . -buildTarget Win64 -executeMethod
    Editor.ShaderBenchBuild.BuildWindows -ffBenchBuildOutput "$PWD/builds/<name>/finalfactory.exe"`.
-2. The biggest save you can load (JustPlay where present; else the biggest in the saves folder or the
+2. The biggest save you can load (JustPlay where present: on BEAST it is
+   `LocalLow/Never Games/finalfactory/save-backups/JustPlay 0.20.0.91 0 (pre-columnar 2025-08-26).zip`, not in
+   `saves/`, so copy it into `saves/` under a name nobody else uses and remove it after; else the biggest in the saves folder or the
    golden fixtures), the same save for both.
 3. A session that runs the changed code. Solo: `-ffBench save:<name> -ffBenchSystems 1
    -ffBenchSeconds 180 -ffBenchOut <absolute dir>`. A capture that runs only in multiplayer (the
@@ -82,6 +84,22 @@ heartbeat-frame wall median. Develop against the branch.
 **Negligible** means each of tick mean, tick p95 and frame median rises by less than 1% of develop's
 value, and the runs resolve it: the difference of the means is clear of the run-to-run spread, or
 add runs until it is. A difference you cannot resolve is not negligible.
+
+**When the whole-heartbeat runs cannot resolve 1%, time the added code itself** ([lesson](../lessons/time-the-added-code-when-the-bench-cannot-resolve.md)).
+On a shared machine the 2-peer bench's spread can be far wider than 1% (w824 on BEAST, JustPlay, 4+4 interleaved
+runs: host heartbeat mean 123.3 ± 3.6 against 125.3 ± 9.4 ms, standard error of the delta 5 ms against a 1% threshold
+of 1.2 ms; about 280 runs would resolve it). Then:
+
+- Load the same save in the editor, unpause it (drive-game recipes: runtime-provisioned state appears only after the
+  unpause), and call each function the change adds on the heartbeat path through reflection, ~50 times with a
+  `Stopwatch`. The editor figure is an upper bound (w824: the whole fingerprint took 225 ms in the editor against
+  ~37 ms on the player's sampled heartbeat). Convert it: per-sample cost / sample interval against the tick mean,
+  the per-sample cost against tick p95 and the frame median.
+- Time the capture again with the case that triggers the change present (the preview, the ghost, the dead
+  ship), interleaved with it absent. w824's fix was free in an ordinary world and cost 5 ms per vision hash while a
+  preview was held (47.6 against 42.6 ms), because every holder paid a hash-set lookup; the review limited it to
+  the chunks that can hold an excluded entity.
+- Put both bench tables and the direct timing in the PR, and say which one resolves each number.
 
 - [ ] Negligible: put the table and the method in the PR, validate it as class 1 or 2 above, merge.
 - [ ] Not negligible: do not merge. Leave the PR open and end your turn with one line, FF Factory

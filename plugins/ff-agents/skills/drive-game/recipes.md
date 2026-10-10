@@ -41,8 +41,13 @@ foreach (var b in buttons) { var l = b.GetComponentInChildren<TMPro.TMP_Text>(tr
 
 **⚠️ Boot gate before ANY new game or load:** never invoke
 `StartNewGame` or `SaveGameManager.LoadGame` until `FFCore.Extensions.Ecs.Ready &&
-Ecs.HasSingleton<FFCore.Config.ItemConfig>() && Ecs.HasSingleton<FFCore.Config.MapGenerationData>()`
-returns true (namespace is `FFCore.Config`, NOT `FFComponents`). `ItemConfig` alone is not enough: a load
+Ecs.HasSingleton<FFCore.Config.ItemConfig>() && Ecs.HasSingleton<FFCore.Config.MapGenerationData>() &&
+Ecs.HasSingleton<FFCore.Fleet.CombatUpgradeContainer>()` returns true (namespace is `FFCore.Config`, NOT
+`FFComponents`), then step ~200 more frames before the call. The singletons arrive one by one: w824's load started
+with `ItemConfig` and `MapGenerationData` present and failed in `CombatUpgradesSystem.Reset` (from
+`SaveGameManager.ResetGame`) with `GetSingleton<FFCore.Fleet.CombatUpgradeContainer>() requires that exactly one
+entity exists`; the same load a few seconds later worked. That is the second miss of this kind (w761, w824): a
+singleton list is a guess at "booted", so keep the extra frames even when every listed singleton is there. `ItemConfig` alone is not enough: a load
 started when it was there and `MapGenerationData` was not ended at "Could Not Load Save" with
 `GetSingleton<FFCore.Config.MapGenerationData>() requires that exactly one entity exists` (w761, the
 editor stepped 30 frames after entering play mode); the same load a moment later worked. A `TitleScreenManager.Instance != null`
@@ -81,6 +86,11 @@ did nothing (it ran before the load began). The built players' saves and the edi
 
 ⚠️ The `NewGame` save is a **modded** save and the editor disables mods, so it loads with missing
 items/tech — pick a non-modded save for clean loads.
+
+⚠️ **Runtime-provisioned state is absent while a loaded save is paused.** Components systems add after load
+(the C3 vision holders, `C3KnnFleetVision`/`C3KnnEnemyVision`) do not exist until the save is unpaused (below) and
+a few frames are pumped: w824 counted 0 holders on paused JustPlay and 37,049 after the unpause. Measure or query
+them only then.
 
 ⚠️ **A loaded save can come in paused (`GameMetaState.IsPaused=true, GameStarted=false`) — never
 clear it with a raw ECS write.** Setting the fields via
