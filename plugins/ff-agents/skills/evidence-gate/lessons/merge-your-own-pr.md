@@ -57,6 +57,14 @@ or forgotten, so the person has to ask.
 - **Gate the merge on the check's result, not on "no longer pending".** `until ! gh pr checks N | grep
   -q pending; do sleep 10; done; gh pr merge N` merged a harness PR whose `validate` had failed in 6 s
   (a lesson count over the cap). Read `gh pr checks N` for `fail` before `gh pr merge`, in a script too.
+- **Merge in one gated command, pinned to the head you verified** (w864, 2026-10-10: the second slip of
+  this kind). FF Factory resumed the worker with "CI on ff-factory#270 finished: all 13 checks passed",
+  but that was the previous head's CI: the worker had pushed a merge of main since, its CI was still
+  running, and `gh pr checks 270 | grep -c pending; gh pr merge 270` printed 8 and merged anyway.
+  `gh pr checks` exits 0 only when every check passed (1 a failure, 8 pending; `gh pr checks --help`),
+  so let its exit code decide and pin the head:
+  `sha=$(gh pr view N --json headRefOid -q .headRefOid) && gh pr checks N && gh pr merge N --merge --match-head-commit "$sha"`.
+  A wake-up that says CI is green is a reason to look, not the verdict.
 - **Post the evidence verdict from the newest ff-agents.** `pr_evidence.py --comment` now refuses to
   post when its own copy is older than the released one (that FAIL is about the copy; it was posted on
   a PR twice and deleted by hand); update the plugin first.
