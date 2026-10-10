@@ -249,7 +249,9 @@ install_ffdiscord_launcher() {
   echo "  installed ffdiscord + ffdiscord-listener into $LAUNCHER_BIN"
   case ":$PATH:" in
     *":$LAUNCHER_BIN:"*) ;;
-    *) echo "  WARNING: $LAUNCHER_BIN is not on your PATH — add it, or skills will not find ffdiscord" >&2 ;;
+    *) echo "  WARNING: $LAUNCHER_BIN is not on your PATH — add it, or skills will not find ffdiscord." >&2
+       echo "           Linux/macOS/git-bash:  echo 'export PATH=\"\$HOME/.local/bin:\$PATH\"' >> ~/.bashrc   (then a new shell)" >&2
+       echo "           git-bash does not put ~/.local/bin on PATH by itself (w912)." >&2 ;;
   esac
 }
 
