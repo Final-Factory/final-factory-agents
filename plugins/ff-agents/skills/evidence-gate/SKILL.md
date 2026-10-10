@@ -174,7 +174,9 @@ One file each under `lessons/`: the rule, why (the incident, dated), how to appl
 - [Lessons belong in the harness repo, written before DONE](lessons/lessons-belong-in-the-harness-repo.md):
   every DONE carries `Learned:`; a correction or reopen gets a check; the strongest home first (tool,
   checklist, skill, the doc beside the code); a second correction of a kind is filed by the
-  orchestrator (w741: five rounds of Deck UI corrections before a check changed).
+  orchestrator (w741: five rounds of Deck UI corrections before a check changed). A GitHub 403 on a token for a
+  permission or repository not on ff-factory's `shared/githubRequirements.ts` is added there in a PR, so the portal's
+  banner asks for it (w904).
 - [Verify simulation at a slow host's frame rate](lessons/verify-simulation-at-a-slow-hosts-frame-rate.md):
   per-frame code writes no simulation state; prove a move with a frame-without-heartbeat test and a
   multiplayer run whose host is held near 20 fps (w342/w356: a Steam Deck host forked alone).

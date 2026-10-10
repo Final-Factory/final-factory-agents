@@ -46,3 +46,7 @@ holds, or the report says what is left instead of DONE.
 9. **Learned.** The report has `Learned: <file or PR>` or `Learned: nothing new`. A correction or a
    reopen gets the check that would have caught it ([lessons belong in the harness
    repo](../lessons/lessons-belong-in-the-harness-repo.md)).
+   A GitHub 403 or "Resource not accessible" you met on a person's or the portal's token, for a permission or repository
+   not in ff-factory's `shared/githubRequirements.ts`, was added there and to docs/vault.md 13.2 in a merged PR, named in
+   the report (Checks and repositories outside Final-Factory excepted; [lessons belong in the harness
+   repo](../lessons/lessons-belong-in-the-harness-repo.md), "A GitHub refusal becomes a requirement", w904).
