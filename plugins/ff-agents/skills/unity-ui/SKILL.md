@@ -97,6 +97,13 @@ census (`<shot>.json`: small, clipped, off-screen and overlapping text, covered 
 - **Every sub-view.** Per tab: select an item, hover one, open its preview or second page, scroll
   the list to the end (`at` + `press right_trigger`, `stick`). A tour that only presses R1 tests the
   tab strip.
+- **A tutorial step is reached by a save, not by a count of skips (w883).** `ffauto:console.run|completeXObjectives 1` once
+  per step advances at the heartbeat, not per call: 34 calls landed on the assembler step in one run and on "Open the map"
+  in the next, and `completeXObjectives 33` in one call only completes the first. Skip once with a save after each call
+  (`ffauto:ui.savegame|<name>-<i>` plus the `observe.state|objectives` line before it), pick the save whose logged step is
+  the one you need, delete the rest from the saves folder, and load it with `-ffAutomationSave <name> -ffAutomationRole
+  solo` for every before/after run (`specs/w819-craft-hint-border/make_tour.py --save-from`, `run_tour.sh` with `SAVE=`).
+  A save made by skipping also shows what a player who skipped sees: the research steps leave their techs unlearned.
 - **Wait for content.** `{"waitFor": "text:<something only the filled screen shows>"}` before each
   `shot`, not a fixed `wait`.
 - **Clips at real rate.** `{"record": "<name>", "seconds": 4}` saves every frame as JPGs in
