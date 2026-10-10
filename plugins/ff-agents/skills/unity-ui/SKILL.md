@@ -107,6 +107,7 @@ census (`<shot>.json`: small, clipped, off-screen and overlapping text, covered 
   the video with `cd clip-<name> && ffmpeg -f concat -safe 0 -i frames.txt -vf vflip -c:v libx264
   -pix_fmt yuv420p out.mp4`. `pr_evidence.py` only accepts a `Clips:` line that names `.mp4` files
   (with where the event is, "0 to 3 s"), so encode the before and after clips and publish them.
+- **Capturing on a shared Windows PC (w803).** Several sandboxes' players run at once, so: (1) the title menu and New Game > Custom come from a Deck tour (`click` steps on `text:New Game`, `text:Custom`; the w764 `menus` part already does it): the agent channel refuses commands at the menu (`state_not_playable`) and posted mouse messages are ignored while the window has no focus, so do not hand-click the title screen. (2) `scripts/agent/peer.py` keys the players by role, so with other sandboxes' players up its `client` is often someone else's: read your own `AgentControl/session-<pid>.json` (port, token) and call the channel yourself. (3) `record_clip.py` fails there (it picks nvenc, which an Intel GPU lacks, and ddagrab grabs the whole desktop with other players' windows over yours): record with the tour's `record` step instead. (4) The channel serves 2 screenshots a second (HTTP 429 beyond), so a screenshot sequence is at most a 2 fps timelapse, never a clip for `pr_evidence.py`; say its fps.
 - **Both arms.** The "before" is the classic screen with the same content (`{"layout": "classic"}`),
   so style and fill can be compared; develop with nothing open compares nothing.
 
