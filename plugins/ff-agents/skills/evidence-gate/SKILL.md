@@ -103,6 +103,8 @@ person asking for that exact element to move. Census 1920x1080, 1280x800 and 128
   "weeks to months"). Rewrite each as scope (files and systems touched, surfaces, risk,
   dependencies) or as a measured agent wall-clock time or cost from a named comparable run,
   labelled measured. No comparable run: scope only.
+- **On ff-factory, `npm run prepush` before every push** ([lesson](lessons/merge-your-own-pr.md#before-the-push-the-repos-own-pre-push-check-ff-factory-w924-2026-10-10)).
+  Push only when it passes; report any `SKIPPED` step (a tool missing on the machine) instead of ignoring it.
 - **Name a decider only from the sender line** ([lesson](lessons/name-a-decider-only-from-the-sender-line.md)).
   Before you write that a person approved, held, lifted, overrode or decided something (a PR
   description, release notes, a ledger note, a report), copy the name from that message's
