@@ -29,3 +29,18 @@ acceptance on the person's screen: ask them, never click it. A `-batchmode` run 
   22.8 (the editor is 3-5 GB, the shader/Burst helpers the rest). One editor, `max_unity` 1.
 - One fast-suite test failed in batch both runs: `AuditWriteCommandTest.ActiveCapturePolicy_TwoWrites…`
   (600-frame wait); unconfirmed whether it is batch-only.
+
+## The editor's bridge, builds from the open editor, and a 1 fps player (w806, 2026-10-09, biscuit/slot1)
+
+- **No bridge on a fresh Linux sandbox** (`[UnityMcpStdioAutoStart] UseHttpTransport pref is unset ... first boot?`, `unity-bridge.py`
+  "no MCP for Unity bridge registered"): stop the editor, add `<pref name="MCPForUnity.UseHttpTransport" type="int">0</pref>`
+  before `</unity_prefs>` in `~/.local/share/unity3d/prefs` (machine-global; the editor rewrites it on quit, so never with it open),
+  start it again: the stdio bridge comes up and `scripts/unity-bridge.py eval_file` works. The MCP tools themselves stay
+  disconnected for that session.
+- **Never `BuildPipeline.BuildPlayer` from the open editor**: it ran 30 minutes with the bridge answering "Command TCS timed out" and
+  no output. A batch build (`unity-slot run -- Unity -batchmode -nographics -quit -buildTarget StandaloneLinux64 -executeMethod
+  <your static method>`, editor closed) took 1.5-3.5 minutes. Run named EditMode tests through the open editor with a small
+  `ICallbacks` script in `Assets/Editor` (kept out of git) called by `unity-bridge.py eval`; results land in a file you poll.
+- **A tour on a PC desktop crawls at 1 fps** (62 frames in 60 s, a 1 fps `record` clip) until `{"fps": 60}` runs: the game turns vsync
+  on while it starts, and a window behind others is throttled by the compositor. Set the cap after the first screen is up, not
+  at step 1 (`docs/UI-Architecture.md`, "Timing a scroll").
