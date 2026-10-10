@@ -21,6 +21,9 @@ holds, or the report says what is left instead of DONE.
    slot nobody holds). The report says what went and how many GB it freed. If the disk is still
    short, the report says so, and FF Factory's own leftovers you found are already removed, not
    asked about ([clean up after yourself](../lessons/clean-up-after-yourself.md)).
+   Every delete was strictly inside the machine's worker install folder (`$FF_WORKER_ROOT`); what lies outside it you measured and
+   reported with sizes, plus the list of what makes FF Factory write there, and did not delete, whatever the brief said
+   ([the delete checklist](delete.md), [delete only inside the worker root](../lessons/clean-up-after-yourself.md#delete-only-inside-the-workers-install-folder-outside-it-measure-and-report-w896), w896).
    **Unity batch builds** you started (`-batchmode`, a build or test run) have ended: `unity-slot status` shows none of
    yours, and a stuck one is cleared with `unity` `clear_batch`, not left running
    ([clean up after yourself](../lessons/clean-up-after-yourself.md), w791).
