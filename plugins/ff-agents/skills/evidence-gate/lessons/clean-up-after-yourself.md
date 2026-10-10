@@ -70,3 +70,15 @@ learns from a repeated problem.
 - Do not start a batch build in a sandbox whose interactive editor runs (two copies of bee_backend lock each
   other); `unity stop` first.
 - FF Factory side: `docs/unity-lifecycle.md`, "Orphaned and hung batch builds are ended".
+
+## A runaway task output, and `python -` through `eval` (w876, w899)
+
+**Rule.** Do not run `python - <<'E' ... E` inside `eval '...'`, `bash -c "..."` or any wrapper that re-parses
+the command: write the script to a file in your temp folder and run `python file.py`. Before DONE,
+`find "$TEMP/claude" -name '*.output' -size +1G` finds nothing of yours; a hit is a process still writing, so end it
+first, then delete the file (the space returns only when the process ends).
+
+**Why.** 2026-10-10: a worker's `eval 'python - <<E ... E'` lost its heredoc, so `python -` opened its interactive
+REPL and looped on `OSError: [WinError 123]` for a day, writing a 99.6 GB Claude task `.output` file; LothDesktop's D:
+fell from 104 GB to 60 GB free. Deleting the file freed nothing until the process (PID 23756) was ended. The
+daemon's clean-up now removes such a file and ends its writer once the session has stopped (FF Factory PR #284, w899).
