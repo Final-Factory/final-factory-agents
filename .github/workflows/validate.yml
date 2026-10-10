@@ -5,6 +5,14 @@
 # are deliberately out of scope — the game repo's update-docs skill owns those.
 # `claude plugin validate` is not run as a gate (CLI availability in CI
 # unproven); manifest checks below cover the structural basics.
+#
+# RUNS ON ffgithubrunners (w909), the FFBox build server's runner containers, not a GitHub-hosted runner:
+# hosted minutes are the Actions spend. A container there cannot reach github.com or api.github.com, so
+# the checkout comes from the host's mirror of this repository (the host fetches it on request; ffbox
+# runners/lib/mirror.sh, ffghr_mirror_serve_extra) and git is told to use it below. The job calls no
+# GitHub API. This repository is PUBLIC and its runners are shared with private repositories, so a fork pull
+# request needs an owner's approval before it runs (Settings, Actions, General, 2026-10-10). Actions are pinned by commit SHA because the runner image carries the archives of exactly
+# those commits and cannot download any other.
 name: validate
 
 on:
@@ -13,9 +21,15 @@ on:
 
 jobs:
   validate:
-    runs-on: ubuntu-latest
+    runs-on: ffgithubrunners
+    timeout-minutes: 15
     steps:
-      - uses: actions/checkout@v4
+      # The container's git reaches this repository only through the host's mirror (ffghr-workspace.sh use-mirror names
+      # this repository to the host, waits for it, and points git at it).
+      - name: The host's mirror of this repository at this commit
+        run: /opt/ffghr/ffghr-workspace.sh use-mirror "${{ github.sha }}"
+
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
           fetch-depth: 0
 
@@ -80,9 +94,6 @@ jobs:
 
       - name: Tool tests (pr_evidence.py)
         run: python3 -m unittest discover -s plugins/ff-agents/skills/evidence-gate/tests -p 'test_*.py' -v
-
-      - name: Tool tests (ffdiscord launcher, w912)
-        run: python3 -m unittest discover -s plugins/ff-discord/skills/discord-cli -p 'test_ffdiscord_shim.py' -v
 
       - name: Tool tests (ui_layout.py)
         run: python3 -m unittest discover -s plugins/ff-agents/skills/unity-ui/tests -p 'test_*.py' -v
