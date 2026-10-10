@@ -113,6 +113,33 @@ CONFIG_SECTION = "discord"
 # override ffbox and claude_keys honour.
 SECRETS_PATH = os.path.expanduser(os.environ.get("FFBOX_SECRETS")
                                   or os.path.join(FFBOX_CONFIG_DIR, "secrets.env"))
+# WHERE THE CONFIG USED TO BE (w901). Until 2026-09-03 this CLI read ~/.config/ffdiscord/config.json and fell back
+# to it; that code was removed when the FFBox box was migrated, and nobody migrated the other machines. On
+# LothDesktop the config stayed at C:/Users/Lothsahn/.config/ffdiscord/, the CLI found no token under
+# ~/.config/ffbox, and a worker had to export FFDISCORD_APP_TOKEN by hand (w784). The CLI still does not READ
+# these; it names them when no token is found, and `adopt-legacy-config` moves one in.
+LEGACY_CONFIGS = ("~/.config/ffdiscord/config.json", "~/.config/ffbox/discord/config.json")
+
+
+def legacy_config_paths():
+    """The old config files that exist on this machine (never read here)."""
+    return [p for p in (os.path.expanduser(c) for c in LEGACY_CONFIGS) if os.path.isfile(p)]
+
+
+def no_token_help():
+    """What to add to a "no bot token" refusal: where this CLI looked and whether an old config is lying there."""
+    found = legacy_config_paths()
+    lines = [f"Looked in {CONFIG_PATH} (the \"{CONFIG_SECTION}\" section) and {SECRETS_PATH}"
+             f"{'' if os.path.exists(CONFIG_PATH) else ' (the config file does not exist)'}."]
+    if found:
+        lines.append(f"An OLD config is on this machine at {found[0]}: this CLI stopped reading ~/.config/ffdiscord on "
+                     f"2026-09-03. Run `ffdiscord adopt-legacy-config` to move it in (the token is never printed), "
+                     f"then try again.")
+    lines.append("To post as Max you do not need the token at all: an FF Factory worker calls "
+                 "`mcp__machine__post_as_max` and FFBox posts.")
+    return " ".join(lines)
+
+
 # What a secrets.env variable name looks like: capitals, digits and underscores, WITH AT LEAST ONE
 # UNDERSCORE. A Discord bot token has lowercase letters and dots, so it can never be mistaken for
 # one. The underscore is what keeps an all-capitals literal -- the offline suite's TESTTOKEN, or
@@ -418,7 +445,7 @@ class Client:
                 + f"Put DISCORD_TOKEN=\"<token>\" in {SECRETS_PATH} and set \"app_token\": "
                 f"\"DISCORD_TOKEN\" in the \"{CONFIG_SECTION}\" section of {CONFIG_PATH}, or "
                 "set FFDISCORD_APP_TOKEN. `sh ffbox/05-discord-setup.sh --check` lists every "
-                "blank, and ffbox/config.md says where each value comes from."
+                "blank, and ffbox/config.md says where each value comes from. " + no_token_help()
             )
         self.ctx = ssl.create_default_context()
 
@@ -1691,6 +1718,67 @@ def cmd_cursors(client, args):
         print(f"{k:<28} {v}  ({fmt_time(v)})")
 
 
+def cmd_adopt_legacy(client_unused, args):
+    """Move an OLD Discord config (~/.config/ffdiscord/config.json) into this machine's ffbox config (w901).
+
+    The token goes to secrets.env as DISCORD_TOKEN and the section names it, as the current layout wants; it is
+    never printed. Everything else in the old file (channels, mentions, me, trust, ...) is carried over under
+    what the new section already says. `guild_id` becomes `server_id`, `token` becomes `app_token`. The old file
+    is left where it is: check `ffdiscord whoami`, then delete it yourself.
+    """
+    src = os.path.expanduser(args.source) if args.source else (legacy_config_paths() or [None])[0]
+    if not src or not os.path.isfile(src):
+        die("no old config found (looked for " + ", ".join(LEGACY_CONFIGS) + "); pass --from <file> if it is elsewhere")
+    try:
+        with open(src, "r", encoding="utf-8") as fh:
+            old = json.load(fh)
+    except (OSError, json.JSONDecodeError) as exc:
+        die(f"{src} could not be read as JSON: {exc}")
+    if not isinstance(old, dict):
+        die(f"{src} is not a JSON object")
+    old = dict(old)
+    token = str(old.pop("app_token", "") or old.pop("token", "") or "").strip()
+    old.pop("token", None)
+    if "guild_id" in old and "server_id" not in old:
+        old["server_id"] = old.pop("guild_id")
+    old.pop("guild_id", None)
+    if SECRET_NAME.fullmatch(token):
+        token = ""      # it names a variable of the OLD machine's secrets.env, which is not here
+    if not token:
+        die(f"{src} holds no bot token (a literal `token` or `app_token`)")
+    current = read_ffbox_config().get(CONFIG_SECTION)
+    if isinstance(current, dict) and current.get("app_token") and not args.force:
+        die(f"{CONFIG_PATH} already has a Discord token; nothing moved (--force replaces it)")
+    name = "DISCORD_TOKEN"
+    if args.dry_run:
+        print(f"DRY RUN: would move {len(old)} setting(s) and the token from {src} into {CONFIG_PATH} and {SECRETS_PATH}")
+        return
+    lines = []
+    try:
+        with open(SECRETS_PATH, "r", encoding="utf-8", errors="replace") as fh:
+            lines = [ln for ln in fh.read().splitlines() if ln.partition("=")[0].strip().removeprefix("export ").strip() != name]
+    except OSError:
+        pass
+    os.makedirs(os.path.dirname(SECRETS_PATH), mode=0o700, exist_ok=True)
+    tmp = f"{SECRETS_PATH}.{os.getpid()}.tmp"
+    with open(tmp, "w", encoding="utf-8") as fh:
+        fh.write("\n".join(lines + [f'{name}="{token}"']) + "\n")
+    os.chmod(tmp, 0o600)
+    os.replace(tmp, SECRETS_PATH)
+
+    def mutate(section):
+        for k, v in old.items():
+            if isinstance(v, dict) and isinstance(section.get(k), dict):
+                section[k] = {**v, **section[k]}
+            elif k not in section:
+                section[k] = v
+        section["app_token"] = name
+
+    update_config(mutate)
+    print(f"moved {len(old)} setting(s) from {src} into {CONFIG_PATH}, and the token into {SECRETS_PATH} as {name} "
+          f"(not shown). {src} was left in place: check `ffdiscord whoami`, then delete it.")
+
+
 def cmd_config(client_unused, args):
     cfg = load_config()
     redacted = dict(cfg)
@@ -1901,6 +1989,13 @@ def build_parser():
 
     add("cursors", cmd_cursors, "show stored cursors", needs_client=False)
     add("config", cmd_config, "show config (token redacted)", needs_client=False)
+
+    sp = add("adopt-legacy-config", cmd_adopt_legacy,
+             "move an old ~/.config/ffdiscord config into ~/.config/ffbox (the token is never printed)",
+             needs_client=False)
+    sp.add_argument("--from", dest="source", help="the old config file (default: the first old location that exists)")
+    sp.add_argument("--force", action="store_true", help="replace a token the ffbox config already has")
+    sp.add_argument("--dry-run", action="store_true", help="say what would move, change nothing")
 
     sp = add("resolve-channels", cmd_resolve_channels,
              "fill blank channel ids by matching the alias to a channel name")

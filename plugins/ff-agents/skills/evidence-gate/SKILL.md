@@ -163,8 +163,8 @@ One file each under `lessons/`: the rule, why (the incident, dated), how to appl
 - [A release lands where SETLIVE says](lessons/a-release-lands-where-setlive-says.md): develop on
   `development`, master on `pre-release`; run `release-status.py`, never recall it.
 - [A release is done when its notes are posted](lessons/a-release-is-done-when-its-notes-are-posted.md):
-  live on its branch AND the patch notes posted as Max in #dev-patch-notes; no ffdiscord config
-  here means the post stays an open step in the report.
+  live on its branch AND the patch notes posted as Max in #dev-patch-notes (`post_as_max`, any
+  machine); a failed post stays an open step in the report, with FFBox's reason.
 - [Keep rm out of long commands](lessons/keep-rm-out-of-long-commands.md): a deletion chained
   into a long command waits on a permission prompt nobody sees.
 - [Text for the person to paste is plain](lessons/paste-text-is-plain.md): no code block, no

@@ -238,13 +238,20 @@ this file; follow it as written. Check the main upload notice's desc too if you 
 ledger's `desc`). A release bumped without notes (the Build menu) still gets them: write them from
 the commits then, and add the file to develop afterwards for the record.
 
-**Posting needs a machine with the ffdiscord config** (the `discord` section and bot token that the
-ff-discord `discord-cli` skill reads; LothDesktop today). Check before the bump:
-`ffdiscord read 1072387196927094845 --limit 1` must list the channel's last post. If this machine
-cannot post, the release is **not done**: report "live on <branch> (BuildID …), patch notes NOT
-posted: no ffdiscord config on <machine>", with the notes file's path, and leave the posting step
-open for a machine that has it. Never finish a release report without one of the two: the message
-link, or that open step.
+**Post with `mcp__machine__post_as_max` from any machine** (w901, Lothsahn, 2026-10-10: "workers can
+request FFBox send a discord message"). FFBox holds the Discord bot and posts for you, so no machine
+needs the ffdiscord config or a token: channel `dev_patch_notes`, `file` the committed notes copy with
+`skip_lines: 2`, `key` the version. It answers the message link. The exact call is in `patch-notes.md`
+section 4. A repeat with the same key answers the first link and posts nothing, so a retry (or a
+second worker) is safe. FFBox refuses a mention, a secret, more than 2000 characters, or more than 12
+posts an hour, and says which. Nothing to check before the bump.
+
+If the tool does not exist in your session (a portal that has not been updated since 2026-10-10), the
+old way still works on a machine with the ffdiscord config (LothDesktop): `ffdiscord post`, as
+`patch-notes.md` shows. If neither is possible, the release is **not done**: report "live on <branch>
+(BuildID …), patch notes NOT posted: <what the tool said>", with the notes file's path, and leave the
+posting step open. Never finish a release report without one of the two: the message link, or that
+open step.
 
 ## 4. The first check, within an hour of live
 
@@ -257,7 +264,8 @@ check happens when it is due.
 
 **A worker has no report listing** (w750, w763 and w782 each reported "couldn't read FFBox's intake"):
 `ffbox_activity` is the orchestrator's, and `fetch_ffbox_report` needs an id. What a worker can read, on
-a machine with the ffdiscord config (`python scripts/discord/ffdiscord.py` in the game repo): FFBox
+a machine with the ffdiscord config (`python scripts/discord/ffdiscord.py` in the game repo; reads only, because
+posting needs no config now): FFBox
 posts every diagnosed crash or desync to `#desync-and-crash-analysis` (channel `1553176064908464209`,
 `read <id> --limit 5`; each post names the report id, kind, platform paths, the symbols' version and a
 NOT-A-BUG tag), and the newest `#bug-reports` threads (`threads 1069745561672106015 --limit 8`, then

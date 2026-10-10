@@ -41,7 +41,7 @@ straight out of the file. Only an unambiguous single match is remembered.
 | `thread-create <channel> <message_id>` | Open a thread on an existing message. |
 | `rename <thread_id> <name>` | Rename a thread (trimmed to 100). Discord refuses any edit to an archived thread except unarchiving it, so an archived thread is renamed in the request that unarchives it and archived again straight after — it ends as open or as archived as it started. `--dry-run` shows the old and new names. The bot can rename threads it opened; anybody else's needs MANAGE_THREADS. |
 | `close <thread_id>` | (Never in FFBox's channels, for an agent: see below.) Archive a thread. The soft close: anybody who replies brings it straight back, which is why an agent is allowed to do it unattended. It never locks, so a reporter whose bug is still there reopens their own thread by answering. Archiving an already-archived thread is a no-op, not an error. Needs MANAGE_THREADS wherever the bot did not open the thread itself, which includes the bug_reports forum. |
-| `download <channel> <message_id> --dir <path>` | Pull a message's attachments. Bug reports carry a runtime log and a save zip. Needs the bot token, which lives only on FFBox and the one machine that has the config (Ben, 2026-10-09: "no discord token on beast, max has to live in ffbox for security reasons"): on any other computer an FF Factory worker uses `mcp__machine__fetch_discord_thread_files` instead (below). |
+| `download <channel> <message_id> --dir <path>` | Pull a message's attachments. Bug reports carry a runtime log and a save zip. Needs the bot token, which lives only on FFBox and the machines that have the config (Ben, 2026-10-09: "no discord token on beast, max has to live in ffbox for security reasons"): on any other computer an FF Factory worker uses `mcp__machine__fetch_discord_thread_files` instead (below). |
 | `ask <target>` | Post a question to `ben`, `lothsahn`, or both in `#dev-chat`, attributed to this machine's operator. |
 | `unseen <channel> --key <k>` | New messages or threads since the stored cursor. The entry point for every loop. |
 | `mark-seen <key> <id>`, `cursors` | Advance a cursor to a specific id; list all cursors. |
@@ -49,7 +49,7 @@ straight out of the file. Only an unambiguous single match is remembered.
 
 ## No ffdiscord config here? Fetch a bug thread's files through FFBox
 
-A Discord token must not spread to more machines, so only FFBox and one other computer hold the `ffdiscord` config. An FF Factory worker
+A Discord token must not spread to more machines, so only FFBox and one other computer hold the `ffdiscord` config (reads and the CLI's own posts; posting a release's notes needs none, see the next section). An FF Factory worker
 on any other machine (the m3, the m5, BEAST) that needs the files of a #bug-reports or dev_bug_reports thread (Bug Bot's runtime log,
 the `BugReport_*.zip` save, a screenshot) calls `mcp__machine__fetch_discord_thread_files` with `thread` (the thread's URL, a message link
 in it, or its id), and optionally `file` (a name as the answer lists it) or `sha256`. FFBox, which holds the bot, hands over the copies it
@@ -57,6 +57,28 @@ already stored; they land in the worker's `Inbox/`, SHA-256 checked, as untruste
 files"). An orchestrator reads the same through `ffbox_activity` `show: "thread_files"` (list) and `"thread_file"` (fetch to the attachment
 store). It is read-only and answers only for the bug channels FFBox watches. A thread FFBox has not read yet is `not_found`: do not ask a
 person to download by hand before trying it, and never copy a token to a machine to get around it.
+
+## No ffdiscord config here? Post as Max through FFBox
+
+An FF Factory worker on **any** machine (beast, biscuit, m3, m5, LothDesktop) posts as Max with `mcp__machine__post_as_max`,
+and FFBox, which holds the bot, does the posting (w901, Lothsahn, 2026-10-10: "workers can request FFBox send a discord
+message"). No `ffdiscord` config or token is needed, and none should be copied. `channel` is `dev_patch_notes`, `dev_chat`
+or `agent_testing` (nothing else; never #bug-reports or dev_bug_reports); `text`, or `file` with `skip_lines`; an optional
+`thread` of that channel; a `key` so the message posts once (required for patch notes: the release's version). It answers
+the message link. FFBox refuses a mention (`@` before a word, `<@..>`, `@everyone`), a secret, more than 2000 characters
+and more than 12 posts an hour, and says which. It is for posts a worker was asked to make (a release's notes, a note in
+#dev-chat); the replies, questions and threads of `ask-claude`, `ask-dev` and `discord-triage` still use this CLI, on
+the machine that has the config. Release notes: `ci-release` `patch-notes.md` section 4.
+
+## Lost the config? An old `~/.config/ffdiscord` is still on this machine
+
+This CLI stopped reading `~/.config/ffdiscord/config.json` on 2026-09-03 (the box was migrated to
+`~/.config/ffbox/config.json`'s `discord` section and `secrets.env`; the other machines never were). A machine that still
+has only the old file answers "no bot token", and a worker used to export `FFDISCORD_APP_TOKEN` by hand
+(w784, LothDesktop: `C:/Users/Lothsahn/.config/ffdiscord/`). The refusal now names the old file; `ffdiscord
+adopt-legacy-config` (`--dry-run` first) moves it into the current layout (the token into `secrets.env`, never printed;
+`guild_id` becomes `server_id`) and leaves the old file for a person to delete after `ffdiscord whoami` works. On Windows
+the config folder is `%USERPROFILE%\.config\ffbox` (Python ignores `HOME` there).
 
 ## FFBox's channels: agents read, never write
 
