@@ -89,6 +89,24 @@ manual pages for these components are the source for the rules: "Auto Layout", "
   windows swapped sides each time the pointer crossed a station. Decide what a piece is by what the player has done
   (a station selected), not by whether it is drawn.
 
+- **A fixed size you change in a prefab is still the old size in the scene (w821).** `main.unity` holds an instance of
+  most window prefabs, and the scene writes the sizes the layout last computed into it as overrides (`m_SizeDelta.x`
+  under the instance's `m_Modifications`, keyed by the prefab's fileID). The production window's progress column was
+  widened from 245.86 to 290 in the prefab; the scene kept 245.86, so the heading and bar ran 44 units into the Outputs
+  column and the window did not grow, while the prefab-only unit test passed. Edit the override in the scene too (a
+  text edit of the two `value:` lines is enough), and keep a test that reads the scene's overrides against the prefab
+  (`ProductionPanelLabelsFitTest.TheSceneKeepsNoStaleSizeForTheHandSizedElements` is the pattern: map the prefab's
+  rects to fileIDs with `AssetDatabase.TryGetGUIDAndLocalFileIdentifier`). Close the editor's scenes (or stop the
+  editor) before you swap a scene file on disk: it stops on "scene modified externally".
+- **A fixed-width label in a layout group wraps first in the longest language, and ellipsis overflow is a suspect
+  when a Cyrillic heading blanks (w821).** Give the heading a `LayoutElement` `flexibleWidth` 1 and `NoWrap`, and keep every
+  sibling that is not meant to grow (the power readout, whose icon holder has `childForceExpandWidth`) at
+  `flexibleWidth` 0 with its own `LayoutElement`, or it takes half the spare width. Leave `overflowMode` at Overflow:
+  with Ellipsis the Russian heading drew nothing and reported a garbage rect (the build that fixed it also fixed the
+  scene width, so the cause is not isolated). Measure each language's text in its runtime font
+  (`TMP_Text.preferredWidth`, per `LocalizationHelper.ApplyFont`) against the box, as `ProductionPanelLabelsFitTest`
+  does for all 11 shipped languages.
+
 ## Grids
 
 - **`GridLayoutGroup` never shrinks its cells.** Cells are `cellSize` exactly; the group's
