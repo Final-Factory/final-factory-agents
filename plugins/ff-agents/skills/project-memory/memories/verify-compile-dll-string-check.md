@@ -40,3 +40,11 @@ heartbeats advance while SaveProcessState is still "Performing".
    and assert the expected callee is present (and the replaced one absent). This proves what is loaded
    in the domain, not merely that a file changed. Note `strings` is NOT installed in this Git-Bash
    environment, so the DLL-grep route needs PowerShell or python anyway.
+3. **A new test file with a compile error looks like "0 tests, Passed"** (w800, 2026-10-09): `run_tests` with
+   `test_names` of a class the last good assembly does not hold returns `total: 0`, `resultState: Passed`, no
+   error, and the file's `.meta` exists, so a "compiled, no errors" reading is wrong. Count `): error` lines in
+   `Logs/sandbox-editor.log` (not just `error CS`, and not before the compile has finished: poll the count of
+   `Reloading assemblies after finishing script compilation` first), and check the class name is in
+   `Library/ScriptAssemblies/<asm>.dll` with `strings -a`. The trap that cost 40 minutes: `using Debug =
+   UnityEngine.Debug;` fails with CS0576 because the game has a global-namespace `Debug` class; write
+   `UnityEngine.Debug.Log` in full. Read the Unity log for the error, not the MCP console, which can be empty.
