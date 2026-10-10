@@ -294,6 +294,39 @@ and deconstruction 790-791, repeatable to 1 heartbeat across runs.
 - Revert the change under test with `git diff <merge>^1 <merge> -- <files> | git apply -R`, recompile,
   run the same hook again, then re-apply it.
 
+## Real-save A/B of a simulation change in the editor (w870, 2026-10-10)
+
+Proven on lothdesktop, develop 8caa350be: production and the full determinism fingerprint of a real save, at
+develop and with a merged change reverted, to show whether the change alters anything a player has.
+
+- **Pick a small real save.** Sandbox editors run with Burst OFF and the Jobs Debugger ON
+  (`BurstCompiler.Options.EnableBurstCompilation` false). `MeltCPU.zip` (80,825 placeables, 676k entities)
+  stepped at ~2.5 s per frame: unusable. The golden fixture
+  `Assets/Tests/Serialization/Fixtures/TimTesting-0.50.0.92.save.bytes` (1,864 placeables, 49 crafters, 106 belt
+  groups, 66 obelisks), copied into the saves folder as `<id>-TimTesting.zip`, loads in about a minute and steps
+  7-8 heartbeats per second. Delete the copy when done.
+- **Pump, don't wait.** With the editor unfocused an `EditorApplication.update` state machine advanced 13 frames
+  in several seconds. Arm the state machine as in the w762 bench, then from each `execute_code` set
+  `isPaused = true`, loop `EditorApplication.Step()` and invoke your `MCPDynamic` update delegate after each step,
+  with a real-time budget of at most 18 s per call. A 25 s call timed out at the client and kept running queued.
+- **Never autosave into the shared folder**: set the `AutosaveController` MonoBehaviour's `enabled = false`
+  before `SaveGameManager.LoadGame`.
+- **Measure** after the real unpause (`UI.UiController.UnpauseGame` + `FFSystems.SystemManager.ResumeAllFFSystems`
+  by reflection), at a fixed heartbeat count, e.g. 160 to settle, then 960 (60 sim-seconds):
+  `Ecs.GetSingleton<ProductionStats>().Serialize().TotalProductionStats` deltas per item id, and
+  `DeterminismStateFingerprint.Compute(em)` + `ToWireSurfaces` (23 surfaces). The settle point came out at the
+  same heartbeat (219) in both runs, and the two sides matched surface for surface (2,042 items, `4e1aa73554172709`).
+  When the sides match, one run each is enough; when they differ, run the base side again before blaming the change.
+- **Check which code is loaded** after each recompile before you trust a run: a field or nested type that only one
+  side has, read by reflection (`InserterCargoJob.AllOutOfPlay` present or not). When later commits conflict with
+  reverting the change, `git apply -3 -R <the commit's patch>` and resolve by hand.
+- `execute_code` history is cleared by every domain reload, so `replay` does not survive a recompile: keep the
+  arming script in a file of your own.
+- **Single player is a Netcode host**: after a single-player load `NetworkManager.IsConnectedClient` and `IsHost`
+  are both true, so code gated on `IsConnected` (e.g. `MiningAction.UsesSharedProgress`) runs in single player.
+- An equivalence test with pinned values (old vs new code) needs a power check: reverse one loop or switch one
+  rule off and confirm every case fails (w870: one reversed neighbour loop and "locks off" each changed all 6 seeds).
+
 ## Marketing and store stills from a built player (w827, 2026-10-10)
 
 Proven on BEAST for Ben's Steam event cover (Build 92 release, 800x450). The finished covers were published
