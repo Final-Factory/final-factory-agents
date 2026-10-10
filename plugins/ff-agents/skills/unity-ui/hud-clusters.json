@@ -24,6 +24,7 @@
       "AddMapMarkerPanel",
       "LogisticsSelectionPanel",
       "*EntityPanel",
+      "LaserTurretPanel",
       "StructuredDock",
       "StructuredStation",
       "SelectionColumnStrip",
