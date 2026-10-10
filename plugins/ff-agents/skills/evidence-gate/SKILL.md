@@ -1,6 +1,6 @@
 ---
 name: evidence-gate
-description: "Before any consequential action (spending money, publishing or sending anything, changing a live setting, releasing, merging a simulation or player-visible change, deleting, or reporting a fix as done) and before recommending one, list the choices, say what each rests on (measured, sourced or guess), settle your own guesses by research, name how it could fail and when you will look, then proceed. A person is asked only for money, for what the rules reserve for them, or at a real fork. Holds the working-rule lessons, the done, visual, UI, Steam Deck, merge, release and FFBox desync PR checklists, and pr_evidence.py, which checks a PR's Evidence section (for a UI change its content, style, per-still and real-rate clip lines) and, for a changed shader or material, its Used by section. Use before acting on something you have not verified, when writing a brief or a report with numbers or recommendations, and after any miss (add a lesson)."
+description: "Before any consequential action (spending money, publishing or sending anything, changing a live setting, releasing, merging a simulation or player-visible change, deleting, or reporting a fix as done) and before recommending one, list the choices, say what each rests on (measured, sourced or guess), settle your own guesses by research, name how it could fail and when you will look, then proceed. A person is asked only for money, for what the rules reserve for them, or at a real fork. Holds the working-rule lessons, the done, delete, visual, UI, Steam Deck, merge, release and FFBox desync PR checklists, and pr_evidence.py, which checks a PR's Evidence section (for a UI change its content, style, per-still and real-rate clip lines) and, for a changed shader or material, its Used by section. Use before acting on something you have not verified, when writing a brief or a report with numbers or recommendations, and after any miss (add a lesson)."
 ---
 
 # Evidence gate: research the decision before acting
@@ -120,6 +120,9 @@ person asking for that exact element to move. Census 1920x1080, 1280x800 and 128
 - [Done](checklists/done.md): before `DONE: wNNN` or saying a request is finished: merged, every
   check the brief's Done names, the steps after the merge, the `Learned:` line, your disk leftovers removed (builds, Captures, worktrees, player slots),
   labels and ids.
+- [Delete](checklists/delete.md) (w896): before any remove on a machine's disk, a clean-up above all: every path strictly inside
+  the worker install folder (`$FF_WORKER_ROOT`); outside it you measure and report sizes and list what writes there, whatever
+  the brief says.
 - [Visual changes](checklists/visual.md)
 - [UI changes](checklists/ui.md): screens, panels, tabs, HUD, layouts: a late-game save, every
   sub-view, the whole content, the classic look side by side, a real-rate clip, one written line
@@ -227,6 +230,10 @@ One file each under `lessons/`: the rule, why (the incident, dated), how to appl
   worktrees, save copies and player slots you made before DONE; low disk is fixed by removing FF
   Factory's own leftovers or filing clean-up work, never by asking a person (w596/w626: the m3
   under its guard with ~78 GB of leftovers, and a worker asked Ben and Lothsahn for a go).
+  Same lesson, deletes (w896): only inside the machine's worker install folder (`$FF_WORKER_ROOT`); outside it you measure, report
+  sizes and list what makes FF Factory write there, whatever the brief says (w876 cleared dotnet temp, the Unity Hub installer,
+  Temp, test output and old transcripts on LothDesktop's C:; lothsahn: "in general we should only be clearing data in the
+  install folder for the worker"; [checklist](checklists/delete.md)).
   Same lesson, Unity slots: your own `-batchmode` builds end before DONE (`unity-slot status`); a start refused for a
   stuck batch holder gets `unity clear_batch`, not a multi-hour wait or a request to end it by hand (w791: two builds
   held slots for hours).
