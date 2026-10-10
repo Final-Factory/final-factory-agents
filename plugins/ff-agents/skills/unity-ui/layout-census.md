@@ -154,6 +154,33 @@ drawn in `LocalizationHelper.ApplyFont`'s font (Khyay for every Latin locale), n
 filter labels were authored in Liberation Sans, where they fit, and wrapped in Khyay. A prefab test that lays out the
 label in both fonts is the game repo's `RaisedLabelsFitTest`.
 
+## What moved (w826)
+
+Ben, after two UI changes moved HUD pieces he had not asked about: "you did more with the overall layout than i wanted"
+(the objectives card pushed under the Station strip) and "why is station info at the top left? i didnt tell you to move
+that" (#1282). Overlap, drift and colour checks do not see a move that leaves nothing overlapping, so every move is listed:
+
+```sh
+python "<this skill's base directory>/ui_layout.py" moves --pair before-1920.json after-1920.json \
+    --pair before-1280.json after-1280.json [--move-px 4]
+```
+
+- Take the four censuses with the same save and the same steps: 1920x1080 at UI 0.9, 1280x800 at UI 0.8. In the editor,
+  pick the Game view size by reflection and set `InterfaceSettingsController.UiScaleOverride` plus
+  `UiScaler.Instance.UpdateUiScale(x)`; that does not write the shared PlayerPrefs, which `ApplyUiScale` does. In a built
+  player, a Deck-tour `shot` writes `<name>.layout.json`, the same census, at `-ffDeckTourSize` and `-ffDeckTourUiScale`.
+- It compares each element's rect (the RectTransform's, not the clipped part), groups what moved into the highest
+  object whose every element moved by the same amount, and prints one line per HUD block (`GamePanels/X`) with its
+  outer rect before and after and the largest part that moved inside it. A block with nothing left on screen is listed
+  as gone; a new block is named, not counted. Elements that share a path are paired in reading order.
+- Each line ends `mark: ?`. Replace it with `asked (Ben): "his words"` or `not asked: justified: <why>`, or put the
+  element back and take the after census again. `pr_evidence.py` fails an unmarked line, a `Moved:` line without both
+  sizes, a Deck quote on a 1920x1080 line, and with `--brief` a quote that is not inside the brief's quotation marks.
+- Measured in the editor (classic layout, a new game with the tutorial objectives, a station from w813's blueprint
+  selected; `tests/fixtures/w826-1282-*.json`): between 4762a5bc3 and 102e46bed (#1282) it prints 7 lines, the Station
+  Info box first (x -312, y -736 px at 1920x1080), then the strip's buttons and the hover card that grew with the text
+  floor, and the Player Inventory 23 px lower at 1280x800. A census against itself prints 0.
+
 ## Compare two
 
 ```sh

@@ -109,8 +109,9 @@ report. Change nothing on a guess.
   per still against the requester's words, and the rest of the screen unchanged (a layout census
   before and after: no new overlap between always-on HUD blocks, no cluster drift over 2 px, every
   touched panel's colour and alpha against a classic panel; a panel the player opens may cover
-  the HUD if it is on top, clickable and gives the HUD back); `Content:`, `Full content:`,
-  `Style:`, `Shots:`, `Overlaps:`, `Alignment:` (and `Opened panels:`) in the PR.
+  the HUD if it is on top, clickable and gives the HUD back; every HUD element the change moved, at
+  1920x1080 and 1280x800, asked for in the requester's words or justified); `Content:`, `Full content:`,
+  `Style:`, `Shots:`, `Overlaps:`, `Alignment:`, `Moved:` (and `Opened panels:`) in the PR.
 - [Steam Deck changes](checklists/deck.md) (w770): glyphs, Steam Input, launch resolution, Deck UI, touch: what a Deck
   tour cannot show, the cheap stand-ins, the real-Deck request to write for your orchestrator (first step: the Deck's
   Steam client and SteamOS are up to date), and the `Real Deck:` line in the PR.
@@ -186,7 +187,10 @@ One file each under `lessons/`: the rule, why (the incident, dated), how to appl
   blocks (a panel the player opens may cover the HUD: Ben, w742), no anchored cluster
   drifting over 2 px, every touched panel measured against a classic one; run the released
   `pr_evidence.py` (w733: the minimap buttons drifted, a slide-out covered the hotbar, and #1272's
-  navy passed a check older than the release that would have failed it).
+  navy passed a check older than the release that would have failed it); and nothing moves that the
+  brief did not ask to move, every move listed at both sizes and marked asked or justified (w826: #1280
+  pushed the objectives card under the Station strip, #1282 moved the Station Info box to the top left;
+  Ben: "i didnt tell you to move that").
 - [Measure against what the player sees](lessons/measure-against-what-the-player-sees.md): a
   placement metric is checked against the drawn surface or outline, computed independently of the
   code under test, never against the code's own answer (w587: w176's impacts scored 0.0 u against

@@ -185,6 +185,7 @@ Style: BlueprintPanelChild (touched) vs InvAndCraft/InventoryPanel: delta E 2.1 
 Shots: proofs/shots.md, one line per still against Ben's words
 Overlaps: 4 block pairs before, 4 after, 0 new, 0 kept between blocks the change moved (ui_layout.py, whole screen, block depth 2)
 Alignment: max drift 0 px over the clusters (bottom-right HUD, top-left HUD); tolerance 2 px
+Moved: 0 element move(s) over 4 px at 1920x1080, 1280x800 (ui_layout.py moves, the same save and screens before and after)
 """
 
     def body(self):
@@ -327,6 +328,88 @@ class LayoutTest(unittest.TestCase):
         self.assertIsNone(pe.stale_problem("1.22.0", "1.22.0"))
         self.assertIsNone(pe.stale_problem("1.22.0", None))
         self.assertIn("ff-agents 9.9.9", pe.verdict_text([], [], "9.9.9"))
+
+
+class MovedTest(unittest.TestCase):
+    """w826: a UI change lists every HUD element it moved, at 1920x1080 and 1280x800, each asked for in the requester's
+    words or not asked with a reason. #1282 (w723, the classic Deck layout) moved the Station Info box from above the
+    ability row to the top left on every screen; Ben: "why is station info at the top left? i didnt tell you to move
+    that". Before it, w722/#1282 put the objectives card under the Station strip; Ben: "you did more with the overall
+    layout than i wanted"."""
+
+    FILES_1282 = (HERE / "fixtures" / "pr-1282-classic-deck.files").read_text(encoding="utf-8").split()
+    # MEASURED (w826): editor censuses at 4762a5bc3 (develop before #1282) and 102e46bed (#1282 merged), a new game with
+    # the tutorial objectives, a station placed from w813's blueprint and selected, the classic layout.
+    # The two Station Info lines of the 7 that ui_layout.py moves printed for #1282 (the others: the Station strip's
+    # buttons and the hover card grew with the raised text floor, w727; the Player Inventory moved 23 px at 1280x800).
+    HEAD = "Moved: 2 element move(s) over 4 px at 1920x1080, 1280x800 (ui_layout.py moves, the same save and screens before and after)"
+    BIG = '- 1920x1080 GamePanels/BuildInfoPanel: x -312, y -736 px, size +201 x -37 px (was 874,777 173x128, now 461,59 374x92); 2 parts moved inside, largest Parent/Header x -410, y -717 px, size +5 x +1 px: '
+    DECK = '- 1280x800 GamePanels/BuildInfoPanel: x -30, y -476 px, size +190 x -35 px (was 558,515 163x121, now 434,56 352x86); 2 parts moved inside, largest Parent/Header x -122, y -458 px, size +5 x +1 px: '
+    DECK_QUOTE = ('asked (Ben): "we need a new place for Station Info hover panel thing it takes up too much space in the '
+                  'steam deck ui"')
+    BRIEF = ("Ben adds: \"we need a new place for Station Info hover panel thing it takes up too much space in the steam "
+             "deck ui, maybe put it in two columns? but make sure it can handle variation in text length\"")
+
+    def body(self, moved):
+        lines = LayoutTest().ui_body()
+        return re.sub(r"^Moved:.*$", lambda _: moved, lines, flags=re.MULTILINE)
+
+    def reasons(self, moved, brief=None):
+        return "\n".join(pe.check(self.body(moved), None, brief)[0])
+
+    def test_1282_as_written_fails_for_its_missing_moved_line(self):
+        body = (HERE / "fixtures" / "pr-1282-classic-deck.md").read_text(encoding="utf-8")
+        self.assertIn("no 'Moved:' line", "\n".join(pe.check(body, self.FILES_1282)[0]))
+
+    def test_no_move_at_both_sizes_passes_and_one_size_is_not_enough(self):
+        self.assertEqual(self.reasons(UiTest.UI_LINES.splitlines()[-1]), "")
+        self.assertIn("does not cover 1920x1080", self.reasons(
+            "Moved: 0 element move(s) over 4 px at 1280x800 (ui_layout.py check, the same save and screens before and after)"))
+
+    def test_an_unmarked_move_fails(self):
+        reasons = self.reasons("\n".join([self.HEAD, self.BIG + "mark: ?", self.DECK + "mark: ?"]))
+        self.assertIn("'Moved:' 1920x1080 GamePanels/BuildInfoPanel is not marked", reasons)
+        self.assertIn("'Moved:' 1280x800 GamePanels/BuildInfoPanel is not marked", reasons)
+        self.assertIn("counts 2 move(s) but only 0", reasons)
+
+    def test_1282_would_have_been_caught_on_the_desktop_with_the_deck_quote(self):
+        # The worker had Ben's Deck words; they ask for a new place on the Deck, not on a desktop.
+        reasons = self.reasons("\n".join([self.HEAD, self.BIG + self.DECK_QUOTE, self.DECK + self.DECK_QUOTE]), self.BRIEF)
+        self.assertIn("1920x1080 GamePanels/BuildInfoPanel: the quote asks for the Deck", reasons)
+        self.assertNotIn("1280x800", reasons)
+
+    def test_an_asked_move_passes_and_its_quote_must_be_in_the_brief(self):
+        moved = "\n".join([self.HEAD, self.BIG + "not asked: justified: the hover card now covers that spot at 1920x1080",
+                           self.DECK + self.DECK_QUOTE])
+        problems, notes = pe.check(self.body(moved), None, self.BRIEF)
+        self.assertEqual(problems, [])
+        self.assertIn("moved, not asked: 1920x1080 GamePanels/BuildInfoPanel", "\n".join(notes))
+        made_up = self.DECK + 'asked (Ben): "put the station info at the top left"'
+        self.assertIn("the quote is not in the brief word for word",
+                      self.reasons("\n".join([self.HEAD, self.BIG + "not asked: justified: the hover card covers it", made_up]),
+                                   self.BRIEF))
+
+    def test_only_the_persons_quoted_words_count_not_the_brief_around_them(self):
+        # w722: Ben's words were "just put in the top left corner and have the main panel and inventory position around
+        # it"; the note around them said "so nothing overlaps", and #1280 moved the objectives card under the strip.
+        brief = ('Ben decided the fixed spot: "for the station controls panel just put in the top left corner and have the '
+                 'main panel and inventory position around it". Mind the top-left HUD (the health bar and the objectives) '
+                 'so nothing overlaps.')
+        head = self.HEAD.replace("2 element", "1 element")
+        card = "- 1280x800 GamePanels/ObjectivesPanel: x +0, y +69 px (was 10,120 410x160, now 10,189 410x160): "
+        notes_words = card + 'asked (Ben): "Mind the top-left HUD (the health bar and the objectives) so nothing overlaps"'
+        self.assertIn("the quote is not in the brief word for word", self.reasons("\n".join([head, notes_words]), brief))
+        strip = ("- 1280x800 GamePanels/SelectionColumnStrip: x -310, y -420 px (was 313,476 356x58, now 3,56 356x58): "
+                 'asked (Ben): "for the station controls panel just put in the top left corner"')
+        self.assertEqual(self.reasons("\n".join([head, strip]), brief), "")
+        self.assertTrue(pe.in_brief("put in the top left corner ... inventory position around it", brief))
+
+    def test_a_reverted_move_does_not_count(self):
+        moved = "\n".join([self.HEAD, self.BIG + "not asked: reverted in 3f2a1b0", self.DECK + self.DECK_QUOTE])
+        self.assertIn("counts 2 move(s) but only 1", self.reasons(moved))
+        retaken = self.HEAD.replace("2 element", "1 element")
+        self.assertEqual(self.reasons("\n".join([retaken, self.BIG + "not asked: reverted in 3f2a1b0",
+                                                 self.DECK + self.DECK_QUOTE])), "")
 
 
 class UsedByTest(unittest.TestCase):

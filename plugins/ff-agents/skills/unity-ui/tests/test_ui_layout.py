@@ -312,6 +312,124 @@ class StyleTest(unittest.TestCase):
         self.assertTrue(any("delta E" in f for f in failures), failures)
 
 
+def station_info(x0, y0, w=163, h=121):
+    """The Station Info box (GamePanels/BuildInfoPanel) with a frame and two rows, at (x0, y0)."""
+    return [el("BuildInfoPanel/Parent", [x0, y0, x0 + w, y0 + h], alpha=0.39),
+            el("BuildInfoPanel/Parent/Title", [x0 + 8, y0 + 4, x0 + 90, y0 + 20], kind="TextMeshProUGUI"),
+            el("BuildInfoPanel/Parent/Rows/Row/Label", [x0 + 8, y0 + 24, x0 + 70, y0 + 40], kind="TextMeshProUGUI"),
+            el("BuildInfoPanel/Parent/Rows/Row/Label", [x0 + 8, y0 + 44, x0 + 70, y0 + 60], kind="TextMeshProUGUI")]
+
+
+class MovedTest(unittest.TestCase):
+    """w826: #1282 moved the Station Info box from above the ability row to the top left on every screen, and put the
+    objectives card under the Station strip; Ben: "why is station info at the top left? i didnt tell you to move that"
+    and "you did more with the overall layout than i wanted". Every move is listed, one line per object that moved."""
+
+    def census(self, *extra):
+        base = hud()
+        base["elements"] += [e for group in extra for e in group]
+        return base
+
+    def test_nothing_moved_is_zero(self):
+        result = ul.moves(self.census(station_info(558, 515)), self.census(station_info(558, 515)))
+        self.assertEqual((result["moved"], result["gone"]), ([], []))
+
+    def test_a_box_that_moved_as_a_whole_is_one_line_at_its_object(self):
+        result = ul.moves(self.census(station_info(558, 515)), self.census(station_info(540, 62)))
+        self.assertEqual([u["path"] for u in result["moved"]], [f"{GP}/BuildInfoPanel"])
+        self.assertEqual([u["path"] for u in result["moved"][0]["parts"]], [f"{GP}/BuildInfoPanel"])
+        self.assertEqual(result["moved"][0]["elements"], 4)
+        line = ul.describe_move(result["moved"][0])
+        self.assertEqual(line, "x -18, y -453 px (was 558,515 163x121, now 540,62 163x121)")
+
+    def test_a_move_under_the_tolerance_is_not_listed_and_a_box_that_grew_says_so(self):
+        self.assertEqual(ul.moves(self.census(station_info(558, 515)), self.census(station_info(561, 517)))["moved"], [])
+        grown = ul.moves(self.census(station_info(558, 515)), self.census(station_info(558, 515, w=260)))
+        self.assertEqual([u["path"] for u in grown["moved"]], [f"{GP}/BuildInfoPanel"])
+        self.assertEqual([u["path"] for u in grown["moved"][0]["parts"]], [f"{GP}/BuildInfoPanel/Parent"])
+        self.assertIn("x +48, y +0 px, size +97 x +0 px", ul.describe_move(grown["moved"][0]))
+
+    def test_the_rest_of_the_hud_is_not_blamed_for_one_move(self):
+        before = self.census(station_info(558, 515))
+        after = self.census(station_info(540, 62))
+        names = {u["path"] for u in ul.moves(before, after)["moved"]}
+        self.assertFalse(any("ObjectivesPanel" in n or "ActionBarParent" in n for n in names), names)
+
+    def test_two_objects_that_moved_differently_are_two_lines(self):
+        # w722/w723: the objectives card went down under the strip while the box went to the top left.
+        before = self.census(station_info(558, 515))
+        after = self.census(station_info(540, 62))
+        for e in after["elements"]:
+            if "ObjectivesPanel" in e["path"]:
+                e["rect"] = [e["rect"][0], e["rect"][1] + 69, e["rect"][2], e["rect"][3] + 69]
+        names = sorted(ul.under_canvas(u["path"]) for u in ul.moves(before, after)["moved"])
+        self.assertEqual(names, ["GamePanels/BuildInfoPanel", "GamePanels/ObjectivesPanel"])
+
+    def test_a_hidden_block_is_gone_and_a_new_one_is_not_counted(self):
+        before = self.census(station_info(558, 515))
+        after = self.census([el("NewThing/Icon", [10, 10, 40, 40])])
+        result = ul.moves(before, after)
+        self.assertEqual(result["gone"], [f"{GP}/BuildInfoPanel"])
+        self.assertEqual(result["new"], [f"{GP}/NewThing"])
+        lines = ul.moved_lines([result], 4, "test")
+        self.assertTrue(lines[0].startswith("Moved: 1 element move(s) over 4 px at 1280x800"))
+        self.assertIn("GamePanels/BuildInfoPanel: gone from the screen: mark: ?", lines[1])
+
+    def test_unnamed_siblings_are_paired_in_reading_order(self):
+        # The two Row/Label texts share a path; a census lists them in any order.
+        before, after = self.census(station_info(558, 515)), self.census(station_info(558, 515))
+        after["elements"].reverse()
+        self.assertEqual(ul.moves(before, after)["moved"], [])
+
+    def test_moves_prints_one_line_over_both_sizes(self):
+        import contextlib
+        import io
+        big = {"screen": [1920, 1080], "elements": station_info(873, 777)}
+        big_after = {"screen": [1920, 1080], "elements": station_info(683, 64)}
+        with tempfile.TemporaryDirectory() as tmp:
+            paths = []
+            for name, census in (("b1", big), ("a1", big_after), ("b2", self.census(station_info(558, 515))),
+                                 ("a2", self.census(station_info(540, 62)))):
+                path = Path(tmp) / f"{name}.json"
+                path.write_text(json.dumps(census), encoding="utf-8")
+                paths.append(str(path))
+            out = io.StringIO()
+            with contextlib.redirect_stdout(out):
+                code = ul.main(["moves", "--pair", paths[0], paths[1], "--pair", paths[2], paths[3]])
+        self.assertEqual(code, 0)
+        text = out.getvalue()
+        self.assertIn("Moved: 2 element move(s) over 4 px at 1920x1080, 1280x800", text)
+        self.assertIn("- 1920x1080 GamePanels/BuildInfoPanel: x -190, y -713 px", text)
+        self.assertIn("- 1280x800 GamePanels/BuildInfoPanel: x -18, y -453 px", text)
+
+
+class RecordedMoveTest(unittest.TestCase):
+    """w826, MEASURED: editor censuses of develop before #1282 (4762a5bc3) and with it (102e46bed), the classic layout, a
+    new game with the tutorial objectives and a selected station (tests/fixtures/w826-1282-*.json). #1282 was the Deck's
+    classic layout (w723); Ben had asked for "a new place for Station Info hover panel thing ... in the steam deck ui",
+    and it moved the box from above the ability row to the top left on the desktop too. Ben, 2026-10-10: "why is
+    station info at the top left? i didnt tell you to move that"."""
+
+    def pair(self, size):
+        fixtures = HERE / "fixtures"
+        return (ul.load(fixtures / f"w826-1282-before-{size}.json"), ul.load(fixtures / f"w826-1282-after-{size}.json"))
+
+    def test_the_station_info_move_is_listed_at_both_sizes_and_the_unchanged_hud_is_not(self):
+        for size, shift in (("1920", "x -312, y -736 px, size +201 x -37 px"), ("1280", "x -30, y -476 px, size +190 x -35 px")):
+            result = ul.moves(*self.pair(size))
+            names = [ul.under_canvas(b["path"]) for b in result["moved"]]
+            self.assertEqual(names[0], "GamePanels/BuildInfoPanel", (size, names))
+            self.assertTrue(ul.describe_move(result["moved"][0]).startswith(shift), ul.describe_move(result["moved"][0]))
+            for steady in ("GamePanels/ActionBarParent", "GamePanels/MinimapParent", "GamePanels/QuickButtons",
+                           "GamePanels/ObjectivesPanel", "GamePanels/TopInfoPanel"):
+                self.assertNotIn(steady, names)
+            self.assertEqual(result["gone"], [])
+
+    def test_the_census_against_itself_moves_nothing(self):
+        before, _ = self.pair("1920")
+        self.assertEqual(ul.moves(before, before)["moved"], [])
+
+
 class CommandTest(unittest.TestCase):
     def test_check_prints_the_three_lines_and_fails(self):
         with tempfile.TemporaryDirectory() as tmp:

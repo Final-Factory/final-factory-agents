@@ -1,6 +1,6 @@
 ---
 name: unity-ui
-description: "Build and verify Final Factory's Unity uGUI screens (panels, windows, tabs, HUD, popups, the structured layout and Steam Deck sizing) so they work the way a player sees them. Covers the project's UI map, uGUI layout rules and the pitfalls that broke the w644 Deck hub (layout groups, ContentSizeFitter, anchors, scroll views, grids, canvas scaling at 1280x800, layout fights that flicker, hard-coded colours), the editor rect audit, the Deck tour with full content, and the pixel checks (scripts/deck_audit/ui_check.py: flicker, fill, style, the per-still sheet), and the whole-screen layout census with ui_layout.py (new overlaps between HUD blocks, anchored clusters drifting over 2 px, every touched panel's colour and alpha against a classic panel). Use before changing or reviewing any UI, and before calling a UI change verified."
+description: "Build and verify Final Factory's Unity uGUI screens (panels, windows, tabs, HUD, popups, the structured layout and Steam Deck sizing) so they work the way a player sees them. Covers the project's UI map, uGUI layout rules and the pitfalls that broke the w644 Deck hub (layout groups, ContentSizeFitter, anchors, scroll views, grids, canvas scaling at 1280x800, layout fights that flicker, hard-coded colours), the editor rect audit, the Deck tour with full content, and the pixel checks (scripts/deck_audit/ui_check.py: flicker, fill, style, the per-still sheet), and the whole-screen layout census with ui_layout.py (new overlaps between HUD blocks, anchored clusters drifting over 2 px, every touched panel's colour and alpha against a classic panel, and every HUD element the change moved at 1920x1080 and 1280x800, each marked asked or justified). Use before changing or reviewing any UI, and before calling a UI change verified."
 ---
 
 # Unity UI: build it, then verify it like a player
@@ -159,6 +159,20 @@ quick buttons from 7 to 24 px off the minimap, the toggles 31 px and the hotbar 
 moved after it; opening the Blueprint slide-out puts it over the hotbar (a new overlap against the
 closed HUD); #1272's backdrop is delta E 23.8 from the classic Inventory on screen, where the window
 was 2.1 before it.
+
+**Then list what moved, at both standard sizes** (w826). Take the before and after censuses at 1920x1080 (UI 0.9)
+and at 1280x800 (UI 0.8), then:
+
+```sh
+python "<this skill's base directory>/ui_layout.py" moves --pair before-1920.json after-1920.json \
+    --pair before-1280.json after-1280.json
+```
+
+It prints the `Moved:` line and one line per HUD block that moved or resized more than 4 px. Paste them into the PR
+and mark each `asked (who): "their words"` (the requester's words for that element on that screen) or `not asked:
+justified: <why>`, or put the element back. `check` prints the same line for its one pair. Measured (editor, the
+classic layout): #1282 moved the Station Info box (`GamePanels/BuildInfoPanel`) x -312, y -736 px at 1920x1080 and
+x -30, y -476 px at 1280x800, and Ben had asked for a new place on the Deck only ("i didnt tell you to move that").
 
 ## 5c. A font-size change, and the desktop under a Deck change
 

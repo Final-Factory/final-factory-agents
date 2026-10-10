@@ -23,8 +23,17 @@ alpha, sprite and drawing order) taken before and after a change, same save, siz
              --shot/--ref-shot inside each panel's rect when given, which is what a player sees), an
              alpha off by more than 0.2 on the same art, or different art without screenshots: FAIL.
 
-It prints the `Overlaps:`, `Opened panels:`, `Alignment:` and `Style:` lines the pull request carries (pr_evidence.py
-reads them) and exits 1 when any check fails, 2 on bad input.
+  Moved      every element that moved or resized more than --move-px px (4), grouped into the largest object that
+             moved as one, and every object that is gone (w826: #1282 moved the Station Info box to the top left and
+             w722/#1282 put the objectives card under the Station strip; Ben: "i didnt tell you to move that"). Listed,
+             not judged: the pull request marks each one asked (quoting the requester) or not asked, and pr_evidence.py
+             fails it while one is unmarked.
+
+It prints the `Overlaps:`, `Opened panels:`, `Alignment:`, `Style:` and `Moved:` lines the pull request carries
+(pr_evidence.py reads them) and exits 1 when any of the first four fails, 2 on bad input.
+
+    ui_layout.py moves --pair before-1920.json after-1920.json --pair before-1280.json after-1280.json [--move-px 4]
+                                               the `Moved:` line and its list over both standard sizes (w826)
 
     ui_layout.py overlaps <census.json>        the overlapping block pairs of one census
     ui_layout.py clusters <census.json|tour.log> [--clusters ...]   cluster edges of one census or a
@@ -276,6 +285,131 @@ def moved_blocks(before: dict, after: dict, depth: int = 2, tolerance: float = 2
 
 
 # ---------------------------------------------------------------------------------------------------------------
+# moves (w826)
+
+
+def under_canvas(path: str) -> str:
+    """The path from the canvas's first child on: what a person reads as the element's name."""
+    parts = path.split("/")
+    return "/".join(parts[canvas_index(parts) + 1:]) or path
+
+
+def keyed(census: dict) -> dict:
+    """{(path, n): rect} for every element but the development overlays. Elements that share a path (unnamed siblings)
+    are told apart by their place in reading order, top to bottom and left to right, on each side."""
+    by_path: dict[str, list] = {}
+    for e in census["elements"]:
+        if any(i in e["path"] for i in IGNORE):
+            continue
+        by_path.setdefault(e["path"], []).append(e["rect"])
+    out = {}
+    for path, rects in by_path.items():
+        for i, r in enumerate(sorted(rects, key=lambda r: (round(r[1]), round(r[0])))):
+            out[(path, i)] = r
+    return out
+
+
+def moves(before: dict, after: dict, move_px: float = 4.0) -> dict:
+    """What moved between two censuses of the same save, size and open screens (w826).
+
+    Every element whose rect (the RectTransform's, not the clipped part) changed more than move_px on any edge is
+    grouped into the highest object in its path whose every element changed by the same amount (within move_px): the
+    Station Info box moving as a whole is one part, not its forty texts; an element that changed by a different amount
+    from its siblings is its own part (a box that grew). Parts are reported per HUD block (block depth 2: GamePanels/X,
+    what a person calls an element), with the block's outer rect. Returns {"moved": [{"path", "delta", "before",
+    "after", "elements", "parts"}], "gone": [path], "new": [path], "screen": "WxH"}; "gone" and "new" are blocks with
+    no element on the other side."""
+    old, now = keyed(before), keyed(after)
+    common = [k for k in now if k in old]
+    delta = {k: [now[k][i] - old[k][i] for i in range(4)] for k in common}
+    moved = [k for k in common if max(abs(d) for d in delta[k]) > move_px]
+
+    def under(prefix: str):
+        return [k for k in common if k[0] == prefix or k[0].startswith(prefix + "/")]
+
+    def same(a, b):
+        return max(abs(x - y) for x, y in zip(a, b)) <= move_px
+
+    units: dict[str, dict] = {}
+    for k in moved:
+        if any((k[0] == p or k[0].startswith(p + "/")) and same(u["delta"], delta[k]) for p, u in units.items()):
+            continue
+        parts = k[0].split("/")
+        start = canvas_index(parts) + 1
+        unit = k[0]
+        for end in range(min(start + 2, len(parts)), len(parts) + 1):  # never above a block (GamePanels/X)
+            prefix = "/".join(parts[:end])
+            if all(same(delta[j], delta[k]) for j in under(prefix)):
+                unit = prefix
+                break
+        keys = under(unit)
+        units[unit] = {"path": unit, "delta": delta[k], "elements": len(keys),
+                       "before": union([old[j] for j in keys]), "after": union([now[j] for j in keys])}
+    # One line per HUD block (GamePanels/X: the Station Info box, the Station strip, the hover card), which is what a
+    # person calls an element: its outer rect before and after, and the parts that moved inside it.
+    blocks: dict[str, dict] = {}
+    for unit in units.values():
+        block = block_of(unit["path"], 2)
+        if block not in blocks:
+            keys = under(block)
+            b, a = union([old[j] for j in keys]), union([now[j] for j in keys])
+            blocks[block] = {"path": block, "delta": [a[i] - b[i] for i in range(4)], "before": b, "after": a,
+                             "elements": len(keys), "parts": []}
+        blocks[block]["parts"].append(unit)
+    for block in blocks.values():
+        block["parts"].sort(key=lambda u: -max(abs(d) for d in u["delta"]))
+    blocks_old = {block_of(k[0], 2) for k in old}
+    blocks_new = {block_of(k[0], 2) for k in now}
+    w, h = after.get("screen") or before.get("screen") or [0, 0]
+    biggest = lambda b: -max(max(abs(d) for d in b["delta"]), max(abs(d) for d in b["parts"][0]["delta"]))
+    return {"moved": sorted(blocks.values(), key=biggest),
+            "gone": sorted(blocks_old - blocks_new), "new": sorted(blocks_new - blocks_old),
+            "screen": f"{int(w)}x{int(h)}"}
+
+
+def shift(d) -> str:
+    dx, dy, dw, dh = (d[0] + d[2]) / 2, (d[1] + d[3]) / 2, d[2] - d[0], d[3] - d[1]
+    size = "" if max(abs(dw), abs(dh)) <= 1 else f", size {dw:+.0f} x {dh:+.0f} px"
+    return f"x {dx:+.0f}, y {dy:+.0f} px{size}"
+
+
+def describe_move(block: dict) -> str:
+    """The block's outer rect before and after, then what moved inside it (the largest part first)."""
+    b, a = block["before"], block["after"]
+    outer = "outer rect unchanged" if max(abs(d) for d in block["delta"]) <= 1 else shift(block["delta"])
+    text = (f"{outer} (was {round(b[0])},{round(b[1])} {round(b[2] - b[0])}x{round(b[3] - b[1])}, now {round(a[0])},"
+            f"{round(a[1])} {round(a[2] - a[0])}x{round(a[3] - a[1])})")
+    parts = block.get("parts") or []
+    inner = [u for u in parts if u["path"] != block["path"]]
+    if len(inner) > 1:
+        text += f"; {len(inner)} parts moved inside"
+    differs = [u for u in inner if max(abs(x - y) for x, y in zip(u["delta"], block["delta"])) > 1]
+    if differs:
+        largest = differs[0]
+        text += f"{',' if len(inner) > 1 else ';'} largest {largest['path'][len(block['path']) + 1:]} {shift(largest['delta'])}"
+    return text
+
+
+MARK = "mark: ?"
+
+
+def moved_lines(results: list[dict], move_px: float, how: str) -> list[str]:
+    """The `Moved:` line and one list line per move and per gone object, each ending in the mark the PR replaces."""
+    sizes = ", ".join(r["screen"] for r in results)
+    count = sum(len(r["moved"]) + len(r["gone"]) for r in results)
+    lines = [f"Moved: {count} element move(s) over {move_px:.0f} px at {sizes} ({how}, the same save and screens before "
+             f"and after); mark each below: asked (who): \"their words\", or not asked: justified: <why>"]
+    for r in results:
+        for unit in r["moved"]:
+            lines.append(f"- {r['screen']} {under_canvas(unit['path'])}: {describe_move(unit)}: {MARK}")
+        for path in r["gone"]:
+            lines.append(f"- {r['screen']} {under_canvas(path)}: gone from the screen: {MARK}")
+        if r["new"]:
+            lines.append(f"  (new at {r['screen']}, not counted: {', '.join(under_canvas(p) for p in r['new'][:8])})")
+    return lines
+
+
+# ---------------------------------------------------------------------------------------------------------------
 # clusters
 
 
@@ -517,7 +651,17 @@ def run_check(args) -> int:
     for f in failures:
         print(f"  STYLE: {f}")
     failed |= bool(failures)
+
+    for line in moved_lines([moves(before, after, args.move_px)], args.move_px, "ui_layout.py check"):
+        print(line)
     return 1 if failed else 0
+
+
+def run_moves(args) -> int:
+    results = [moves(load(b), load(a), args.move_px) for b, a in args.pair]
+    for line in moved_lines(results, args.move_px, "ui_layout.py moves"):
+        print(line)
+    return 0
 
 
 def run_overlaps(args) -> int:
@@ -556,6 +700,11 @@ def main(argv=None) -> int:
     c.add_argument("--touched", action="append", default=[],
                    help="a path fragment of a window the change is about: always style-checked (repeatable)")
     c.add_argument("--tolerance", type=float, default=2.0)
+    c.add_argument("--move-px", type=float, default=4.0, help="an element moving more than this is listed on 'Moved:'")
+    m = sub.add_parser("moves", help="what moved, over several sizes: the 'Moved:' line and its list (w826)")
+    m.add_argument("--pair", nargs=2, action="append", required=True, metavar=("BEFORE", "AFTER"),
+                   help="a before and an after census at one size (repeat: 1920x1080, then 1280x800 at 0.8)")
+    m.add_argument("--move-px", type=float, default=4.0)
     o = sub.add_parser("overlaps", help="the overlapping block pairs of one census")
     o.add_argument("census")
     o.add_argument("--clusters", default=str(DEFAULT_CLUSTERS))
@@ -566,7 +715,7 @@ def main(argv=None) -> int:
         p.add_argument("--block-depth", type=int, default=2)
     args = ap.parse_args(argv)
     try:
-        return {"check": run_check, "overlaps": run_overlaps, "clusters": run_clusters}[args.cmd](args)
+        return {"check": run_check, "overlaps": run_overlaps, "clusters": run_clusters, "moves": run_moves}[args.cmd](args)
     except (ValueError, OSError, KeyError) as error:
         print(f"ui_layout: {error}", file=sys.stderr)
         return 2
