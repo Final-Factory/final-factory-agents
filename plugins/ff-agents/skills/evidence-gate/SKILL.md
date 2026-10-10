@@ -255,8 +255,9 @@ One file each under `lessons/`: the rule, why (the incident, dated), how to appl
 - [A wait on a person is declared, not polled](lessons/a-person-wait-is-declared-not-polled.md): when only a
   person can move you on, call `waiting_on_person` and end the turn naming who and what; a `wake_me` check-in
   shows the request Working (w665: Working for 10 h while it waited for Ben to reboot the m3). First check a
-  person is needed: never hand a person a step the ops worker or ssh can do, an installer rerun included
-  (w855: the dispatcher asked Ben to rerun biscuit's installer for w847).
+  person is needed: never hand a person a step you, the ops worker or ssh can do, an installer rerun included
+  (w855: the dispatcher asked Ben to rerun biscuit's installer for w847) and Unity closed, opened or reopened, git
+  commands and file copies (w935: a worker told Ben to close Unity on his m5 main clone; Ben: "You can close Unity").
 
 ## Adding a lesson: before every DONE
 

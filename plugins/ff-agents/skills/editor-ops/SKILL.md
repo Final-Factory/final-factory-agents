@@ -200,6 +200,29 @@ restarts. Verify, recover, and monitor readiness yourself:
    after targeted recovery has genuinely failed or an external prerequisite (licensing, OS dialog,
    missing installation) requires human action.
 
+**An editor open on a project you must change is yours to close, whoever opened it** (Ben, 2026-10-10, w935, after w934
+told him to close Unity on his m5 main clone: "Dude, why are you telling me to close Unity? You can close Unity. There's
+tons of instructions on how to manage Unity instances. I can't believe I'm still having to tell you this."). It holds for
+a sandbox's editor and for a machine's main clone, a person's own project folder:
+
+1. Find the editor by its project path (`ps -axo pid,command | grep "[M]acOS/Unity -projectPath <path>"`; on Windows the
+   Unity process whose command line holds the path). A path-verified process is yours to stop; Unity Hub and other
+   checkouts' editors are not.
+2. Save it first: `EditorSceneManager.SaveOpenScenes()` through the bridge (`scripts/unity-bridge.py eval`, or
+   `execute_code`). With the bridge down, copy the open scene files and any other unsaved edits to a backup folder and
+   say where in your report.
+3. Quit it cleanly (`mcp__machine__unity stop` in a sandbox; elsewhere `EditorApplication.Exit(0)` through the bridge, or
+   `osascript -e 'tell application "Unity" to quit'`), then poll until the process count reads zero
+   ([recovery.md](references/recovery.md), "open -n double-instance"). Force it only after a clean quit has failed.
+4. Do the git work, file copies or installer run. If a person was using the editor, relaunch it on the same project
+   path (`scripts/launch-editor.sh`, or the sandbox tool's `start`) and say so in the report; if it was closed, leave it
+   closed.
+5. If the harness's guard refuses a step (it blocks the protected main-clone path and stopping Unity by hand), say which
+   tool refused what and hand the step to the requester's orchestrator for the ops worker or ssh. Never write "What Ben
+   needs to do", and never hand a person Unity, git, copy or installer steps: a person is asked only for what the rules
+   reserve to them (approvals, design decisions, spending, publishing, admin acts that need their own words;
+   [evidence-gate lesson](../evidence-gate/lessons/a-person-wait-is-declared-not-polled.md)).
+
 Known traps, with signature, diagnosis and recovery, in [references/recovery.md](references/recovery.md).
 Open it when the editor or bridge misbehaves:
 
