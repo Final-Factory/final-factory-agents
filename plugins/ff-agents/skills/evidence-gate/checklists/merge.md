@@ -81,6 +81,10 @@ Not verified: the Bats' slot lag (simulation, follow-up PR)
   |---|---|
   | `Assets/Art/Materials/AsteroWorldSpriteMat.mat` | TARGET: the Alt-view icon template (Evidence above) |
   ```
+- **Content or a feature not ready for players** (new items, recipes, buildings, research, belt models) is gated by
+  a feature toggle that is off for players, and the description names it and how to turn it on (`-ffFeatures=<id>`,
+  Final Factory > Feature Toggles); a Simulation toggle's row names its two-peer run with it on
+  ([unfinished content goes behind a toggle](../../project-memory/memories/feedback-unfinished-content-behind-a-toggle.md)).
 - **A fix for a Discord report** has its `Discord: https://discord.com/channels/<guild>/<thread>` line
   (or the original message's `/<guild>/<channel>/<message>` link for a message in a channel) in the
   description before it merges, one per report: FFBox tells the reporter from it and nothing else
