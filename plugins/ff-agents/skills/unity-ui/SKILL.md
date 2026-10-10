@@ -102,6 +102,11 @@ census (`<shot>.json`: small, clipped, off-screen and overlapping text, covered 
 - **Clips at real rate.** `{"record": "<name>", "seconds": 4}` saves every frame as JPGs in
   `clip-<name>/` (with `frames.txt` for ffmpeg). Record each screen idle and while hovering and
   selecting. Never stitch the stills into a 1 fps "clip".
+  The frames come out **upside down** (w819: every `clip-*/NNNNN.jpg` is flipped vertically; the
+  `shot` PNGs are not), so crop and `ui_check.py flicker --rect` in flipped coordinates, and make
+  the video with `cd clip-<name> && ffmpeg -f concat -safe 0 -i frames.txt -vf vflip -c:v libx264
+  -pix_fmt yuv420p out.mp4`. `pr_evidence.py` only accepts a `Clips:` line that names `.mp4` files
+  (with where the event is, "0 to 3 s"), so encode the before and after clips and publish them.
 - **Both arms.** The "before" is the classic screen with the same content (`{"layout": "classic"}`),
   so style and fill can be compared; develop with nothing open compares nothing.
 
