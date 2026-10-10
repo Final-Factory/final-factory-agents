@@ -56,6 +56,9 @@ Not verified: the Bats' slot lag (simulation, follow-up PR)
   first-frame resolution, the Steam client or touch ([deck.md](deck.md); w684 -> w768, w767).
 - **Kind `simulation`** needs "Tests", "Determinism audit" (with the heartbeat count, per the
   `determinism-audit` skill) and "Save compatibility" (the repo's hard rule).
+- **A new system has a test that runs it** ([lesson](../lessons/verify-simulation-at-a-slow-hosts-frame-rate.md#a-new-system-runs-in-a-test-before-the-first-in-game-run-w809-2026-10-09)): the PR's Tests line names
+  the test that schedules each new `ISystem`/`SystemBase` in a world with a matching entity, presentation and animation
+  systems included (w809: a job's aliasing error only showed when a golden fixture loaded in PlayMode).
 - **A new or moved system, or code that runs per frame or on one peer only** (a request leg, a
   publisher): the PR names the system's group; per-frame code writes nothing the simulation reads
   (`PerFrameSystemCensusTest` passes, a frame-without-heartbeat test pins a move); and the
