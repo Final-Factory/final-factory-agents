@@ -35,6 +35,9 @@ holds, or the report says what is left instead of DONE.
    ([the Deck list](deck.md), [a simulated Deck is not a Deck](../lessons/verify-ui-with-full-content-like-a-player.md#a-simulated-deck-is-not-a-deck-w770)). When the
    request is a player's report from their own Deck, DONE waits for their check: end with `wNNN: still open: waiting on
    <name> to check on the Deck` and declare it with `waiting_on_person`.
-8. **Learned.** The report has `Learned: <file or PR>` or `Learned: nothing new`. A correction or a
+8. **Steps handed to a person.** Every "someone has to run X" in the report or a question was checked
+   against the tools: nothing the ops worker or ssh can do is left to a person
+   ([never hand a person a step a tool can do, first section](../lessons/a-person-wait-is-declared-not-polled.md), w855).
+9. **Learned.** The report has `Learned: <file or PR>` or `Learned: nothing new`. A correction or a
    reopen gets the check that would have caught it ([lessons belong in the harness
    repo](../lessons/lessons-belong-in-the-harness-repo.md)).

@@ -1,10 +1,23 @@
 ---
 name: a-person-wait-is-declared-not-polled
-description: "A worker that needs a person to act (reboot, log in, decide, approve, hand over a secret) declares it with FF Factory's waiting_on_person tool, names who and what in its report and its 'wNNN: still open:' line, and ends its turn. It never polls for a person with wake_me: a pending check-in makes the ledger show the request Working."
+description: "Never hand a person a step the harness's own tools (the ops worker, ssh to the machines) can do: an installer rerun or a daemon update is sent to the ops worker. A worker that needs a person to act (reboot, log in, decide, approve, hand over a secret) declares it with FF Factory's waiting_on_person tool, names who and what in its report and its 'wNNN: still open:' line, and ends its turn. It never polls for a person with wake_me: a pending check-in makes the ledger show the request Working."
 date: 2026-10-08
 ---
 
 # A wait on a person is declared, never polled
+
+**First, check that a person is really needed (w855).** Never hand a person a step the harness's own
+tools can do. A machine installer rerun (`--max-sandboxes N`), a daemon update, a reinstall or any
+command on a machine goes through the ops worker (`ops_worker machine_update`, or `send`;
+docs/ops-worker.md) or ssh, not to Ben or lothsahn. "Update the machines" means every machine's
+daemon through it, installers included. lothsahn, 2026-10-10 (from w847, where the dispatcher asked
+Ben to rerun biscuit's installer): "don't ask ben to run installers.  Update your instructions.
+Stop doing that.  When we say update the machines, do the update, including installers if
+necessary". A tool's refusal ("its sandbox count comes from its installer") points at the step to
+send, not at a question. The dispatcher hands the step to the requester's orchestrator in a
+`decide_work` note; an orchestrator calls the tool in any turn. A person is for what the rules
+reserve (money, deleting, publishing, releases, app settings, a secret) or a physical act (reboot,
+login). Only then declare the wait, below.
 
 **Rule.** When only a person can move you on (they must reboot or log in to a computer, decide,
 approve, hand over a secret), call `mcp__machine__waiting_on_person` with `who` and `what`, then end
