@@ -100,6 +100,7 @@ report. Change nothing on a guess.
 - **Time the added code when the bench cannot resolve 1%** ([lesson](lessons/settle-your-own-guesses.md#when-a-measurement-cannot-resolve-it-measure-closer-to-the-change-w824-2026-10-09)). A class 3
   desync PR whose before/after runs spread wider than 1% gets the added functions timed directly on the same save,
   with the triggering case present and absent (`checklists/ffbox-desync-pr.md`, w824).
+- **A CI test does not gate on the clock** ([lesson](lessons/verify-simulation-at-a-slow-hosts-frame-rate.md#a-ci-test-does-not-gate-on-the-clock-w857-2026-10-10)). A test the editmode job runs asserts no wall-clock ratio or time limit (make the benchmark `[Explicit]`, assert the structure), and a `[UnityTest]` waiting on real I/O counts seconds, not frames (w857: a 19 % flake and 422 s of a 14 minute job).
 - **Every new system runs in a test** ([lesson](lessons/verify-simulation-at-a-slow-hosts-frame-rate.md#a-new-system-runs-in-a-test-before-the-first-in-game-run-w809-2026-10-09)). Before you report a change
   that adds an `ISystem` or `SystemBase` (presentation and animation systems too), name the test that schedules it in a
   world with a matching entity. A system nobody runs throws on its first frame in a real world (w809: an aliasing error
