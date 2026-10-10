@@ -1,0 +1,14 @@
+# w909 PROOF ONLY: does the tools layer ffbox's Dockerfile gains build on Ubuntu 22.04?
+name: w909 dockerfile test
+on:
+  push:
+    branches: [w909-runner-test]
+    paths: ['.github/Dockerfile.w909-test', '.github/workflows/w909-dockerfile-test.yml']
+jobs:
+  build:
+    runs-on: ubuntu-22.04
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - run: docker build -f .github/Dockerfile.w909-test --progress=plain -t w909-test . 2>&1 | tail -80
+      - run: docker run --rm w909-test sh -c 'node --version; gitleaks version; jq --version; ls /usr/lib/x86_64-linux-gnu | grep -c .; du -sh /usr/lib /usr/share 2>/dev/null'
