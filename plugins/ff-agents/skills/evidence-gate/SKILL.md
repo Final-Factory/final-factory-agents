@@ -110,7 +110,7 @@ person asking for that exact element to move. Census 1920x1080, 1280x800 and 128
   desync PR whose before/after runs spread wider than 1% gets the added functions timed directly on the same save,
   with the triggering case present and absent (`checklists/ffbox-desync-pr.md`, w824).
 - **A CI test does not gate on the clock** ([lesson](lessons/verify-simulation-at-a-slow-hosts-frame-rate.md#a-ci-test-does-not-gate-on-the-clock-w857-2026-10-10)). A test the editmode job runs asserts no wall-clock ratio or time limit (make the benchmark `[Explicit]`, assert the structure), and a `[UnityTest]` waiting on real I/O counts seconds, not frames (w857: a 19 % flake and 422 s of a 14 minute job).
-- **Read why a CI job died before re-running it** ([lesson](lessons/read-why-a-ci-job-died-before-rerunning.md)). A job
+- **Read why a CI job died before re-running it** ([lesson](lessons/settle-your-own-guesses.md#read-why-a-ci-job-died-before-re-running-it-w906-2026-10-10)). A job
   cancelled at its timeout with no log at all (`BlobNotFound`) lost its runner; one with its log names the hung test
   (a watchdog prints it); "coverage file is empty" with every test green is a node child ended mid-exit. Name the
   cause before any re-run (w906: 27 coverage failures in 30 days and two lost jobs, each re-run blind).
