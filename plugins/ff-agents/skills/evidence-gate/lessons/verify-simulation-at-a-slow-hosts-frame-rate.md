@@ -1,6 +1,6 @@
 ---
 name: verify-simulation-at-a-slow-hosts-frame-rate
-description: "A simulation, timing or system-placement change is verified at both frame cadences: a frame without a heartbeat must change no simulation state, and the multiplayer check holds the host near one frame per heartbeat against fast clients. A same-speed pair cannot see a frame-order fork."
+description: "A simulation, timing or system-placement change is verified at both frame cadences: a frame without a heartbeat must change no simulation state, and the multiplayer check holds the host near one frame per heartbeat against fast clients. A same-speed pair cannot see a frame-order fork. A CI test asserts no wall-clock ratio and waits on real I/O in seconds, not frames."
 date: 2026-10-04
 ---
 
@@ -63,3 +63,41 @@ now scans an `OnCreate` that has its own attribute).
 **How to apply.** Write the system's test before the first in-game run. Make it red first on the broken shape (restore
 the old code, run, see the exception, restore the fix): w809's two animation tests failed with the aliasing error on the
 old job and pass on the new. A first built player or PlayMode load of a new feature is the second check, not the first.
+
+## A CI test does not gate on the clock (w857, 2026-10-10)
+
+
+**Rule.** A test CI runs is verified at the host's speed, not yours.
+
+1. A test the editmode job runs never asserts a wall-clock ratio or a time limit on shared
+   hardware. Make the benchmark `[Explicit]` (precedent: `HeldConnectionPointsCostTest`) and
+   assert what the speed-up is made of, which is deterministic: the job type, the batch count, the
+   result.
+2. A `[UnityTest]` that waits for real I/O or a worker thread counts **seconds** (a `Stopwatch`
+   against the command's own deadline), never frames. A headless editor runs frames in
+   microseconds, an interactive one throttles them to about 10 ms, so a frame budget passes on
+   your editor and fails in CI.
+3. A Burst option change in a test (`EnableBurstCompileSynchronously`, safety checks off) is a cold
+   compile in CI, minutes long. Measure the test's duration before you add one.
+
+**Why.** w857 (2026-10-10): `InterpolationRestoreCostTest` failed 14 of the 73 editmode runs
+measured since it landed, its best-pass ratio ranging 33-92 % (median 59 %) against a 70 % bar,
+and its cold Burst compile took a median 422 s (max 536 s against its own 600 s limit) of a 14
+minute job. It was the re-run behind #1365, #1357 and #1369, about 30 minutes each.
+`AuditWriteCommandTest` waited 600 frames for a file write: a local `-batchmode` run spent them in
+under 33 ms and failed 2 of 2, the interactive editor passed.
+
+**How to measure which tests flake** (all of this is retained, none of it needs a local run):
+
+- Runs and attempts: `gh api repos/Final-Factory/FinalFactory/actions/workflows/53376253/runs`,
+  then `actions/runs/<id>/attempts/<n>/jobs`. A test is a flake when attempt 1 failed it and a
+  later attempt of the same run passed.
+- Failed test names: `gh api --allow-escape-sequences repos/.../actions/jobs/<job id>/logs`, the
+  `FAIL: <name>` lines and the message under each.
+- Per-test duration and `TestContext.WriteLine` output for every run since July: artifact
+  `Test results for editmode` (`actions/artifacts?name=...`, `/zip`). A timing test's own printed
+  numbers are in there.
+- CI-speed frames locally: stop your editor, then
+  `unity-slot run -- Unity -batchmode -nographics -projectPath . -runTests -testPlatform EditMode -testFilter <name> -testResults <xml>`.
+- A failure that repeats across unrelated branches inside one day and not afterwards is a broken
+  develop, not a flake; one that passes on re-run is.
