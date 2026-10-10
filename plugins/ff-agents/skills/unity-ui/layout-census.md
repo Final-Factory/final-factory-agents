@@ -200,6 +200,36 @@ request, and `pr_evidence.py` has no way out of `Opened panels:` (a count over 0
 - Tour: `-ffSoloObjectives HandHoldy` shows the tutorial card; to see a taller later card, add
   `{"waitFor": "text:Skip", "timeout": 120}, {"click": "text:Skip"}` per step (w835 `make_tour.py --skips 6`).
 
+## A small UI change, before and after, in two built players (w809)
+
+The census snippet above is for the editor. For a change to one panel (w809: a Status row in the Laser Turret's window and
+new rows on an item's hover card) two development players take it without `execute_code`, and the Deck tour writes
+`<shot>.layout.json` for every `shot` step:
+
+1. **The base build is a throwaway commit of the same tree.** `build_player.sh` wants HEAD at a clean 40-hex sha. Build your tip first,
+   then `git checkout origin/develop -- <the UI files you changed>` (scripts, the scene), commit it locally with a TEMP subject, build that,
+   then `git reset --hard <your pushed tip>` (the commit was never pushed). The base build then differs from yours by exactly the UI
+   change, with no second checkout to import.
+2. **The same tour on both**, one after the other (the agent port is fixed), at `-ffDeckTourSize 1920x1080 -ffDeckTourUiScale 0.9` and
+   `1280x800` at `0.8`: HUD at rest, each `flyout:<name>`, the hover card, your panel open and closed, and the *old* panel that shares
+   code with yours (a Laser Turret for a Railgun) open and closed in both builds. Give `-ffDeckTour` and `-ffDeckTourOut` **absolute**
+   paths (a relative one resolves against the player's own folder and the tour reads no steps: "could not find file").
+3. **Tour traps.** The item hotbar did not show in a Deck tour (the Deck's default is the radial hotbar, `HotbarStyleSetting.Default`): add `{"setup": "hotbarstyle:bar"}` before hovering a slot, then
+   `{"point": "name:ItemSlot (1) in name:BuildItems"}` (slot 1 is `ItemSlot`, slot 2 `ItemSlot (1)`; in w809's tour `hotbar.set|1|Railgun` landed in
+   `ItemSlot (1)`, the first slot held a default item: read the shot). Close a docked structure panel with `{"click": "text:Close"}`; `ui.selecttile`
+   on an empty tile fails. A step that fails ends the tour, so give the base build its own step list where it has no such panel.
+4. **The held-item icon** (`UI Canvas/IconImage(Clone)`, the item in the player's hand) follows the tour's pointer and is in one census and not the
+   other: drop it from every `.layout.json` before `check` or `moves` (it is not layout). `ui_check.py flicker` reads the `record` step's frames
+   (upside down: crop in flipped coordinates).
+5. **Then** `check --before <base rest> --after <your panel open> --closed <yours after Close> --touched <panel> --ref MiniInventory
+   --shot <after png> --ref-shot <after png> --ref-census <after census>` (the reference window must be open in that census) and `moves --pair`
+   over rest and the hover card at both sizes. A `moves` pair of the hover card lists the card as moved when its content grew: mark it.
+
+`hud-clusters.json` must list the window as an opened panel or `check` takes it for always-on HUD and fails the *base* build the same way
+(w809: the Laser Turret's window is `GamePanels/LaserTurretPanel`, which `*EntityPanel` does not match: 1 pair, 7 under the HUD, HUD
+not restored at 1920x1080 before the path was added). If your census fails on the base build too, the list is the first thing to read. At
+1280x800 any docked structure panel hides the quick buttons, option toggles and hotbars in both builds, and `check` prints them as "gone".
+
 ## Compare two
 
 ```sh
