@@ -21,6 +21,9 @@ RUN set -eux; \
     rm -f gitleaks_*; gitleaks version; \
     mkdir /tmp/pw && cd /tmp/pw && npm init -y >/dev/null && npm install --no-audit --no-fund "playwright-core@${PLAYWRIGHT_VERSION}"; \
     node node_modules/playwright-core/cli.js install-deps chromium webkit; \
+    PLAYWRIGHT_BROWSERS_PATH=/opt/ms-playwright node node_modules/playwright-core/cli.js install chromium webkit; \
+    echo "${PLAYWRIGHT_VERSION}" > /opt/ms-playwright/PLAYWRIGHT_VERSION; chmod -R a+rX /opt/ms-playwright; \
     cd /; rm -rf /tmp/pw /var/lib/apt/lists/*; npm cache clean --force; \
-    echo "node $(node --version), gitleaks $(gitleaks version), playwright libs for ${PLAYWRIGHT_VERSION}"
-RUN node --version && npm --version && gitleaks version && jq --version && df -h / | tail -1
+    du -sh /opt/ms-playwright; \
+    echo "node $(node --version), gitleaks $(gitleaks version), playwright ${PLAYWRIGHT_VERSION} libs and browsers"
+ENV PLAYWRIGHT_BROWSERS_PATH=/opt/ms-playwright

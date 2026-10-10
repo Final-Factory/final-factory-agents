@@ -1,4 +1,4 @@
-# w909 PROOF ONLY: does the tools layer ffbox's Dockerfile gains build on Ubuntu 22.04?
+# w909/w911 PROOF ONLY: does the tools layer ffbox's Dockerfile gains build on Ubuntu 22.04, and do both browsers start?
 name: w909 dockerfile test
 on:
   push:
@@ -10,5 +10,10 @@ jobs:
     timeout-minutes: 30
     steps:
       - uses: actions/checkout@v4
-      - run: docker build -f .github/Dockerfile.w909-test --progress=plain -t w909-test . 2>&1 | tail -80
-      - run: docker run --rm w909-test sh -c 'node --version; gitleaks version; jq --version; ls /usr/lib/x86_64-linux-gnu | grep -c .; du -sh /usr/lib /usr/share 2>/dev/null'
+      - run: docker build -f .github/Dockerfile.w909-test --progress=plain -t w909-test . 2>&1 | tail -30
+      - name: both browsers start from the baked path, no network needed for them
+        run: |
+          docker run --rm w909-test sh -c 'cd /tmp && mkdir t && cd t && npm init -y >/dev/null && npm i --no-audit --no-fund playwright-core@1.63.0 >/dev/null && cat /opt/ms-playwright/PLAYWRIGHT_VERSION && ls /opt/ms-playwright && du -sh /opt/ms-playwright && node -e "
+          const { chromium, webkit } = require(\"playwright-core\");
+          (async () => { for (const b of [chromium, webkit]) { const br = await b.launch(); const p = await br.newPage(); await p.setContent(\"<h1>hi</h1>\"); console.log(b.name(), await p.textContent(\"h1\"), br.version()); await br.close(); } })().catch(e => { console.error(e); process.exit(1); });
+          "'
