@@ -22,6 +22,13 @@ changed code runs) in your first report and in the PR description.
 - Class 1 or 3 in doubt is 3. "Only runs when a desync is detected" is class 1 only if the code it
   adds is reached from the report writer and nowhere on the heartbeat or frame path; show the call
   sites (`file.cs:line`).
+- That covers every existing function the diff changes, not only the ones it adds: list each
+  changed function's callers. A helper the report shares with a per-heartbeat capture is on the
+  heartbeat path (w817, PR #1327: FFBox changed `DescribeBotOwner` to print `bot=dead`, and
+  `DescribeConstruction` feeds both the report's `DetailDumps` and
+  `DeterminismFingerprintSystem.RecordDetail` every heartbeat in audit sessions). It is class 3
+  unless you split the change so that path prints exactly what develop prints (there: a report-only
+  `DescribeConstructionForReport` overload, plus a test that the audit dump is unchanged).
 - A class 2 fix that also adds capture is class 3 for the capture part.
 
 ## 2. Class 1: safe to merge
@@ -30,6 +37,11 @@ changed code runs) in your first report and in the PR description.
 - [ ] A test covers the report it writes (add one when none does).
 - [ ] Every new call site is on the report path only: cite them.
 - [ ] The PR's `## Evidence` says class 1, the call sites, the tests ([merges](merge.md)), then merge.
+- [ ] CI red from `Tests.Performance.InterpolationRestoreCostTest.RestoringALateGameFrame_IsFasterThanTheSingleJob`
+      alone is that wall-clock test's known flake on the shared runner (it also failed on unrelated
+      PR heads aab19faf4 and d61b6c7fa, and on #1327's first attempt, which passed on rerun, w817).
+      Read the failed test's name from the `editmode Test Results` annotations, then
+      `gh run rerun <run id> --failed`; don't change code for it.
 
 ## 3. Class 2: proven red, then green
 
