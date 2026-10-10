@@ -5,6 +5,13 @@
 # are deliberately out of scope — the game repo's update-docs skill owns those.
 # `claude plugin validate` is not run as a gate (CLI availability in CI
 # unproven); manifest checks below cover the structural basics.
+#
+# RUNS ON ffgithubrunners (w909), the FFBox build server's runner containers, not a GitHub-hosted runner:
+# hosted minutes are the Actions spend. A container there cannot reach github.com or api.github.com, so
+# the checkout comes from the host's mirror of this repository (the host fetches it on request; ffbox
+# runners/lib/mirror.sh, ffghr_mirror_serve_extra) and git is told to use it below. The job calls no
+# GitHub API. Actions are pinned by commit SHA because the runner image carries the archives of exactly
+# those commits and cannot download any other.
 name: validate
 
 on:
@@ -13,9 +20,22 @@ on:
 
 jobs:
   validate:
-    runs-on: ubuntu-latest
+    runs-on: ffgithubrunners
+    timeout-minutes: 15
     steps:
-      - uses: actions/checkout@v4
+      # The container's git reaches this repository only through the host's mirror. --system, because
+      # actions/checkout runs git with a HOME of its own and would not see a --global rule.
+      - name: Ask the host for its mirror of this repository at this commit
+        run: |
+          repo="${GITHUB_REPOSITORY#*/}"
+          printf '%s\n' "$repo" > /ffghr/out/fetch.repo
+          /opt/ffghr/ffghr-workspace.sh request-mirror "${{ github.sha }}"
+          /opt/ffghr/ffghr-workspace.sh wait-mirror
+          mirror="${FFGHR_GIT_MIRROR%/*}/extra/$repo.git"
+          git config --system --add "url.$mirror.insteadOf" "https://github.com/$GITHUB_REPOSITORY"
+          git config --system --add "url.$mirror.insteadOf" "https://github.com/$GITHUB_REPOSITORY.git"
+
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
           fetch-depth: 0
 
