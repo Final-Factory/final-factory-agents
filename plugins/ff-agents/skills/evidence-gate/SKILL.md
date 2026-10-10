@@ -143,7 +143,7 @@ One file each under `lessons/`: the rule, why (the incident, dated), how to appl
   is a second opinion.
 - [No merge before the review](lessons/no-merge-before-the-review.md): "pending" is not done.
 - [Merge your own pull request](lessons/merge-your-own-pr.md): verified and green means merge;
-  hold only for exceptional risk or a timing reason, and say which and when.
+  hold only for exceptional risk or a timing reason, and say which and when. mechanics: check `git branch --show-current` after a wait, gate `gh pr merge` on a passing check, post the verdict only from the newest ff-agents (w807).
 - [A release lands where SETLIVE says](lessons/a-release-lands-where-setlive-says.md): develop on
   `development`, master on `pre-release`; run `release-status.py`, never recall it.
 - [A release is done when its notes are posted](lessons/a-release-is-done-when-its-notes-are-posted.md):

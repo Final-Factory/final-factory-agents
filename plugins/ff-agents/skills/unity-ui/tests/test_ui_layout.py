@@ -440,5 +440,22 @@ class CommandTest(unittest.TestCase):
             self.assertEqual(ul.main(["check", "--before", str(b), "--after", str(b)]), 0)
 
 
+class SampleWithoutPillowTest(unittest.TestCase):
+    def test_a_missing_pillow_says_how_to_get_it(self):
+        # w807: a bare "ModuleNotFoundError: No module named 'PIL'" was all a Mac with no Pillow printed
+        saved = sys.modules.get("PIL", False)
+        sys.modules["PIL"] = None  # makes `from PIL import Image` raise ImportError
+        try:
+            with self.assertRaises(SystemExit) as raised:
+                ul.sample("nowhere.png", [0, 0, 10, 10])
+        finally:
+            if saved is False:
+                sys.modules.pop("PIL", None)
+            else:
+                sys.modules["PIL"] = saved
+        self.assertIn("pillow", str(raised.exception).lower())
+        self.assertIn("venv", str(raised.exception))
+
+
 if __name__ == "__main__":
     unittest.main()
