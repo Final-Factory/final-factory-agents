@@ -217,7 +217,11 @@ a sandbox's editor and for a machine's main clone, a person's own project folder
 4. Do the git work, file copies or installer run. If a person was using the editor, relaunch it on the same project
    path (`scripts/launch-editor.sh`, or the sandbox tool's `start`) and say so in the report; if it was closed, leave it
    closed.
-5. If the harness's guard refuses a step (it blocks the protected main-clone path and stopping Unity by hand), say which
+5. A machine's main clone is protected by the guard unless your request carries the grant (w936, deployed 2026-10-10: a
+   field `mainCloneAccess` on the request, set by its person's orchestrator in the person's own turn with `update_work
+   main_clone: "<machine>"`; your brief then has a paragraph listing the allowed forms, always `git -C <clone> ...`: the
+   bridge save-and-quit, stash/branch/patch backup, fetch, checkout/switch, ff-only merge, reopen Unity). No grant and the
+   request asks for work in the clone: say so to your orchestrator, who sets it. If the guard refuses any other step (stopping Unity by hand), say which
    tool refused what and hand the step to the requester's orchestrator for the ops worker or ssh. Never write "What Ben
    needs to do", and never hand a person Unity, git, copy or installer steps: a person is asked only for what the rules
    reserve to them (approvals, design decisions, spending, publishing, admin acts that need their own words;
