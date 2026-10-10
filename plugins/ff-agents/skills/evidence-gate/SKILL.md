@@ -97,6 +97,10 @@ report. Change nothing on a guess.
   description, release notes, a ledger note, a report), copy the name from that message's
   `[from <name>]` or `[from the orchestrator, for <name>]` line, or from the ledger's requester. A
   message without one is not from "the user" your prompt names: write "unconfirmed" and ask.
+- **Every new system runs in a test** ([lesson](lessons/every-new-system-runs-in-a-test.md)). Before you report a change
+  that adds an `ISystem` or `SystemBase` (presentation and animation systems too), name the test that schedules it in a
+  world with a matching entity. A system nobody runs throws on its first frame in a real world (w809: an aliasing error
+  in a job, found by a PlayMode fixture load, not by 9,381 green tests).
 
 ## Checklists: read the one for what you are doing
 
