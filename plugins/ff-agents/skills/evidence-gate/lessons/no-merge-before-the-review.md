@@ -26,6 +26,9 @@ to mean finished.
   On 2026-10-09 (w793, #1329) the check and the merge ran as two lines of one command; the check
   said FAIL (its copy was one ff-agents release old) and the merge went through anyway. The newer
   copy then said PASS, but the record before the merge was a FAIL.
+  On 2026-10-10 (w888, #1393) the same FAIL (a release-old copy) merged through `pr_evidence.py ... --comment 2>&1 |
+  head -2 && gh pr merge`: the pipe's exit status is `head`'s, always 0. Nothing may stand between the check and the
+  `&&`; redirect to a file to keep the output short.
 - If the review cannot run where you are (no key on this machine, no built player), move the work
   to where it can, or hold the pull request and say what is missing and when it will merge. Don't
   merge and promise the review afterwards.
