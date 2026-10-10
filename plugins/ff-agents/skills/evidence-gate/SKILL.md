@@ -248,6 +248,11 @@ One file each under `lessons/`: the rule, why (the incident, dated), how to appl
   Same lesson, Unity slots: your own `-batchmode` builds end before DONE (`unity-slot status`); a start refused for a
   stuck batch holder gets `unity clear_batch`, not a multi-hour wait or a request to end it by hand (w791: two builds
   held slots for hours).
+- [Unfinished content goes behind a feature toggle](lessons/unfinished-content-goes-behind-a-toggle.md):
+  content or a feature not ready for players merges to develop behind a toggle in the game repo's
+  `FFCore.Features.FeatureToggles` (Simulation: per game, the host's set wins; Presentation: local), never on a
+  waiting branch or deleted from the config list (w937, Ben: "merge new content ... to develop ... and also not
+  exposing unfinished stuff to players"); `FeatureToggleLifecycleTest` enforces dates, use and self-contained gates.
 - [No human-time estimates](lessons/no-human-time-estimates.md): size work by scope, or by a
   measured agent time from a named comparable run, never in human days or weeks (w545: the Steam
   Deck report's "1–2 weeks" and "weeks to months"; Ben: "stop giving human time estimates").
