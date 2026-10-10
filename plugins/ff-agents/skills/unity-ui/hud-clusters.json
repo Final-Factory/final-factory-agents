@@ -4,7 +4,8 @@
     "why": "A panel or slide-out the player opens on purpose and can close may draw over HUD elements (the hotbar, the Objectives card, the minimap buttons). ui_layout.py does not count its overlaps with the HUD; it checks that the panel draws on top, takes the clicks over everything it covers, stays inside the screen, and that closing it leaves the covered HUD where it was. Overlaps between always-on HUD blocks, anchored-cluster drift and colour mismatches still fail.",
     "who": [
       "Ben, w732, 2026-10-09: \"Put the slide out back just make it appear over the hot bar. The user can then close it to show the hotbar again\"",
-      "Ben, w742, 2026-10-09, on the Blueprints window covering the Objectives card: \"the blueprint panel showing over objectives is fine since its a temporarily opened panel\""
+      "Ben, w742, 2026-10-09, on the Blueprints window covering the Objectives card: \"the blueprint panel showing over objectives is fine since its a temporarily opened panel\"",
+      "Ben, w813, 2026-10-09, on the Station strip: \"objectives are on their own layer and game Ui panels should just show over top of them\" (SelectionColumnStrip is the classic layout's Station panel, StructuredStation the dock's: the same panel)"
     ],
     "howToAdd": "Add a path (components joined with /, fnmatch globs, matched against a run of components anywhere in the element's path, '(Clone)' ignored) only for something the player opens on purpose and can close again. Never for something always showing, and never to make a check pass: a HUD piece in the way of another HUD piece is a defect.",
     "paths": [
@@ -25,6 +26,7 @@
       "*EntityPanel",
       "StructuredDock",
       "StructuredStation",
+      "SelectionColumnStrip",
       "StructuredHub*"
     ]
   },

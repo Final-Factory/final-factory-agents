@@ -138,6 +138,14 @@ screen; on desktop three labels stopped fitting, the two windows left their defa
     that order, which every earlier still (opened with the toggle already on) missed. The tour's `rowOverlaps` is 0 in every
     state.
 
+21. **Layers are sibling order, and the test starts the object where the game creates it (w813).** In `GamePanels` a later
+    sibling draws over an earlier one; a frame or panel built at run time is a last sibling, so it covers every window
+    until something moves it. A test of that move starts the object last (the first w813 `PlaceAbove` test started the
+    frame first, passed, and shipped a dock frame that hid and blocked every docked window; an adversarial review found
+    it). Ben, w813: "objectives are on their own layer and game Ui panels should just show over top of them", so a
+    window never keeps off the objectives card and the strip over it is the intended overlap (`openedPanels` lists
+    `SelectionColumnStrip`).
+
 19. **The Deck tour is a stand-in (w770).** It forces its own window size and a scripted Deck, so it cannot show Steam's
     layout choice, the Proton first-frame resolution, the Steam client version or touch. A Deck UI change says "verified on
     a real Deck" or "not verified on a real Deck" ([deck.md](deck.md)). For a stored bad size use `-ffDeckTourSize none

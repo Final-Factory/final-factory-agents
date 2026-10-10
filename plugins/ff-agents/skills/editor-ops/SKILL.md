@@ -226,6 +226,11 @@ CI runs the whole suite on every pull request, so anything the selection leaves 
 there. For #1137's change the selection ran in 75 s against 376 s for the full fast suite
 (measured, lothdesktop).
 
+- **Do not change the editor's scene or locale from `execute_code` between test runs** (w813): `NewScene(EmptyScene)` and
+  `LocalizationSettings.SelectedLocale = ...` left 11 unrelated UI tests failing with an NRE in
+  `LocalizationHelper.ApplyLocalizedFont` (the tests need the open scene's `LocalizationHelper`), even after
+  `manage_scene load main` and a domain reload; only a `unity restart` cleared it. Probe layouts in a built player's
+  Deck tour (`layout.json` per shot) instead, or restart the editor before the next run.
 - Pass `test_names`, never regex `group_names`. One class through a regex took the job 16.6 s
   against 4.0 s by exact name, and regex runs held the main thread for minutes (measured).
 - Give `run_tests` an `init_timeout` of 120000. A call that answers "Timeout receiving Unity
