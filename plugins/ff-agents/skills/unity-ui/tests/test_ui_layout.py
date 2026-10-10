@@ -398,9 +398,9 @@ class MovedTest(unittest.TestCase):
                 code = ul.main(["moves", "--pair", paths[0], paths[1], "--pair", paths[2], paths[3]])
         self.assertEqual(code, 0)
         text = out.getvalue()
-        self.assertIn("Moved: 2 element move(s) over 4 px at 1920x1080, 1280x800", text)
-        self.assertIn("- 1920x1080 GamePanels/BuildInfoPanel: x -190, y -713 px", text)
-        self.assertIn("- 1280x800 GamePanels/BuildInfoPanel: x -18, y -453 px", text)
+        self.assertIn("Moved: 2 element move(s) over 4 px at 1920x1080 undocked, 1280x800 undocked", text)
+        self.assertIn("- 1920x1080 undocked GamePanels/BuildInfoPanel: x -190, y -713 px", text)
+        self.assertIn("- 1280x800 undocked GamePanels/BuildInfoPanel: x -18, y -453 px", text)
 
 
 class RecordedMoveTest(unittest.TestCase):
@@ -428,6 +428,62 @@ class RecordedMoveTest(unittest.TestCase):
     def test_the_census_against_itself_moves_nothing(self):
         before, _ = self.pair("1920")
         self.assertEqual(ul.moves(before, before)["moved"], [])
+
+
+class PinTest(unittest.TestCase):
+    """w894: the places Ben fixed himself (hud-pins.json), checked in every census whatever the PR's parent showed. The
+    dock had stacked Station Info and the building hover card top left since w772 (0068ccf9b), so every before/after
+    diff after it saw them "unmoved" there. Ben, 2026-10-10: "it seems like you keep moving it to the top on the deck. I
+    don't want that" and "put it back over the minimap, stop moving panels around that I don't ask you to move around".
+    MEASURED: editor censuses of develop 9798f308c (tests/fixtures/w894-develop-*.json)."""
+
+    SPEC = json.loads(ul.DEFAULT_PINS.read_text(encoding="utf-8"))
+
+    def verdicts(self, name):
+        census = ul.load(HERE / "fixtures" / name)
+        return {pin["name"]: ul.pin_check(census, pin)[0] for pin in self.SPEC["pins"]}
+
+    def test_todays_docked_layout_breaks_station_info_and_the_hover_card(self):
+        census = ul.load(HERE / "fixtures" / "w894-develop-1280-docked.json")
+        self.assertEqual(ul.layout_of(census), "docked")
+        self.assertEqual(self.verdicts("w894-develop-1280-docked.json"),
+                         {"Station Info": "broken", "building hover card": "broken", "Player Inventory": "ok"})
+
+    def test_todays_classic_layout_keeps_every_pin(self):
+        for name in ("w894-develop-1920-classic.json", "w894-develop-1280-classic.json"):
+            self.assertEqual(ul.layout_of(ul.load(HERE / "fixtures" / name)), "undocked")
+            self.assertEqual(set(self.verdicts(name).values()), {"ok"}, name)
+
+    def test_1282_broke_the_station_info_pin_and_its_parent_kept_it(self):
+        self.assertEqual(self.verdicts("w826-1282-after-1920.json")["Station Info"], "broken")
+        self.assertEqual(self.verdicts("w826-1282-before-1920.json")["Station Info"], "ok")
+
+    def test_the_inventory_against_the_left_edge_is_broken(self):
+        census = hud()
+        census["elements"].append(el("MiniInventory/Content", [6, 300, 470, 560]))
+        pin = next(p for p in self.SPEC["pins"] if p["name"] == "Player Inventory")
+        self.assertEqual(ul.pin_check(census, pin)[0], "broken")
+        census["elements"][-1].update(rect=[60, 300, 524, 560], visible=[60, 300, 524, 560])
+        self.assertEqual(ul.pin_check(census, pin)[0], "ok")
+
+    def test_a_pin_not_on_screen_is_not_shown_and_the_command_fails_on_a_broken_one(self):
+        import contextlib
+        import io
+        out = io.StringIO()
+        with contextlib.redirect_stdout(out):
+            code = ul.main(["pins", str(HERE / "fixtures" / "w894-develop-1920-classic.json"),
+                            str(HERE / "fixtures" / "w894-develop-1280-docked.json")])
+        text = out.getvalue()
+        self.assertEqual(code, 1)
+        self.assertIn("Pinned: 3 pin(s) in 2 census(es) (1920x1080 undocked, 1280x800 docked): 2 broken, 0 not shown", text)
+        self.assertIn("BROKEN 1280x800 docked (w894-develop-1280-docked.json): Station Info", text)
+        self.assertIn("BROKEN 1280x800 docked (w894-develop-1280-docked.json): building hover card", text)
+        self.assertEqual(ul.pin_check(hud(), self.SPEC["pins"][0])[0], "not shown")
+
+    def test_moves_refuses_a_pair_of_different_layouts(self):
+        with self.assertRaises(ValueError):
+            ul.moves(ul.load(HERE / "fixtures" / "w894-develop-1280-classic.json"),
+                     ul.load(HERE / "fixtures" / "w894-develop-1280-docked.json"))
 
 
 class CommandTest(unittest.TestCase):

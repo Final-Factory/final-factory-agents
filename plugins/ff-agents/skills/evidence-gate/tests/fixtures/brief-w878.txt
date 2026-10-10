@@ -1,0 +1,11 @@
+w878 (ledger brief, 2026-10-10, as read_work printed it; the description of Ben's screenshots is the dispatcher's)
+
+Ben's words: "on desktop i dont love how the panels dont really cluster in the middle by default. i have to move them. like heres what the defense platform panels looked like the first timee i clicked it. and then i put them in the arrangement I wanted, more clustered on the center of the screen ... then look at how i arranged the panels for a production building. i want these to be the defaults. use the center of the screen!"
+
+Ben's arrangement, which he wants as the default:
+- the Range panel and the Defense Platform panel side by side, around the vertical center line of the screen: Range on the left at about x 432-752, y 322-478, and Defense Platform on its right at about x 758-1063, y 305-510;
+- the Player Inventory centred under the pair, at about x 733-1092, y 548-763.
+
+Constraints:
+- Desktop only. Don't change the Steam Deck layout; w644 and w815 own that.
+- Don't move other UI.

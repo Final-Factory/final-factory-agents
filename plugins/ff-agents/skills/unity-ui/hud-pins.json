@@ -1,0 +1,43 @@
+{
+  "about": "Where Ben placed HUD pieces himself (w894). ui_layout.py pins checks every census against these, whatever the pull request's parent looked like: a move an earlier PR made does not become the new normal. A pin changes only when the person asks, quoted in its 'who', through a harness PR. Rects are screen pixels from the top-left; fractions are of the screen's width (W) or height (H). A pin whose element is not on screen in a census is 'not shown' there: take the census with a station selected and the hover card up.",
+  "pins": [
+    {
+      "name": "Station Info",
+      "element": "BuildInfoPanel",
+      "names": ["station info"],
+      "rule": "above",
+      "anchor": "ActionBarParent/Hotbars/AbilityHotbar",
+      "maxGap": 0.06,
+      "region": {"minBottom": 0.7, "centerXMin": 0.25, "centerXMax": 0.75},
+      "where": "just above the ability row, bottom centre, on every screen and layout; never in the panel cluster",
+      "who": [
+        "Ben, 2026-10-10 (w813): \"why is station info at the top left? i didnt tell you to move that\"",
+        "Ben, 2026-10-10 (w894): \"the Station Info hover panel, it seems like you keep moving it to the top on the deck. I don't want that. I want it to just be in its normal position over the abilities, Which is now even better because we got rid of the hotbar on the deck. So just leave it. Don't put it in formation with the other panels. It's just a hover panel that shows above the abilities. Just leave it there on the desktop and the deck.\""
+      ]
+    },
+    {
+      "name": "building hover card",
+      "element": "HoverDescription",
+      "names": ["hover panel", "hover card", "tooltip", "hover info"],
+      "rule": "above",
+      "anchor": "MinimapParent",
+      "maxGap": 0.06,
+      "region": {"minBottom": 0.6, "minRight": 0.8},
+      "where": "just above the minimap, bottom right, on every screen and layout; never in the panel cluster",
+      "who": [
+        "Ben, 2026-10-10 (w895): \"I also noticed that the actual normal hover panel is up, you put it up in the fucking, you know, array of panels up on the top left. Don't do that, put it back over the minimap, stop moving panels around that I don't ask you to move around. It's driving me crazy.\""
+      ]
+    },
+    {
+      "name": "Player Inventory",
+      "element": "MiniInventory",
+      "names": ["player inventory", "inventory"],
+      "rule": "offLeftEdge",
+      "minLeft": 0.02,
+      "where": "never against the left edge of the screen (2 % of the width at least: 38 px at 1920, 26 px at 1280)",
+      "who": [
+        "Ben, 2026-10-10 (w895): \"I don't like the player inventory all the way up against the edge of the left side of the screen. I sent you screenshots of where I had it, where I said I liked it, so just keep it there.\""
+      ]
+    }
+  ]
+}

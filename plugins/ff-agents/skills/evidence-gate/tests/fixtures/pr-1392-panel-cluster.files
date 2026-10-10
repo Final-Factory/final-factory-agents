@@ -1,0 +1,9 @@
+Assets/Scripts/UI/Components/DefaultPanelCluster.cs
+Assets/Scripts/UI/Components/DefaultPanelCluster.cs.meta
+Assets/Scripts/UI/Panels/SelectionColumn.cs
+Assets/Tests/UI/DefaultPanelClusterTests.cs
+Assets/Tests/UI/DefaultPanelClusterTests.cs.meta
+docs/UI-Architecture.md
+specs/w878-cluster-defaults/check_layout.py
+specs/w878-cluster-defaults/make_tour.py
+specs/w878-cluster-defaults/run_tour.sh
