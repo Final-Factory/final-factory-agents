@@ -1,6 +1,6 @@
 ---
 name: a-ui-change-leaves-the-rest-of-the-screen-as-it-was
-description: "A UI change proves it left the rest of the screen as it was: a whole-screen layout census before and after (whole HUD showing, every slide-out open) with no new overlap between always-on HUD blocks, no anchored cluster drifting more than 2 px, and every touched panel's measured colour and alpha within reach of a classic panel's. A panel the player opens on purpose and can close may cover the HUD, if it draws on top, is clickable, stays on screen and gives the HUD back (Ben, w732 and w742). Checked by the released pr_evidence.py, not an older copy."
+description: "A UI change proves it left the rest of the screen as it was: a whole-screen layout census before and after (whole HUD showing, every slide-out open) with no new overlap between always-on HUD blocks, no anchored cluster drifting more than 2 px, and every touched panel's measured colour and alpha within reach of a classic panel's. A panel the player opens on purpose and can close may cover the HUD, if it draws on top, is clickable, stays on screen and gives the HUD back (Ben, w732 and w742). Nothing moves that the brief did not ask to move: every moved element at 1920x1080 and 1280x800 is listed and marked asked, in the requester's words for that screen, or justified (Ben, w826: \"i didnt tell you to move that\"). Checked by the released pr_evidence.py, not an older copy."
 date: 2026-10-09
 ---
 
@@ -135,3 +135,40 @@ The labels fitted in the font their prefab names (Liberation Sans) and not in th
 **How to apply.** `checklists/ui.md` items 15 and 16; `unity-ui` `text_diff.py` for the per-text comparison; in the
 game repo, `SelectionColumnPanelsTests` pins which screens the packer places the player's windows on and
 `RaisedLabelsFitTest` lays labels out in both fonts.
+
+## Nothing moves that the brief did not ask to move (w826, 2026-10-10)
+
+**Rule.** A UI change lists every HUD element it moved, at 1920x1080 and at 1280x800, and each one is either asked for in
+the requester's own words, for that element on that screen, or put back. A move kept without being asked is named in the
+report's first lines, with why.
+
+**Why.** Ben corrected the same kind of miss twice in two days, both in the classic layout's top-left corner:
+
+- 2026-10-09, on w722/w723: "you did more with the overall layout than i wanted. like the station controls are not being
+  put above objectives. that's not what i wanted. objectives are on their own layer and game Ui panels should just show
+  over top of them". Ben's words in w722 were "for the station controls panel just put in the top left corner and have
+  the main panel and inventory position around it"; the note that carried them added "Mind the top-left HUD (the health
+  bar and the objectives) so nothing overlaps", and #1280 moved the objectives card down under the strip
+  (`KeepObjectivesOff`; w722's log: "the Objectives panel moves down under the strip and the two never overlap").
+- 2026-10-10: "why is station info at the top left? i didnt tell you to move that". #1282 (w723) moved the Station Info box
+  from above the ability row to beside the strip, on every screen. Ben's words in w723 were "we need a new place for Station
+  Info hover panel thing it takes up too much space in the steam deck ui": a Deck request that named no place. The
+  note that carried them added "It is the same on desktop unless that looks worse there"; the worker picked the top left
+  and applied it to the desktop as well.
+
+In both, the move came from a brief's own words around Ben's quote, which item 1 of the checklist already says are a
+guess until the person says them.
+
+Both PRs passed every check of their day: overlaps, cluster drift and colour look at what touches what, not at what moved.
+#1282's TL;DR even said "a two-column Station Info box beside them", and nothing compared that with Ben's words. MEASURED
+(w826, editor censuses of develop 4762a5bc3 and 102e46bed, #1282's merge, the classic layout, a new game with the tutorial
+objectives and a selected station): `ui_layout.py moves` lists `GamePanels/BuildInfoPanel` at x -312, y -736 px at 1920x1080
+and x -30, y -476 px at 1280x800, the first of 7 lines (the others: the strip's buttons and the hover card grew with the
+text floor w727 asked for, and the Player Inventory moved 23 px at 1280x800). With Ben's Deck quote on both Station Info
+lines, `pr_evidence.py` fails the 1920x1080 one: a Deck request does not move the desktop.
+
+**How to apply.** [The UI checklist](../checklists/ui.md), item 22: `ui_layout.py moves` over both sizes, the `Moved:`
+line and its list in the PR, each line marked `asked (who): "their words"` or `not asked: justified: <why>`, and
+`pr_evidence.py --brief <the brief>` so each quote is checked against the requester's words. "A new place" asks for a
+move, not for the place you chose: put the place in the TL;DR for the person to see. The recorded censuses are
+`unity-ui/tests/fixtures/w826-1282-*.json`.

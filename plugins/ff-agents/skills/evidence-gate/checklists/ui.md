@@ -146,6 +146,24 @@ screen; on desktop three labels stopped fitting, the two windows left their defa
     window never keeps off the objectives card and the strip over it is the intended overlap (`openedPanels` lists
     `SelectionColumnStrip`).
 
+22. **Nothing moves that the brief did not ask to move (w826).** Take the census before and after at both standard sizes,
+    1920x1080 at UI 0.9 and 1280x800 at UI 0.8, the same save and screens, and run `ui_layout.py moves --pair
+    before-1920.json after-1920.json --pair before-1280.json after-1280.json` (unity-ui `layout-census.md`). It lists
+    every HUD block and window that moved or resized more than 4 px, with what moved inside it. Paste its `Moved:` line
+    and list into the PR and mark each line:
+    - `asked (Ben): "his words"` only when the words ask for **that element to move on that screen**. A Deck request does
+      not move the desktop (`pr_evidence.py` fails a Deck quote on a 1920x1080 line). Words that ask for "a new place" ask
+      for a move, not for the place you picked: name the place in the TL;DR and the report's first lines.
+    - otherwise put it back and re-take the census, or mark it `not asked: justified: <why>` (a size the requester's
+      change forces, such as a text floor they asked for) and name it in the report's first lines.
+
+    Run `pr_evidence.py --brief <the brief, saved from read_work>` so every quote is checked against the requester's words.
+    Ben, after w722/w723 had moved the objectives card under the Station strip: "you did more with the overall layout than
+    i wanted. like the station controls are not being put above objectives. that's not what i wanted"; after #1282 had
+    moved the Station Info box from above the ability row to the top left on every screen: "why is station info at the
+    top left? i didnt tell you to move that". MEASURED (w826, editor censuses of 4762a5bc3 and 102e46bed): the check lists
+    `GamePanels/BuildInfoPanel` at x -312, y -736 px at 1920x1080 and x -30, y -476 px at 1280x800.
+
 19. **The Deck tour is a stand-in (w770).** It forces its own window size and a scripted Deck, so it cannot show Steam's
     layout choice, the Proton first-frame resolution, the Steam client version or touch. A Deck UI change says "verified on
     a real Deck" or "not verified on a real Deck" ([deck.md](deck.md)). For a stored bad size use `-ffDeckTourSize none
@@ -160,6 +178,8 @@ Style: BlueprintPanelChild (touched) vs InvAndCraft/InventoryPanel: delta E 2.1 
 Overlaps: 4 block pairs before, 4 after, 0 new, 0 kept between blocks the change moved (ui_layout.py, whole screen, block depth 2); 1 opened-panel pair(s) over the HUD, not counted here
 Opened panels: 1 opened panel pair(s) over the HUD (allowed: Ben, w732 and w742), 0 under the HUD, 0 not clickable, 0 cut off by the screen edge, HUD restored on close: yes (3 covered HUD element(s) checked in closed.json)
 Alignment: max drift 0 px over the clusters (bottom-right HUD, top-left HUD); tolerance 2 px
+Moved: 1 element move(s) over 4 px at 1920x1080, 1280x800 (ui_layout.py moves, the same save and screens before and after); ...
+- 1280x800 GamePanels/BlueprintPanelChild: x +0, y +40 px (was 392,68 458x376, now 392,108 458x376): asked (Ben): "move the blueprint window down so it clears the top bar on the deck"
 Shots: /srv/fff/review/wNNN/shots.md (one line per still against Ben's words)
 Clips: after-1280.mp4, 60 fps; idle and hover per tab at 0-4 s, 4-8 s ...; ui_check flicker: 0 regions
 ```
@@ -167,7 +187,7 @@ Clips: after-1280.mp4, 60 fps; idle and hover per tab at 0-4 s, 4-8 s ...; ui_ch
 `pr_evidence.py` fails a UI change without these lines, with a clip of 1 to 9 fps, with a new
 overlap, an opened panel under the HUD, not clickable, cut off or leaving the HUD unrestored (the
 `Opened panels:` line, required when the `Overlaps:` line counts an opened-panel pair), a drift over 2 px, a `Style:` line without a measured delta E and alpha, or a delta E over
-10. A difference the requester asked for passes with their words on its line:
+10, a `Moved:` line missing either standard size or with a move not marked asked or justified (item 22). A difference the requester asked for passes with their words on its line:
 `intended (Ben): "..."`. A scene file (`Assets/Scenes/*.unity`) counts as UI.
 
 Lessons behind this list:

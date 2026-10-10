@@ -5,13 +5,15 @@ The evidence-gate skill (checklists/merge.md) says what the section holds. This 
 part a script can check: every claim has a basis and none is a guess, nothing is pending, a visual
 change names a built player, the event's place in the clip and the intended look, a simulation
 change names its tests, its determinism audit and its save compatibility, a UI change names its content, its
-full-content and style checks, its per-still notes and a real-rate clip (checklists/ui.md), and a change to a shader
+full-content and style checks, its per-still notes, a real-rate clip and every HUD element it moved at 1920x1080 and
+1280x800, each asked for in the requester's words or justified (checklists/ui.md), and a change to a shader
 or material lists everything that uses it ("## Used by", from the game repo's scripts/asset_usage.py)
 with a basis for each, and a Deck-facing change says 'Real Deck: verified ...' or 'not verified on a real Deck' (checklists/deck.md). It cannot tell whether anyone looked carefully. Standard library only; `gh` for everything that reads GitHub.
 
     pr_evidence.py --repo OWNER/NAME --pr N               check one pull request (exit 1 on FAIL)
     pr_evidence.py --repo OWNER/NAME --pr N --comment     the same, and post the verdict on it
     pr_evidence.py --body-file F [--files-file G]         the same, offline (a description and a file list)
+    ... [--brief B]                                       also: every 'Moved:' quote is in the request's brief (w826)
     pr_evidence.py --repo OWNER/NAME --audit --since 2026-10-01 [--base develop]
                                                           merged pull requests: the verdict now, and
                                                           whether a PASS was posted before the merge
@@ -162,7 +164,7 @@ def used_by_problems(body: str, files: list[str] | None) -> list[str]:
     return problems
 
 
-def ui_problems(section: str) -> list[str]:
+def ui_problems(section: str, brief: str | None = None) -> tuple[list[str], list[str]]:
     """A screen, panel or HUD change: full content, the classic look, a still-by-still look and a real-rate clip (w718)."""
     problems = []
     wanted = {
@@ -182,11 +184,13 @@ def ui_problems(section: str) -> list[str]:
         problems.append(f"'Clips' is a slideshow ('{SLIDESHOW.search(clips[1]).group(0)}'): record each screen at 30 fps "
                         f"or more, idle and while hovering and selecting, so flicker can show (DeckTour `record`)")
     problems += layout_problems(section)
+    moved, notes = moved_problems(section, brief)
+    problems += moved
     flick = field(section, "Flicker")
     if not re.search(r"flicker", (clips[1] if clips else "") + (flick[1] if flick else ""), re.IGNORECASE):
         problems.append("UI change with no flicker result: run ui_check.py flicker on the clip's frames and say how "
                         "many regions it found, on the 'Clips:' line or a 'Flicker:' line")
-    return problems
+    return problems, notes
 
 
 def deck_problems(section: str, files: list[str] | None) -> tuple[list[str], list[str]]:
@@ -253,6 +257,92 @@ def opened_panel_problems(section: str, pairs: int) -> list[str]:
     return problems
 
 
+# w826: every element a UI change moved, as `ui_layout.py moves` lists it, marked with the requester's words or a reason.
+MOVE_ENTRY = re.compile(r"^\s*[-*]\s+(\d{3,4}\s*x\s*\d{3,4})\s+(.+?):\s", re.IGNORECASE)
+ASKED = re.compile(r"\basked\s*\(([^)]+)\)\s*:\s*[\"\u201c](.{8,}?)[\"\u201d]", re.IGNORECASE)
+JUSTIFIED = re.compile(r"\bnot asked\s*:\s*justified\s*:\s*(.{20,})", re.IGNORECASE)
+REVERTED = re.compile(r"\bnot asked\s*:\s*reverted\b", re.IGNORECASE)
+STANDARD_SIZES = ("1920x1080", "1280x800")
+
+
+def normalized(text: str) -> str:
+    text = text.replace("\u2019", "'").replace("\u2018", "'").replace("\u201c", '"').replace("\u201d", '"')
+    return re.sub(r"\s+", " ", text).strip().lower()
+
+
+def in_brief(quote: str, brief: str) -> bool:
+    """Every piece of the quote between ellipses is in the brief, word for word (case and spacing aside), inside one of
+    the brief's quotations: the person's own words, not the brief's around them (w826: "so nothing overlaps" and "the
+    same on desktop" were the notes' words, and both moves Ben corrected came from them). A brief with no quotation
+    marks counts whole (the person wrote it)."""
+    text = normalized(brief)
+    spoken = re.findall(r'"([^"]+)"', text) or [text]
+    pieces = [normalized(p) for p in re.split(r"\.\.\.|\u2026", quote)]
+    return all(any(p in s for s in spoken) for p in pieces if len(p) >= 3)
+
+
+def moved_problems(section: str, brief: str | None = None) -> tuple[list[str], list[str]]:
+    """Every element the change moved is accounted for (w826, Ben: "i didnt tell you to move that"). The `Moved:` line
+    is `ui_layout.py moves` over the two standard sizes; each list line under it carries `asked (who): "their words"`
+    or `not asked: justified: <why>`. A move marked `not asked: reverted` does not count: a reverted move is not in
+    the after census, so re-take it."""
+    lines = section.split("\n")
+    head = next((i for i, l in enumerate(lines) if re.match(r"^\s*Moved\s*:", l, re.IGNORECASE)), None)
+    if head is None:
+        return (["UI change with no 'Moved:' line: census before and after at 1920x1080 and at 1280x800 (UI 0.8), run "
+                 "ui_layout.py moves --pair before-1920 after-1920 --pair before-1280 after-1280, paste its line and "
+                 "mark every move asked (who): \"their words\" or not asked: justified: <why> (checklists/ui.md, "
+                 "item 22; w826: #1282 moved the Station Info box to the top left and nobody had asked)"], [])
+    text = lines[head]
+    problems, notes = [], []
+    count = re.search(r"Moved\s*:\s*(\d+)\s+element move", text, re.IGNORECASE)
+    if not count:
+        return (["'Moved:' does not say how many element moves the census found: paste ui_layout.py moves' line"], [])
+    sizes = {re.sub(r"\s", "", m).lower() for m in re.findall(r"\b\d{3,4}\s*x\s*\d{3,4}\b", text)}
+    missing = [s for s in STANDARD_SIZES if s not in sizes]
+    if missing:
+        problems.append(f"'Moved:' does not cover {' and '.join(missing)}: compare before and after at both standard sizes "
+                        f"(1920x1080 at the default UI scale, 1280x800 at 0.8). A move made for one screen is a move on "
+                        f"the other too (w761, w826)")
+    entries = []
+    for line in lines[head + 1:]:
+        if not line.strip():
+            continue
+        if not re.match(r"^\s*([-*]\s|\()", line):
+            break
+        found = MOVE_ENTRY.match(line)
+        if found:
+            entries.append((re.sub(r"\s", "", found.group(1)).lower(), found.group(2).strip(), line))
+    accounted = 0
+    for size, name, line in entries:
+        asked, justified = ASKED.search(line), JUSTIFIED.search(line)
+        if REVERTED.search(line) and not asked and not justified:
+            continue
+        if asked:
+            accounted += 1
+            if size != "1280x800" and re.search(r"\bdeck\b", asked.group(2), re.IGNORECASE):
+                problems.append(f"'Moved:' {size} {name}: the quote asks for the Deck (\"{asked.group(2)[:60]}\"), not "
+                                f"for this screen. A Deck request does not move the desktop HUD: put it back at {size} "
+                                f"or quote words about this screen (w826: #1282 moved the Station Info box on desktop "
+                                f"too; Ben: \"i didnt tell you to move that\")")
+            if brief is not None and not in_brief(asked.group(2), brief):
+                problems.append(f"'Moved:' {size} {name}: the quote is not in the brief word for word: "
+                                f"\"{asked.group(2)[:80]}\". Only the requester's own words are a target (checklists/ui.md, item 1)")
+        elif justified:
+            accounted += 1
+            notes.append(f"moved, not asked: {size} {name}: {justified.group(1)[:140]}. Put it in the report's first lines "
+                         f"for the requester")
+        else:
+            problems.append(f"'Moved:' {size} {name} is not marked: asked (who): \"their words\" when the requester "
+                            f"asked for this element to move there, otherwise put it back (then re-take the census) or "
+                            f"mark it not asked: justified: <why>")
+    if accounted < int(count.group(1)):
+        problems.append(f"'Moved:' counts {count.group(1)} move(s) but only {accounted} list line(s) are marked asked or "
+                        f"justified: paste every line ui_layout.py moves prints under it and mark each (a reverted move "
+                        f"is not in the after census: re-take it)")
+    return problems, notes
+
+
 def layout_problems(section: str) -> list[str]:
     """The rest of the screen (w733): no new overlap, no anchored cluster drifting, every touched panel's colour and
     alpha within reach of the classic panel's. The lines are the ones `unity-ui/ui_layout.py check` prints; a
@@ -304,7 +394,7 @@ def layout_problems(section: str) -> list[str]:
     return problems
 
 
-def check(body: str, files: list[str] | None = None) -> tuple[list[str], list[str]]:
+def check(body: str, files: list[str] | None = None, brief: str | None = None) -> tuple[list[str], list[str]]:
     """Every reason the evidence is not ready (empty = PASS), and notes that do not fail it."""
     used_by = used_by_problems(body, files)
     section = evidence_section(body or "")
@@ -365,7 +455,9 @@ def check(body: str, files: list[str] | None = None) -> tuple[list[str], list[st
                             "intended look. A measurement or a watch_video verdict is not a look")
 
     if ui:
-        problems += ui_problems(section)
+        ui_found, ui_notes = ui_problems(section, brief)
+        problems += ui_found
+        notes += ui_notes
 
     deck, deck_notes = deck_problems(section, files)
     problems += deck
@@ -483,6 +575,8 @@ def main(argv=None) -> int:
     ap.add_argument("--comment", action="store_true", help="post the verdict on the pull request")
     ap.add_argument("--body-file", help="check this description instead of asking GitHub")
     ap.add_argument("--files-file", help="with --body-file: the changed paths, one per line")
+    ap.add_argument("--brief", help="the request's brief (read_work's text): every asked (who): \"...\" quote on the "
+                                     "'Moved:' list must be in it word for word (w826)")
     ap.add_argument("--audit", action="store_true", help="list merged pull requests and their verdicts")
     ap.add_argument("--offline", action="store_true", help="skip the check that this copy is the released version")
     ap.add_argument("--since", help="--audit: merged on or after this date (YYYY-MM-DD)")
@@ -518,7 +612,8 @@ def main(argv=None) -> int:
     else:
         ap.error("give --repo and --pr, or --body-file, or --audit")
 
-    problems, notes = check(body, files)
+    brief = Path(args.brief).read_text(encoding="utf-8") if args.brief else None
+    problems, notes = check(body, files, brief)
     if not args.offline:
         released = released_version()
         stale = stale_problem(own_version(), released)
