@@ -71,6 +71,15 @@ restarts and its person's messages: FF Factory docs/orchestrators.md, "Timers"),
 named, against the numbers you wrote. If reality is far off, stop, find which failure it is, and
 report. Change nothing on a guess.
 
+## Move only what the person asked to move
+
+**A hard rule for every UI change** (Ben, w894, after four corrections: "stop moving panels around that I don't ask you
+to move around. It's driving me crazy."; [lesson](lessons/a-ui-change-leaves-the-rest-of-the-screen-as-it-was.md#move-only-what-the-person-asked-to-move-the-hard-rule-w894-2026-10-10)).
+Never move, re-anchor, restack or regroup an existing panel, HUD element or hover panel unless the brief quotes the
+person asking for that exact element to move. Census 1920x1080, 1280x800 and 1280x800 docked; `ui_layout.py moves` and
+`pins`; `pr_evidence.py --brief` fails any move not asked for in the brief's own words and any broken pin
+([UI checklist](checklists/ui.md), item 22).
+
 ## Reports and briefs
 
 - Label each number and recommendation **measured**, **sourced** or **guess**. Say what you saw,
@@ -118,8 +127,8 @@ report. Change nothing on a guess.
   before and after: no new overlap between always-on HUD blocks, no cluster drift over 2 px, every
   touched panel's colour and alpha against a classic panel; a panel the player opens may cover
   the HUD if it is on top, clickable and gives the HUD back; every HUD element the change moved, at
-  1920x1080 and 1280x800, asked for in the requester's words or justified); `Content:`, `Full content:`,
-  `Style:`, `Shots:`, `Overlaps:`, `Alignment:`, `Moved:` (and `Opened panels:`) in the PR.
+  1920x1080, 1280x800 and 1280x800 docked, asked for in the brief's own words, and every pin held); `Content:`, `Full content:`,
+  `Style:`, `Shots:`, `Overlaps:`, `Alignment:`, `Moved:`, `Pinned:` (and `Opened panels:`) in the PR.
 - [Steam Deck changes](checklists/deck.md) (w770): glyphs, Steam Input, launch resolution, Deck UI, touch: what a Deck
   tour cannot show, the cheap stand-ins, the real-Deck request to write for your orchestrator (first step: the Deck's
   Steam client and SteamOS are up to date), and the `Real Deck:` line in the PR.
@@ -196,9 +205,11 @@ One file each under `lessons/`: the rule, why (the incident, dated), how to appl
   drifting over 2 px, every touched panel measured against a classic one; run the released
   `pr_evidence.py` (w733: the minimap buttons drifted, a slide-out covered the hotbar, and #1272's
   navy passed a check older than the release that would have failed it); and nothing moves that the
-  brief did not ask to move, every move listed at both sizes and marked asked or justified (w826: #1280
+  brief did not ask to move, every move listed and asked for in the brief's own words (w826: #1280
   pushed the objectives card under the Station strip, #1282 moved the Station Info box to the top left;
-  Ben: "i didnt tell you to move that").
+  Ben: "i didnt tell you to move that"); w894: the hard rule, no "justified" moves, quotes checked against the
+  brief, the docked layout censused, and the places Ben fixed pinned (`unity-ui/hud-pins.json`) because the dock had
+  kept Station Info and the hover card top left since w772 and every parent-based diff called that normal.
 - [Measure against what the player sees](lessons/measure-against-what-the-player-sees.md): a
   placement metric is checked against the drawn surface or outline, computed independently of the
   code under test, never against the code's own answer (w587: w176's impacts scored 0.0 u against

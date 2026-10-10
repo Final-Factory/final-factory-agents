@@ -29,8 +29,15 @@ alpha, sprite and drawing order) taken before and after a change, same save, siz
              not judged: the pull request marks each one asked (quoting the requester) or not asked, and pr_evidence.py
              fails it while one is unmarked.
 
-It prints the `Overlaps:`, `Opened panels:`, `Alignment:`, `Style:` and `Moved:` lines the pull request carries
-(pr_evidence.py reads them) and exits 1 when any of the first four fails, 2 on bad input.
+  Pinned     every place Ben fixed himself (hud-pins.json: Station Info over the abilities, the building hover card over
+             the minimap, the Player Inventory off the left edge), checked in the after census whatever the before one
+             showed, so an earlier PR's move never becomes the new normal (w894). A broken pin: FAIL.
+
+It prints the `Overlaps:`, `Opened panels:`, `Alignment:`, `Style:`, `Pinned:` and `Moved:` lines the pull request
+carries (pr_evidence.py reads them) and exits 1 when any of the first five fails, 2 on bad input.
+
+    ui_layout.py pins <census.json> [<census.json> ...]   the `Pinned:` line over every census (w894): take them at
+                                               1920x1080, 1280x800 undocked and 1280x800 docked, a station selected
 
     ui_layout.py moves --pair before-1920.json after-1920.json --pair before-1280.json after-1280.json [--move-px 4]
                                                the `Moved:` line and its list over both standard sizes (w826)
@@ -53,6 +60,7 @@ from pathlib import Path
 
 HERE = Path(__file__).resolve().parent
 DEFAULT_CLUSTERS = HERE / "hud-clusters.json"
+DEFAULT_PINS = HERE / "hud-pins.json"
 TOUR_RECT = re.compile(r"->\s+(?P<path>.+?)\s+active\s+(?P<active>\w+)\s+screen x\s+(?P<x0>-?[\d.]+)\.\.(?P<x1>-?[\d.]+)\s+"
                        r"y\s+(?P<y0>-?[\d.]+)\.\.(?P<y1>-?[\d.]+)\s+of\s+(?P<w>\d+)x(?P<h>\d+)")
 
@@ -362,9 +370,23 @@ def moves(before: dict, after: dict, move_px: float = 4.0) -> dict:
     blocks_new = {block_of(k[0], 2) for k in now}
     w, h = after.get("screen") or before.get("screen") or [0, 0]
     biggest = lambda b: -max(max(abs(d) for d in b["delta"]), max(abs(d) for d in b["parts"][0]["delta"]))
+    layout = layout_of(after)
+    if layout_of(before) != layout:
+        raise ValueError(f"the before census is {layout_of(before)} and the after one {layout}: compare the same layout")
     return {"moved": sorted(blocks.values(), key=biggest),
             "gone": sorted(blocks_old - blocks_new), "new": sorted(blocks_new - blocks_old),
-            "screen": f"{int(w)}x{int(h)}"}
+            "screen": f"{int(w)}x{int(h)} {layout}"}
+
+
+def layout_of(census: dict) -> str:
+    """'docked' when the structured layout's dock is on screen (w894: the Deck's default with a building selected, where
+    Station Info and the hover card were stacked top left and no check looked), else 'undocked'. A census may say it
+    itself with a "layout" key."""
+    if census.get("layout"):
+        return str(census["layout"])
+    docked = any("/StructuredDock/" in "/" + e["path"] + "/" or "/StructuredStation/" in "/" + e["path"] + "/"
+                 for e in census["elements"])
+    return "docked" if docked else "undocked"
 
 
 def shift(d) -> str:
@@ -398,7 +420,7 @@ def moved_lines(results: list[dict], move_px: float, how: str) -> list[str]:
     sizes = ", ".join(r["screen"] for r in results)
     count = sum(len(r["moved"]) + len(r["gone"]) for r in results)
     lines = [f"Moved: {count} element move(s) over {move_px:.0f} px at {sizes} ({how}, the same save and screens before "
-             f"and after); mark each below: asked (who): \"their words\", or not asked: justified: <why>"]
+             f"and after); mark each below asked (who): \"their words naming it\", from the brief, or put it back (w894)"]
     for r in results:
         for unit in r["moved"]:
             lines.append(f"- {r['screen']} {under_canvas(unit['path'])}: {describe_move(unit)}: {MARK}")
@@ -407,6 +429,73 @@ def moved_lines(results: list[dict], move_px: float, how: str) -> list[str]:
         if r["new"]:
             lines.append(f"  (new at {r['screen']}, not counted: {', '.join(under_canvas(p) for p in r['new'][:8])})")
     return lines
+
+
+# ---------------------------------------------------------------------------------------------------------------
+# pins (w894)
+
+
+def pin_check(census: dict, pin: dict) -> tuple[str, str]:
+    """('ok' | 'broken' | 'not shown', what was measured) for one pin of hud-pins.json in one census.
+
+    above        the element's bottom edge at most maxGap x H above the anchor's top edge, not below it, and over it
+                 (sharing some of its width). When the anchor is not on screen (the dock hides the ability row and the
+                 minimap), the element stands in the anchor's own region instead (region: minBottom x H for its bottom
+                 edge, its centre between centerXMin and centerXMax x W, or its right edge past minRight x W).
+    offLeftEdge  the element's left edge at least minLeft x W from the screen's left edge."""
+    w, h = census.get("screen") or [0, 0]
+    r = find(census, pin["element"])
+    if r is None:
+        return "not shown", f"{pin['element']} is not on screen"
+    at = f"{round(r[0])},{round(r[1])} {round(r[2] - r[0])}x{round(r[3] - r[1])}"
+    if pin["rule"] == "offLeftEdge":
+        need = pin["minLeft"] * w
+        if r[0] < need:
+            return "broken", f"left edge at {r[0]:.0f} px, less than {need:.0f} px from the screen's edge ({at})"
+        return "ok", f"left edge at {r[0]:.0f} px ({at})"
+    if pin["rule"] != "above":
+        raise ValueError(f"hud-pins.json: unknown rule {pin['rule']!r}")
+    anchor = find(census, pin["anchor"])
+    if anchor is not None:
+        gap = anchor[1] - r[3]
+        over = min(r[2], anchor[2]) - max(r[0], anchor[0])
+        if gap < -2 or gap > pin["maxGap"] * h or over <= 0:
+            return "broken", (f"bottom edge {gap:.0f} px above {pin['anchor'].split('/')[-1]}'s top edge (0 to "
+                              f"{pin['maxGap'] * h:.0f} px), {max(over, 0):.0f} px of its width shared ({at})")
+        return "ok", f"{gap:.0f} px above {pin['anchor'].split('/')[-1]} ({at})"
+    region = pin["region"]
+    problems = []
+    if r[3] < region["minBottom"] * h:
+        problems.append(f"bottom edge at {r[3]:.0f} px, above {region['minBottom'] * h:.0f}")
+    centre = (r[0] + r[2]) / 2
+    if "centerXMin" in region and not region["centerXMin"] * w <= centre <= region["centerXMax"] * w:
+        problems.append(f"centre at x {centre:.0f}, outside {region['centerXMin'] * w:.0f}..{region['centerXMax'] * w:.0f}")
+    if "minRight" in region and r[2] < region["minRight"] * w:
+        problems.append(f"right edge at {r[2]:.0f} px, left of {region['minRight'] * w:.0f}")
+    where = f"{pin['anchor'].split('/')[-1]} not on screen, so its region"
+    if problems:
+        return "broken", f"{where}: {'; '.join(problems)} ({at})"
+    return "ok", f"{where} ({at})"
+
+
+def pinned_lines(censuses: list[tuple[str, dict]], spec: dict, how: str) -> tuple[list[str], int]:
+    """The `Pinned:` line and one line per broken or missing pin, and the number broken."""
+    pins = spec.get("pins", [])
+    states = [f"{int((c.get('screen') or [0, 0])[0])}x{int((c.get('screen') or [0, 0])[1])} {layout_of(c)}" for _, c in censuses]
+    broken, missing, details = 0, 0, []
+    for (name, census), state in zip(censuses, states):
+        for pin in pins:
+            verdict, what = pin_check(census, pin)
+            if verdict == "broken":
+                broken += 1
+                details.append(f"  BROKEN {state} ({name}): {pin['name']} (GamePanels/{pin['element']}): {what}; it belongs "
+                               f"{pin['where']}. {pin['who'][-1]}")
+            elif verdict == "not shown":
+                missing += 1
+                details.append(f"  NOT SHOWN {state} ({name}): {pin['name']}: take the census with it up")
+    head = (f"Pinned: {len(pins)} pin(s) in {len(censuses)} census(es) ({', '.join(states)}): {broken} broken, {missing} "
+            f"not shown ({how}, hud-pins.json: {', '.join(p['name'] for p in pins)})")
+    return [head] + details, broken
 
 
 # ---------------------------------------------------------------------------------------------------------------
@@ -657,9 +746,23 @@ def run_check(args) -> int:
         print(f"  STYLE: {f}")
     failed |= bool(failures)
 
+    lines, broken = pinned_lines([(Path(args.after).name, after)], json.loads(Path(args.pins).read_text(encoding="utf-8")),
+                                 "ui_layout.py check")
+    for line in lines:
+        print(line)
+    failed |= broken > 0
+
     for line in moved_lines([moves(before, after, args.move_px)], args.move_px, "ui_layout.py check"):
         print(line)
     return 1 if failed else 0
+
+
+def run_pins(args) -> int:
+    lines, broken = pinned_lines([(Path(c).name, load(c)) for c in args.census],
+                                 json.loads(Path(args.pins).read_text(encoding="utf-8")), "ui_layout.py pins")
+    for line in lines:
+        print(line)
+    return 1 if broken else 0
 
 
 def run_moves(args) -> int:
@@ -710,6 +813,10 @@ def main(argv=None) -> int:
     m.add_argument("--pair", nargs=2, action="append", required=True, metavar=("BEFORE", "AFTER"),
                    help="a before and an after census at one size (repeat: 1920x1080, then 1280x800 at 0.8)")
     m.add_argument("--move-px", type=float, default=4.0)
+    q = sub.add_parser("pins", help="every census against the places Ben fixed (hud-pins.json): the 'Pinned:' line (w894)")
+    q.add_argument("census", nargs="+")
+    q.add_argument("--pins", default=str(DEFAULT_PINS))
+    c.add_argument("--pins", default=str(DEFAULT_PINS))
     o = sub.add_parser("overlaps", help="the overlapping block pairs of one census")
     o.add_argument("census")
     o.add_argument("--clusters", default=str(DEFAULT_CLUSTERS))
@@ -720,7 +827,7 @@ def main(argv=None) -> int:
         p.add_argument("--block-depth", type=int, default=2)
     args = ap.parse_args(argv)
     try:
-        return {"check": run_check, "overlaps": run_overlaps, "clusters": run_clusters, "moves": run_moves}[args.cmd](args)
+        return {"check": run_check, "overlaps": run_overlaps, "clusters": run_clusters, "moves": run_moves, "pins": run_pins}[args.cmd](args)
     except (ValueError, OSError, KeyError) as error:
         print(f"ui_layout: {error}", file=sys.stderr)
         return 2

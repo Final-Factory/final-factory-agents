@@ -1,6 +1,6 @@
 ---
 name: unity-ui
-description: "Build and verify Final Factory's Unity uGUI screens (panels, windows, tabs, HUD, popups, the structured layout and Steam Deck sizing) so they work the way a player sees them. Covers the project's UI map, uGUI layout rules and the pitfalls that broke the w644 Deck hub (layout groups, ContentSizeFitter, anchors, scroll views, grids, canvas scaling at 1280x800, layout fights that flicker, hard-coded colours), the editor rect audit, the Deck tour with full content, and the pixel checks (scripts/deck_audit/ui_check.py: flicker, fill, style, the per-still sheet), and the whole-screen layout census with ui_layout.py (new overlaps between HUD blocks, anchored clusters drifting over 2 px, every touched panel's colour and alpha against a classic panel, and every HUD element the change moved at 1920x1080 and 1280x800, each marked asked or justified). Use before changing or reviewing any UI, and before calling a UI change verified."
+description: "Build and verify Final Factory's Unity uGUI screens (panels, windows, tabs, HUD, popups, the structured layout and Steam Deck sizing) so they work the way a player sees them. Covers the project's UI map, uGUI layout rules and the pitfalls that broke the w644 Deck hub (layout groups, ContentSizeFitter, anchors, scroll views, grids, canvas scaling at 1280x800, layout fights that flicker, hard-coded colours), the editor rect audit, the Deck tour with full content, and the pixel checks (scripts/deck_audit/ui_check.py: flicker, fill, style, the per-still sheet), and the whole-screen layout census with ui_layout.py (new overlaps between HUD blocks, anchored clusters drifting over 2 px, every touched panel's colour and alpha against a classic panel, every HUD element the change moved at 1920x1080, 1280x800 and 1280x800 docked, each asked for in the brief's own words, and the places Ben fixed himself pinned in hud-pins.json: move only what the person asked to move). Use before changing or reviewing any UI, and before calling a UI change verified."
 ---
 
 # Unity UI: build it, then verify it like a player
@@ -160,19 +160,25 @@ moved after it; opening the Blueprint slide-out puts it over the hotbar (a new o
 closed HUD); #1272's backdrop is delta E 23.8 from the classic Inventory on screen, where the window
 was 2.1 before it.
 
-**Then list what moved, at both standard sizes** (w826). Take the before and after censuses at 1920x1080 (UI 0.9)
-and at 1280x800 (UI 0.8), then:
+**Then list what moved, and check the pins, on every screen and layout** (w826, w894). **Move only what the person
+asked to move**: never move, re-anchor, restack or regroup an existing panel, HUD element or hover panel unless the brief
+quotes the person asking for that exact element to move (Ben, after four corrections: "stop moving panels around that I
+don't ask you to move around"). Take the before and after censuses at 1920x1080 (UI 0.9), 1280x800 (UI 0.8) and
+1280x800 docked, a station selected so Station Info and the building hover card are up, then:
 
 ```sh
-python "<this skill's base directory>/ui_layout.py" moves --pair before-1920.json after-1920.json \
-    --pair before-1280.json after-1280.json
+python "<this skill's base directory>/ui_layout.py" moves --pair b-1920.json a-1920.json \
+    --pair b-1280.json a-1280.json --pair b-docked.json a-docked.json
+python "<this skill's base directory>/ui_layout.py" pins a-1920.json a-1280.json a-docked.json
 ```
 
-It prints the `Moved:` line and one line per HUD block that moved or resized more than 4 px. Paste them into the PR
-and mark each `asked (who): "their words"` (the requester's words for that element on that screen) or `not asked:
-justified: <why>`, or put the element back. `check` prints the same line for its one pair. Measured (editor, the
-classic layout): #1282 moved the Station Info box (`GamePanels/BuildInfoPanel`) x -312, y -736 px at 1920x1080 and
-x -30, y -476 px at 1280x800, and Ben had asked for a new place on the Deck only ("i didnt tell you to move that").
+`moves` prints the `Moved:` line and one line per HUD block that moved or resized more than 4 px, labelled with its
+screen and layout. Mark each `asked (Ben): "his words"` from inside the brief's quotation marks, naming that element on
+that screen, or put the element back; there is no "justified". `pins` checks the places Ben fixed himself
+([hud-pins.json](hud-pins.json): Station Info just above the abilities, the hover card just above the minimap, the Player
+Inventory off the left edge) in every census, whatever the parent looked like. Measured (editor): #1282 moved Station Info
+x -312, y -736 px at 1920x1080; on develop 9798f308c the docked layout breaks the Station Info and hover card pins, and
+the undocked layouts keep all three.
 
 ## 5c. A font-size change, and the desktop under a Deck change
 

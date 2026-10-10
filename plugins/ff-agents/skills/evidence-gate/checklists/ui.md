@@ -5,6 +5,14 @@ the structured layout, Steam Deck sizing). The [visual checklist](visual.md) app
 adds what a screen needs. The recipe (the Deck tour, the pixel checks, uGUI pitfalls) is the
 `unity-ui` skill.
 
+**Hard rule: move only what the person asked to move** (w894, Ben's fourth correction of the same kind, 2026-10-10: "stop
+moving panels around that I don't ask you to move around. It's driving me crazy. Please update the harness to not fucking
+move panels around unless I tell you to."). Never move, re-anchor, restack or regroup an existing panel, HUD element or
+hover panel (Station Info, the building hover card) unless the brief quotes the person asking for that exact element to
+move. A layout change touches only what was asked; whatever else its code would push aside stays where it was, and a
+conflict you cannot solve without moving something goes back to the person as a question before the PR. Item 22 is how it
+is checked; the places Ben fixed himself are pinned in `unity-ui/hud-pins.json`.
+
 **The line that would have caught w644's hub** (#1251, Ben's Deck, Build 89):
 every screen and sub-view, in a late-game save, at the target size and UI scale in a built player,
 shows its whole content (grid, list, tree, preview) on the classic panels' colours and art, holds
@@ -146,23 +154,36 @@ screen; on desktop three labels stopped fitting, the two windows left their defa
     window never keeps off the objectives card and the strip over it is the intended overlap (`openedPanels` lists
     `SelectionColumnStrip`).
 
-22. **Nothing moves that the brief did not ask to move (w826).** Take the census before and after at both standard sizes,
-    1920x1080 at UI 0.9 and 1280x800 at UI 0.8, the same save and screens, and run `ui_layout.py moves --pair
-    before-1920.json after-1920.json --pair before-1280.json after-1280.json` (unity-ui `layout-census.md`). It lists
-    every HUD block and window that moved or resized more than 4 px, with what moved inside it. Paste its `Moved:` line
-    and list into the PR and mark each line:
-    - `asked (Ben): "his words"` only when the words ask for **that element to move on that screen**. A Deck request does
-      not move the desktop (`pr_evidence.py` fails a Deck quote on a 1920x1080 line). Words that ask for "a new place" ask
-      for a move, not for the place you picked: name the place in the TL;DR and the report's first lines.
-    - otherwise put it back and re-take the census, or mark it `not asked: justified: <why>` (a size the requester's
-      change forces, such as a text floor they asked for) and name it in the report's first lines.
+22. **Nothing moves that the brief did not ask to move (w826, w894). Checked, no way out.** Take the census before and
+    after on every standard screen and layout: 1920x1080 at UI 0.9, 1280x800 at UI 0.8, and 1280x800 docked (the Deck's
+    default with a building selected), with a station selected so Station Info and the building hover card are up.
+    Then:
+    - `ui_layout.py moves --pair b-1920.json a-1920.json --pair b-1280.json a-1280.json --pair b-docked.json
+      a-docked.json` lists every HUD block, window and hover panel that moved or resized more than 4 px, one per line,
+      labelled with its screen and layout. Paste its `Moved:` line and every list line as printed.
+    - Mark each line `asked (Ben): "his words"`, words from inside the brief's quotation marks that ask for **that element
+      to move on that screen**. Anything else goes back where it was and the after census is taken again. There is no
+      "justified": #1397 marked Station Info and the hover card "not asked: justified" in the dock and passed, and Ben
+      saw them at the top left.
+    - `ui_layout.py pins a-1920.json a-1280.json a-docked.json` checks the places Ben fixed himself
+      (`unity-ui/hud-pins.json`: Station Info just above the abilities, the building hover card just above the minimap,
+      the Player Inventory off the left edge) in every after census, whatever the parent looked like: the dock had stacked
+      Station Info and the hover card top left since w772, so every before/after diff after it saw them "unmoved". Paste
+      its `Pinned:` line; a broken pin is put back. A pin changes only when the person asks, in a harness PR with their
+      words.
+    - Give `pr_evidence.py` the brief: `--brief <read_work's text saved to a file>`, or `Brief (Ben): "..."` lines in the
+      PR with the person's words. It fails a quote that is not in the brief's quotations (#1392 quoted "Station Grid
+      Information on the left of center", which nobody said), a Deck quote on a desktop line, a pinned element whose quote
+      does not name it, a line that folds several elements together, and a `Moved:` or `Pinned:` line that leaves out a
+      screen or the docked layout.
 
-    Run `pr_evidence.py --brief <the brief, saved from read_work>` so every quote is checked against the requester's words.
-    Ben, after w722/w723 had moved the objectives card under the Station strip: "you did more with the overall layout than
-    i wanted. like the station controls are not being put above objectives. that's not what i wanted"; after #1282 had
-    moved the Station Info box from above the ability row to the top left on every screen: "why is station info at the
-    top left? i didnt tell you to move that". MEASURED (w826, editor censuses of 4762a5bc3 and 102e46bed): the check lists
-    `GamePanels/BuildInfoPanel` at x -312, y -736 px at 1920x1080 and x -30, y -476 px at 1280x800.
+    The four corrections: "you did more with the overall layout than i wanted. like the station controls are not being
+    put above objectives" (w722/w723); "why is station info at the top left? i didnt tell you to move that" (#1282); "it
+    seems like you keep moving it to the top on the deck. I don't want that. I want it to just be in its normal position
+    over the abilities ... Don't put it in formation with the other panels" (w894); "you put it up in the fucking, you
+    know, array of panels up on the top left. Don't do that, put it back over the minimap, stop moving panels around that
+    I don't ask you to move around" (w895). MEASURED (w894, editor censuses of develop 9798f308c): `ui_layout.py pins`
+    breaks Station Info and the hover card at 1280x800 docked and passes 1920x1080 and 1280x800 undocked.
 
 22. **A layout change lists every HUD element it moved (w813).** Measure the base build (the commit before the first PR
     of the layout work) and yours with the same tour, and put a table in the PR: each element whose place differs, with the
@@ -189,8 +210,10 @@ Style: BlueprintPanelChild (touched) vs InvAndCraft/InventoryPanel: delta E 2.1 
 Overlaps: 4 block pairs before, 4 after, 0 new, 0 kept between blocks the change moved (ui_layout.py, whole screen, block depth 2); 1 opened-panel pair(s) over the HUD, not counted here
 Opened panels: 1 opened panel pair(s) over the HUD (allowed: Ben, w732 and w742), 0 under the HUD, 0 not clickable, 0 cut off by the screen edge, HUD restored on close: yes (3 covered HUD element(s) checked in closed.json)
 Alignment: max drift 0 px over the clusters (bottom-right HUD, top-left HUD); tolerance 2 px
-Moved: 1 element move(s) over 4 px at 1920x1080, 1280x800 (ui_layout.py moves, the same save and screens before and after); ...
-- 1280x800 GamePanels/BlueprintPanelChild: x +0, y +40 px (was 392,68 458x376, now 392,108 458x376): asked (Ben): "move the blueprint window down so it clears the top bar on the deck"
+Moved: 1 element move(s) over 4 px at 1920x1080 undocked, 1280x800 undocked, 1280x800 docked (ui_layout.py moves, the same save and screens before and after); ...
+- 1280x800 undocked GamePanels/BlueprintPanelChild: x +0, y +40 px (was 392,68 458x376, now 392,108 458x376): asked (Ben): "move the blueprint window down so it clears the top bar on the deck"
+Pinned: 3 pin(s) in 3 census(es) (1920x1080 undocked, 1280x800 undocked, 1280x800 docked): 0 broken, 0 not shown (ui_layout.py pins, hud-pins.json: Station Info, building hover card, Player Inventory)
+Brief (Ben): "move the blueprint window down so it clears the top bar on the deck"
 Shots: /srv/fff/review/wNNN/shots.md (one line per still against Ben's words)
 Clips: after-1280.mp4, 60 fps; idle and hover per tab at 0-4 s, 4-8 s ...; ui_check flicker: 0 regions
 ```
@@ -198,7 +221,8 @@ Clips: after-1280.mp4, 60 fps; idle and hover per tab at 0-4 s, 4-8 s ...; ui_ch
 `pr_evidence.py` fails a UI change without these lines, with a clip of 1 to 9 fps, with a new
 overlap, an opened panel under the HUD, not clickable, cut off or leaving the HUD unrestored (the
 `Opened panels:` line, required when the `Overlaps:` line counts an opened-panel pair), a drift over 2 px, a `Style:` line without a measured delta E and alpha, or a delta E over
-10, a `Moved:` line missing either standard size or with a move not marked asked or justified (item 22). A difference the requester asked for passes with their words on its line:
+10, a `Moved:` or `Pinned:` line missing a screen or the docked layout, a move not asked for in the brief's own words, or a
+broken pin (item 22). A difference the requester asked for passes with their words on its line:
 `intended (Ben): "..."`. A scene file (`Assets/Scenes/*.unity`) counts as UI.
 
 **A drag, drop or press-and-hold gesture** is shown with the real input module, not `ffauto:ui.drag` or `pointer.*` alone (those
