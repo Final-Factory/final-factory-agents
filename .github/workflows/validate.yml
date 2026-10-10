@@ -81,6 +81,9 @@ jobs:
       - name: Tool tests (pr_evidence.py)
         run: python3 -m unittest discover -s plugins/ff-agents/skills/evidence-gate/tests -p 'test_*.py' -v
 
+      - name: Tool tests (ffdiscord launcher, w912)
+        run: python3 -m unittest discover -s plugins/ff-discord/skills/discord-cli -p 'test_ffdiscord_shim.py' -v
+
       - name: Tool tests (ui_layout.py)
         run: python3 -m unittest discover -s plugins/ff-agents/skills/unity-ui/tests -p 'test_*.py' -v
 

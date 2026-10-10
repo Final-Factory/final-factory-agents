@@ -92,6 +92,8 @@ person asking for that exact element to move. Census 1920x1080, 1280x800 and 128
   Before you relay "X is not built", "nothing will investigate this" or "that is off" from one
   system's tool about another, read the other system's live config or state (for FFBox,
   `ffbox_activity show config` / `show signatures`) and quote the key and value, or say unknown.
+  For what FF Factory itself did (a deploy, a clean-up, an update, a restart), read the portal's own logs with
+  `mcp__machine__portal_logs` (w920) and name the source and window; never infer it from the code.
 - **Say what every id is, every time** ([lesson](lessons/say-what-an-id-is.md)). Before you send
   anything a person reads, scan it for request ids (w293), PR numbers (#972), commits, worker or
   session ids and sandbox names: each one gets its plain-English words beside it, on every
@@ -110,6 +112,10 @@ person asking for that exact element to move. Census 1920x1080, 1280x800 and 128
   desync PR whose before/after runs spread wider than 1% gets the added functions timed directly on the same save,
   with the triggering case present and absent (`checklists/ffbox-desync-pr.md`, w824).
 - **A CI test does not gate on the clock** ([lesson](lessons/verify-simulation-at-a-slow-hosts-frame-rate.md#a-ci-test-does-not-gate-on-the-clock-w857-2026-10-10)). A test the editmode job runs asserts no wall-clock ratio or time limit (make the benchmark `[Explicit]`, assert the structure), and a `[UnityTest]` waiting on real I/O counts seconds, not frames (w857: a 19 % flake and 422 s of a 14 minute job).
+- **Read why a CI job died before re-running it** ([lesson](lessons/settle-your-own-guesses.md#read-why-a-ci-job-died-before-re-running-it-w906-2026-10-10)). A job
+  cancelled at its timeout with no log at all (`BlobNotFound`) lost its runner; one with its log names the hung test
+  (a watchdog prints it); "coverage file is empty" with every test green is a node child ended mid-exit. Name the
+  cause before any re-run (w906: 27 coverage failures in 30 days and two lost jobs, each re-run blind).
 - **Every new system runs in a test** ([lesson](lessons/verify-simulation-at-a-slow-hosts-frame-rate.md#a-new-system-runs-in-a-test-before-the-first-in-game-run-w809-2026-10-09)). Before you report a change
   that adds an `ISystem` or `SystemBase` (presentation and animation systems too), name the test that schedules it in a
   world with a matching entity. A system nobody runs throws on its first frame in a real world (w809: an aliasing error
@@ -174,7 +180,9 @@ One file each under `lessons/`: the rule, why (the incident, dated), how to appl
 - [Lessons belong in the harness repo, written before DONE](lessons/lessons-belong-in-the-harness-repo.md):
   every DONE carries `Learned:`; a correction or reopen gets a check; the strongest home first (tool,
   checklist, skill, the doc beside the code); a second correction of a kind is filed by the
-  orchestrator (w741: five rounds of Deck UI corrections before a check changed).
+  orchestrator (w741: five rounds of Deck UI corrections before a check changed). A GitHub 403 on a token for a
+  permission or repository not on ff-factory's `shared/githubRequirements.ts` is added there in a PR, so the portal's
+  banner asks for it (w904).
 - [Verify simulation at a slow host's frame rate](lessons/verify-simulation-at-a-slow-hosts-frame-rate.md):
   per-frame code writes no simulation state; prove a move with a frame-without-heartbeat test and a
   multiplayer run whose host is held near 20 fps (w342/w356: a Steam Deck host forked alone).
@@ -183,7 +191,8 @@ One file each under `lessons/`: the rule, why (the incident, dated), how to appl
   requester; none means "unconfirmed" and ask (w389: a bare message became "Release hold lifted (Ben)").
 - [Check the other system's live config](lessons/check-the-other-systems-live-config.md): a tool's
   sentence about what another system does is a guess until that system's own config says so (w412:
-  "automatic investigations are not built yet" while FFBox's `intake.auto` was on).
+  "automatic investigations are not built yet" while FFBox's `intake.auto` was on); what FF Factory itself did
+  comes from `portal_logs`, not from the code (w920).
 - [Check who uses a shared shader or material](lessons/check-who-uses-a-shared-asset.md): run the
   game repo's `scripts/asset_usage.py` before the edit; more users than the target means a new
   shader or material for it, or a built-player before/after of every user; the PR's `## Used by`
