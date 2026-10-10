@@ -223,6 +223,8 @@ One file each under `lessons/`: the rule, why (the incident, dated), how to appl
 - [A fix names its player report](lessons/a-fix-names-its-player-report.md): a `Report: <id>`
   line in the PR, or the id as a request subject; a brief's ids claim nothing, and FFBox keeps the
   report open (w414 / #1064 left two Build 76 crash reports NEEDS-INFO).
+- [`python -` through eval](lessons/python-dash-heredoc.md): run a script file, never a heredoc re-parsed by eval/bash -c;
+  a lost heredoc left a REPL looping and a 99.6 GB task output on LothDesktop (w876/w899).
 - [Clean up after yourself](lessons/clean-up-after-yourself.md): remove the builds, Captures,
   worktrees, save copies and player slots you made before DONE; low disk is fixed by removing FF
   Factory's own leftovers or filing clean-up work, never by asking a person (w596/w626: the m3

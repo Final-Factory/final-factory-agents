@@ -24,6 +24,8 @@ holds, or the report says what is left instead of DONE.
    **Unity batch builds** you started (`-batchmode`, a build or test run) have ended: `unity-slot status` shows none of
    yours, and a stuck one is cleared with `unity` `clear_batch`, not left running
    ([clean up after yourself](../lessons/clean-up-after-yourself.md), w791).
+   **No runaway output**: `find "$TEMP/claude" -name '*.output' -size +1G` finds nothing of yours; a hit is a process still
+   writing, ended before anything else ([`python -` through eval](../lessons/python-dash-heredoc.md), w899).
 5. **Labels and ids.** Each number and recommendation is labelled measured, sourced or guess, and
    every id has its plain words beside it ([say what an id is](../lessons/say-what-an-id-is.md)).
 6. **Open waits.** Every `wNNN: still open:` line that names a person (a reboot, a login, a decision, an
