@@ -44,8 +44,8 @@ adds what a release rests on and the first check after it.
    version are clearly above the previous one's. Give the evidence and the previous BuildID.
    Rolling back or promoting a branch is the owner's call; never move a Steam branch by hand.
 9. **Patch notes are posted once it is confirmed live**, once, as Max in #dev-patch-notes
-   (`ci-release` section 3), with the wording from step 2. The release is not done without the
-   message link; a machine with no ffdiscord config reports the post as an open step (lesson:
+   (`ci-release` section 3, `post_as_max` from any machine), with the wording from step 2. The release is not done without the
+   message link; a failed post is reported as an open step with FFBox's reason (lesson:
    [a release is done when its notes are posted](../lessons/a-release-is-done-when-its-notes-are-posted.md)).
 
 A release that is asked for is pre-approved. Don't send the requester these steps as questions:
