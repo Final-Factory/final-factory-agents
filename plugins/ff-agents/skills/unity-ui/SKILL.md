@@ -101,7 +101,7 @@ census (`<shot>.json`: small, clipped, off-screen and overlapping text, covered 
   per step advances at the heartbeat, not per call: 34 calls landed on the assembler step in one run and on "Open the map"
   in the next, and `completeXObjectives 33` in one call only completes the first. Skip once with a save after each call
   (`ffauto:ui.savegame|<name>-<i>` plus the `observe.state|objectives` line before it), pick the save whose logged step is
-  the one you need, delete the rest from the saves folder, and load it with `-ffAutomationSave <name> -ffAutomationRole
+  the one you need, name the saves `ffa-<session>-<name>-<i>` (your `$TMPDIR` folder's name in front) so you can `rm -f` the rest from the saves folder with no approval, and load it with `-ffAutomationSave <name> -ffAutomationRole
   solo` for every before/after run (`specs/w819-craft-hint-border/make_tour.py --save-from`, `run_tour.sh` with `SAVE=`).
   A save made by skipping also shows what a player who skipped sees: the research steps leave their techs unlearned.
 - **Wait for content.** `{"waitFor": "text:<something only the filled screen shows>"}` before each

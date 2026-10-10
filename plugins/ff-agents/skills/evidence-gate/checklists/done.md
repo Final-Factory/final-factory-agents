@@ -14,21 +14,17 @@ holds, or the report says what is left instead of DONE.
 3. **Steps after the merge.** Each step the brief asks for after the merge (a paired audit, a
    release's first-hour check, the patch notes posted) ran, and the report says how it went
    ([say DONE per request](../lessons/say-done-per-request.md)).
-4. **Clean-up.** Everything you made on disk for this request is removed: player builds, Captures,
-   recordings and screenshot sets (after publishing the proofs the report links), worktrees and
-   clones you added, save copies in the shared saves folder, scratch outside your own temp folder,
-   and the player slots you filled (`python scripts/nightly/player_slots.py prune` empties every
-   slot nobody holds). The report says what went and how many GB it freed. If the disk is still
-   short, the report says so, and FF Factory's own leftovers you found are already removed, not
-   asked about ([clean up after yourself](../lessons/clean-up-after-yourself.md)).
-   Every delete was strictly inside the machine's worker install folder (`$FF_WORKER_ROOT`); what lies outside it you measured and
+4. **Nothing to clean up (w913).** You made your files in `$TMPDIR` and left them: the daemon removes the temp folder, the
+   sandbox's build and capture output and the rest ([workers do not clean up](../lessons/clean-up-after-yourself.md)). There
+   is no `rm`, `Remove-Item` or `player_slots.py prune` in the work and no "removed N GB" in the report. What the report links
+   is published (`publish_review`, `specs/<NNN>/proofs/`) and every clone you need is pushed.
+   Every delete you did run was strictly inside the machine's worker install folder (`$FF_WORKER_ROOT`); what lies outside it you measured and
    reported with sizes, plus the list of what makes FF Factory write there, and did not delete, whatever the brief said
    ([the delete checklist](delete.md), [delete only inside the worker root](../lessons/clean-up-after-yourself.md#delete-only-inside-the-workers-install-folder-outside-it-measure-and-report-w896), w896).
    **Unity batch builds** you started (`-batchmode`, a build or test run) have ended: `unity-slot status` shows none of
    yours, and a stuck one is cleared with `unity` `clear_batch`, not left running
-   ([clean up after yourself](../lessons/clean-up-after-yourself.md), w791).
-   **No runaway output**: `find "$TEMP/claude" -name '*.output' -size +1G` finds nothing of yours; a hit is a process still
-   writing, ended before anything else ([clean up after yourself](../lessons/clean-up-after-yourself.md), w899).
+   ([clean up after yourself](../lessons/clean-up-after-yourself.md), w791). **No runaway process**: nothing of yours is
+   looping or writing a huge `.output` file ([clean up after yourself](../lessons/clean-up-after-yourself.md), w899).
 5. **Labels and ids.** Each number and recommendation is labelled measured, sourced or guess, and
    every id has its plain words beside it ([say what an id is](../lessons/say-what-an-id-is.md)).
 6. **Open waits.** Every `wNNN: still open:` line that names a person (a reboot, a login, a decision, an

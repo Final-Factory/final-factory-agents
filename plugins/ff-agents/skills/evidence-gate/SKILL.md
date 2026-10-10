@@ -235,10 +235,10 @@ One file each under `lessons/`: the rule, why (the incident, dated), how to appl
 - [A fix names its player report](lessons/a-fix-names-its-player-report.md): a `Report: <id>`
   line in the PR, or the id as a request subject; a brief's ids claim nothing, and FFBox keeps the
   report open (w414 / #1064 left two Build 76 crash reports NEEDS-INFO).
-- [Clean up after yourself](lessons/clean-up-after-yourself.md): remove the builds, Captures,
-  worktrees, save copies and player slots you made before DONE; low disk is fixed by removing FF
-  Factory's own leftovers or filing clean-up work, never by asking a person (w596/w626: the m3
-  under its guard with ~78 GB of leftovers, and a worker asked Ben and Lothsahn for a go).
+- [Workers do not clean up; the harness does](lessons/clean-up-after-yourself.md): leave builds, clones, logs and scratch in `$TMPDIR`
+  (the daemon sweeps it when your process ends, w913: "Random clean up commands take a lot of approvals"); no rm, no
+  `player_slots.py prune`, no clean-up step before DONE; a mid-task `rm -rf` under `$TMPDIR` needs no approval; low disk is
+  fixed by the harness or by filed clean-up work, never by asking a person (w596/w626).
   Same lesson, deletes (w896): only inside the machine's worker install folder (`$FF_WORKER_ROOT`); outside it you measure, report
   sizes and list what makes FF Factory write there, whatever the brief says (w876 cleared dotnet temp, the Unity Hub installer,
   Temp, test output and old transcripts on LothDesktop's C:; lothsahn: "in general we should only be clearing data in the

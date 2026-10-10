@@ -16,6 +16,7 @@ For any `rm`, `Remove-Item`, `del`, `rd`, `git clean`, `shutil.rmtree` or clean-
    game's `LocalLow` folder, `~/.claude`, the npm / NuGet / pip / uv / Playwright caches, dotnet, the system temp): the
    setting, script or tool that makes FF Factory write it, and a variable or setting that could move it inside the root.
 5. **Inside the root, FF Factory's own and finished.** A player slot with no live lease, a worktree with nothing
-   uncommitted or unpushed, a finished agent's `ffa-<session>` folder: remove and report the GB. Something you cannot
+   uncommitted or unpushed, a finished agent's `ffa-<session>` folder: the daemon removes these by itself (w913), so an
+   ordinary worker leaves them; a clean-up request removes them and reports the GB. Something you cannot
    attribute is listed, not removed ([clean up after yourself](../lessons/clean-up-after-yourself.md)).
 6. **The report says** what was removed (inside), what was only measured (outside, with sizes), and the list from 4.
