@@ -85,7 +85,7 @@ heartbeat-frame wall median. Develop against the branch.
 value, and the runs resolve it: the difference of the means is clear of the run-to-run spread, or
 add runs until it is. A difference you cannot resolve is not negligible.
 
-**When the whole-heartbeat runs cannot resolve 1%, time the added code itself** ([lesson](../lessons/time-the-added-code-when-the-bench-cannot-resolve.md)).
+**When the whole-heartbeat runs cannot resolve 1%, time the added code itself** ([lesson](../lessons/settle-your-own-guesses.md#when-a-measurement-cannot-resolve-it-measure-closer-to-the-change-w824-2026-10-09)).
 On a shared machine the 2-peer bench's spread can be far wider than 1% (w824 on BEAST, JustPlay, 4+4 interleaved
 runs: host heartbeat mean 123.3 ± 3.6 against 125.3 ± 9.4 ms, standard error of the delta 5 ms against a 1% threshold
 of 1.2 ms; about 280 runs would resolve it). Then:

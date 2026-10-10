@@ -35,3 +35,16 @@ to judge. More questions to him would not have helped. Research by the agent wou
   not pass the question to the person.
 - Reports still label each number and recommendation measured, sourced or guess, so the person
   can see what a result rests on without being asked to decide it.
+
+## When a measurement cannot resolve it, measure closer to the change (w824, 2026-10-09)
+
+A measurement whose spread is wider than the difference you must judge settles nothing: neither escalate on its
+noise nor merge on a hunch. Measure the changed code itself, as an upper bound, and measure the case that triggers
+it. w824 (PR #1332, the vision fingerprint skipping blueprint-preview children, a class 3 FFBox desync PR): the
+2-peer JustPlay bench on BEAST, 4+4 interleaved runs, gave host heartbeat means of 123.3 ± 3.6 against
+125.3 ± 9.4 ms, a standard error of 5 ms on the delta against a 1% threshold of 1.2 ms (about 280 runs would have
+resolved it). Timing `PrepareC3VisionChunks`, the only main-thread code the change adds, on JustPlay in the editor
+(1.08 ms median over 50 calls, once per 8 heartbeats) bounded the change at +0.11% tick mean, +0.63% p95 and +0.57%
+frame median. Timing the vision hash with a held preview found a cost the bench could never show: 47.6 against
+42.6 ms, every one of 45,566 holders paying a hash-set lookup; the review limited it to Parent-bearing chunks (49.9
+against 50.0 ms after). The steps for class 3 PRs are in `checklists/ffbox-desync-pr.md`.
