@@ -44,3 +44,20 @@ or forgotten, so the person has to ask.
 - Work that starts from text written outside the team (a Discord request, a standing agent's
   delegation) keeps its own rule in the ff-discord skills and in FF Factory: a pull request, never
   merged by the agent. That is the exceptional-risk case, decided once.
+
+**The mechanics of the merge** (w807, 2026-10-10: three slips on one request, each cheap to prevent).
+
+- **Check your branch first.** After any long wait (`wake_me`, a declared person wait, a background
+  build) the sandbox's worktree may have been given to another worker. `git branch --show-current`
+  must name your branch before the first git write; if it does not, `switch_branch` back (editor
+  stopped). w807 ran `git merge origin/develop` on `ffbox-f/w817-supply-bots-cache-drift` at 19:50
+  after slot2 had been moved there at 19:04, and reset it to its own tip (`fd7ae757d`, tree clean,
+  nothing pushed) once `Assets/Scripts/UI/HotbarRadial/` was missing. The reflog shows the move.
+  Say in the report that you touched the other branch and that it is back.
+- **Gate the merge on the check's result, not on "no longer pending".** `until ! gh pr checks N | grep
+  -q pending; do sleep 10; done; gh pr merge N` merged a harness PR whose `validate` had failed in 6 s
+  (a lesson count over the cap). Read `gh pr checks N` for `fail` before `gh pr merge`, in a script too.
+- **Post the evidence verdict from the newest ff-agents.** `pr_evidence.py --comment` now refuses to
+  post when its own copy is older than the released one (that FAIL is about the copy; it was posted on
+  a PR twice and deleted by hand); update the plugin first.
+
