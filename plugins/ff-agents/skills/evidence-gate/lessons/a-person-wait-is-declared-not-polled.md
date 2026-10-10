@@ -23,7 +23,8 @@ a physical act (reboot, login).
 - **Machine steps** (git, copying, installers) go to the tools: the ops worker (`ops_worker machine_update`, or `send`;
   docs/ops-worker.md) or ssh. An installer rerun, a daemon update or a reinstall is the ops worker's, not Ben's or
   lothsahn's. "Update the machines" means every machine's daemon through it, installers included.
-- **When the harness itself blocks the step** (the guard refuses a path or a tool): say which tool refused what, and
+- **When the harness itself blocks the step** (the guard refuses a path or a tool; a machine's main clone is open to a
+  worker only when its request carries the `main_clone` grant its person's orchestrator set, w936, editor-ops): say which tool refused what, and
   hand that step to the requester's orchestrator (a `decide_work` note) for the ops worker or ssh. Never write "what Ben
   needs to do" with commands for him to run (w934).
 
