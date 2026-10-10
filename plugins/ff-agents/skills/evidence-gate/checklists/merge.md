@@ -85,6 +85,9 @@ Not verified: the Bats' slot lag (simulation, follow-up PR)
 - **A fix for a player's crash or desync report** has a `Report: <report id>` line per report it
   fixes in the description (or the id among its request's subjects): FFBox shows the report fixed
   only from that ([a fix names its player report](../lessons/a-fix-names-its-player-report.md)).
+- **Before the merge's first git write after a wait**, `git branch --show-current` names your branch
+  (`lessons/check-your-branch-after-a-wait.md`, w807). **Post the verdict with `--comment` only from the
+  newest ff-agents**: a stale copy's FAIL is about the copy, so `pr_evidence.py` now refuses to post it.
 - **"Not verified"** is always there, even when it says "nothing". It is the honest place for
   what you could not check.
 - Nothing in the section may be pending. Finish the review, then merge.

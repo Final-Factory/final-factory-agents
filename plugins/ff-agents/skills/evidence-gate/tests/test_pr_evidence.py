@@ -329,6 +329,14 @@ class LayoutTest(unittest.TestCase):
         self.assertIsNone(pe.stale_problem("1.22.0", None))
         self.assertIn("ff-agents 9.9.9", pe.verdict_text([], [], "9.9.9"))
 
+    def test_a_stale_copy_never_posts_its_verdict(self):
+        # w807: "this pr_evidence.py is ff-agents 1.24.18, but 1.24.21 is released" went onto a PR as a FAIL, twice
+        stale = pe.stale_problem("1.24.18", "1.24.21")
+        self.assertTrue(pe.comment_refused([stale]))
+        self.assertTrue(pe.comment_refused(["a real problem", stale]))
+        self.assertFalse(pe.comment_refused(["no 'Overlaps:' line"]))
+        self.assertFalse(pe.comment_refused([]))
+
 
 class MovedTest(unittest.TestCase):
     """w826: a UI change lists every HUD element it moved, at 1920x1080 and 1280x800, each asked for in the requester's

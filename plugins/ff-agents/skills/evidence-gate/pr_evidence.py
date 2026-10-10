@@ -531,6 +531,11 @@ def version_tuple(v: str) -> tuple:
     return tuple(int(p) if p.isdigit() else 0 for p in re.split(r"[.+-]", v or "0"))
 
 
+def comment_refused(problems: list[str]) -> bool:
+    """w807: --comment posts nothing from a copy older than the released one (its FAIL is about the copy, not the PR)."""
+    return any(p.startswith("this pr_evidence.py is ff-agents") for p in problems)
+
+
 def stale_problem(mine: str, released: str | None) -> str | None:
     """w733: #1272 got a PASS at 22:47 from a copy older than the 1.21.0 that would have failed it (released 21:53)."""
     if released and mine != "unknown" and version_tuple(mine) < version_tuple(released):
@@ -626,6 +631,11 @@ def main(argv=None) -> int:
     if args.comment:
         if not (args.repo and args.pr):
             ap.error("--comment needs --repo and --pr")
+        if comment_refused(problems):
+            # w807: a FAIL for "your copy is old" was posted on a PR twice and deleted by hand; it says nothing about the PR.
+            print("not posted: update ff-agents first (claude plugin marketplace update final-factory-agents && "
+                  "claude plugin update ff-agents@final-factory-agents), then run the newest copy")
+            return 1
         gh("pr", "comment", str(args.pr), "--repo", args.repo, "--body", text)
     return 1 if problems else 0
 
