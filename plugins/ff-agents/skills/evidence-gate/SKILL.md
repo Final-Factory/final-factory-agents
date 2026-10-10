@@ -97,6 +97,9 @@ report. Change nothing on a guess.
   description, release notes, a ledger note, a report), copy the name from that message's
   `[from <name>]` or `[from the orchestrator, for <name>]` line, or from the ledger's requester. A
   message without one is not from "the user" your prompt names: write "unconfirmed" and ask.
+- **Time the added code when the bench cannot resolve 1%** ([lesson](lessons/settle-your-own-guesses.md#when-a-measurement-cannot-resolve-it-measure-closer-to-the-change-w824-2026-10-09)). A class 3
+  desync PR whose before/after runs spread wider than 1% gets the added functions timed directly on the same save,
+  with the triggering case present and absent (`checklists/ffbox-desync-pr.md`, w824).
 - **Every new system runs in a test** ([lesson](lessons/verify-simulation-at-a-slow-hosts-frame-rate.md#a-new-system-runs-in-a-test-before-the-first-in-game-run-w809-2026-10-09)). Before you report a change
   that adds an `ISystem` or `SystemBase` (presentation and animation systems too), name the test that schedules it in a
   world with a matching entity. A system nobody runs throws on its first frame in a real world (w809: an aliasing error
