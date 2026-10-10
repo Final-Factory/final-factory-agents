@@ -92,6 +92,8 @@ person asking for that exact element to move. Census 1920x1080, 1280x800 and 128
   Before you relay "X is not built", "nothing will investigate this" or "that is off" from one
   system's tool about another, read the other system's live config or state (for FFBox,
   `ffbox_activity show config` / `show signatures`) and quote the key and value, or say unknown.
+  For what FF Factory itself did (a deploy, a clean-up, an update, a restart), read the portal's own logs with
+  `mcp__machine__portal_logs` (w920) and name the source and window; never infer it from the code.
 - **Say what every id is, every time** ([lesson](lessons/say-what-an-id-is.md)). Before you send
   anything a person reads, scan it for request ids (w293), PR numbers (#972), commits, worker or
   session ids and sandbox names: each one gets its plain-English words beside it, on every
@@ -189,7 +191,8 @@ One file each under `lessons/`: the rule, why (the incident, dated), how to appl
   requester; none means "unconfirmed" and ask (w389: a bare message became "Release hold lifted (Ben)").
 - [Check the other system's live config](lessons/check-the-other-systems-live-config.md): a tool's
   sentence about what another system does is a guess until that system's own config says so (w412:
-  "automatic investigations are not built yet" while FFBox's `intake.auto` was on).
+  "automatic investigations are not built yet" while FFBox's `intake.auto` was on); what FF Factory itself did
+  comes from `portal_logs`, not from the code (w920).
 - [Check who uses a shared shader or material](lessons/check-who-uses-a-shared-asset.md): run the
   game repo's `scripts/asset_usage.py` before the edit; more users than the target means a new
   shader or material for it, or a built-player before/after of every user; the PR's `## Used by`
