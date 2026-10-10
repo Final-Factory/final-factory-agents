@@ -201,6 +201,11 @@ overlap, an opened panel under the HUD, not clickable, cut off or leaving the HU
 10, a `Moved:` line missing either standard size or with a move not marked asked or justified (item 22). A difference the requester asked for passes with their words on its line:
 `intended (Ben): "..."`. A scene file (`Assets/Scenes/*.unity`) counts as UI.
 
+**A drag, drop or press-and-hold gesture** is shown with the real input module, not `ffauto:ui.drag` or `pointer.*` alone (those
+dispatch the events themselves and never reach `InputSystemUIInputModule`): use `ui.drag ...|real` or a pointer-event test, with the app
+focused. A gesture that "does nothing" in a background window is not a finding (w875;
+[pointer input needs OS focus](../../project-memory/memories/ui-pointer-input-needs-os-focus-and-ui-drag-bypasses-the-module.md)).
+
 Lessons behind this list:
 [verify UI with full content, like a player](../lessons/verify-ui-with-full-content-like-a-player.md),
 [a UI change leaves the rest of the screen as it was](../lessons/a-ui-change-leaves-the-rest-of-the-screen-as-it-was.md).
