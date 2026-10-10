@@ -181,6 +181,25 @@ python "<this skill's base directory>/ui_layout.py" moves --pair before-1920.jso
   Info box first (x -312, y -736 px at 1920x1080), then the strip's buttons and the hover card that grew with the text
   floor, and the Player Inventory 23 px lower at 1280x800. A census against itself prints 0.
 
+## A HUD piece the requester asked to draw over an opened panel (w835)
+
+`ui_layout.py check` knows one layering: an opened panel over the HUD. A request for the opposite on purpose
+(lothsahn, w835: with the Technology window open in the tutorial, the objectives card "on top of the technology
+menu") makes it print `UNDER` for every element of the card and `NOT RESTORED` for the same elements. Both are the
+request, and `pr_evidence.py` has no way out of `Opened panels:` (a count over 0 fails). What to do, measured in w835:
+
+- `--before` is the census of the HUD **at rest** (menu closed) on the base build, never the base build's own
+  open-menu census (that one makes the whole HUD under the panel show as "not restored"); `--after` is yours with
+  the menu open; `--closed` is yours after closing it.
+- Take that HUD piece's rows out of the open census (a copy, paths containing its block name) and run `check` again:
+  the `Opened panels:` line then counts what else is under, blocked, cut off or not restored. Say in the line what you
+  set aside and why, quote the request, and give the piece's own proof: `moves` between your closed census and the
+  base's at-rest census prints 0.
+- A pre-existing `cut off` (the Technology scroll bar handle, 6 px wide, past the top at 1920x1080) is also in the
+  base build's census: say so in the line.
+- Tour: `-ffSoloObjectives HandHoldy` shows the tutorial card; to see a taller later card, add
+  `{"waitFor": "text:Skip", "timeout": 120}, {"click": "text:Skip"}` per step (w835 `make_tour.py --skips 6`).
+
 ## Compare two
 
 ```sh
