@@ -150,6 +150,29 @@ manual pages for these components are the source for the rules: "Auto Layout", "
 - **Text size is known after a mesh update.** `ForceMeshUpdate()` before reading `textInfo`,
   `preferredHeight` or line counts on a text changed this frame.
 
+## Long languages and fixed-width panels (w812, Ben's German screenshots)
+
+- **A window drawn for English keeps its width in any language.** Its width is usually a stored
+  `sizeDelta.x` of a child (a layout group with `ctl --` reads each child's `sizeDelta`, not its
+  preferred size), so "Zerstören" stays in an 88-unit button. Measure the words and set the widths in
+  code (`FitButtonToLabel`, `FleetPanelLayout`; game repo `docs/UI-Architecture.md` §3f), never below
+  the English width. Check with a test that lays the real prefab out in all 11 languages with each
+  language's words and font (`Tests.UI.LongLanguagePanelsTests`: strings from `LocaleTableFile`, no
+  Localization assembly needed) and fails on a mid-word break, a text wider than its box and a drawn
+  overlap. When a language only fits with a shorter word, change that row (`set_rows.py`) in the same PR.
+- **Stretch-anchored, rotated icons break when a button grows.** Re-anchor them to the edge first.
+- **Never save `main.unity` from the editor.** It rewrites ~2300 lines of layout-driven rects, and the
+  editor crashes at the "scene changed on disk" prompt when you patch the file under it. Edit in the
+  editor, `SaveScene(scene, path, saveAsCopy: true)` before and after, `diff -u`, `patch --fuzz=3` the
+  repo scene with the editor stopped; call `PrefabUtility.RecordPrefabInstancePropertyModifications`
+  for prefab-instance edits or they are missing from the diff.
+- **A tour of a new game must wait out the intro narration** (`NEW_WORLD_WAIT=75` in
+  `specs/w812-german-ui`): before it the hub (Y) and I-key windows do not open, and a census of a still
+  with no panel in it passes. Look at each still for the panel before trusting a PASS. Run one language
+  per game; a station left selected keeps the next language's window from opening.
+- **Stop only the player pids your own run started.** Matching `finalfactory` in a command line also
+  matches other sandboxes' players.
+
 ## Input and focus (Deck)
 
 - **The Deck reaches what the tour reaches.** Steam Input buttons, the trackpad cursor and R2/L2
