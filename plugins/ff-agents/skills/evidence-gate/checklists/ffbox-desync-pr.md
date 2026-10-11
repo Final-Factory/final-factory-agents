@@ -29,6 +29,13 @@ changed code runs) in your first report and in the PR description.
   `DeterminismFingerprintSystem.RecordDetail` every heartbeat in audit sessions). It is class 3
   unless you split the change so that path prints exactly what develop prints (there: a report-only
   `DescribeConstructionForReport` overload, plus a test that the audit dump is unchanged).
+  Second case, w1013 (PR #1472): FFBox reordered `FleetMoverInputDiagnostics.Describe` (shooters
+  first, a character budget, new header fields, an extra projectile query) for the report's
+  `FleetInputsDetail`. The Diagnostic audit profile appends the same `Describe` to `DescribeMovers`,
+  which `DeterminismFingerprintSystem` records on audit heartbeats. The split: `Describe(em)` kept
+  develop's code path and `DescribeForReport(em, budget)` took the new behaviour. FFBox's PRs keep
+  doing this, so grep every changed `Describe*` and every function it calls for callers outside
+  `DesyncReportCollector`.
 - A class 2 fix that also adds capture is class 3 for the capture part.
 
 ## 2. Class 1: safe to merge

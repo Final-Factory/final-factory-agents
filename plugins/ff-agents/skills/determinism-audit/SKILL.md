@@ -85,6 +85,22 @@ not prove the Steam lobby, relay or invite path, even if Steam initialized in th
 durable checklist is in
 [project memory](../project-memory/memories/cross-machine-built-player-gameplay-acceptance.md).
 
+**Replaying a desync report's served save** (w1014, 2026-10-11). The host's report zip carries
+`*_served-<time>-e<N>.zip`, the world the host served when epoch N began. Copy it into the saves
+folder as `ffa-<session>-<name>.zip`. Load it with `run_build_multiplayer_audit.sh --skip-build
+--host-extra "-ffAutomationSave ffa-<session>-<name> -ffAutomationFlatMap false"` and
+`FF_CLIENT_LAUNCH_DELAY_SECONDS=90`, so the host settles before the client asks to join. Otherwise the
+host approves the join after the client has timed out (w257).
+
+On a big world the driver cannot reach the fork. It always passes `-ffAutomationDeterminismAudit true`,
+and the first value of a flag wins. With 31,605 entities, two headless players on BEAST managed 5 to 9
+heartbeats in 5 minutes, against a fork at heartbeat 864.
+
+So launch the pair yourself through the slot pool with `-ffAutomationDeterminismAudit false
+-ffAutomationWriteReport false`, the same `-ffAutomationRole`/`Host`/`Port`/`Save` flags, and the client
+started 90 s later. That pair ran at 16 UPS with a 12 ms round trip. The game's runtime desync detector
+then judges the run: grep both players' logs and the desync-reports folder for a verdict.
+
 **Before any paired run after a code change**: the clone does NOT auto-recompile — force it
 through the MCP bridge and confirm a clean compile on BOTH editors first (`gotchas.md` §Clone
 stale assembly). **Long audits**: launch detached and monitor the log file, not the job
