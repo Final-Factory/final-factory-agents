@@ -115,6 +115,27 @@ taught (w930):
   cannot give one: say so.
 - `ffauto:wait` runs on game time and stalls while the Esc menu pauses the game.
 
+**The whole Normal tutorial, solo, in 6 minutes** (Build 98, w949: the tutorial-end clip). w923's
+two-player tutorial runner also plays one host: every recipe whose `by` is not a peer goes to the host
+(`tutorial_play.py` `actor`). Put an uncommitted scenario in `scripts/nightly/scenarios/` (the runner
+only reads that folder) shaped like `MP-tutorial-e2e-loth.json`, with `"mode": "sp"`,
+`"peers": ["host"]`, `"peerArgs": {"host": ["-ffTutorialTrace", "true"]}` and the assert's
+`"peers": ["host"]`, and run
+`python3 scripts/nightly/ffnightly.py run --player <out>/osx/player/finalfactory.app --sha <bump sha>
+--scenario <id> --no-retry --invariants off --out "$TMPDIR/tut"` (it launches through the player slots).
+Two things the solo run needs, both measured on Build 98:
+- **The seed `nightly-tutorial-e2e`**: the recipes' coordinates are that world's (another seed: step 2
+  "mining.until stopped at 0/8 Bauxite Ore").
+- **A recipes copy whose step 24 `prep` also adds `ffauto:inventory.add|Low Density Structure|2`**: in
+  two-player the client carries them; solo, the host's hand crafts used them up and the drop-in was
+  refused (`InventoryTransfer ... NothingInSource`), stopping the run at step 24.
+Then all 40 steps PASS (`tutorial-report.md`, 0 failures), and the host log's `[TutorialTrace]` `reveal`
+and `sub show` lines, mapped to titles through `scripts/nightly/tutorial-normal-steps.json` by `uid`,
+give the order of cards and voice lines. For the clip, poll `/v1/screenshot?maxEdge=960` once a second
+beside the run (port and token from `AgentControl/session-<pid>.json` in the game's data folder) and
+join the frames with ffmpeg's concat demuxer at their real times. It is about 1 fps, not a 60 fps capture:
+say so. Delete the two uncommitted files afterwards.
+
 ## 4. Upload the main app's two depots, set live on development
 
 steamcmd on the m5 runs with its own home, `HOME=/Users/benryding/.steamcmd-home`, as `slims20`,
