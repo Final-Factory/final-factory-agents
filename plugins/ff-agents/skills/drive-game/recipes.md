@@ -84,6 +84,15 @@ real-time budget (100 steps took ~12 s mid-load) until `FFSystems.Core.ConfigIni
 did nothing (it ran before the load began). The built players' saves and the editor share
 `SaveGamePath`, so a leg's checkpoint loads in the editor by name (074 T104/T105 probes).
 
+⚠️ **If the headless load does not start, use the DevLoadSave menu instead** (w1048, 2026-10-11, lothdesktop): the
+headless `LoadGame` from `execute_code` followed by `EditorApplication.Step()` loops never loaded a save (0 `Placeable`s
+after ~4000 stepped frames, `GameMetaState` paused, no error and no "In game scene is prepared" log; the Step loop had
+left `EditorApplication.isPaused` true). Writing the save name to `dev_loadsave.trigger` in the worktree root
+(gitignored) and running `execute_menu_item` "Final Factory/Dev/Load Save (from dev_loadsave.trigger)" from edit mode
+loaded the same save twice, in about two minutes of the editor's own frames (poll `GameStarted` and the `Placeable`
+count; do not Step). A Bug Bot `BugReport_*.zip` is a save: copy it into `SaveGamePath` as
+`ffa-<session>-<name>.zip` and load it by that name.
+
 ⚠️ The `NewGame` save is a **modded** save and the editor disables mods, so it loads with missing
 items/tech — pick a non-modded save for clean loads.
 
