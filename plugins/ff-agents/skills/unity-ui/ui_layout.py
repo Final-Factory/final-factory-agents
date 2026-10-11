@@ -12,6 +12,13 @@ alpha, sprite and drawing order) taken before and after a change, same save, siz
              was there before and is still there, between blocks the change moved, is kept: FAIL too. Elements of a
              panel the player opens on purpose and can close (hud-clusters.json `openedPanels`: Blueprints, Inventory,
              the slide-outs, the Station panel, the hub) are not HUD: they may cover it (w742, Ben).
+  Window     every open window (hud-clusters.json `openedPanels`: the Player Inventory, a Cargo Hold or Station Core or
+  overlaps   Station Grid panel, the Station controls strip, a slide-out) against the other windows and against the HUD
+             blocks, each pair named with both elements and the overlap rect. An overlap is allowed only when
+             hud-clusters.json `windowOverlaps` lists it with the requester's words (or the dock hosts the window as its
+             tab); every other one is NOT ALLOWED. A pair in `after` that is not in `before` is new and one left between
+             windows the change moved is kept: FAIL (w981: the Station strip stood 11 px over the Player Inventory in the
+             Deck's classic layout and `overlaps` counted 0, because a window is not an always-on HUD block).
   Opened     what an opened panel over the HUD must still do: draw on top of what it covers, take the clicks over
   panels     every raycast target it covers, stay inside the screen, and (with --closed, a census taken after closing
              it) leave the covered HUD exactly where it was. Any failure: FAIL.
@@ -33,8 +40,8 @@ alpha, sprite and drawing order) taken before and after a change, same save, siz
              the minimap, the Player Inventory off the left edge), checked in the after census whatever the before one
              showed, so an earlier PR's move never becomes the new normal (w894). A broken pin: FAIL.
 
-It prints the `Overlaps:`, `Opened panels:`, `Alignment:`, `Style:`, `Pinned:` and `Moved:` lines the pull request
-carries (pr_evidence.py reads them) and exits 1 when any of the first five fails, 2 on bad input.
+It prints the `Overlaps:`, `Window overlaps:`, `Opened panels:`, `Alignment:`, `Style:`, `Pinned:` and `Moved:` lines the
+pull request carries (pr_evidence.py reads them) and exits 1 when any of the first six fails, 2 on bad input.
 
     ui_layout.py pins <census.json> [<census.json> ...]   the `Pinned:` line over every census (w894): take them at
                                                1920x1080, 1280x800 undocked and 1280x800 docked, a station selected
@@ -42,7 +49,8 @@ carries (pr_evidence.py reads them) and exits 1 when any of the first five fails
     ui_layout.py moves --pair before-1920.json after-1920.json --pair before-1280.json after-1280.json [--move-px 4]
                                                the `Moved:` line and its list over both standard sizes (w826)
 
-    ui_layout.py overlaps <census.json>        the overlapping block pairs of one census
+    ui_layout.py overlaps <census.json>        the overlapping HUD block pairs of one census, then every window overlap
+                                               (allowed ones with their quote, the rest NOT ALLOWED); exits 1 on one of those
     ui_layout.py clusters <census.json|tour.log> [--clusters ...]   cluster edges of one census or a
                                                Deck-tour log's `rect:` lines (built players)
 
@@ -300,6 +308,161 @@ def moved_blocks(before: dict, after: dict, depth: int = 2, tolerance: float = 2
         if max(abs(a - b) for a, b in zip(r, now)) > tolerance:
             moved.add(block_of(e["path"], depth))
     return moved
+
+
+# ---------------------------------------------------------------------------------------------------------------
+# window overlaps (w981)
+
+
+def window_spec(spec: dict | None) -> dict:
+    return (spec or {}).get("windowOverlaps") or {}
+
+
+def path_has(path: str, pattern: str) -> bool:
+    """Whether `pattern` (path components, fnmatch globs; a run anywhere in the path, '(Clone)' ignored) is in `path`."""
+    return opened_prefix(path, [pattern]) is not None
+
+
+def unit_of(path: str, patterns: list[str], backdrops: list[str], depth: int):
+    """('W', window path) for an element of a window the player opens, ('H', block path) for always-on HUD, None for a
+    backdrop (the map view)."""
+    window = opened_prefix(path, patterns)
+    if window:
+        return "W", window
+    if backdrops and opened_prefix(path, backdrops):
+        return None
+    return "H", block_of(path, depth)
+
+
+def unit_name(label: str, spec: dict | None) -> str:
+    """A person's name for a window or block, then its path under the canvas: 'Player Inventory (GamePanels/MiniInventory)'."""
+    plain = under_canvas(label)
+    for pattern, name in (window_spec(spec).get("names") or {}).items():
+        if path_has(label, pattern):
+            return f"{name} ({plain})"
+    return plain
+
+
+def when_holds(when: dict | None, census: dict, rects: dict, label_a: str) -> bool:
+    """An allow-list entry's condition, measured on the census. aStandsAbove: the entry's `a` window stands directly over
+    the named element (its bottom edge no lower than that element's top edge, sharing some of its width). The element
+    not on screen: the condition does not hold (Ben's w873 words allow the strip over the Player Inventory only while it
+    stands above Station Info)."""
+    if not when:
+        return True
+    for key, value in when.items():
+        if key != "aStandsAbove":
+            raise ValueError(f"hud-clusters.json windowOverlaps: unknown condition {key!r}")
+        anchor = find(census, value)
+        mine = rects.get(label_a)
+        if anchor is None or mine is None:
+            return False
+        if mine[3] > anchor[1] + 4 or min(mine[2], anchor[2]) - max(mine[0], anchor[0]) <= 0:
+            return False
+    return True
+
+
+def allowance(spec: dict | None, census: dict, rects: dict, a: dict, la: str, b: dict, lb: str):
+    """('hosting' | 'allowed', the words or source) when hud-clusters.json lists the pair of elements, else None."""
+    ws = window_spec(spec)
+    for host in ws.get("hosting", []):
+        for outer, inner in ((a, b), (b, a)):
+            if path_has(outer["path"], host["host"]) and any(path_has(inner["path"], t) for t in host["tenants"]):
+                return "hosting", host["source"]
+    for entry in ws.get("allowed", []):
+        for x, y, lx in ((a, b, la), (b, a, lb)):
+            if path_has(x["path"], entry["a"]) and path_has(y["path"], entry["b"]) and when_holds(entry.get("when"), census, rects, lx):
+                return "allowed", entry["who"][-1]
+    return None
+
+
+def window_overlaps(census: dict, spec: dict | None, depth: int = 2, min_px: float = 16.0) -> list[dict]:
+    """Every overlap that involves an open window (w981): window x window and window x always-on HUD block, one entry per
+    pair of owners and verdict, {"a", "b" (labels), "kind", "px", "rect" (the union of the overlapping parts), "status"
+    ('hosting' | 'allowed' | 'not allowed'), "why" (the quote or source), "example"}. HUD x HUD pairs are `overlaps`';
+    a window the dock hosts as a tab is not an overlap with the dock."""
+    patterns, backdrops = opened_patterns(spec), backdrop_patterns(spec)
+    items = []
+    for e in census["elements"]:
+        if not solid(e) or area(e.get("visible") or e["rect"]) < 4:
+            continue
+        unit = unit_of(e["path"], patterns, backdrops, depth)
+        if unit:
+            items.append((e, unit[0], unit[1]))
+    rects: dict[str, list] = {}
+    for e, _, label in items:
+        r = e.get("visible") or e["rect"]
+        rects[label] = union([rects[label], r]) if label in rects else list(r)
+    found: dict[tuple, dict] = {}
+    for i in range(len(items)):
+        a, ka, la = items[i]
+        ra = a.get("visible") or a["rect"]
+        for j in range(i + 1, len(items)):
+            b, kb, lb = items[j]
+            if (ka == "H" and kb == "H") or la == lb or la.startswith(lb + "/") or lb.startswith(la + "/"):
+                continue
+            rb = b.get("visible") or b["rect"]
+            if rb[0] >= ra[2] or rb[2] <= ra[0] or rb[1] >= ra[3] or rb[3] <= ra[1]:
+                continue
+            both = inter(ra, rb)
+            px = area(both)
+            if px < max(min_px, 0.05 * min(area(ra), area(rb))):
+                continue
+            verdict = allowance(spec, census, rects, a, la, b, lb)
+            status, why = verdict if verdict else ("not allowed", "")
+            first, second = sorted(((la, a), (lb, b)), key=lambda t: t[0])
+            key = (first[0], second[0], status)
+            entry = found.setdefault(key, {"a": first[0], "b": second[0], "px": 0.0, "rect": list(both), "status": status,
+                                           "why": why, "kind": "window x window" if ka == kb == "W" else "window x HUD",
+                                           "example": (first[1]["path"], second[1]["path"])})
+            entry["px"] += px
+            entry["rect"] = union([entry["rect"], both])
+    return sorted(found.values(), key=lambda v: (v["status"] != "not allowed", -v["px"]))
+
+
+def moved_units(before: dict, after: dict, spec: dict | None, depth: int = 2, tolerance: float = 2.0) -> set[str]:
+    """The windows and blocks (by unit label) with an element, matched by path, that moved over `tolerance`."""
+    patterns, backdrops = opened_patterns(spec), backdrop_patterns(spec)
+    old = {e["path"]: e.get("visible") or e["rect"] for e in before["elements"]}
+    out = set()
+    for e in after["elements"]:
+        r = old.get(e["path"])
+        if r is None or any(i in e["path"] for i in IGNORE):
+            continue
+        if max(abs(a - b) for a, b in zip(r, e.get("visible") or e["rect"])) > tolerance:
+            unit = unit_of(e["path"], patterns, backdrops, depth)
+            if unit:
+                out.add(unit[1])
+    return out
+
+
+def window_diff(before: dict, after: dict, spec: dict | None, depth: int = 2, tolerance: float = 2.0) -> dict:
+    """The not-allowed window overlaps of `after` split into new (not in `before`), kept (in both, between windows the
+    change moved: theirs to fix) and standing (in both, neither moved: noted, not this change's)."""
+    bad_after = [v for v in window_overlaps(after, spec, depth) if v["status"] == "not allowed"]
+    bad_before = {(v["a"], v["b"]) for v in window_overlaps(before, spec, depth) if v["status"] == "not allowed"}
+    moved = moved_units(before, after, spec, depth, tolerance)
+    new, kept, standing = [], [], []
+    for v in bad_after:
+        if (v["a"], v["b"]) not in bad_before:
+            new.append(v)
+        elif v["a"] in moved or v["b"] in moved:
+            kept.append(v)
+        else:
+            standing.append(v)
+    return {"new": new, "kept": kept, "standing": standing, "before": len(bad_before), "after": len(bad_after)}
+
+
+def rect_text(r) -> str:
+    return f"{round(r[0])},{round(r[1])} to {round(r[2])},{round(r[3])} ({round(r[2] - r[0])}x{round(r[3] - r[1])} px)"
+
+
+def window_overlap_text(v: dict, spec: dict | None) -> str:
+    """One overlap named with both elements and the overlap rect; an allowed one carries its quote or source."""
+    text = f"{unit_name(v['a'], spec)}  x  {unit_name(v['b'], spec)}: {v['px']:.0f} px2, overlap rect {rect_text(v['rect'])}"
+    if v["status"] == "not allowed":
+        return text
+    return f"{text}; {'hosted by the dock' if v['status'] == 'hosting' else 'allowed'}: {v['why']}"
 
 
 # ---------------------------------------------------------------------------------------------------------------
@@ -724,6 +887,18 @@ def run_check(args) -> int:
               f"them and left them overlapping")
     failed |= bool(new) or bool(kept)
 
+    wd = window_diff(before, after, spec, args.block_depth, args.tolerance)
+    allowed = [v for v in window_overlaps(after, spec, args.block_depth) if v["status"] != "not allowed"]
+    print(f"Window overlaps: {wd['after']} not allowed after, {wd['before']} before, {len(wd['new'])} new, {len(wd['kept'])} kept "
+          f"between windows the change moved, {len(wd['standing'])} standing; {len(allowed)} allow-listed with the requester's "
+          f"words (hud-clusters.json windowOverlaps) (ui_layout.py, whole screen, open windows against the HUD and each other)")
+    for label, rows in (("NEW", wd["new"]), ("KEPT", wd["kept"]), ("STANDING", wd["standing"])):
+        for v in rows[:15]:
+            print(f"  {label}: {window_overlap_text(v, spec)}")
+    for v in allowed[:15]:
+        print(f"  ALLOWED: {window_overlap_text(v, spec)}")
+    failed |= bool(wd["new"]) or bool(wd["kept"])
+
     problems = over["under"] + over["blocked"] + over["cut"]
     if args.closed:
         gone = restored(load(args.closed), over["covered"], args.tolerance) if over["covered"] else []
@@ -791,7 +966,13 @@ def run_overlaps(args) -> int:
     print(f"{len(pairs)} overlapping block pairs between always-on HUD blocks (block depth {args.block_depth})")
     for (a, b), v in sorted(pairs.items(), key=lambda kv: -kv[1]["px"]):
         print(f"  {short(a)}  x  {short(b)}: {v['px']:.0f} px2, e.g. {short(v['example'][0], 2)} / {short(v['example'][1], 2)}")
-    return 0
+    windows = window_overlaps(census, spec, args.block_depth)
+    bad = [v for v in windows if v["status"] == "not allowed"]
+    print(f"{len(bad)} window overlap(s) not allowed, {len(windows) - len(bad)} allow-listed (open windows against the HUD "
+          f"blocks and each other, hud-clusters.json windowOverlaps)")
+    for v in windows:
+        print(f"  {'NOT ALLOWED' if v['status'] == 'not allowed' else 'ALLOWED'}: {window_overlap_text(v, spec)}")
+    return 1 if bad else 0
 
 
 def run_clusters(args) -> int:

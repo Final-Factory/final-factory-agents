@@ -93,6 +93,8 @@ The census recipe and `ui_layout.py` are in the `unity-ui` skill, `layout-census
     by the screen edge, drift (item 12) and colour (item 13). What counts as opened is
     `hud-clusters.json` `openedPanels`: add a window only when the player opens and closes it, never
     to make a check pass. Restore what your change displaced rather than moving other blocks.
+    **Windows are measured too (item 24, w981):** the `Window overlaps:` line, windows against each other and the HUD,
+    not allowed unless `hud-clusters.json` `windowOverlaps` holds the requester's words for that pair.
     Re-take the census on the merged result when another UI PR landed in between (#1280 checked
     its merges by compile and tests only).
 12. **No drift.** Every anchored cluster (`hud-clusters.json`: the minimap with the quick buttons,
@@ -195,6 +197,19 @@ screen; on desktop three labels stopped fitting, the two windows left their defa
     when the tour switches back to classic with a building selected, so a "classic" still shot after a docked pass was the
     dock (the census names it: `StructuredDock`, `StructuredStation`). Run one layout per player launch, and read the census
     names of the first still before trusting a set of them.
+24. **Window overlaps measured by the tool, not by eye (w981).** Every open window (the Player Inventory, a Cargo Hold,
+    Station Core or Station Grid panel, the Station strip, a slide-out) against the other windows and the HUD blocks is
+    `ui_layout.py check`'s `Window overlaps:` line, and `ui_layout.py overlaps <census.json>` lists them for one census:
+    both elements named, the overlap rect, NOT ALLOWED or allow-listed with the requester's words. Take the census with the
+    windows in reach open: a Cargo Hold or Command Core selected and the Player Inventory up, at 1280x800 UI 0.8 classic,
+    1920x1080 and docked. A new one, or one left between windows the change moved, fails (`pr_evidence.py`); one both
+    censuses show and nothing moved is STANDING, which the report names. **Never measure a window overlap from the rects
+    by hand and call it clean, and never accept "overlaps: 0" from the HUD-block count as covering windows**: w961's strip
+    stood 11 px over the Player Inventory and w978's worker measured it by hand because `overlaps` said 0 for a window
+    (Ben: "UI should be clean and flowy"). The allow-list is `hud-clusters.json` `windowOverlaps`, one entry per pair
+    the requester asked for, their words in it and the situation they set (Ben, w873: "yes put the station panel
+    controls above station info and it should be over the player inventory" allows the strip over the Inventory only
+    while the strip stands above Station Info); add one only in a harness PR with their words, never to pass a check.
 
 19. **The Deck tour is a stand-in (w770).** It forces its own window size and a scripted Deck, so it cannot show Steam's
     layout choice, the Proton first-frame resolution, the Steam client version or touch. A Deck UI change says "verified on
@@ -208,6 +223,7 @@ Content: late-game audit save w718-lategame.zip (212 techs, 140 recipes, 24 blue
 Full content: every tab's grid/list/tree whole or scrolling, fill 78-96 % (ui_check fill); Info lists 6 objectives
 Style: BlueprintPanelChild (touched) vs InvAndCraft/InventoryPanel: delta E 2.1 (on screen), alpha 1.00 vs 1.00, same art
 Overlaps: 4 block pairs before, 4 after, 0 new, 0 kept between blocks the change moved (ui_layout.py, whole screen, block depth 2); 1 opened-panel pair(s) over the HUD, not counted here
+Window overlaps: 0 not allowed after, 0 before, 0 new, 0 kept between windows the change moved, 0 standing; 1 allow-listed with the requester's words (hud-clusters.json windowOverlaps) (ui_layout.py, whole screen, open windows against the HUD and each other)
 Opened panels: 1 opened panel pair(s) over the HUD (allowed: Ben, w732 and w742), 0 under the HUD, 0 not clickable, 0 cut off by the screen edge, HUD restored on close: yes (3 covered HUD element(s) checked in closed.json)
 Alignment: max drift 0 px over the clusters (bottom-right HUD, top-left HUD); tolerance 2 px
 Moved: 1 element move(s) over 4 px at 1920x1080 undocked, 1280x800 undocked, 1280x800 docked (ui_layout.py moves, the same save and screens before and after); ...
@@ -219,7 +235,7 @@ Clips: after-1280.mp4, 60 fps; idle and hover per tab at 0-4 s, 4-8 s ...; ui_ch
 ```
 
 `pr_evidence.py` fails a UI change without these lines, with a clip of 1 to 9 fps, with a new
-overlap, an opened panel under the HUD, not clickable, cut off or leaving the HUD unrestored (the
+overlap (between HUD blocks, or a new or kept `Window overlaps:`), an opened panel under the HUD, not clickable, cut off or leaving the HUD unrestored (the
 `Opened panels:` line, required when the `Overlaps:` line counts an opened-panel pair), a drift over 2 px, a `Style:` line without a measured delta E and alpha, or a delta E over
 10, a `Moved:` or `Pinned:` line missing a screen or the docked layout, a move not asked for in the brief's own words, or a
 broken pin (item 22). A difference the requester asked for passes with their words on its line:

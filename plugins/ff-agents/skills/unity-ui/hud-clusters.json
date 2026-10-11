@@ -39,6 +39,56 @@
       "GamePanels/Map"
     ]
   },
+  "windowOverlaps": {
+    "why": "No overlaps in the UI (Ben: \"UI should be clean and flowy\"). ui_layout.py lists every overlap that involves an open window (openedPanels above): window against window, and window against an always-on HUD block, each named with both elements and the overlap rect. An overlap passes only when it is listed under `allowed` with the requester's own words (and the condition they set), or is a window the dock hosts. Every other one is NOT ALLOWED: new or kept between windows the change moved fails ui_layout.py check and pr_evidence.py (w981: the Station strip stood 11 px over the Player Inventory in the Deck's classic layout and `overlaps` said 0).",
+    "howToAdd": "Only for an overlap the requester asked for, with their words word for word in `who` (the last entry is printed next to the overlap), the two sides as path patterns (components joined with /, fnmatch globs, '(Clone)' ignored, matched against a run of components anywhere in an element's path) and, when their words set a condition, `when`. Never to make a check pass, and never wider than the words: a quote about one pair allows that pair, in the situation they described. `when` supports aStandsAbove: the named element (a path tail), meaning the `a` window stands directly over it.",
+    "names": {
+      "MiniInventory": "Player Inventory",
+      "SelectionColumnStrip": "Station controls strip",
+      "StructuredStation": "Station controls strip (docked)",
+      "BuildInfoPanel": "Station Info",
+      "HoverDescription": "building hover card",
+      "CargoEntityPanel": "Cargo Hold",
+      "StationCoreEntityPanel": "Station Core",
+      "StationGridEntityPanel": "Station Grid",
+      "ObjectivesPanel": "Objectives card",
+      "ActionBarParent": "ability row and hotbar",
+      "MinimapParent": "minimap",
+      "QuickButtons": "minimap buttons"
+    },
+    "hosting": [
+      {
+        "host": "StructuredDock",
+        "tenants": ["*EntityPanel"],
+        "source": "docs/UI-Architecture.md in the game repo (develop), the building dock: \"a selected building's EntityPanel windows dock frameless, as tabs\" in StructuredDock, so a building panel inside the dock's frame is its tab, not an overlap"
+      }
+    ],
+    "allowed": [
+      {
+        "a": "SelectionColumnStrip",
+        "b": "MiniInventory",
+        "when": {"aStandsAbove": "BuildInfoPanel"},
+        "who": [
+          "Ben, 2026-10-10 (w873): \"no i dont want it over the obejctives card. move the station info down so its just above the abilities, then put the station controls right above that hover panel\", then \"yes put the station panel controls above station info and it should be over the player inventory\""
+        ]
+      },
+      {
+        "a": "*",
+        "b": "ObjectivesPanel",
+        "who": [
+          "Ben, w742, 2026-10-09: \"the blueprint panel showing over objectives is fine since its a temporarily opened panel\"",
+          "Ben, w813, 2026-10-09: \"objectives are on their own layer and game Ui panels should just show over top of them\""
+        ]
+      },
+      {
+        "a": "QuckControls/OptionsPanels/*",
+        "b": "ActionBarParent/Hotbars",
+        "who": [
+          "Ben, w732, 2026-10-09: \"Put the slide out back just make it appear over the hot bar. The user can then close it to show the hotbar again\""
+        ]
+      }
+    ]
+  },
   "clusters": [
     {
       "name": "bottom-right HUD",

@@ -224,6 +224,11 @@ One file each under `lessons/`: the rule, why (the incident, dated), how to appl
   Ben: "i didnt tell you to move that"); w894: the hard rule, no "justified" moves, quotes checked against the
   brief, the docked layout censused, and the places Ben fixed pinned (`unity-ui/hud-pins.json`) because the dock had
   kept Station Info and the hover card top left since w772 and every parent-based diff called that normal.
+- [Window overlaps are measured by the tool, not by eye](lessons/a-ui-change-leaves-the-rest-of-the-screen-as-it-was.md#window-overlaps-are-measured-by-the-tool-not-by-eye-w981-2026-10-11): `ui_layout.py
+  overlaps` counted only always-on HUD blocks, so the Station strip standing 11 px over the Player Inventory (w961, #1444;
+  22 to 45 px on develop with w978) read 0 and a worker measured rects by hand (w981); now every open window against the
+  HUD and each other is the `Window overlaps:` line, allowed only by a quoted `hud-clusters.json` `windowOverlaps` entry,
+  and `pr_evidence.py` fails a new or kept one ([UI checklist](checklists/ui.md), item 24).
 - [Measure against what the player sees](lessons/measure-against-what-the-player-sees.md): a
   placement metric is checked against the drawn surface or outline, computed independently of the
   code under test, never against the code's own answer (w587: w176's impacts scored 0.0 u against

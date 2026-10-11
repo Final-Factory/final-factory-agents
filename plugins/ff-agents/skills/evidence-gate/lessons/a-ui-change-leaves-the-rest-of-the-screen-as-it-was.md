@@ -1,6 +1,6 @@
 ---
 name: a-ui-change-leaves-the-rest-of-the-screen-as-it-was
-description: "A UI change proves it left the rest of the screen as it was: a whole-screen layout census before and after (whole HUD showing, every slide-out open) with no new overlap between always-on HUD blocks, no anchored cluster drifting more than 2 px, and every touched panel's measured colour and alpha within reach of a classic panel's. A panel the player opens on purpose and can close may cover the HUD, if it draws on top, is clickable, stays on screen and gives the HUD back (Ben, w732 and w742). Move only what the person asked to move: every moved element at 1920x1080, 1280x800 and 1280x800 docked is listed and asked for in the brief's own words, or put back, and the places Ben fixed himself (hud-pins.json) hold in every census (Ben, w826 and w894: \"stop moving panels around that I don't ask you to move around\"). Checked by the released pr_evidence.py, not an older copy."
+description: "A UI change proves it left the rest of the screen as it was: a whole-screen layout census before and after (whole HUD showing, every slide-out open) with no new overlap between always-on HUD blocks, no anchored cluster drifting more than 2 px, and every touched panel's measured colour and alpha within reach of a classic panel's. A panel the player opens on purpose and can close may cover the HUD, if it draws on top, is clickable, stays on screen and gives the HUD back (Ben, w732 and w742). Move only what the person asked to move: every moved element at 1920x1080, 1280x800 and 1280x800 docked is listed and asked for in the brief's own words, or put back, and the places Ben fixed himself (hud-pins.json) hold in every census (Ben, w826 and w894: \"stop moving panels around that I don't ask you to move around\"). Checked by the released pr_evidence.py, not an older copy. Open windows against each other and the HUD are measured by ui_layout.py (Window overlaps:), never by eye (w981)."
 date: 2026-10-09
 ---
 
@@ -217,3 +217,36 @@ brief's own words; `pr_evidence.py --brief`. The places Ben fixed himself are in
 `unity-ui/tests/fixtures/w894-develop-*.json`): it breaks Station Info (bottom edge at 264 of 800 px, centre x 282) and the
 hover card (right edge at 358 of 1280 px) at 1280x800 docked, and passes 1920x1080 and 1280x800 undocked. The fix itself is
 w895's.
+
+## Window overlaps are measured by the tool, not by eye (w981, 2026-10-11)
+
+**Rule.** Every open window (the Player Inventory, a Cargo Hold, Station Core or Station Grid panel, the Station
+strip, a slide-out) against the other windows and the HUD is `ui_layout.py`'s `Window overlaps:` line
+(`check`) or its listing (`ui_layout.py overlaps <census.json>`): both elements named, the overlap rect, and
+NOT ALLOWED unless `unity-ui/hud-clusters.json` `windowOverlaps` holds the requester's words for that pair. A new
+one, or one left between windows the change moved, fails `pr_evidence.py`. An `Overlaps: 0` line says nothing about
+windows. Never measure rects by hand and call a window overlap clean.
+
+**Why (Ben: "UI should be clean and flowy").** `Overlaps:` counted only always-on HUD blocks;
+an element of a panel the player opens (`openedPanels`) was skipped, and `Opened panels:` checked a window only against
+the HUD (on top, clickable, on screen), never against another window. On the Deck's classic layout (1280x800, UI 0.8,
+a Cargo Hold in reach) the Station strip stood over the Player Inventory by 22 to 45 px on develop, and by 11 px with
+#1444 (w961: strip 193..482 x 713..791, inventory bottom edge 724). Both censuses printed `Overlaps: 0`, and w978's worker
+(session 81914696) had to measure the rects by hand from the census to find it. The same census had the strip 154x58 px
+over a Station Core panel while flying (a961 / comb census of #1444), and at 1920x1080 classic the Player Inventory
+153x26 px over a Station Grid panel; nothing had ever reported either.
+
+**What is allowed, and how to add one.** Only what a person said, in their words, in
+`hud-clusters.json` `windowOverlaps.allowed` (`a`, `b` path patterns, an optional `when`, `who` quotes): the strip over
+the Player Inventory only while the strip stands directly above Station Info (Ben, w873: "yes put the station panel
+controls above station info and it should be over the player inventory", which is the develop layout; #1444's strip
+left of Station Info is not covered), any window over the Objectives card (w742, w813), a slide-out over the hotbar
+(w732). A window the dock hosts as a tab (`hosting`) is not an overlap with the dock. The PR text of #1397 said the strip
+is "drawn over the Player Inventory and any building panel"; Ben's words name only the Player Inventory, so a Cargo Hold
+under the strip is reported. Widen the list only in a harness PR with the person's words, never to make a check pass.
+
+**How to apply.** [UI checklist](../checklists/ui.md), item 24: take the census with the windows in reach open, run
+`ui_layout.py check` and paste the `Window overlaps:` line; `pr_evidence.py` fails a missing line, a new or kept overlap
+and an `intended` quote that is not in the brief. Tests: `unity-ui/tests/test_ui_layout.py` (`WindowOverlapTest`,
+`WindowCheckTest`: the w978 rects, the w873 develop layout, the dock, 1920x1080 Inventory over Station Grid) and
+`evidence-gate/tests/test_pr_evidence.py` (`WindowOverlapTest`).

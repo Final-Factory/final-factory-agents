@@ -23,7 +23,7 @@ def el(path, rect, kind="Image", color="#FFFFFFFF", alpha=1.0, sprite="backgroun
 
 
 def hud(quick_x0=946, slideout=False, blueprint_backdrop=False, blueprint_window=False, window_rect=None,
-        quick_on_hotbar=False, slideout_depth=None, slideout_raycast=True):
+        quick_on_hotbar=False, slideout_depth=None, slideout_raycast=True, inventory=True):
     """The bottom-right HUD and the Objectives card at 1280x800, as the w733 census of develop measured it, roughly.
     Drawing order is the list order, and a panel the player opens (hud-clusters.json openedPanels) draws above the HUD."""
     elements = [
@@ -34,10 +34,11 @@ def hud(quick_x0=946, slideout=False, blueprint_backdrop=False, blueprint_window
         el("ActionBarParent/Hotbars/BuildBar/ItemSlot (7)/Background", [735, 688, 770, 723]),
         el("ActionBarParent/Hotbars/BuildBar/ItemSlot (8)/Background", [795, 688, 830, 723]),
         el("ObjectivesPanel/Card", [10, 100, 420, 260], alpha=0.71),
-        el("InvAndCraft/InventoryPanel", [208, 6, 778, 610]),
         el("ObjectivesPanel/ScrollviewParent/ScrollView/Viewport", [10, 100, 420, 260], sprite="UIMask", maskOnly=True),
         el("CraftQueuePanels/Viewport", [0, 100, 600, 700], sprite="UIMask", maskOnly=True),
     ]
+    if inventory:
+        elements.append(el("InvAndCraft/InventoryPanel", [208, 6, 778, 610]))
     if quick_on_hotbar:
         elements.append(el("QuickButtons/Extra/Icon", [735, 688, 770, 723], selectable=True))
     if slideout:
@@ -249,11 +250,14 @@ class RealCaseTest(unittest.TestCase):
     to the measured on-screen colours (the window 23.8 from the classic Inventory, 2.1 before)."""
 
     def test_1272_the_blueprints_window_over_objectives_passes_the_overlap_check_and_fails_the_colour(self):
-        code, out = Cmd.run(hud(), hud(blueprint_backdrop=True), closed=hud(), extra=["--touched", "BlueprintPanelChild"])
+        # no Inventory window open here: two open windows over each other are the Window overlaps line's (WindowCheckTest)
+        code, out = Cmd.run(hud(inventory=False), hud(blueprint_backdrop=True, inventory=False), closed=hud(inventory=False),
+                            extra=["--touched", "BlueprintPanelChild"])
         self.assertEqual(code, 1)
         self.assertIn("0 new, 0 kept", the_line(out, "Overlaps"))
         self.assertIn("BlueprintPanelChild  x  ObjectivesPanel", out)
         self.assertNotIn("NEW: ", out)
+        self.assertIn("ALLOWED: GamePanels/BlueprintPanelChild  x  Objectives card", out)
         self.assertIn("0 under the HUD, 0 not clickable, 0 cut off by the screen edge, HUD restored on close: yes",
                       the_line(out, "Opened panels"))
         self.assertIn("STYLE: ", out)       # the colour is what fails
@@ -283,7 +287,8 @@ class RealCaseTest(unittest.TestCase):
         self.assertIn("0 new, 0 kept", the_line(out, "Overlaps"))
 
     def test_1272_with_the_classic_look_would_have_passed(self):
-        code, out = Cmd.run(hud(), hud(blueprint_window=True), closed=hud(), extra=["--touched", "BlueprintPanelChild"])
+        # clear of the Inventory window (two open windows over each other are the Window overlaps line's: WindowCheckTest)
+        code, out = Cmd.run(hud(), hud(window_rect=[800, 68, 1260, 444]), closed=hud(), extra=["--touched", "BlueprintPanelChild"])
         self.assertEqual(code, 0, out)
 
     def test_1264_the_minimap_buttons_drift_still_fails(self):
@@ -511,6 +516,212 @@ class PinTest(unittest.TestCase):
         with self.assertRaises(ValueError):
             ul.moves(ul.load(HERE / "fixtures" / "w894-develop-1280-classic.json"),
                      ul.load(HERE / "fixtures" / "w894-develop-1280-docked.json"))
+
+
+SPEC = json.loads(ul.DEFAULT_CLUSTERS.read_text(encoding="utf-8"))
+
+
+def screen(*elements):
+    """A 1280x800 census of just these elements (path, rect) in the order given; a window draws above the HUD."""
+    out = []
+    for i, (path, rect) in enumerate(elements):
+        e = el(path, rect)
+        e.setdefault("depth", i + (1000 if ul.opened_prefix(e["path"], OPENED) else 0))
+        e.setdefault("canvasOrder", 0)
+        out.append(e)
+    return {"screen": [1280, 800], "elements": out}
+
+
+STRIP, INVENTORY, STATION_INFO = "SelectionColumnStrip", "MiniInventory/Background", "BuildInfoPanel/Parent"
+
+
+class WindowOverlapTest(unittest.TestCase):
+    """w981: `overlaps` counted only always-on HUD blocks, so the Station strip standing 11 px over the Player Inventory
+    (Deck classic, 1280x800 UI 0.8, a Cargo Hold in reach; #1444, w961) was reported as 0 and the w978 worker measured the
+    rects by hand. Ben, w873: "yes put the station panel controls above station info and it should be over the player
+    inventory": that one pair, with the strip above Station Info, is allow-listed; every other pair is reported."""
+
+    def found(self, census):
+        return ul.window_overlaps(census, SPEC)
+
+    def test_the_strip_left_of_station_info_over_the_inventory_is_not_allowed(self):
+        # the w978 combined case, the rects measured from the built player: strip 193..482 x 713..791, inventory 26..489 x 448..724
+        census = screen((INVENTORY, [26, 448, 489, 724]), (STRIP, [193, 713, 482, 791]), (STATION_INFO, [489, 639, 773, 725]))
+        (v,) = self.found(census)
+        self.assertEqual(v["status"], "not allowed")
+        self.assertEqual([round(x) for x in v["rect"]], [193, 713, 482, 724])
+        self.assertEqual({v["a"], v["b"]}, {f"{GP}/MiniInventory", f"{GP}/{STRIP}"})
+        text = ul.window_overlap_text(v, SPEC)
+        self.assertIn("Player Inventory (GamePanels/MiniInventory)", text)
+        self.assertIn("Station controls strip (GamePanels/SelectionColumnStrip)", text)
+        self.assertIn("overlap rect 193,713 to 482,724 (289x11 px)", text)
+
+    def test_the_strip_above_station_info_over_the_inventory_is_ben_w873(self):
+        # develop before w961: the strip stands right above Station Info, centred on it, over the inventory's right edge
+        census = screen((INVENTORY, [26, 448, 466, 724]), (STRIP, [444, 536, 818, 626]), (STATION_INFO, [489, 639, 773, 725]))
+        (v,) = self.found(census)
+        self.assertEqual(v["status"], "allowed")
+        self.assertIn("yes put the station panel controls above station info and it should be over the player inventory", v["why"])
+        self.assertEqual([round(x) for x in v["rect"]], [444, 536, 466, 626])
+
+    def test_the_allowance_follows_the_words_not_the_pair(self):
+        # the same strip and inventory, but Station Info is not on screen or the strip is not above it: not allowed
+        base = [(INVENTORY, [26, 448, 489, 724]), (STRIP, [444, 536, 818, 626])]
+        self.assertEqual(self.found(screen(*base))[0]["status"], "not allowed")
+        beside = base + [(STATION_INFO, [900, 639, 1100, 725])]
+        self.assertEqual(self.found(screen(*beside))[0]["status"], "not allowed")
+
+    def test_the_strip_over_station_info_or_a_cargo_hold_is_not_allowed(self):
+        census = screen((STATION_INFO, [489, 639, 773, 725]), (STRIP, [444, 700, 818, 791]),
+                        ("CargoEntityPanel/MainPanel", [84, 176, 436, 382]), ("SelectionColumnStrip/Hint", [300, 300, 440, 330]))
+        pairs = {(ul.under_canvas(v["a"]), ul.under_canvas(v["b"]), v["status"], v["kind"]) for v in self.found(census)}
+        self.assertEqual(pairs, {
+            ("GamePanels/BuildInfoPanel", "GamePanels/SelectionColumnStrip", "not allowed", "window x HUD"),
+            ("GamePanels/CargoEntityPanel", "GamePanels/SelectionColumnStrip", "not allowed", "window x window")})
+
+    def test_two_windows_over_each_other_are_found_and_named(self):
+        # 1920x1080 classic, the Player Inventory over a Station Grid panel (a census of #1444)
+        census = screen((INVENTORY, [500, 500, 1000, 620]), ("StationGridEntityPanel/MainPanel", [924, 300, 1200, 600]))
+        (v,) = self.found(census)
+        self.assertEqual(v["status"], "not allowed")
+        self.assertIn("Station Grid (GamePanels/StationGridEntityPanel)", ul.window_overlap_text(v, SPEC))
+        self.assertEqual([round(x) for x in v["rect"]], [924, 500, 1000, 600])
+
+    def test_a_window_over_the_objectives_card_is_ben_w742_and_w813(self):
+        census = screen(("ObjectivesPanel/Card", [10, 100, 420, 260]), ("BlueprintPanelChild/Window", [200, 68, 600, 444]))
+        (v,) = self.found(census)
+        self.assertEqual(v["status"], "allowed")
+        self.assertIn("game Ui panels should just show over top of them", v["why"])
+
+    def test_a_window_over_the_minimap_or_station_info_is_reported(self):
+        census = screen(("MinimapParent/Background", [996, 520, 1268, 792]), ("BlueprintPanelChild/Window", [900, 500, 1100, 700]),
+                        (STATION_INFO, [489, 639, 773, 725]), ("InvAndCraft/InventoryPanel", [400, 600, 600, 760]))
+        statuses = {(ul.under_canvas(v["a"]), ul.under_canvas(v["b"])): v["status"] for v in self.found(census)}
+        self.assertEqual(set(statuses.values()), {"not allowed"})
+        self.assertIn(("GamePanels/BlueprintPanelChild", "GamePanels/MinimapParent"), statuses)
+        self.assertIn(("GamePanels/BuildInfoPanel", "GamePanels/InvAndCraft"), statuses)
+
+    def test_a_building_panel_inside_the_docks_frame_is_hosted_not_an_overlap(self):
+        # a docked census of #1444: the Station Core panel is the dock's tab, inside StructuredDock's frame
+        census = screen(("StructuredDock", [751, 59, 1270, 256]), ("StationCoreEntityPanel/MainPanel/Content/Text", [772, 96, 1134, 231]))
+        (v,) = self.found(census)
+        self.assertEqual(v["status"], "hosting")
+        self.assertIn("docs/UI-Architecture.md", v["why"])
+
+    def test_always_on_hud_pairs_stay_overlaps_not_window_overlaps(self):
+        census = hud(quick_on_hotbar=True)
+        self.assertEqual([v for v in self.found(census) if "Hotbars" in v["example"][1] and "QuickButtons" in v["example"][0]], [])
+        self.assertEqual(len(ul.overlaps(census, opened=OPENED)), 1)
+
+    def test_each_allowed_entry_carries_the_requesters_words(self):
+        for entry in SPEC["windowOverlaps"]["allowed"]:
+            self.assertTrue(entry["who"] and all('"' in quote for quote in entry["who"]), entry)
+        for host in SPEC["windowOverlaps"]["hosting"]:
+            self.assertTrue(host["source"] and host["tenants"], host)
+
+    def test_an_unknown_condition_is_an_error_not_a_silent_pass(self):
+        spec = json.loads(json.dumps(SPEC))
+        spec["windowOverlaps"]["allowed"][0]["when"] = {"nearby": "BuildInfoPanel"}
+        census = screen((INVENTORY, [26, 448, 489, 724]), (STRIP, [193, 713, 482, 791]))
+        with self.assertRaises(ValueError):
+            ul.window_overlaps(census, spec)
+
+
+class WindowCheckTest(unittest.TestCase):
+    """The census pair: a window overlap that is new, or kept between windows the change moved, fails; one both censuses
+    show and the change did not touch is listed as standing."""
+
+    INVENTORY_BOX = [26, 448, 489, 724]
+    BEFORE = [(INVENTORY, [26, 448, 466, 724]), (STRIP, [444, 536, 818, 626]), (STATION_INFO, [489, 639, 773, 725])]
+
+    def test_1444_moves_the_strip_onto_the_inventory_and_fails(self):
+        after = screen((INVENTORY, [26, 448, 466, 724]), (STRIP, [193, 713, 482, 791]), (STATION_INFO, [489, 639, 773, 725]))
+        code, out = Cmd.run(screen(*self.BEFORE), after)
+        self.assertEqual(code, 1)
+        self.assertIn("1 not allowed after, 0 before, 1 new, 0 kept", the_line(out, "Window overlaps"))
+        self.assertIn("  NEW: Player Inventory (GamePanels/MiniInventory)  x  Station controls strip", out)
+        self.assertIn("overlap rect 193,713 to 466,724 (273x11 px)", out)
+        self.assertIn("0 new, 0 kept", the_line(out, "Overlaps"))
+
+    def test_the_allowed_overlap_before_is_listed_and_does_not_fail(self):
+        code, out = Cmd.run(screen(*self.BEFORE), screen(*self.BEFORE))
+        self.assertEqual(code, 0, out)
+        self.assertIn("0 not allowed after, 0 before, 0 new, 0 kept between windows the change moved, 0 standing; 1 allow-listed",
+                      the_line(out, "Window overlaps"))
+        self.assertIn("  ALLOWED: Player Inventory", out)
+
+    def test_1447_moves_the_inventory_and_leaves_the_overlap_kept(self):
+        strip_left = [(STRIP, [193, 713, 482, 791]), (STATION_INFO, [489, 639, 773, 725])]
+        before = screen((INVENTORY, [3, 448, 466, 724]), *strip_left)
+        after = screen((INVENTORY, self.INVENTORY_BOX), *strip_left)
+        code, out = Cmd.run(before, after)
+        self.assertEqual(code, 1)
+        self.assertIn("0 new, 1 kept between windows the change moved, 0 standing", the_line(out, "Window overlaps"))
+        self.assertIn("  KEPT: ", out)
+
+    def test_an_overlap_neither_window_moved_stands_and_does_not_fail(self):
+        census = screen((INVENTORY, self.INVENTORY_BOX), (STRIP, [193, 713, 482, 791]), (STATION_INFO, [489, 639, 773, 725]))
+        code, out = Cmd.run(census, census)
+        self.assertEqual(code, 0, out)
+        self.assertIn("0 new, 0 kept between windows the change moved, 1 standing", the_line(out, "Window overlaps"))
+        self.assertIn("  STANDING: ", out)
+
+    def test_overlaps_command_reports_every_window_overlap_and_fails_on_one(self):
+        import contextlib
+        import io
+        census = screen((INVENTORY, self.INVENTORY_BOX), (STRIP, [193, 713, 482, 791]), (STATION_INFO, [489, 639, 773, 725]))
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "census.json"
+            path.write_text(json.dumps(census), encoding="utf-8")
+            out = io.StringIO()
+            with contextlib.redirect_stdout(out):
+                code = ul.main(["overlaps", str(path)])
+        self.assertEqual(code, 1)
+        self.assertIn("0 overlapping block pairs between always-on HUD blocks", out.getvalue())
+        self.assertIn("1 window overlap(s) not allowed, 0 allow-listed", out.getvalue())
+        self.assertIn("NOT ALLOWED: Player Inventory (GamePanels/MiniInventory)  x  Station controls strip", out.getvalue())
+
+
+class RecordedWindowTest(unittest.TestCase):
+    """w981, on censuses of built development players of #1444's head (64482cf0b, w961), 1280x800 UI 0.8 and 1920x1080
+    UI 0.9 classic, a Cargo Hold / Command Core in reach (specs/w961-station-panel-left/run_tour.sh, NOTUT=1). The old
+    `overlaps` printed 0 block pairs on every one of them."""
+
+    def census(self, name):
+        return ul.load(HERE / "fixtures" / name)
+
+    def test_the_station_strip_over_the_player_inventory_is_reported_with_its_rect(self):
+        census = self.census("w981-1444-1280-classic-cargo-hold-locked.json")
+        self.assertEqual(ul.overlaps(census, opened=OPENED), {})
+        (v,) = ul.window_overlaps(census, SPEC)
+        self.assertEqual(v["status"], "not allowed")
+        self.assertEqual([round(x) for x in v["rect"]], [193, 713, 466, 724])
+        self.assertIn("Player Inventory (GamePanels/MiniInventory)  x  Station controls strip (GamePanels/SelectionColumnStrip)",
+                      ul.window_overlap_text(v, SPEC))
+
+    def test_two_windows_over_each_other_at_1920_are_reported(self):
+        (v,) = ul.window_overlaps(self.census("w981-1444-1920-classic-flying.json"), SPEC)
+        self.assertEqual(v["status"], "not allowed")
+        self.assertEqual({ul.under_canvas(v["a"]), ul.under_canvas(v["b"])},
+                         {"GamePanels/MiniInventory", "GamePanels/StationGridEntityPanel"})
+
+    def test_develop_before_1444_has_the_strip_over_the_inventory_that_ben_w873_asked_for(self):
+        # develop 84dc2f03f, the same tour: the strip stands above Station Info over the inventory's right edge, 22x90 px
+        census = self.census("w981-develop-84dc2f03f-1280-classic-cargo-hold-locked.json")
+        (v,) = ul.window_overlaps(census, SPEC)
+        self.assertEqual(v["status"], "allowed")
+        self.assertEqual([round(x) for x in v["rect"]], [444, 536, 466, 626])
+
+    def test_develop_to_1444_is_a_new_window_overlap_and_the_old_check_saw_nothing(self):
+        before = self.census("w981-develop-84dc2f03f-1280-classic-cargo-hold-locked.json")
+        after = self.census("w981-1444-1280-classic-cargo-hold-locked.json")
+        self.assertEqual(ul.overlaps(before, opened=OPENED), ul.overlaps(after, opened=OPENED))
+        diff = ul.window_diff(before, after, SPEC)
+        self.assertEqual((len(diff["new"]), len(diff["kept"]), len(diff["standing"])), (1, 0, 0))
+        code, out = Cmd.run(before, after)
+        self.assertEqual(code, 1)
+        self.assertIn("1 not allowed after, 0 before, 1 new, 0 kept", the_line(out, "Window overlaps"))
+        self.assertIn("0 new, 0 kept", the_line(out, "Overlaps"))
 
 
 class CommandTest(unittest.TestCase):

@@ -163,7 +163,7 @@ python "<this skill's base directory>/ui_layout.py" check --before before.json -
     --touched <your window> --shot after.png --ref-shot classic.png --ref-census classic.json
 ```
 
-It prints the `Overlaps:`, `Opened panels:`, `Alignment:` and `Style:` lines for the PR and exits 1 on a new overlap
+It prints the `Overlaps:`, `Window overlaps:`, `Opened panels:`, `Alignment:` and `Style:` lines for the PR and exits 1 on a new overlap
 between always-on HUD blocks (a panel the player opens and closes may cover the HUD: Ben, w732 and w742; it
 must be on top, clickable, inside the screen and give the HUD back, `--closed`), a cluster ([hud-clusters.json](hud-clusters.json)) drifting more than 2 px, or a
 touched panel more than delta E 10 from the classic Inventory on screen, or with different art or
@@ -172,6 +172,15 @@ quick buttons from 7 to 24 px off the minimap, the toggles 31 px and the hotbar 
 moved after it; opening the Blueprint slide-out puts it over the hotbar (a new overlap against the
 closed HUD); #1272's backdrop is delta E 23.8 from the classic Inventory on screen, where the window
 was 2.1 before it.
+
+**Windows count too (w981).** `Overlaps:` is the always-on HUD blocks. Every open window (the Player Inventory, a Cargo Hold,
+Station Core or Grid panel, the Station strip, a slide-out) against the other windows and the HUD is the `Window overlaps:`
+line, and `ui_layout.py overlaps <census.json>` lists them for one census, each pair named with both elements and the overlap
+rect, NOT ALLOWED unless [hud-clusters.json](hud-clusters.json) `windowOverlaps` holds the requester's words for that pair
+(Ben, w873: "yes put the station panel controls above station info and it should be over the player inventory", only while the
+strip stands above Station Info). Take the census with the windows in reach open (a Cargo Hold or Command Core selected).
+A new overlap or one kept between windows you moved fails; never measure rects by hand and call a window overlap clean
+(w961's strip stood 11 px over the Player Inventory and the HUD-block count said 0).
 
 **Then list what moved, and check the pins, on every screen and layout** (w826, w894). **Move only what the person
 asked to move**: never move, re-anchor, restack or regroup an existing panel, HUD element or hover panel unless the brief
