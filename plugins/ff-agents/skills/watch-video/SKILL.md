@@ -122,7 +122,12 @@ The tool writes `<out>/report.md` (default out: `<system temp>/watch_video/<name
 3. **Read `gemini.md`.** Gemini watched and listened to the cut blind: it got the brief, never the
    flags. So a flag marked "[the blind model review heard/saw this too]" has two independent
    witnesses. Its "model-only" findings need checking on the sheets before you act on them.
-4. **Write the critique:** for each problem, the time, what is wrong, and the fix. Lead with what
+4. **Hunt for what should not be there, before you say "matches"** (w1032). In `--mode vfx` the model
+   review has a separate **Out of place** section, answered without the brief. Whatever it says, you list
+   per frame what is visible that the brief did not ask for (ghost or leftover copies, dark silhouettes, stale
+   UI, overlaps, z-order, flicker, clipped text) and explain or fix each
+   ([lesson](../evidence-gate/lessons/hunt-for-what-should-not-be-there.md)).
+5. **Write the critique:** for each problem, the time, what is wrong, and the fix. Lead with what
    Ben would notice first.
 
 ## What each flag means

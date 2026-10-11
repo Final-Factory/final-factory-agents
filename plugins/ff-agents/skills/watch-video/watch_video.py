@@ -1162,9 +1162,15 @@ Write markdown with exactly these sections:
    Categories: POP (appears or vanishes abruptly), TIMING (too fast, slow, long or short), SHAPE, SCALE, COLOR,
    MOTION (wrong direction, lags, detaches, jitters), FLICKER, SORTING (drawn over or under the wrong thing),
    ALIASING, READABILITY (hard to see or read), BRIEF (not the intended look), COMPARE (worse than video A).
-3. **Against the intended look**: each point of the brief, met or not, and why.
-4. **Against the reference** (only when video A is given): what changed from A to B, better or worse.
-5. **Verdict**: ship it, or fix first; the top 3 fixes.
+3. **Out of place** (answer this WITHOUT looking at the brief; it is a separate question from "does it match"):
+   frame by frame, what looks wrong, extra or out of place whatever the brief asked for? Hunt for: a duplicate,
+   ghost or leftover copy of an object left behind, a dark or unlit silhouette, stale or lingering UI, things
+   overlapping or drawn over/under the wrong thing, flicker, clipped or cut-off text, anything that is there for
+   no reason. One bullet each, EXACTLY: `- [m:ss.ss] GHOST|LEFTOVER|SILHOUETTE|STALE_UI|OVERLAP|SORTING|FLICKER|CLIPPED|OTHER: what and where in the frame`.
+   Write "nothing out of place" only if you looked for each of those.
+4. **Against the intended look**: each point of the brief, met or not, and why.
+5. **Against the reference** (only when video A is given): what changed from A to B, better or worse.
+6. **Verdict**: ship it, or fix first; the top 3 fixes.
 Only report what you actually see; write "unsure" rather than guess. Timestamps are video time of the clip
 under review."""
 
