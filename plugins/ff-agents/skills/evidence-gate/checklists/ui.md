@@ -210,6 +210,12 @@ screen; on desktop three labels stopped fitting, the two windows left their defa
     the requester asked for, their words in it and the situation they set (Ben, w873: "yes put the station panel
     controls above station info and it should be over the player inventory" allows the strip over the Inventory only
     while the strip stands above Station Info); add one only in a harness PR with their words, never to pass a check.
+25. **A structure-selection window may cover the game world (w1019, w961).** The windows that selecting a structure
+    opens (a building's window, Station Core, Cargo Hold, Player Inventory and the like) may cover the game world,
+    the selected structure included: not an overlap defect, so do not flag it and do not move or resize a window to
+    clear it (Ben, 2026-10-11, about w961's Station Core window over the selected core: "That's fine the ui elements
+    that come from selecting structures can block the game world since they are closed and can be moved too"). Window
+    over window, window over a HUD block and window over the station controls still count (items 11 and 24).
 
 19. **The Deck tour is a stand-in (w770).** It forces its own window size and a scripted Deck, so it cannot show Steam's
     layout choice, the Proton first-frame resolution, the Steam client version or touch. A Deck UI change says "verified on
