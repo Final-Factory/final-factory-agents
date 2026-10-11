@@ -38,7 +38,8 @@ description: Cut a release through CI on the ffbox build server — write the re
 > close every editor and player, bump with `trigger-ci-release.sh --skip-ci` (FFBox then builds
 > nothing), build Windows + Mac main with `Editor.ReleaseBuild`, upload with steamcmd's cached login,
 > set live on `development`, verify on Steam. The notes (section 0.5, 3) and the first-hour check
-> (section 4) are unchanged. First run: Build 97, BuildID 25859327.
+> (section 4) are unchanged. First run: Build 97, BuildID 25859327. A request may add the demo (Build 99,
+> w1006: built beside main, uploaded with nothing set live; `m5-manual-build.md`).
 >
 > History: the 0.50.0.36/.37/.39 Mac players failed with "Disk full" on the `ffghr-loth2400-*`
 > runners (2026-09-27). Lothsahn fixed it in ffbox (the nightly cache rebuild, FinalFactory #651, and

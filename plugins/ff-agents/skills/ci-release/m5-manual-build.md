@@ -1,4 +1,4 @@
-# The m5 manual build: Windows + Mac main, set live on development, by hand
+# The m5 manual build: Windows + Mac main (and the demo when asked), main set live on development, by hand
 
 **When:** only while Ben has moved develop builds to his m5. Ben, 2026-10-10 (w930), verbatim:
 "for the next build, please just do the process on my m5 and just do the windows and mac builds (we
@@ -7,8 +7,13 @@ manually use my m5 for builds for a couple days, remember this", and "also when 
 have all the workers stop and close out the open unity editors or game instance so we can use the
 full power of my m5 to do builds. remember this". It is the one exception to "releases only through
 FFBox's lane", and it covers **develop builds set live on `development` only**: never the default
-branch, never pre-release, never the demo app, no Linux. When Ben or Lothsahn says FFBox builds again,
+branch, never pre-release, no Linux. When Ben or Lothsahn says FFBox builds again,
 go back to `SKILL.md` section 1.
+
+**The demo, when the request asks for it** (Build 99, w1006; Ben, 2026-10-11: "remember we need win/mac
+and also the demo for win/mac. no linux necessary", and "development is fine and i'll hand move the demo
+too"): build it beside main (section 3), upload app 2387320 with nothing set live (section 4), and say
+its BuildID; Ben moves the demo's branches himself. Without that ask, main only.
 
 First run: Build 97 (0.50.0.97, bump `ca8185dd6`, w930, 2026-10-11). Every number below is from it.
 
@@ -20,8 +25,13 @@ First run: Build 97 (0.50.0.97, bump `ca8185dd6`, w930, 2026-10-11). Every numbe
   and `unity-slot status`.
 - Quit any FF Factory sandbox editor or player still running cleanly (`mcp__machine__unity` stop for
   a sandbox's editor; AppleScript quit or SIGTERM for a player; kill -9 only after 2 minutes of being
-  ignored). **Never touch Ben's own editor** (`-projectpath /Users/benryding/nevergames/FinalFactory`)
-  or his main clone: leave it and say so in the report.
+  ignored). **Ben's own editor** (`-projectPath /Users/benryding/nevergames/FinalFactory`): leave it
+  unless the request asks to close it. When it does (w1006: "including his main clone, cleanly with a
+  save first"): no `*` in its window title (`osascript -e 'tell application "System Events" to get name
+  of every window of (first process whose unix id is <pid>)'`) means no unsaved scene; then
+  `osascript -e 'tell application "Unity" to quit'` (closed in 5 s, Build 99), and reopen it after the
+  upload: `open -a /Applications/Unity/Hub/Editor/<ver>/Unity.app --args -projectPath <that path>`.
+  A `*` in the title: ask, do not quit it.
 - When the upload is done, say in a turn report that the other m5 workers can be resumed.
 
 ## 2. Bump develop with `--skip-ci`, so FFBox builds nothing
@@ -70,6 +80,14 @@ for T in win64:StandaloneWindows64 osx:StandaloneOSX; do
 done
 ```
 
+**With the demo** (Build 99), loop `for E in main demo` inside the target loop, `-ffEdition $E`, out
+`$TMPDIR/b<R>/$k-$E`: main first, then the demo in the same session order, as FFBox does. The demo
+reuses main's compile: its player step took 27 s (Windows) and 30 s (Mac) against main's 1381 s and
+225 s. Check each demo really is the demo: `cmp -l <k>-main/player/.../level0 <k>-demo/player/.../level0
+| wc -l` prints `1` (the DemoController flag in `main.unity`; `ReleaseBuild` sets it back after).
+The Localization CSVs also differ, but only in the ids the harvest gives new rows on every run (two main
+players differ the same way), not in text.
+
 Run it in the background and wait on its exit. Each `-ffOut` gets `player/` (exactly what ships),
 `symbols/` and `release-build.json` (`result`, `build_errors`, `phases` in seconds).
 
@@ -95,6 +113,9 @@ The harvest and the bundleVersion sync can leave tracked files changed in the sa
 open its `ffbox/release-<version>-regenerated` PR for them). Commit any that changed on a branch and
 open a PR into develop for them. On Build 97 they were the same seven files FFBox's release PRs carry
 (`main.unity` and the Noto Sans JP/KR/SC atlases and character sets; #1377, #1387, #1421): PR #1441.
+The re-saved `main.unity` can rewrite a TMP `m_text` from `"a\nb"` into a single-quoted string folded over
+lines (same value): on Build 99 that failed `MapControlsPanelSceneTest`, which matched the quoted text;
+#1498 made it read the YAML value. A scene-text test must compare the value, never the quoting.
 
 ## 3b. The stills come from the release player through Agent Control
 
@@ -167,6 +188,14 @@ grep "Successfully finished AppID 1383150 build" "$S/steamcmd.log"     # (BuildI
 Build 97: the cached token logged in, both depots uploaded in about 40 s (chunk dedupe), and the
 log ended `Successfully finished AppID 1383150 build (BuildID 25859327)`. The `depot_build_*.log`
 files in `buildoutput` name each depot's `New manifestID`.
+
+**The demo app** (when asked): app 2387320, depots **2387321 = Windows** and **2387322 = Mac**
+(the game repo's `cicd/ff_demo_app_2387320.vdf` and its depot vdfs name them), the same depot form, and
+`"setlive" ""`: the demo is set live nowhere (FFBox's rule too), Ben moves it. Write both app vdfs
+with ffbox's own `ffsteam.depot_vdf` / `app_vdf` (import `scripts/ffsteam.py` from an ffbox clone).
+Build 99: main BuildID 25870630 (development, 22:01:14 UTC, 34 min after the bump), demo BuildID
+25870651, each upload about a minute. `release-status.py` reads only the main app: verify the demo
+with `app_info_print 2387320` (its branches must NOT have moved to the new BuildID).
 
 ## 5. Verify on Steam, then the rest of the release
 
