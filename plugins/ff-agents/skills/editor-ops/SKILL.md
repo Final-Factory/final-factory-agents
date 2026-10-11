@@ -269,6 +269,16 @@ there. For #1137's change the selection ran in 75 s against 376 s for the full f
   selection above 60% of the suite's time) or when someone asks for it. Pass both
   `FFEditorTests` and `FFEditorTestsSlow` (or all EditMode assemblies) only when all tests are
   explicitly requested; run slow tests only if asked.
+- **Edit nothing under `Assets/` while a run is going in that editor.** Finish or stop the run
+  first. A run that sees half an edit reports failures that are not real. In w1009 (2026-10-11,
+  lothdesktop) an objective asset was deleted and a fixture JSON edited during a full
+  `FFEditorTests` run. It reported 2 false failures:
+  - `ControlHighlightTests` hit an NRE because `AssetDatabase.FindAssets` still returned the
+    deleted asset's GUID;
+  - `PreTutorialReworkSaveLoadTest` built its cases from the fixture before the edit.
+
+  After `refresh_unity` the rerun passed 549 of 549. If you did edit mid-run, `refresh_unity` and
+  rerun the affected tests before you read any failure as real.
 
 Verify the tests you ran pass before considering work complete. **Confirm Burst is enabled and
 idle before starting any run** — see the next subsection.
