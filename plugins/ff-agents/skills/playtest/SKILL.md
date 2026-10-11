@@ -164,6 +164,37 @@ in real time: motion and feel episodes, flicker, VFX and clips for Ben, voice li
 fps/UPS/perf numbers, and wall-second holds (`movement.hold`, `mobilestation.drive`, `mobilestation.panelrotate`). The
 drive-game skill ("Play faster: game speed") and `Documentation/Game-Speed.md` have the limits.
 
+### The Esc menu strands an attached single player; never use OS input (w1012)
+
+The agent channel refuses every command while single player is paused behind the Esc menu (`409 state_not_playable`),
+`ui.menu|close` included, so `ui.menu|open` strands the session until the player is restarted. Reach the Esc menu only
+through verbs that close it again: `ui.savegame|<name>|resume` and `ui.loadgame|<name>`. Its Settings panel (and the
+title screen) cannot be driven over the channel: say so in the report as a gap, do not work around it.
+
+**Never send OS mouse or keyboard input** (`SetCursorPos`, `mouse_event`, `keybd_event`, PowerShell click helpers) to a
+built player on a shared machine. On beast (2026-10-11) another sandbox's `finalfactory` window lay over w1012's at the
+click point (`WindowFromPoint` named the other pid), so both clicks landed in another worker's game. `PrintWindow`
+captures an occluded window fine, so a still of it is safe; input is not.
+
+### Testing the DEMO build (w1012)
+
+The release lane's demo edition is the main build with one flag flipped: `Editor.ReleaseBuild.Build -ffEdition demo` ->
+`BuildCommand2.SetDemoMode` sets `DemoController._isDemo` in `Assets/Scenes/main.unity`; no define, no other asset. For a
+drivable demo player commit `_isDemo: 1` (the `_isDemo: 0` line in main.unity) on a throwaway branch that is never
+merged, and run `scripts/nightly/build_player.sh <project> <that sha> win|mac <cache>` (a Development multiplayer
+player, ~15 min on beast). `MP-tutorial-e2e-loth` and `tutorial_check.py` run on it unchanged. What the demo gates, to
+look at: `MainMenuPanel` (Buy Now button, DEMO BUILD label), `TechnologyButton.SetTechStateBackground` and
+`TechnologySelectionPanel` ("Not available in the demo" + Buy Now on a `DisableForDemo` tech),
+`ResearchQueueClientRequest.IsLockedBehindDemo` (host refusal), and `TutorialCompleteForDemo` ->
+`DemoController.ShowDemoReminder` (the "Enjoying the demo?" panel when the tutorial's last step completes). The
+first run found a demo-only NullReferenceException each time research ended (FinalFactory #1473): run the demo, the
+main build's tests never take the `IsDemo` branch.
+
+`ffnightly.py run` takes the machine's lab lock in `FF_NIGHTLY_ROOT` (`<worker root>/nightly/lab.lock`), shared by every
+sandbox on the machine: on a busy machine it answers "the lab is locked by another run" at once. Retry it in a
+background loop (every 30 s); never point `FF_NIGHTLY_ROOT` elsewhere to dodge the lock, which keeps windowed runs from
+loading the machine together.
+
 ## Multiplayer gameplay fixes need two real built players
 
 Finalize, copy, and compare both peers' baseline reports **before** injecting a disconnect,
