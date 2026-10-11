@@ -229,6 +229,7 @@ One file each under `lessons/`: the rule, why (the incident, dated), how to appl
   22 to 45 px on develop with w978) read 0 and a worker measured rects by hand (w981); now every open window against the
   HUD and each other is the `Window overlaps:` line, allowed only by a quoted `hud-clusters.json` `windowOverlaps` entry,
   and `pr_evidence.py` fails a new or kept one ([UI checklist](checklists/ui.md), item 24).
+- [Text is covered by its drawn bounds, not its box](lessons/a-ui-change-leaves-the-rest-of-the-screen-as-it-was.md#text-is-covered-by-its-drawn-bounds-not-its-box-w727-2026-10-11): the Technology tab's "Excess Research 0.0" label ran half under the hub's tab bar and every census check read 0, because the census held RectTransform boxes only (w727, #1291); now the census records `textRect` and `ui_layout.py covered-text` flags a text of an opened screen under an opaque element (checklist item 26).
 - [Measure against what the player sees](lessons/measure-against-what-the-player-sees.md): a
   placement metric is checked against the drawn surface or outline, computed independently of the
   code under test, never against the code's own answer (w587: w176's impacts scored 0.0 u against

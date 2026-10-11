@@ -216,6 +216,14 @@ screen; on desktop three labels stopped fitting, the two windows left their defa
     clear it (Ben, 2026-10-11, about w961's Station Core window over the selected core: "That's fine the ui elements
     that come from selecting structures can block the game world since they are closed and can be moved too"). Window
     over window, window over a HUD block and window over the station controls still count (items 11 and 24).
+26. **Text is covered by drawn bounds, not by box (w727).** `ui_layout.py check` prints a `Covered text:` line and
+    `ui_layout.py covered-text <census.json>` lists, for one census, every text of an opened screen (a hub tab, a window)
+    whose DRAWN glyphs (`textRect` in the census) lie under an opaque element drawn above it. A new one fails; one both
+    censuses show is STANDING, which the report names. Every other check compares RectTransform boxes, and a label that
+    wraps or overflows its box reaches past it: the Technology tab's "Excess Research 0.0" was half under the hub's tab
+    bar while `Opened panels` read 0 and the label's box was clear (found by looking at the still, not by the census).
+    Take the census with the tool's current snippet or the Deck tour's `setup:census:` step so `textRect` is in it; a
+    census without it prints "not measured", which is not "clean". Look at every still of a hub tab at full size as well.
 
 19. **The Deck tour is a stand-in (w770).** It forces its own window size and a scripted Deck, so it cannot show Steam's
     layout choice, the Proton first-frame resolution, the Steam client version or touch. A Deck UI change says "verified on
