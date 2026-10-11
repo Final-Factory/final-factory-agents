@@ -123,6 +123,24 @@ desync reports upload to ffintake: never hunt desyncs that way (project-memory
 that no `ffauto` scope exposes, driving uGUI by reflection, or reproducing something that only
 happens in the editor.
 
+## Play faster: game speed (w931)
+
+Ben (2026-10-10): "turn up the timescale and play the game faster because you're a computer, not a human". **Default
+for agent play in single player: 4x** (`-ffGameSpeed 4` on a built player, `ffauto:game.speed|4` (dev tier) or the
+console's `setGameSpeed 4` in a running game; `ffauto:game.speed` with no argument reads it). It produces the same
+heartbeats k times as often, so the simulation is unchanged, only faster; `SetTimeScale` and `-ffSoloUps` do NOT do
+this (the heartbeat clock is a Stopwatch, and UPS changes each step's Dt). Full reference, limits and numbers:
+`Documentation/Game-Speed.md` in the game repo.
+
+- **Stay at 1x** for: video of how it looks or feels (flicker, animation, VFX, camera, a clip for Ben); voice lines,
+  subtitles, narration and tutorial card timing (FMOD and `Time.unscaledTime` do not speed up); fps, UPS, pacing or
+  performance numbers; `movement.hold`, `mobilestation.drive`, `mobilestation.panelrotate` (wall-second holds).
+- **Multiplayer is always 1x**: the game drops a session to 1x from the frame a client connects. A lone host with
+  nobody connected speeds up like single player.
+- **It needs frames**: one heartbeat per frame, so k needs 16·k fps. A windowed 60 Hz editor or player reaches 3.75x at
+  most; the game lowers `Time.timeScale` to what the frame rate reaches, so it never runs ahead of the simulation.
+- `ffauto:wait|N` and `movement.goto` are game time (scaled), so they still cover N game seconds.
+
 ## Control channels
 
 1. **`execute_code` — the primary surface.** Compiles via Roslyn on macOS AND Windows

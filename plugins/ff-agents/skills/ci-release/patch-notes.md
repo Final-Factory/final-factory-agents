@@ -12,8 +12,8 @@ Every release carries its notes (Ben, 2026-09-28). They are written **before** t
    posted as Max in #dev-patch-notes (channel `1072387196927094845`).
 
 It is part of the release, not an optional extra: a requested release is done only when it is live
-on its branch AND the notes are posted (`SKILL.md` section 3). If they cannot be posted from this
-machine, the release stays open and the report says so.
+on its branch AND the notes are posted (`SKILL.md` section 3). Any machine can post them
+(`post_as_max`, section 4); if the post fails, the release stays open and the report says why.
 
 **Players hear "Build R", its last number** (Ben, 2026-10-04, w395: "Build 75 is out"). In everything
 a player reads (the post's title and bullets, and the `steam_description:` line), 0.50.0.76 is
@@ -61,9 +61,10 @@ branch moves before you trigger, re-read the new commits and add them.
 - A commit that was reverted in the same range is not a change; describe the final state.
 - Voice: Max, per the ff-discord `max-voice` skill (the game repo's `Documentation/Max-Voice.md`). No
   em or en dashes, none of the banned phrases, contractions.
-- **Never write @everyone or @here, and never mention a person or role.** Post with `--silent`.
-- **The post must fit one message**: Discord refuses more than 2000 characters and `ffdiscord post`
-  exits rather than truncating. Tighten the wording first; only split into a second post (Fixes
+- **Never write @everyone or @here, and never mention a person or role.** FFBox refuses any `@` before
+  a word, `<@..>` and `<#..>`, and posts silently.
+- **The post must fit one message**: Discord refuses more than 2000 characters, and `post_as_max`
+  (and `ffdiscord post`) refuse rather than truncate. Tighten the wording first; only split into a second post (Fixes
   continued) if it still does not fit.
 
 ## 3. The file (copy the format exactly)
@@ -139,23 +140,35 @@ you name the branch it landed on. Never wait for a branch ffbox does not set:
 - Unposted earlier releases (the script's verdict for them is LANDED or SUPERSEDED, with no post in
   #dev-patch-notes) are folded into the next post, newest first.
 
-Post the committed copy, so what players read is what the release carried:
+Post the committed copy, so what players read is what the release carried. Put it in your working
+folder, then call the machine tool (it works on every computer; FFBox holds the bot):
 
 ```sh
 git fetch origin
-git show origin/<branch>:cicd/release-notes/<version>.md | tail -n +3 > Temp/post-<version>.md
-ffdiscord post 1072387196927094845 --silent --text - < Temp/post-<version>.md
-ffdiscord read 1072387196927094845 --limit 1      # the message id, for the link
+git show origin/<branch>:cicd/release-notes/<version>.md > Temp/release-notes-<version>.md
 ```
 
-(`ffdiscord` is the ff-discord `discord-cli` skill's CLI; if it is not on PATH, run that skill's
-`ffdiscord.py` with python, or set `FFDISCORD_CLI`.) The link is
-`https://discord.com/channels/530867164866150410/1072387196927094845/<message id>`; put it in the
-release report.
+```text
+mcp__machine__post_as_max  channel: dev_patch_notes
+                           file: Temp/release-notes-<version>.md
+                           skip_lines: 2
+                           key: <version>          (e.g. 0.50.0.94: the notes post once)
+```
 
-**If Discord answers 403 Missing Permissions**, stop: do not post somewhere else or through another
-account. Give the file's path in the report and say the bot needs Send Messages in #dev-patch-notes.
-(It had none until 2026-09-28.)
+It answers the message link
+(`https://discord.com/channels/530867164866150410/1072387196927094845/<message id>`): put it in the
+release report. A second call with the same key answers "Already posted" and that link, so calling
+again after a timeout or from another worker never double-posts. If the call times out, call it again
+with the same key. The text can also be passed as `text` instead of `file`.
+
+**If FFBox answers `refused`, `rate_limited` or `failed`**, stop and read its reason: a mention or a
+secret in the text, over 2000 characters, 12 posts an hour, or Discord's own answer (a 403 Missing
+Permissions means the bot needs Send Messages in #dev-patch-notes; it had none until 2026-09-28). Do
+not post somewhere else or through another account. Give the file's path in the report with the reason.
+
+**Fallback while a portal predates `post_as_max`** (no such tool in your session): on a machine with the
+ffdiscord config only, `tail -n +3 Temp/release-notes-<version>.md | ffdiscord post 1072387196927094845 --silent --text -`
+then `ffdiscord read 1072387196927094845 --limit 1` for the message id.
 
 **A release that went out without notes** (bumped from the Build menu, or before 2026-09-28): write
 the file from the commits the same way after it is live, post the body, and push the file to the

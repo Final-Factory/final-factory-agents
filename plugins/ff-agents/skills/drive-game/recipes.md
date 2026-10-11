@@ -303,8 +303,8 @@ develop and with a merged change reverted, to show whether the change alters any
   (`BurstCompiler.Options.EnableBurstCompilation` false). `MeltCPU.zip` (80,825 placeables, 676k entities)
   stepped at ~2.5 s per frame: unusable. The golden fixture
   `Assets/Tests/Serialization/Fixtures/TimTesting-0.50.0.92.save.bytes` (1,864 placeables, 49 crafters, 106 belt
-  groups, 66 obelisks), copied into the saves folder as `<id>-TimTesting.zip`, loads in about a minute and steps
-  7-8 heartbeats per second. Delete the copy when done.
+  groups, 66 obelisks), copied into the saves folder as `ffa-<session>-TimTesting.zip` (your `$TMPDIR` folder's name in front; the session lets you `rm -f` exactly that file with no approval), loads in about a minute and steps
+  7-8 heartbeats per second. Remove the copy when done (it is outside the install folder, so no sweep takes it).
 - **Pump, don't wait.** With the editor unfocused an `EditorApplication.update` state machine advanced 13 frames
   in several seconds. Arm the state machine as in the w762 bench, then from each `execute_code` set
   `isPaused = true`, loop `EditorApplication.Step()` and invoke your `MCPDynamic` update delegate after each step,
@@ -351,7 +351,7 @@ as att_czxzut77aptx, att_bewwrewxiy7h and att_8u6r6t4e4kw9.
 - **Check the version you shot.** BEAST's Steam install reported `gameVersion` 0.50.0.83 on `/v1/hello`
   while develop was at 92. Say which build the frame came from.
 - **Close the player with `(Get-Process -Id <pid>).CloseMainWindow()` in PowerShell.** The harness hook
-  blocks `taskkill` from Bash. Then run `player_slots.py prune`.
+  blocks `taskkill` from Bash. The slot's build stays until the daemon's pass takes it (w913: no `player_slots.py prune`).
 - **The game's own key art is in the repo**: `Assets/Art/Textures/Final Factory_Artworks_02/{Building,Exploration}/PNG/*_Art_01.png`
   (9000x2700). Ben OK'd it for event covers: "you can also just generate something based on the
   illustrations for the game". A 4800x2700 crop is 16:9. The option recommended for the Build 92 event was a crop

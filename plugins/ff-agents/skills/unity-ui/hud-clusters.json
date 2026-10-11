@@ -31,6 +31,14 @@
       "StructuredHub*"
     ]
   },
+  "backdrops": {
+    "why": "A full-screen view the HUD is drawn over is not an HUD block: what lies on it does not overlap it in any sense a player sees (w959: the Map Controls row always lies on the map view, and Map x MapControls failed every check that moved the controls, 110684 -> 43499 px2, exit 1 in all eight census pairs).",
+    "who": ["Ben, w959, 2026-10-10: \"just move the buttons to the top next to the player panel\" (the controls belong to the map view)"],
+    "howToAdd": "Only a view that fills the screen behind the whole HUD, never a panel or an HUD element. Same path syntax as openedPanels.",
+    "paths": [
+      "GamePanels/Map"
+    ]
+  },
   "clusters": [
     {
       "name": "bottom-right HUD",

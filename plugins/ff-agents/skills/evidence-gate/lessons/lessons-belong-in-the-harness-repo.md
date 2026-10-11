@@ -53,6 +53,17 @@ the second correction itself adds the check in the same request as the fix.
 you, follow the person, say so in the report, and fix the lesson or the check in the same request,
 quoting their words, never a paraphrase (w732: `hud-clusters.json` `byDesign`, a one-pair exemption; w742 made it the general `openedPanels` rule).
 
+**A GitHub refusal becomes a requirement (w904).** FF Factory checks every GitHub token it uses (each person's vault
+token, the portal's own D7 login) against one list, ff-factory's `shared/githubRequirements.ts`, and a dashboard banner
+asks the token's person to update it when something on the list is missing. lothsahn, 2026-10-10: "As we find more
+permissions we need, please add them to the requirements". So when GitHub refuses a token you work with (HTTP 403,
+"Resource not accessible by personal access token", a 404 on a repository that exists) for a permission or repository the
+list does not have, add it to `shared/githubRequirements.ts` and to docs/vault.md 13.2's table in an ff-factory pull request
+(`server/githubTokens.test.ts` keeps the two equal), merge it on green, and say in your report what you added and which
+call was refused. The banner then asks for it at the next probe. Two refusals are not requirements: **Checks** (GitHub
+offers fine-grained tokens no Checks permission; read CI with `gh run list --commit <sha>` and `gh run view`) and a
+repository outside the Final-Factory organization (a fine-grained token has one resource owner; docs/vault.md 13.2).
+
 **Why.** Ben, 2026-10-02: "Your memory should be stored in this repos harness so it is enshrined
 forever for anyone who forks it." Ben, 2026-10-09 (w741): "If you learn something after struggling
 or figure out new ways to do things better, update the harness especially after putting in a bunch

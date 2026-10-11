@@ -770,6 +770,41 @@ def main():
     check("rather than being sent to Discord as if it were the token",
           "bug-reports" not in p.stdout, p.stdout)
 
+    # AN OLD CONFIG LEFT BEHIND (w901). LothDesktop kept its token under ~/.config/ffdiscord after the CLI
+    # stopped reading it, and a worker had to export the token by hand. The refusal now says where the old
+    # file is and how to move it, and `adopt-legacy-config` moves it without printing the token.
+    print("an old ~/.config/ffdiscord config")
+    fake_home = tempfile.mkdtemp(prefix="ffdiscord-oldhome-")
+    os.makedirs(os.path.join(fake_home, ".config", "ffdiscord"))
+    with open(os.path.join(fake_home, ".config", "ffdiscord", "config.json"), "w", encoding="utf-8") as fh:
+        json.dump({"token": "TESTTOKEN", "guild_id": GUILD, "channels": {"bug_reports": FORUM, "dev_chat": DEVCHAT},
+                   "mentions": {"ben": BEN}}, fh)
+    homes = {"HOME": fake_home, "USERPROFILE": fake_home}
+    h = tempfile.mkdtemp(prefix="ffdiscord-adopt-")
+    p = run_bare(h, "channels", FFBOX_SECRETS=os.path.join(h, "secrets.env"), **homes)
+    check("no token: the refusal names the old file, the way to move it, and the tool that needs no token",
+          p.returncode != 0 and "ffdiscord" in p.stderr and "adopt-legacy-config" in p.stderr
+          and "post_as_max" in p.stderr and "TESTTOKEN" not in p.stderr, p.stderr)
+    p = run_bare(h, "adopt-legacy-config", "--dry-run", FFBOX_SECRETS=os.path.join(h, "secrets.env"), **homes)
+    check("--dry-run changes nothing", p.returncode == 0 and not os.path.exists(os.path.join(h, "config.json"))
+          and not os.path.exists(os.path.join(h, "secrets.env")), p.stdout + p.stderr)
+    p = run_bare(h, "adopt-legacy-config", FFBOX_SECRETS=os.path.join(h, "secrets.env"), **homes)
+    check("adopt: succeeds and never prints the token", p.returncode == 0 and "TESTTOKEN" not in p.stdout + p.stderr
+          and "not shown" in p.stdout, p.stdout + p.stderr)
+    moved = read_cfg(h)
+    check("the section is in the current layout: app_token names a variable, server_id not guild_id, the rest carried",
+          moved.get("app_token") == "DISCORD_TOKEN" and moved.get("server_id") == GUILD and "guild_id" not in moved
+          and "token" not in moved and moved["channels"]["dev_chat"] == DEVCHAT and moved["mentions"] == {"ben": BEN}, moved)
+    with open(os.path.join(h, "secrets.env"), encoding="utf-8") as fh:
+        check("the token is in secrets.env", 'DISCORD_TOKEN="TESTTOKEN"' in fh.read())
+    if os.name == "posix":
+        check("owner-only", oct(os.stat(os.path.join(h, "secrets.env")).st_mode & 0o777) == "0o600")
+    p = run_bare(h, "channels", FFBOX_SECRETS=os.path.join(h, "secrets.env"), **homes)
+    check("and then it authenticates on its own", "bug-reports" in p.stdout, p.stdout + p.stderr)
+    p = run_bare(h, "adopt-legacy-config", FFBOX_SECRETS=os.path.join(h, "secrets.env"), **homes)
+    check("a second run refuses to replace a token that is there", p.returncode != 0 and "already has" in p.stderr, p.stderr)
+    check("the old file is left in place", os.path.isfile(os.path.join(fake_home, ".config", "ffdiscord", "config.json")))
+
     print("resolve-channels")
     # Aliases are snake_case (they are JSON keys); Discord channel names are hyphenated.
     blank_home = home_with({"app_token": "TESTTOKEN", "server_id": GUILD,

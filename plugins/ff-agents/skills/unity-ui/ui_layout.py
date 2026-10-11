@@ -156,6 +156,13 @@ def opened_patterns(spec: dict | None) -> list[str]:
     return list(((spec or {}).get("openedPanels") or {}).get("paths", []))
 
 
+def backdrop_patterns(spec: dict | None) -> list[str]:
+    """hud-clusters.json `backdrops`: full-screen views the HUD is drawn over (the map). Not an HUD block, not a panel the
+    player opens over the HUD: what lies on it is not an overlap with it (w959: the Map Controls always lie on the map view,
+    and `Map x MapControls` failed every check that moved them)."""
+    return list(((spec or {}).get("backdrops") or {}).get("paths", []))
+
+
 def _pairs(census: dict, depth: int, min_px: float, same_block: bool):
     """Every two solid elements whose visible rects overlap enough to count: (a, block a, b, block b, px2, rect)."""
     items = [(e, block_of(e["path"], depth)) for e in census["elements"] if solid(e) and area(e.get("visible") or e["rect"]) >= 4]
@@ -176,13 +183,16 @@ def _pairs(census: dict, depth: int, min_px: float, same_block: bool):
             yield a, ba, b, bb, px, both
 
 
-def overlaps(census: dict, depth: int = 2, min_px: float = 16.0, opened: list[str] | None = None) -> dict:
+def overlaps(census: dict, depth: int = 2, min_px: float = 16.0, opened: list[str] | None = None,
+             backdrops: list[str] | None = None) -> dict:
     """{(blockA, blockB): {"px": area, "example": (pathA, pathB)}} for always-on HUD blocks whose solid elements overlap.
     With `opened` (the openedPanels patterns) an element of a panel the player opens does not count: it may cover the
     HUD (see opened_over_hud, which checks that it does so properly)."""
     pairs: dict[tuple[str, str], dict] = {}
     for a, ba, b, bb, px, _ in _pairs(census, depth, min_px, same_block=False):
         if opened and (opened_prefix(a["path"], opened) or opened_prefix(b["path"], opened)):
+            continue
+        if backdrops and (opened_prefix(a["path"], backdrops) or opened_prefix(b["path"], backdrops)):
             continue
         key = tuple(sorted((ba, bb)))
         entry = pairs.setdefault(key, {"px": 0.0, "example": (a["path"], b["path"])})
@@ -695,9 +705,11 @@ def run_check(args) -> int:
     before, after = load(args.before), load(args.after)
     spec = json.loads(Path(args.clusters).read_text(encoding="utf-8"))
     patterns = opened_patterns(spec)
+    backdrops = backdrop_patterns(spec)
     failed = False
 
-    ob, oa = overlaps(before, args.block_depth, opened=patterns), overlaps(after, args.block_depth, opened=patterns)
+    ob = overlaps(before, args.block_depth, opened=patterns, backdrops=backdrops)
+    oa = overlaps(after, args.block_depth, opened=patterns, backdrops=backdrops)
     new = {k: v for k, v in oa.items() if k not in ob}
     moved = moved_blocks(before, after, args.block_depth, args.tolerance)
     kept = {k: v for k, v in oa.items() if k in ob and (k[0] in moved or k[1] in moved)}
@@ -775,7 +787,7 @@ def run_moves(args) -> int:
 def run_overlaps(args) -> int:
     census = load(args.census)
     spec = json.loads(Path(args.clusters).read_text(encoding="utf-8"))
-    pairs = overlaps(census, args.block_depth, opened=opened_patterns(spec))
+    pairs = overlaps(census, args.block_depth, opened=opened_patterns(spec), backdrops=backdrop_patterns(spec))
     print(f"{len(pairs)} overlapping block pairs between always-on HUD blocks (block depth {args.block_depth})")
     for (a, b), v in sorted(pairs.items(), key=lambda kv: -kv[1]["px"]):
         print(f"  {short(a)}  x  {short(b)}: {v['px']:.0f} px2, e.g. {short(v['example'][0], 2)} / {short(v['example'][1], 2)}")

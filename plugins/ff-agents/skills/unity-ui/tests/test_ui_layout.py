@@ -129,6 +129,33 @@ class KeptOverlapTest(unittest.TestCase):
         self.assertIn("0 new, 0 kept", out)
 
 
+class BackdropTest(unittest.TestCase):
+    """w959: the map view fills the screen under the HUD; the Map Controls lie on it by design."""
+
+    def census(self, controls_x):
+        return {"screen": [1280, 800], "elements": [
+            dict(el("Map/Image", [0, 0, 1280, 800], alpha=1.0), depth=0, canvasOrder=0),
+            dict(el("MapControls/Controls/AddMarker", [controls_x, 10, controls_x + 135, 40], selectable=True), depth=5,
+                 canvasOrder=0),
+        ]}
+
+    def test_a_control_lying_on_the_map_is_not_an_overlap_with_it(self):
+        before, after = self.census(500), self.census(650)
+        spec = json.loads(ul.DEFAULT_CLUSTERS.read_text(encoding="utf-8"))
+        self.assertEqual(ul.overlaps(after, 2, opened=OPENED, backdrops=ul.backdrop_patterns(spec)), {})
+        code, out = Cmd.run(before, after)
+        self.assertIn("0 new, 0 kept", out)
+
+    def test_without_the_classification_it_still_fails(self):
+        self.assertTrue(ul.overlaps(self.census(650), 2, opened=OPENED))
+
+    def test_the_shipped_spec_lists_the_map_and_not_the_map_controls(self):
+        patterns = ul.backdrop_patterns(json.loads(ul.DEFAULT_CLUSTERS.read_text(encoding="utf-8")))
+        self.assertTrue(ul.opened_prefix(f"{GP}/Map/Image", patterns))
+        self.assertIsNone(ul.opened_prefix(f"{GP}/MapControls/Controls/AddMarker", patterns))
+        self.assertIsNone(ul.opened_prefix(f"{GP}/MinimapParent/MapImage", patterns))
+
+
 class OpenedPanelTest(unittest.TestCase):
     """w742 (Ben): a panel the player opens on purpose and can close may draw over the HUD; it must sit on top, take
     its clicks, stay on screen and give the HUD back when closed. Always-on HUD overlaps still fail."""

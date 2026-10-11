@@ -36,6 +36,15 @@ changed code runs) in your first report and in the PR description.
 - [ ] The fast suite (`FFEditorTests`) passes on the branch, compile verified (the `editor-ops` ritual).
 - [ ] A test covers the report it writes (add one when none does).
 - [ ] Every new call site is on the report path only: cite them.
+- [ ] A dump meant to name the forked record is proven by forking: a test forks one record past
+      the old dump's cap once per field the surface hash folds, diffs the before and after dumps the
+      way a reader diffs the two peers' halves, and asserts that exactly that record's entry differs
+      and only the edited field in it. List every field the record's sub-hash folds and check that
+      each one shows in the dump. w928 (PR #1416): FFBox's `MoverDigestsDetail` printed seven group
+      digests, but no group covered Position (which an owning rail folds) or the raw Flags (the
+      `FlagAvoidanceTangentChosen` bit is the one folded field of a mirrored fleet rail that changes
+      in play). A position or flag fork would have shown as a changed sub-hash with every group
+      equal. The field-by-field fork test found it, and `pos=` and `fl=` were added before the merge.
 - [ ] The PR's `## Evidence` says class 1, the call sites, the tests ([merges](merge.md)), then merge.
 - [ ] CI red from `Tests.Performance.InterpolationRestoreCostTest.RestoringALateGameFrame_IsFasterThanTheSingleJob`
       alone is that wall-clock test's known flake on the shared runner (it also failed on unrelated

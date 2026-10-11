@@ -31,6 +31,6 @@ work:
 - When a delete is needed, run it alone and first. If it prompts, you learn in seconds, and
   nothing else is held up behind it.
 - Scratch in your temp folder needs no clean-up for the run to continue; the harness removes it
-  after the session. Delete large outputs once you have reported them, as their own step.
+  after the session (w913: workers do not clean up). A delete under `$TMPDIR` that is needed mid-task gets no prompt.
 - If a command has not returned and you cannot tell why, a prompt is one of the likelier causes.
   Say in your report that you may be waiting on one.

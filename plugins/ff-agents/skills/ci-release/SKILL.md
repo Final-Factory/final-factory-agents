@@ -1,6 +1,6 @@
 ---
 name: ci-release
-description: Cut a release through CI on the ffbox build server — write the release notes, bump the version (FFVersion.cs + bundleVersion) and push, follow CI through the Windows/Mac main+demo builds, tests and Steam uploads, then post the patch notes as Max in #dev-patch-notes. A requested release is done only when it is live on its Steam branch AND its notes are posted. ffbox sets a develop release's main app live on `development` and a master release's on `pre-release`, automatically; Ben or Lothsahn move the default branch by hand. `scripts/release-status.py` says where a release is. Use when Ben or Lothsahn asks for either in any words ("push a new dev build", "a build for the testers", "cut a release on master"). Never start it on your own initiative or as a side step of other work.
+description: Cut a release through CI on the ffbox build server — write the release notes, bump the version (FFVersion.cs + bundleVersion) and push, follow CI through the Windows/Mac main+demo builds, tests and Steam uploads, then post the patch notes as Max in #dev-patch-notes. A requested release is done only when it is live on its Steam branch AND its notes are posted. ffbox sets a develop release's main app live on `development` and a master release's on `pre-release`, automatically; Ben or Lothsahn move the default branch by hand. `scripts/release-status.py` says where a release is. Use when Ben or Lothsahn asks for either in any words ("push a new dev build", "a build for the testers", "cut a release on master"). Never start it on your own initiative or as a side step of other work. While Ben has develop builds made on his m5 (w930, 2026-10-10), follow m5-manual-build.md beside it.
 ---
 
 # Trigger a CI release on master or develop
@@ -29,6 +29,16 @@ description: Cut a release through CI on the ffbox build server — write the re
 > manual M5 procedure, `mp-beta-deploy`, is a last-resort fallback: only when ffbox CI is actually
 > down, and only with Ben's OK. A failed player is not "ffbox down": get the reason from the job log,
 > report it, and fix it here (re-run the job or bump again); never switch to `mp-beta-deploy` on your own.
+>
+> **FOR NOW, DEVELOP BUILDS ARE MADE ON BEN'S M5, NOT ON FFBOX** (Ben, 2026-10-10, w930: "for the
+> next build, please just do the process on my m5 and just do the windows and mac builds (we dont need
+> demo or linux builds yet) ffbox is having issues with build speed so we are going to manually use my
+> m5 for builds for a couple days, remember this"). Until Ben or Lothsahn says FFBox builds again,
+> a develop build follows **`m5-manual-build.md`** beside this file: stop the other m5 workers and
+> close every editor and player, bump with `trigger-ci-release.sh --skip-ci` (FFBox then builds
+> nothing), build Windows + Mac main with `Editor.ReleaseBuild`, upload with steamcmd's cached login,
+> set live on `development`, verify on Steam. The notes (section 0.5, 3) and the first-hour check
+> (section 4) are unchanged. First run: Build 97, BuildID 25859327.
 >
 > History: the 0.50.0.36/.37/.39 Mac players failed with "Disk full" on the `ffghr-loth2400-*`
 > runners (2026-09-27). Lothsahn fixed it in ffbox (the nightly cache rebuild, FinalFactory #651, and
@@ -238,13 +248,20 @@ this file; follow it as written. Check the main upload notice's desc too if you 
 ledger's `desc`). A release bumped without notes (the Build menu) still gets them: write them from
 the commits then, and add the file to develop afterwards for the record.
 
-**Posting needs a machine with the ffdiscord config** (the `discord` section and bot token that the
-ff-discord `discord-cli` skill reads; LothDesktop today). Check before the bump:
-`ffdiscord read 1072387196927094845 --limit 1` must list the channel's last post. If this machine
-cannot post, the release is **not done**: report "live on <branch> (BuildID …), patch notes NOT
-posted: no ffdiscord config on <machine>", with the notes file's path, and leave the posting step
-open for a machine that has it. Never finish a release report without one of the two: the message
-link, or that open step.
+**Post with `mcp__machine__post_as_max` from any machine** (w901, Lothsahn, 2026-10-10: "workers can
+request FFBox send a discord message"). FFBox holds the Discord bot and posts for you, so no machine
+needs the ffdiscord config or a token: channel `dev_patch_notes`, `file` the committed notes copy with
+`skip_lines: 2`, `key` the version. It answers the message link. The exact call is in `patch-notes.md`
+section 4. A repeat with the same key answers the first link and posts nothing, so a retry (or a
+second worker) is safe. FFBox refuses a mention, a secret, more than 2000 characters, or more than 12
+posts an hour, and says which. Nothing to check before the bump.
+
+If the tool does not exist in your session (a portal that has not been updated since 2026-10-10), the
+old way still works on a machine with the ffdiscord config (LothDesktop): `ffdiscord post`, as
+`patch-notes.md` shows. If neither is possible, the release is **not done**: report "live on <branch>
+(BuildID …), patch notes NOT posted: <what the tool said>", with the notes file's path, and leave the
+posting step open. Never finish a release report without one of the two: the message link, or that
+open step.
 
 ## 4. The first check, within an hour of live
 
@@ -257,7 +274,8 @@ check happens when it is due.
 
 **A worker has no report listing** (w750, w763 and w782 each reported "couldn't read FFBox's intake"):
 `ffbox_activity` is the orchestrator's, and `fetch_ffbox_report` needs an id. What a worker can read, on
-a machine with the ffdiscord config (`python scripts/discord/ffdiscord.py` in the game repo): FFBox
+a machine with the ffdiscord config (`python scripts/discord/ffdiscord.py` in the game repo; reads only, because
+posting needs no config now): FFBox
 posts every diagnosed crash or desync to `#desync-and-crash-analysis` (channel `1553176064908464209`,
 `read <id> --limit 5`; each post names the report id, kind, platform paths, the symbols' version and a
 NOT-A-BUG tag), and the newest `#bug-reports` threads (`threads 1069745561672106015 --limit 8`, then
@@ -279,6 +297,7 @@ release"), in `release.decided`, and in the ffbox journal (`journalctl -u ffwatc
 | declined: `does not change the version` | The pushed commit is not a bump. Bump and push again. |
 | declined: `not on <branch>'s first-parent history` | The bump arrived only through a merge's second parent. Bump directly on the branch. A master release is the exception that works: a develop→master merge PR (#1158, merge 6eac4d00d) changes the version against its first parent, so the merge commit is the bump; `release-status.py` finds it there (162de7b37). |
 | declined: `already built at <sha>` / `already built` | That version exists already. Bump again; a version is built once. |
+| declined: `<target>-<edition> is already being built`, after the release run was **cancelled** | A cancelled run leaves each worker it was granted at `"granted"` in the host's ledger, and `release_lane.decide()` refuses a granted worker for `GRANT_TTL_SECS` = 5 hours (ffbox `scripts/release_lane.py:138, 410`), so re-running that version is refused for 5 hours. Bump to the next version instead. Players see that build number skipped, which is fine: the cancelled one never shipped (w902: 0.50.0.95 cancelled at 21:47 UTC 2026-10-10 on Ben's hold, released as 0.50.0.96, LANDED 23:08). Cancel a release run only on a person's word, and only before its upload notice: the upload waits for the run's `Test in` jobs, so while they run nothing is on Steam (`release-status.py <version>` then says NOT UPLOADED). A cancelled job's log can be gone (GitHub answers BlobNotFound); the lane's FAILED notices in #release-build-announce carry the reason. |
 | declined: `job identity not confirmed` | The host could not confirm the job with GitHub (the GitHub App needs Actions:Read and Contents:Read). Tell the ffbox owner. |
 | a worker FAILED: `asset import error` | A Linux editor cannot import something (e.g. a video with transcoding on). Fix the asset settings, then bump again. |
 | a worker FAILED: an AgentKit error | The host has no copy of the pinned kit (`/opt/ffcache/agentkit/<v>`; `scripts/agentkit.py ensure`). Tell the ffbox owner. |

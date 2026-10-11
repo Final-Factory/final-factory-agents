@@ -197,6 +197,20 @@ python "<this skill's base directory>/ui_layout.py" pins a-1920.json a-1280.json
   Info (bottom edge at 264 of 800 px) and the hover card (right edge at 358 of 1280 px) at 1280x800 docked, where w772's
   dock cluster stacks them top left, and keeps all three pins at 1920x1080 and 1280x800 undocked.
 
+## A UI change that moves no HUD element still needs the census (w884)
+
+`pr_evidence.py` fails a UI PR without `Moved:`, `Pinned:`, `Overlaps:`, `Alignment:` and a clip line, and the checklist says
+"no way out": a PR that only changes the title screen's New Game panel and a tutorial chain was held for it. Do not look for
+an `n/a`; take it once, early, with the tour that already exists: `specs/w895-info-panels/make_tour.py` (a new game with a Cargo
+Hold, a Defense Platform, an Assembler and a Command Core put down, each selected, the census written beside each still).
+Build the develop tip and your branch with `scripts/nightly/build_player.sh` (`git branch -f x origin/develop` then
+`switch_branch`, the build is cached by commit; about 15 minutes each on lothdesktop-class hardware), run the tour three times per
+build (`--layout classic` at 1920x1080 scale 0.9 and 1280x800 scale 0.8, `--layout docked` at 1280x800), then `ui_layout.py moves`,
+`pins` and `check` on the `cargo-hold.layout.json` pairs. Measured (w884, 2026-10-10): 0 moves, 3 pins kept, 0 new overlaps, 0 px
+drift, 3 tour runs of about 100 s per build. The `Clips:` line must name a video file and say where the event is in seconds.
+Merge develop first: a landed PR (w921) changed the same panels while the builds ran, and the HUD pairs stayed valid because it
+touched no HUD.
+
 ## A HUD piece the requester asked to draw over an opened panel (w835)
 
 `ui_layout.py check` knows one layering: an opened panel over the HUD. A request for the opposite on purpose

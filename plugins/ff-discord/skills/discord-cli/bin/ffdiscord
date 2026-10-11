@@ -53,11 +53,78 @@ if [ -z "$CLI" ] || [ ! -r "$CLI" ]; then
     exit 69
 fi
 
-# Windows git-bash has `python` but usually not `python3`; Linux and macOS are the reverse.
-for py in python3 python; do
-    if command -v "$py" >/dev/null 2>&1; then
-        exec "$py" "$CLI" "$@"
-    fi
+# Find a Python 3 that RUNS. `command -v` alone is not enough on Windows: git-bash finds
+# %LOCALAPPDATA%\Microsoft\WindowsApps\python3.exe, the Microsoft Store "App Execution Alias",
+# which exists on PATH even with no Python installed and only prints "Python was not found"
+# (w912, LothDesktop). So every candidate must execute a one-liner and exit 0 before it is
+# used; the Store stub fails that and the loop moves on. Order, first hit wins:
+#   1. $FFDISCORD_PYTHON        explicit override (a full path)
+#   2. python3, python, py -3   from PATH, anything under WindowsApps last
+#   3. known Windows install dirs (python.org installer, per-user and all-users), newest first
+# Linux and macOS take step 2 on the first candidate, as before.
+TRIED=
+
+works() {  # $1 = interpreter, $2 = optional leading argument (py's -3)
+    TRIED="$TRIED
+    $1${2:+ $2}"
+    "$1" ${2:+"$2"} -c 'import sys; sys.exit(0 if sys.version_info[0] == 3 else 1)' >/dev/null 2>&1
+}
+
+if [ -n "${FFDISCORD_PYTHON:-}" ]; then
+    if works "$FFDISCORD_PYTHON"; then exec "$FFDISCORD_PYTHON" "$CLI" "$@"; fi
+    echo "$SELF: FFDISCORD_PYTHON=$FFDISCORD_PYTHON does not run a Python 3." >&2
+    exit 127
+fi
+
+store_aliases=
+for name in python3 python; do
+    found=$(command -v "$name" 2>/dev/null) || { TRIED="$TRIED
+    $name (not on PATH)"; continue; }
+    case "$found" in
+        */WindowsApps/*|*\\WindowsApps\\*) store_aliases="$store_aliases
+$name" ;;
+        *) if works "$name"; then exec "$name" "$CLI" "$@"; fi ;;
+    esac
 done
-echo "$SELF: no python3 or python on PATH" >&2
+if command -v py >/dev/null 2>&1; then
+    if works py -3; then exec py -3 "$CLI" "$@"; fi
+else
+    TRIED="$TRIED
+    py -3 (py launcher not on PATH)"
+fi
+
+# python.org installs. $HOME is the user profile in git-bash/MSYS, so no backslash paths.
+candidates=$(
+    {
+        [ -n "${LOCALAPPDATA:-}" ] && command -v cygpath >/dev/null 2>&1 \
+            && ls -d "$(cygpath -u "$LOCALAPPDATA")"/Programs/Python/Python3*/python.exe 2>/dev/null
+        ls -d "$HOME"/AppData/Local/Programs/Python/Python3*/python.exe \
+              /c/Python3*/python.exe \
+              "/c/Program Files/Python3"*/python.exe \
+              "/c/Program Files (x86)/Python3"*/python.exe 2>/dev/null
+    } | sort -u | sort -rV
+)
+oldifs=$IFS
+IFS='
+'
+for cand in $candidates; do
+    IFS=$oldifs
+    if works "$cand"; then exec "$cand" "$CLI" "$@"; fi
+    IFS='
+'
+done
+IFS=$oldifs
+TRIED="$TRIED
+    python.org install dirs: \$HOME/AppData/Local/Programs/Python/Python3*, /c/Python3*, /c/Program Files/Python3* (none ran)"
+
+# Last resort: a Python from the Microsoft Store itself lives under WindowsApps and does run.
+for name in $store_aliases; do
+    if works "$name"; then exec "$name" "$CLI" "$@"; fi
+done
+
+echo "$SELF: no working Python 3 found. Tried, in order:$TRIED" >&2
+echo "  Nothing from PATH under WindowsApps counts unless it runs: that is the Microsoft Store" >&2
+echo "  stub, which does nothing until Python is installed (winget install Python.Python.3.13," >&2
+echo "  or turn the python.exe / python3.exe 'App execution aliases' off in Windows Settings)." >&2
+echo "  Or set FFDISCORD_PYTHON to the full path of a python.exe." >&2
 exit 127

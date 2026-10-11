@@ -1,52 +1,61 @@
 ---
 name: clean-up-after-yourself
-description: "A worker removes what it made on disk before it reports a request done (builds, Captures, recordings, extra worktrees and clones, save copies, player slots, temp), and low disk on a machine is fixed by removing FF Factory's own leftovers or filing clean-up work, never by asking a person for a go. The same for Unity slots: its own -batchmode builds are gone before DONE, and a slot held by a stuck batch build is cleared with unity clear_batch, not waited out. Every delete is strictly inside the machine's worker install folder (root.json's root, $FF_WORKER_ROOT); outside it a worker only measures and reports sizes and lists what makes FF Factory write there, whatever the brief says (w896)."
-date: 2026-10-07
+description: "Workers do NOT clean up (w913): leave everything you make in your own $TMPDIR (clones, logs, builds, tour output, scratch); the daemon removes it a few minutes after your process ends and your sandbox's build and capture output when it is released, so no rm, no player_slots prune and no clean-up step before DONE. The one delete left to a worker (a huge build mid-task, disk short) is a plain rm -rf under $TMPDIR, which the session answers itself with no approval, and a save copy you put in the saves folder, named with your temp folder's name in front. Low disk on a machine is fixed by the harness or by filed clean-up work, never by asking a person. Every delete is strictly inside the machine's worker install folder (root.json's root, $FF_WORKER_ROOT); outside it a worker only measures and reports (w896). A -batchmode build you started is ended before DONE."
+date: 2026-10-10
 ---
 
-# Clean up after yourself; low disk is never a person's question
+# Workers do not clean up; the harness does (w913)
 
-**Rule.** Before you report a request done, remove what you made on disk for it: player builds,
-Captures, recordings and screenshot sets (publish the proofs your report links first), worktrees
-and clones you added, save copies you put in the shared saves folder, the player slots you filled,
-and scratch outside your own temp folder. Say in the report what you removed and how much it freed.
+**Rule.** Put everything you make for a request in your own temp folder (`$TMPDIR`, also TMP and TEMP:
+`<install>/tmp/ffa-<session>`) and **leave it there**. Do not run `rm`, `Remove-Item`, `git worktree remove` or
+`player_slots.py prune` to clean up, do not write a clean-up step before `DONE`, and do not list what you removed in the
+report. Publish the proofs your report links (`publish_review`, `specs/<NNN>/proofs/`) before you end: the rest goes.
 
-When a machine is short of disk, FF Factory's own leftovers are not anyone's personal files, and
-removing them needs nobody's go: player slots nobody holds, old agent worktrees whose work is
-pushed, finished agents' `ffa-<session>` temp folders and build output of closed requests, all
-**inside the machine's worker install folder** (`$FF_WORKER_ROOT`, w896: outside it you measure and
-report and delete nothing, see [delete only inside the worker root](#delete-only-inside-the-workers-install-folder-outside-it-measure-and-report-w896);
-Unity Hub's editor versions are outside it, so they are listed, not removed).
-Remove them yourself (or run `machine_cleanup` when you are an orchestrator), and report what went.
-A person decides only about their own files: documents, downloads, their own projects and saves,
-and a worktree with unpushed work. List those in your report with sizes; do not ask about the rest.
+What removes it, and when (FF Factory `docs/self-recovery.md`, "Workers do not clean up"):
 
-**Why.** 2026-10-07 (w596, w626): the m3 drifted under its 50 GB disk guard. A worker on it found
-about 78 GB of FF Factory's own leftovers (old player slots in `~/nevergames/ff-players`, an old
-agent worktree, Unity editors no project used) and asked for a person's go instead of removing
-them. The orchestrators passed the question to Ben and Lothsahn. Ben: "no YOU free up disk space,
-like you are instructed to in this harness. stop making us tell you to do it. PLEASE FOR THE LOVE
-OF GOD CLEAN UP AFTER YOURSELF". The leftovers were there in the first place because earlier
-workers left their slots, worktrees and installs behind when they finished.
+- your temp folder, a few minutes after your process ends (a request closed, a wait for CI or a person, a stop): everything
+  but git clones; the clones six hours after, unless one holds work nothing else has (that one is kept and listed);
+- your sandbox's cached builds beyond the newest, benchmark builds and capture output, when the sandbox is released;
+- old nightly output, per-commit builds, stale scratch and runaway task output in the daily pass; player slots nobody holds
+  and pushed agent worktrees when the disk is low.
+
+Because the sweep waits for a process that names your folder, a build you leave running in it is not pulled from under it;
+and because a clone with unpushed work is kept, push before you leave.
+
+**The one delete left to a worker.** The disk is short in the middle of your task (a huge player build): free it with a plain
+`rm -rf "$TMPDIR/<name>"` (PowerShell: `Remove-Item -Recurse -Force $env:TEMP\<name>`) with every path written out under
+`$TMPDIR`. The session answers that itself, with no approval (`server/tempDelete.ts`); anything else asks a person, so do
+not send it: the folder itself, `/tmp` (Git Bash's `/tmp` is not your folder), `..`, `~`, a variable that is not `$TMPDIR`, a
+pipe, a redirect into a file, `$(...)`, a path outside the folder. A save copy you put in the game's saves folder (outside
+the install folder, so no sweep takes it) is named with your temp folder's name in front, `ffa-<session>-<name>.zip`, and
+`rm -f` on exactly that file is approval-free too; a save with another name is a person's. Never ask a person to approve a
+clean-up: if a delete would ask, you do not need it.
+
+When a machine is short of disk, FF Factory's own leftovers are not anyone's personal files and removing them needs nobody's
+go: the daemon does it, or the orchestrators file clean-up work (`machine_cleanup`). That is for a clean-up request; an
+ordinary worker leaves them. A person decides only about their own files (documents, downloads, their own projects and saves,
+a worktree with unpushed work): list those with sizes, do not ask about the rest.
+
+**Why.** 2026-10-10 (w913, lothsahn): "Random clean up commands take a lot of approvals. Is there some way we can build what
+those cleanup commands are doing into the harness (like we have for trimming the Burst Cache) so that they run every time a
+worker is done, and stop asking the workers to do cleanup and need approvals?" Claude Code asks about `rm -rf`, a wildcard or
+a path outside the working folder, so `rm -rf $TMPDIR/ff-factory $TMPDIR/ffbox $TMPDIR/*.log` (w901) and `rm -rf $TMPDIR/ff
+$TMPDIR/*.txt` (w907, approved twice by Ben) waited for a person. Measured on beast over 8 days: 1351 delete statements, 388 on
+`$TMPDIR` or `/tmp` (100 sessions), 61 save copies, 57 `player_slots.py prune`, and 21 GB of `ffa-*` folders on disk anyway.
+This reverses the instruction Ben's 2026-10-07 correction (w596/w626: "PLEASE FOR THE LOVE OF GOD CLEAN UP AFTER YOURSELF")
+produced; the aim was a disk that stays free without him asking, which the daemon now delivers without the prompts.
 
 **How to apply.**
 
-- Run the clean-up step of the [done checklist](../checklists/done.md) before every `DONE: wNNN`
-  ([say DONE per request](say-done-per-request.md)).
-- Before removing, check that the thing is FF Factory's and finished: a player slot with no live
-  lease (`python scripts/nightly/player_slots.py status`, then `prune` empties every slot nobody
-  holds), a worktree with nothing uncommitted, untracked or unpushed (`git status --porcelain`
-  empty, `git rev-list --count HEAD --not --remotes` = 0). Something you cannot attribute is listed, not removed.
-  A Unity editor version nothing names is in Unity Hub's folder, outside the worker install folder: you measure it and
-  report its size ([delete only inside the worker root](#delete-only-inside-the-workers-install-folder-outside-it-measure-and-report-w896), w896).
-- Never delete another agent's work in progress or a protected path (the main clone, the daemon's
-  folder): the harness blocks those anyway.
-- Orchestrators and the dispatcher: low disk on a machine (a `[machine <id>] Clean-up cannot free
-  enough disk space` notice, DISK in `list_machines`, a worker saying so) gets `machine_cleanup`
-  and then clean-up work filed for that machine. Never a question to its owner.
-- Since FF Factory PR #200 (w626) a machine's daemon also removes these leftovers by itself
-  whenever its free space is below the soft threshold (FF Factory `docs/self-recovery.md`, "FF
-  Factory's own leftovers"). That is the net under this rule, not a reason to skip it.
+- Builds, recordings, tour output and test saves go under `$TMPDIR`, not the worktree, `/tmp` or a shared scratch folder
+  (the sweep and the guard know your folder; a build left in a sandbox's `Builds/` is taken at release only when it is a
+  cached build beyond the newest or a bench or capture folder).
+- Before you end: everything the report links is published; every clone you need is pushed.
+- Never delete another agent's work in progress or a protected path (the main clone, the daemon's folder): the harness blocks
+  those anyway.
+- Orchestrators and the dispatcher: low disk on a machine (a `[machine <id>] Clean-up cannot free enough disk space` notice,
+  DISK in `list_machines`, a worker saying so) gets `machine_cleanup` and then clean-up work filed for that machine. Never a
+  question to its owner.
 
 ## Delete only inside the worker's install folder; outside it, measure and report (w896)
 
@@ -115,9 +124,9 @@ learns from a repeated problem.
 ## A runaway task output, and `python -` through `eval` (w876, w899)
 
 **Rule.** Do not run `python - <<'E' ... E` inside `eval '...'`, `bash -c "..."` or any wrapper that re-parses
-the command: write the script to a file in your temp folder and run `python file.py`. Before DONE,
-`find "$TEMP/claude" -name '*.output' -size +1G` finds nothing of yours; a hit is a process still writing, so end it
-first, then delete the file (the space returns only when the process ends).
+the command: write the script to a file in your temp folder and run `python file.py`. A background process of yours is
+ended before DONE; the daemon also ends the writer of an oversize task `.output` file once your session has stopped (w899),
+but a live one is only listed, so a process of yours that loops is yours to end.
 
 **Why.** 2026-10-10: a worker's `eval 'python - <<E ... E'` lost its heredoc, so `python -` opened its interactive
 REPL and looped on `OSError: [WinError 123]` for a day, writing a 99.6 GB Claude task `.output` file; LothDesktop's D:
