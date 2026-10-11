@@ -724,6 +724,36 @@ class RecordedWindowTest(unittest.TestCase):
         self.assertIn("0 new, 0 kept", the_line(out, "Overlaps"))
 
 
+    def test_w1004_repeated_inventory_slots_are_no_move_and_develop_s_overlaps_stand(self):
+        # w1004 (game PR #1466, a glyph colour change): the same tour on develop 59713ef45 and the PR; `moves` found 0
+        # moves, but keyed by path alone the Player Inventory's item-slot(Clone) siblings read as moved 300-400 px and
+        # develop's three window overlaps were called kept between windows the change moved
+        before = self.census("w1004-develop-59713ef45-1280-classic-cargo-hold.json")
+        after = self.census("w1004-1466-1280-classic-cargo-hold.json")
+        self.assertEqual(ul.moves(before, after)["moved"], [])
+        self.assertEqual(ul.moved_units(before, after, SPEC), set())
+        diff = ul.window_diff(before, after, SPEC)
+        self.assertEqual((len(diff["new"]), len(diff["kept"]), len(diff["standing"])), (0, 0, 3))
+
+
+class RepeatedSiblingsTest(unittest.TestCase):
+    def test_siblings_that_share_a_path_are_matched_in_reading_order(self):
+        def census():
+            c = hud()
+            for i in range(3):
+                c["elements"].append(el("MiniInventory/Content/Inventory/item-slot(Clone)/Background",
+                                        [600 + 38 * i, 320, 625 + 38 * i, 345], depth=2000 + i, canvasOrder=0))
+            return c
+
+        self.assertEqual(ul.moved_blocks(census(), census()), set())
+        self.assertEqual(ul.moved_units(census(), census(), SPEC), set())
+        moved = census()
+        for e in moved["elements"]:
+            if "item-slot" in e["path"]:
+                e["rect"] = e["visible"] = [e["rect"][0] + 10, 320, e["rect"][2] + 10, 345]
+        self.assertEqual(ul.moved_blocks(census(), moved), {f"{GP}/MiniInventory"})
+
+
 class CommandTest(unittest.TestCase):
     def test_check_prints_the_three_lines_and_fails(self):
         with tempfile.TemporaryDirectory() as tmp:

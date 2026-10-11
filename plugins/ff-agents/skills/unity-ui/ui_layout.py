@@ -298,16 +298,30 @@ def moved_blocks(before: dict, after: dict, depth: int = 2, tolerance: float = 2
     An overlap the change leaves between blocks it moved is the change's to fix, even if it was there before
     (w733: 7f75224fa moved the slide-out toggles and the hotbar apart and left the Blueprint slide-out over the
     hotbar, 14689 -> 3948 px2)."""
-    old = {e["path"]: e.get("visible") or e["rect"] for e in before["elements"]}
+    old, now = keyed_visible(before), keyed_visible(after)
     moved = set()
-    for e in after["elements"]:
-        r = old.get(e["path"])
-        if r is None or any(i in e["path"] for i in IGNORE):
-            continue
-        now = e.get("visible") or e["rect"]
-        if max(abs(a - b) for a, b in zip(r, now)) > tolerance:
-            moved.add(block_of(e["path"], depth))
+    for key, r in now.items():
+        was = old.get(key)
+        if was is not None and max(abs(a - b) for a, b in zip(was, r)) > tolerance:
+            moved.add(block_of(key[0], depth))
     return moved
+
+
+def keyed_visible(census: dict) -> dict:
+    """{(path, n): visible rect} for every element but the development overlays, siblings that share a path told apart
+    by reading order as in keyed(). Keyed by path alone, the 30 `item-slot(Clone)` slots of the Player Inventory
+    collapsed into one, every other slot read as moved 300-400 px, and the window overlaps that stood unchanged on
+    develop were called kept between windows the change moved (w1004, game PR #1466: `moves` found 0 moves)."""
+    by_path: dict[str, list] = {}
+    for e in census["elements"]:
+        if any(i in e["path"] for i in IGNORE):
+            continue
+        by_path.setdefault(e["path"], []).append(e.get("visible") or e["rect"])
+    out = {}
+    for path, rects in by_path.items():
+        for i, r in enumerate(sorted(rects, key=lambda r: (round(r[1]), round(r[0])))):
+            out[(path, i)] = r
+    return out
 
 
 # ---------------------------------------------------------------------------------------------------------------
@@ -423,14 +437,12 @@ def window_overlaps(census: dict, spec: dict | None, depth: int = 2, min_px: flo
 def moved_units(before: dict, after: dict, spec: dict | None, depth: int = 2, tolerance: float = 2.0) -> set[str]:
     """The windows and blocks (by unit label) with an element, matched by path, that moved over `tolerance`."""
     patterns, backdrops = opened_patterns(spec), backdrop_patterns(spec)
-    old = {e["path"]: e.get("visible") or e["rect"] for e in before["elements"]}
+    old, now = keyed_visible(before), keyed_visible(after)
     out = set()
-    for e in after["elements"]:
-        r = old.get(e["path"])
-        if r is None or any(i in e["path"] for i in IGNORE):
-            continue
-        if max(abs(a - b) for a, b in zip(r, e.get("visible") or e["rect"])) > tolerance:
-            unit = unit_of(e["path"], patterns, backdrops, depth)
+    for key, r in now.items():
+        was = old.get(key)
+        if was is not None and max(abs(a - b) for a, b in zip(was, r)) > tolerance:
+            unit = unit_of(key[0], patterns, backdrops, depth)
             if unit:
                 out.add(unit[1])
     return out
