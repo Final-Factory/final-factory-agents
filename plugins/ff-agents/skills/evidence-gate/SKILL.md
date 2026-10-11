@@ -253,6 +253,10 @@ One file each under `lessons/`: the rule, why (the incident, dated), how to appl
   Same lesson, Unity slots: your own `-batchmode` builds end before DONE (`unity-slot status`); a start refused for a
   stuck batch holder gets `unity clear_batch`, not a multi-hour wait or a request to end it by hand (w791: two builds
   held slots for hours).
+- [Merge only after reading the checker's verdict](lessons/merge-only-after-reading-the-checkers-verdict.md): run
+  `pr_evidence.py` and `gh pr merge` in separate calls and merge on `PASS` from the released version only; a FAIL that says
+  a newer ff-agents is released is not a pass (w978: a chained `;` merged on it, and the newer checker wanted a
+  `Window overlaps:` line).
 - [No human-time estimates](lessons/no-human-time-estimates.md): size work by scope, or by a
   measured agent time from a named comparable run, never in human days or weeks (w545: the Steam
   Deck report's "1–2 weeks" and "weeks to months"; Ben: "stop giving human time estimates").
