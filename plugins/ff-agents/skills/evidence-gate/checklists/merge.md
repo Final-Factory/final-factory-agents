@@ -92,6 +92,10 @@ Not verified: the Bats' slot lag (simulation, follow-up PR)
 - **A fix for a player's crash or desync report** has a `Report: <report id>` line per report it
   fixes in the description (or the id among its request's subjects): FFBox shows the report fixed
   only from that ([a fix names its player report](../lessons/a-fix-names-its-player-report.md)).
+- **An FFBox branch is reviewed file by file against its report**: its run can end with a commit
+  `ffbox <run>: uncommitted work at exit` that sweeps in editor serialization noise. In w944, #1422's fix for a stop
+  drag also carried `DysonBeam.mat` `m_CustomRenderQueue` 3000 -> 2000, a render change nobody asked for. Run
+  `git diff origin/develop...<branch> --stat`, and put back every file the report does not explain before you land it.
 - **Before the merge's first git write after a wait**, `git branch --show-current` names your branch
   (`lessons/merge-your-own-pr.md`, w807). **Post the verdict with `--comment` only from the
   newest ff-agents**: a stale copy's FAIL is about the copy, so `pr_evidence.py` now refuses to post it.
