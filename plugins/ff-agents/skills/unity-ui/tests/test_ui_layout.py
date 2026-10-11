@@ -785,6 +785,14 @@ class CoveredTextTest(unittest.TestCase):
     def test_a_translucent_element_does_not_cover_it(self):
         self.assertEqual([], ul.covered_text(self.census([40, 70, 200, 112], bar_alpha=0.5), OPENED))
 
+    def test_a_hollow_selection_frame_does_not_cover_the_text_inside_it(self):
+        # the real Technology census (w727): the selected tile's orange `SelectionFrame` (sprite TechDependencyBorder) is a ring
+        # whose rect holds the tile's own cost text
+        census = self.census([40, 70, 200, 112])
+        census["elements"][1].update(path=census["elements"][1]["path"].replace("TabBar/Background", "TechButton/SelectionFrame"),
+                                     sprite="TechDependencyBorder")
+        self.assertEqual([], ul.covered_text(census, OPENED))
+
     def test_a_census_without_text_bounds_is_not_measured(self):
         census = self.census([40, 70, 200, 112])
         del census["elements"][0]["textRect"]
