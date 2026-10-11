@@ -40,6 +40,16 @@ on stills and broke on Ben's Deck).
 5. **Look yourself.** Step through the event's frames (`frames.jpg`) against each line of the
    intended look, at a zoom where the detail shows. Position numbers, counts and logs support
    this. They do not replace it.
+5b. **Artifact hunt: what is visible that nobody asked for (w895, w1015).** "Matches the brief" is two
+   checks. Besides "is each thing asked for there?", go through every still and every frame of the
+   sheet again and write down what is on screen that the brief did not ask for: a duplicate, ghost or
+   leftover copy of an object, a dark or unlit silhouette, stale UI, one thing drawn over or
+   intersecting another (a hover card over a panel, text over sliders), a z-order error, flicker, clipped
+   text. Each is explained (and the person would agree it is meant) or fixed before you write
+   "matches"; "nothing extra" is claimed only with the list of what you looked for. A measurement is
+   not this pass ([lesson](../lessons/visual-fixes-are-verified-by-looking.md#hunt-for-what-should-not-be-there-w895-w1015); Ben, w895: "the hover
+   panel is clearly showing over the defense platform"; w1015: "why is there a black ghost vessel
+   that stays behind").
 6. **`watch_video` and the blind model review are a second opinion.** They have passed clips
    that did not contain the event, and agreed with a mistake the brief described as intended.
    Quote them, and say where the frames contradict them.

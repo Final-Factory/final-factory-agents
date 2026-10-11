@@ -213,7 +213,7 @@ animations, particles, camera feel or other visual presentation gets 60 fps clip
 from gameplay angles, covering the effect's whole lifetime (`record_clip`). Review them with
 `watch_video --mode vfx` against a written description of the intended look, and step through the
 frames. The PR links the clips and the review report. Once Ben has approved a look, compare
-against that approved clip. Screenshots alone don't count. Recipe: `ff-agents:watch-video`.
+against that approved clip. Screenshots alone don't count. Recipe: `ff-agents:watch-video`. **Before you write "matches", hunt for what should not be there** (w895, w1015): per still or frame, list what is visible that the brief did not ask for (ghost or leftover copies, dark silhouettes, stale UI, overlaps, z-order, flicker, clipped text) and explain or fix each ([lesson](../evidence-gate/lessons/visual-fixes-are-verified-by-looking.md#hunt-for-what-should-not-be-there-w895-w1015)).
 A screen, panel or layout also goes through `ff-agents:unity-ui` and the evidence-gate's
 `checklists/ui.md` (w718).
 
