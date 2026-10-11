@@ -50,6 +50,7 @@ Not verified: the Bats' slot lag (simulation, follow-up PR)
   max drift 2 px or less) and a `Style:` line with a measured delta E (10 or less) and alpha for
   every touched panel; a difference the requester asked for carries `intended (who): "..."`. The
   verdict names its ff-agents version and fails when a newer one is released.
+  **Run it in its own call and read its first line before you merge** ([lesson](../lessons/merge-your-own-pr.md#merge-only-after-reading-the-checkers-verdict-w978-2026-10-11); w978: a merge chained after it with `;` ran on a FAIL that said "1.26.27 is released"). Merge only on `PASS` from the released version.
 - **A Deck-facing change** (Steam Input, glyphs, the display settings, Deck UI, or an Evidence section that names the
   Deck) needs a `Real Deck:` line: `verified (who, date; Steam client <build>, SteamOS <version>): <what they saw>`, or
   `not verified on a real Deck: <what stays open>`. A Deck tour on a PC cannot show Steam's layout choice, the Proton

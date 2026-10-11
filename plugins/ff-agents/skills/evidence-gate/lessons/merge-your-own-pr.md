@@ -85,3 +85,14 @@ biscuit) instead of a CI round trip and a re-push.
 **How to apply.** Before `git push` in ff-factory: `npm run prepush`. Fix what it names, commit, run it again. The
 repo's own `CLAUDE.md` carries the same rule; `docs/ci.md` ("Before you push") says what each step runs. There is no
 git hook on purpose: a sandbox is a worktree, and a hook would land in the hooks folder every worktree shares.
+
+## Merge only after reading the checker's verdict (w978, 2026-10-11)
+
+`pr_evidence.py` and `gh pr merge` go in separate calls. Run the checker, read its first line, and merge
+only on `PASS` from the released ff-agents version. In w978 one command ran
+`python pr_evidence.py ...; gh pr merge ...`: the checker printed
+`evidence-gate: FAIL ... this pr_evidence.py is ff-agents 1.26.24, but 1.26.27 is released: its rules are older than the team's`
+and the merge ran anyway. The newer checker then wanted a `Window overlaps:` line (w981), which the PR lacked (the
+orchestrator had asked for that overlap check before the merge); it was added to the merged PR afterwards. A FAIL that
+says a newer version is released is not a pass: update the plugin (`claude plugin marketplace update
+final-factory-agents`), run the checker alone with `--brief`, fix the PR body, then merge in its own call.
