@@ -101,7 +101,19 @@ open a PR into develop for them. On Build 97 they were the same seven files FFBo
 A release player has no Deck tour (`DeckTour.cs` refuses without `Debug.isDebugBuild`). Start it
 through `scripts/nightly/player_slots.py launch` with `-ffAgentControl true`, which starts the agent
 HTTP channel and every `ffauto` command in a release build (`AgentControlRelease.cs` header), and
-drive and capture through that channel.
+drive and capture through that channel (`/v1/screenshot` gives a whole-screen PNG; add
+`-ffAgentControlDev true`, and every still shows an "Agent control ON" chip at the top). What Build 97
+taught (w930):
+- `player_slots.py launch --detach <player> -- <args>`: `--detach` goes BEFORE the player path, or the
+  launch blocks.
+- The player ignores `-screen-width/-screen-height`; it takes the size from the stored prefs
+  (`com.Never-Games.finalfactory` `ResolutionWidth/Height`). Save them, set 1920x1080, put them back.
+- The channel only takes commands while a game is playing, so the title screen and New Game options
+  cannot be driven through it. Start a game with the tutorial on as `-ffSoloNewGame <name>
+  -ffSoloObjectives Normal` (Tutorial ON is `ObjectivesMode.Normal`, `NewGameOptionsPanel.cs:66`) and
+  off without the second flag. A New Game screen still needs OS clicks, so a locked Mac (Ben away)
+  cannot give one: say so.
+- `ffauto:wait` runs on game time and stalls while the Esc menu pauses the game.
 
 ## 4. Upload the main app's two depots, set live on development
 
@@ -151,4 +163,8 @@ BuildID before and after, and compare each depot's `development` `gid` in the sa
 `[skip ci]` build: it takes the dispatched test run as the release run and says "A Release job
 failed" because that run's `Release` job is skipped (Build 97). Quote its Steam lines and the test
 result; say the verdict does not apply to a manual build. The patch notes (section 3), the UI stills of the built players (launch only
-through `scripts/nightly/player_slots.py`) and the first-hour check (section 4) are unchanged.
+through `scripts/nightly/player_slots.py`) and the first-hour check (section 4) are unchanged, except that **the m5 cannot read the
+crash/desync intake**: it has no ffdiscord token (`ffdiscord.py read` says "no bot token"), the
+portal's logs carry no report intake, and `fetch_ffbox_report` needs an id. Ask the orchestrator
+for `ffbox_activity` reports/signatures for the version at the hour mark, fetch any report it names
+by id, and confirm the BuildID on `development` yourself (Build 97).
