@@ -1,6 +1,6 @@
 ---
 name: ci-release
-description: Cut a release through CI on the ffbox build server — write the release notes, bump the version (FFVersion.cs + bundleVersion) and push, follow CI through the Windows/Mac main+demo builds, tests and Steam uploads, then post the patch notes as Max in #dev-patch-notes. A requested release is done only when it is live on its Steam branch AND its notes are posted. ffbox sets a develop release's main app live on `development` and a master release's on `pre-release`, automatically; Ben or Lothsahn move the default branch by hand. `scripts/release-status.py` says where a release is. Use when Ben or Lothsahn asks for either in any words ("push a new dev build", "a build for the testers", "cut a release on master"). Never start it on your own initiative or as a side step of other work.
+description: Cut a release through CI on the ffbox build server — write the release notes, bump the version (FFVersion.cs + bundleVersion) and push, follow CI through the Windows/Mac main+demo builds, tests and Steam uploads, then post the patch notes as Max in #dev-patch-notes. A requested release is done only when it is live on its Steam branch AND its notes are posted. ffbox sets a develop release's main app live on `development` and a master release's on `pre-release`, automatically; Ben or Lothsahn move the default branch by hand. `scripts/release-status.py` says where a release is. Use when Ben or Lothsahn asks for either in any words ("push a new dev build", "a build for the testers", "cut a release on master"). Never start it on your own initiative or as a side step of other work. While Ben has develop builds made on his m5 (w930, 2026-10-10), follow m5-manual-build.md beside it.
 ---
 
 # Trigger a CI release on master or develop
@@ -29,6 +29,16 @@ description: Cut a release through CI on the ffbox build server — write the re
 > manual M5 procedure, `mp-beta-deploy`, is a last-resort fallback: only when ffbox CI is actually
 > down, and only with Ben's OK. A failed player is not "ffbox down": get the reason from the job log,
 > report it, and fix it here (re-run the job or bump again); never switch to `mp-beta-deploy` on your own.
+>
+> **FOR NOW, DEVELOP BUILDS ARE MADE ON BEN'S M5, NOT ON FFBOX** (Ben, 2026-10-10, w930: "for the
+> next build, please just do the process on my m5 and just do the windows and mac builds (we dont need
+> demo or linux builds yet) ffbox is having issues with build speed so we are going to manually use my
+> m5 for builds for a couple days, remember this"). Until Ben or Lothsahn says FFBox builds again,
+> a develop build follows **`m5-manual-build.md`** beside this file: stop the other m5 workers and
+> close every editor and player, bump with `trigger-ci-release.sh --skip-ci` (FFBox then builds
+> nothing), build Windows + Mac main with `Editor.ReleaseBuild`, upload with steamcmd's cached login,
+> set live on `development`, verify on Steam. The notes (section 0.5, 3) and the first-hour check
+> (section 4) are unchanged. First run: Build 97, BuildID 25859327.
 >
 > History: the 0.50.0.36/.37/.39 Mac players failed with "Disk full" on the `ffghr-loth2400-*`
 > runners (2026-09-27). Lothsahn fixed it in ffbox (the nightly cache rebuild, FinalFactory #651, and
