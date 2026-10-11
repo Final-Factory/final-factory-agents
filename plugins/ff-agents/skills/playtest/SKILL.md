@@ -155,6 +155,15 @@ the game (the player keeps playing; other peers see the agent-driven marker clea
 the player removes its discovery file. There is no `.ff-local-automation.json` to delete unless you
 wrote one, no play mode to exit, and no `isPaused` to undo.
 
+### Play at 4x unless the check needs real time (w931)
+
+Ben (2026-10-10): "turn up the timescale and play the game faster because you're a computer, not a human". Add
+`-ffGameSpeed 4` to a single-player or lone-host player's launch (or send `ffauto:game.speed|4`, dev tier). It plays the
+same heartbeats four times as fast; multiplayer stays 1x by itself once a client connects. Keep 1x for anything judged
+in real time: motion and feel episodes, flicker, VFX and clips for Ben, voice lines, subtitles and tutorial narration,
+fps/UPS/perf numbers, and wall-second holds (`movement.hold`, `mobilestation.drive`, `mobilestation.panelrotate`). The
+drive-game skill ("Play faster: game speed") and `Documentation/Game-Speed.md` have the limits.
+
 ## Multiplayer gameplay fixes need two real built players
 
 Finalize, copy, and compare both peers' baseline reports **before** injecting a disconnect,
