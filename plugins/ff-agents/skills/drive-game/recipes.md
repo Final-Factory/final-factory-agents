@@ -371,3 +371,32 @@ as att_czxzut77aptx, att_bewwrewxiy7h and att_8u6r6t4e4kw9.
   gradient, then downscale with LANCZOS. Look at a 400x225 copy for legibility.
   - Publish the first good option at once, then iterate on the person's own event text. Ben changed the
     headline mid-request, to "Being Reborn" instead of "Big Update".
+
+### The follow-up event for Build 99 (w1047, 2026-10-11)
+
+Covers att_6q95i6niq1v0 (recommended: the victory cinematic's vessel entering the black hole), att_1v6i23795cdc
+(factory), att_rc6k6smxr5t0 (horizon flash); text att_734970a1xbde. Tools beside this file:
+`compose_event_cover.py` (the w827 "Being Reborn" layout over any frame) and `check_steam_event.py` (the body's tags,
+jargon and length).
+
+- **Ben's words on the follow-up cover**: "i like the being reborn subtitle but make sure the three features you
+  highlight are the new ones for this release not the last ones", and "dont include narrator voice, maybe Story and
+  Narration instead". Keep the headline, take the three lines only from the notes since the last event, and run
+  `compose_event_cover.py` (it refuses "narrator voice").
+- **A Development player's overlays and how to clear them** (`scripts/nightly/build_player.sh` builds only Development
+  players): `ffauto:ui.hide|true` hides the HUD but not the Debug Info panel; `ffauto:console.run|toggleDebugPanel` hides
+  that, and opens the game's console, closed with a real click on its Close button. Unity's own Development Console
+  (it opens on a logged error) closes only with a real click on its Close button too (`oswin.click` from
+  `specs/w884-one-tutorial/oswin.py`, window made topmost first). The "Development Build" watermark stays: crop it out.
+- **Victory cinematic stills**: `scripts/narration/record_cinematic.py <player dir> <out> 1920 1080 --distance 650
+  --no-record` stages it in a new game, and a poller that waits for "vessel spawned" in `<out>/drive.log` and takes
+  `/v1/screenshot?maxEdge=1920` every 0.55 s gets 50 lossless stills in 34 s. Ships nearing the hole at 11-14 s, the
+  horizon flash and rings at 17-19 s. The picture lies between the letterbox bars, y 140..940 at 1080p, and the
+  Debug Info text sits right of x 1720, so crop `0,140,1422,800` (16:9) and put the text on the left.
+- **Busy factory**: `bigAmazingSaveForTrailer` (copy it under your own name), `movement.goto|-7330|5900`,
+  `camera.zoom|760`: a Dyson sphere top left, open space on the right for the text.
+- **Ben's earlier posts are the format to copy**: `https://api.steampowered.com/ISteamNews/GetNewsForApp/v2/?appid=1383150&feeds=steam_community_announcements&count=40&maxlength=0`
+  gives each post's body as Steam's editor stored it: `[h2]` title lines, `[p]` paragraphs, `[h3]` sections,
+  `[list][*][p]..[/p][/*][/list]`. Steam documents no body limit; the longest body it took from us is 11,924
+  characters (THE MULTIPLAYER UPDATE, 2026-10-01). The banned and avoided words are ff-marketing's
+  `brand/voice.json`, checked with its `scripts/mk/gate.py` `lint_text`.
