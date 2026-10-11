@@ -126,7 +126,7 @@ The tool writes `<out>/report.md` (default out: `<system temp>/watch_video/<name
    review has a separate **Out of place** section, answered without the brief. Whatever it says, you list
    per frame what is visible that the brief did not ask for (ghost or leftover copies, dark silhouettes, stale
    UI, overlaps, z-order, flicker, clipped text) and explain or fix each
-   ([lesson](../evidence-gate/lessons/hunt-for-what-should-not-be-there.md)).
+   ([lesson](../evidence-gate/lessons/visual-fixes-are-verified-by-looking.md#hunt-for-what-should-not-be-there-w895-w1015)).
 5. **Write the critique:** for each problem, the time, what is wrong, and the fix. Lead with what
    Ben would notice first.
 

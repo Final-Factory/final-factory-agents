@@ -47,7 +47,7 @@ on stills and broke on Ben's Deck).
    intersecting another (a hover card over a panel, text over sliders), a z-order error, flicker, clipped
    text. Each is explained (and the person would agree it is meant) or fixed before you write
    "matches"; "nothing extra" is claimed only with the list of what you looked for. A measurement is
-   not this pass ([lesson](../lessons/hunt-for-what-should-not-be-there.md); Ben, w895: "the hover
+   not this pass ([lesson](../lessons/visual-fixes-are-verified-by-looking.md#hunt-for-what-should-not-be-there-w895-w1015); Ben, w895: "the hover
    panel is clearly showing over the defense platform"; w1015: "why is there a black ghost vessel
    that stays behind").
 6. **`watch_video` and the blind model review are a second opinion.** They have passed clips

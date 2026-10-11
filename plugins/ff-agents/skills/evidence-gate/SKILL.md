@@ -164,10 +164,7 @@ One file each under `lessons/`: the rule, why (the incident, dated), how to appl
   four checks of totals said "nothing wrong"; the country table at 21.6 hours showed the failure.
 - [A visual fix is verified by looking](lessons/visual-fixes-are-verified-by-looking.md): a built
   player, a clip that contains the event, the intended look in the person's words; `watch_video`
-  is a second opinion.
-- [Hunt for what should not be there](lessons/hunt-for-what-should-not-be-there.md): check frames for
-  ghosts, leftovers, overlaps and z-order errors, not only for what was asked; list and explain each
-  before saying "matches" (w895, w1015).
+  is a second opinion; also hunt for what should not be there (ghosts, leftovers, overlaps, z-order) before saying "matches" ([section](lessons/visual-fixes-are-verified-by-looking.md#hunt-for-what-should-not-be-there-w895-w1015), w895, w1015).
 - [No merge before the review](lessons/no-merge-before-the-review.md): "pending" is not done.
 - [Merge your own pull request](lessons/merge-your-own-pr.md): verified and green means merge;
   hold only for exceptional risk or a timing reason, and say which and when. mechanics: check `git branch --show-current` after a wait, gate `gh pr merge` on a passing check (`gh pr checks N && gh pr merge N --match-head-commit <sha>`: exit 8 is pending; w864), post the verdict only from the newest ff-agents (w807).
