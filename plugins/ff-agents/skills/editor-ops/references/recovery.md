@@ -276,3 +276,33 @@ a pushed branch up to date with `git merge origin/<base>` (never a rebase), and 
 by pushing a refspec from wherever you are: `git push origin HEAD:refs/heads/<new-branch>`.
 The hook reads the command text, so those words inside a `-m` message or a `gh pr create --body`
 trip it too: write the message to a file and pass `-F <file>` / `--body-file <file>`.
+
+### A pull while the editor starts rewrites `.meta` files: the boot fails and a new game throws missing singletons
+
+**Signature** (w966, 2026-10-10, Ben's m5 clone on develop 6846a8bfc): a new game in the editor throws
+`MapGenerationData not found` (`FogOfWarPlane.cs:103`) and `GetSingleton<FFCore.Objectives.ObjectivesTracker>()
+... there are none` (`ObjectivesTrackingSystem.ResetObjectives`, called from `TitleScreenManager.StartNewGameImpl`).
+Neither is the bug. The first error of the session, earlier in `Editor.log`, is the boot failure `Something went
+wrong with game initialization in the Start Controller` (`StartController.cs:541`), here caused by `No sprite found
+for item Battery` (`InventoryItem.cs:208`, raised from `ConfigLoadingUtil.SetupItemConfigArrays` when an item
+config's `IconSprite` is null). The title screen still comes up after a failed boot, so New Game runs on a world
+whose config singletons were never made.
+
+**Cause**: Unity was opened while `git pull` was still writing files (`Editor.log` `Date:` 02:11:37Z, `git reflog`
+pull 11 s later). Its startup scan logged `A meta data file (.meta) exists but its asset
+'Assets/Resources/Icons/Battery.png' can't be found` for each file the pull had unlinked and not yet rewritten.
+When the file came back, Unity wrote a fresh `.meta` with default importer settings: the icon turned from a
+Sprite (`textureType: 8`) into a Default texture with no sprite, and two connector models
+(`advanced-ship-assembler-connector-item.fbx`/`.blend`) got NEW GUIDs, breaking the three ship-assembler
+connector prefabs that point at the old ones. The committed files were fine; develop and built players were not
+affected, and other machines at the same commit booted clean.
+
+**Diagnose**: `git status` lists `.meta` files nobody edited (`git diff` shows `textureType`/`spriteMode` reset or a
+changed `guid:`), and `grep "meta data file (.meta) exists but its asset" Editor.log` names them. Always find the
+first error of the session before chasing a downstream singleton error.
+
+**Fix**: `git checkout -- <each rewritten .meta>` and let Unity reimport (focus the editor or refresh). Never
+"fix" it by re-saving the importer in the editor, and don't commit the rewritten `.meta`. **Prevent**: close the
+editor before a pull, or let the pull finish before opening it. Reproduced in m5/slot2 by applying the rewritten
+`.meta` (boot fails with the same exception) and cleared by restoring it (new game with the Normal tutorial and
+with it off, and a save load, all clean).
