@@ -26,6 +26,9 @@ Found while playing the whole Normal tutorial twice in a development player and 
 - **The Technology Unlocked popup** stays over the objectives card until Dismiss is pressed; no ffauto verb and no OS click closed it.
   Turn "Research Notifications" off (the key above) for a recording and restore it.
 
+- **A desktop recording (gdigrab) films whatever window is on top of that rectangle** (w948: another sandbox's player covered mine for a whole 15-minute run, and the clip showed a late-game factory). The player's own frames do not: poll `GET /v1/screenshot?maxEdge=1280` twice a second from a thread and encode the stills with their file times (`specs/w884-one-tutorial/play_normal_tutorial.py`, `STREAM_FROM=<step>`). Keep the driver's own stills tolerant of a busy channel (the stream thread made a main-thread `shot` raise `no screenshot` and killed a run), and save a game from the surviving player (`ffauto:game.save|name`) before restarting from `RESUME`. Look at a frame of the clip before trusting it.
+- **"The build lacks the step" is a git question first** (w948: Ben's Build 96 report; `git merge-base --is-ancestor <merge> <release bump>` and `git ls-tree <bump> <asset dir>` answered it in a minute, before any player was built).
+
 Related: [[two-built-players-on-one-machine-share-port-7777]], [[ui-pointer-input-needs-os-focus-and-ui-drag-bypasses-the-module]] (that one says never to drive the
 OS mouse on a shared desktop: w884 clicked the title menu through `SetCursorPos`/`mouse_event` on the player window, which needs
 no focus theft but does move the real cursor; ask for a hidden desktop next time).
