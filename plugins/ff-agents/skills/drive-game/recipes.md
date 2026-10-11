@@ -393,6 +393,12 @@ jargon and length).
   `/v1/screenshot?maxEdge=1920` every 0.55 s gets 50 lossless stills in 34 s. Ships nearing the hole at 11-14 s, the
   horizon flash and rings at 17-19 s. The picture lies between the letterbox bars, y 140..940 at 1080p, and the
   Debug Info text sits right of x 1720, so crop `0,140,1422,800` (16:9) and put the text on the left.
+- **Ben picked the horizon flash** (option C) and asked: "can you just use this one but add some more saturation or
+  clean up the image part a little bit to still show the black hole". The reworked att_a303728id2tn is the 19.1 s frame
+  through `grade_event_frame.py --sat 1.4 --contrast 1.1 --despark 1.0 --black 14 --hole 940,540`: saturation up, the
+  white spark streaks replaced by a 21 px median, and the inside of the ring darkened by a flood fill from the hole's
+  centre. Grade a raw cinematic still before it goes on a cover; a frame 0.7 s after the flash keeps the rings and
+  has far fewer sparks.
 - **Busy factory**: `bigAmazingSaveForTrailer` (copy it under your own name), `movement.goto|-7330|5900`,
   `camera.zoom|760`: a Dyson sphere top left, open space on the right for the text.
 - **Ben's earlier posts are the format to copy**: `https://api.steampowered.com/ISteamNews/GetNewsForApp/v2/?appid=1383150&feeds=steam_community_announcements&count=40&maxlength=0`
