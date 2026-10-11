@@ -29,6 +29,15 @@ Found while playing the whole Normal tutorial twice in a development player and 
 - **A desktop recording (gdigrab) films whatever window is on top of that rectangle** (w948: another sandbox's player covered mine for a whole 15-minute run, and the clip showed a late-game factory). The player's own frames do not: poll `GET /v1/screenshot?maxEdge=1280` twice a second from a thread and encode the stills with their file times (`specs/w884-one-tutorial/play_normal_tutorial.py`, `STREAM_FROM=<step>`). Keep the driver's own stills tolerant of a busy channel (the stream thread made a main-thread `shot` raise `no screenshot` and killed a run), and save a game from the surviving player (`ffauto:game.save|name`) before restarting from `RESUME`. Look at a frame of the clip before trusting it.
 - **"The build lacks the step" is a git question first** (w948: Ben's Build 96 report; `git merge-base --is-ancestor <merge> <release bump>` and `git ls-tree <bump> <asset dir>` answered it in a minute, before any player was built).
 
+- **`ffauto:console.run` leaves the cheat console open, and an open console stops the player controller**
+  (`PlayerController.cs:201`, `StopController`: `QuantumCommandInterface.IsConsoleOpen`), so a later `movement.goto` or
+  `movement.hold` does nothing, and `camera.zoom` did not take either. Only Escape closes it; the agent channel cannot send
+  keys, and an automation `pointer.click` on its Close button did not close it (w1011). Run the cheat LAST, after anything that
+  needs input, and design the shot so the idle player is already where the event happens (w1011 spawned the black hole 320
+  units from the waiting player rather than flying in). A cheat sent in the same chain as `cheats.enable` can run before the
+  host's cheat op applies: send `cheats.enable` on its own first. Two `spawnBlackHole` on one spot flood `EntityGrid already
+  contains key` and killed the player.
+
 Related: [[two-built-players-on-one-machine-share-port-7777]], [[ui-pointer-input-needs-os-focus-and-ui-drag-bypasses-the-module]] (that one says never to drive the
 OS mouse on a shared desktop: w884 clicked the title menu through `SetCursorPos`/`mouse_event` on the player window, which needs
 no focus theft but does move the real cursor; ask for a hidden desktop next time).
