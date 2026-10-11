@@ -30,6 +30,12 @@ alpha, sprite and drawing order) taken before and after a change, same save, siz
              --shot/--ref-shot inside each panel's rect when given, which is what a player sees), an
              alpha off by more than 0.2 on the same art, or different art without screenshots: FAIL.
 
+  Covered    every text of an opened screen whose DRAWN glyph bounds (the census `textRect`, which can reach past the
+  text      text's RectTransform when it wraps or overflows) lie under an opaque element drawn above it (w727: the
+             Technology tab's "Excess Research" label ran half under the hub's tab bar and `Opened panels` said 0, because
+             the census held only RectTransform boxes). A text covered after and not before: FAIL; one covered in both is
+             listed as standing. Texts clipped by a mask are skipped (the census has no mask rect for the glyphs).
+
   Moved      every element that moved or resized more than --move-px px (4), grouped into the largest object that
              moved as one, and every object that is gone (w826: #1282 moved the Station Info box to the top left and
              w722/#1282 put the objectives card under the Station strip; Ben: "i didnt tell you to move that"). Listed,
@@ -40,7 +46,7 @@ alpha, sprite and drawing order) taken before and after a change, same save, siz
              the minimap, the Player Inventory off the left edge), checked in the after census whatever the before one
              showed, so an earlier PR's move never becomes the new normal (w894). A broken pin: FAIL.
 
-It prints the `Overlaps:`, `Window overlaps:`, `Opened panels:`, `Alignment:`, `Style:`, `Pinned:` and `Moved:` lines the
+It prints the `Overlaps:`, `Window overlaps:`, `Opened panels:`, `Covered text:`, `Alignment:`, `Style:`, `Pinned:` and `Moved:` lines the
 pull request carries (pr_evidence.py reads them) and exits 1 when any of the first six fails, 2 on bad input.
 
     ui_layout.py pins <census.json> [<census.json> ...]   the `Pinned:` line over every census (w894): take them at
@@ -48,6 +54,8 @@ pull request carries (pr_evidence.py reads them) and exits 1 when any of the fir
 
     ui_layout.py moves --pair before-1920.json after-1920.json --pair before-1280.json after-1280.json [--move-px 4]
                                                the `Moved:` line and its list over both standard sizes (w826)
+
+    ui_layout.py covered-text <census.json>    the texts of opened screens drawn under an opaque element (w727); exits 1 on one
 
     ui_layout.py overlaps <census.json>        the overlapping HUD block pairs of one census, then every window overlap
                                                (allowed ones with their quote, the rest NOT ALLOWED); exits 1 on one of those
@@ -277,6 +285,41 @@ def opened_over_hud(census: dict, patterns: list[str], depth: int = 2, min_px: f
     out["blocked"] = sorted(set(out["blocked"]))
     out["cut"] = sorted(set(out["cut"]))
     return out
+
+
+def covered_text(census: dict, patterns: list[str], min_share: float = 0.2, min_px: float = 16.0) -> list[dict]:
+    """Texts of an opened screen whose drawn glyph bounds (`textRect`) lie under an opaque element drawn above them (w727:
+    the Technology tab's "Excess Research 0.0" label wrapped to a second line under the hub's tab bar; every other check
+    compared RectTransform boxes, and the label's box was clear of the bar). Returns [{"path", "text", "by", "share", "rect"}].
+    A text clipped by a mask is skipped: the census has no mask rect for glyphs that overflow its box."""
+    texts = [e for e in census["elements"] if e.get("text") and e.get("textRect") and not any(i in e["path"] for i in IGNORE)
+             and opened_prefix(e["path"], patterns) and area(e["textRect"]) >= 4
+             and all(abs(a - b) <= 1 for a, b in zip(e.get("visible") or e["rect"], e["rect"]))]
+    covers = [e for e in census["elements"] if not e.get("maskOnly") and "Text" not in e.get("kind", "")
+              and e.get("alpha", 1.0) >= 0.9 and not any(i in e["path"] for i in IGNORE) and area(e.get("visible") or e["rect"]) >= 4]
+    found = []
+    for t in texts:
+        tr = t["textRect"]
+        best = None
+        for c in covers:
+            if above(c, t) is not True:
+                continue
+            both = inter(tr, c.get("visible") or c["rect"])
+            px = area(both) if both[2] > both[0] and both[3] > both[1] else 0.0
+            if px >= min_px and px >= min_share * area(tr) and (best is None or px > best[0]):
+                best = (px, c, both)
+        if best:
+            found.append({"path": t["path"], "text": t["text"], "by": best[1]["path"], "share": best[0] / area(tr), "rect": best[2]})
+    return found
+
+
+def covered_key(f: dict):
+    return (f["path"], f["text"])
+
+
+def covered_text_line(f: dict) -> str:
+    return (f"{short(f['path'], 3)} \"{f['text']}\": {100 * f['share']:.0f}% of its drawn text is under {short(f['by'], 2)} "
+            f"(rect {rect_text(f['rect'])})")
 
 
 def restored(closed: dict, covered: dict, tolerance: float = 2.0) -> list[str]:
@@ -931,6 +974,17 @@ def run_check(args) -> int:
             print(f"  {kind}: {line}")
     failed |= bool(problems)
 
+    cb = {covered_key(f) for f in covered_text(before, patterns)}
+    ca = covered_text(after, patterns)
+    new_cov = [f for f in ca if covered_key(f) not in cb]
+    print(f"Covered text: {len(ca)} text(s) of opened screens under an opaque element after, {len(cb)} before, "
+          f"{len(new_cov)} new (ui_layout.py, drawn glyph bounds: needs `textRect` in the census"
+          + ("" if any(e.get("textRect") for e in after["elements"]) else "; NOT in this census: not measured") + ")")
+    for label, rows in (("NEW", new_cov), ("STANDING", [f for f in ca if covered_key(f) in cb])):
+        for f in rows[:15]:
+            print(f"  {label}: {covered_text_line(f)}")
+    failed |= bool(new_cov)
+
     worst, lines = drift(cluster_edges(before, spec), cluster_edges(after, spec), args.tolerance)
     names = ", ".join(c["name"] for c in spec.get("clusters", []))
     print(f"Alignment: max drift {worst:.0f} px over the clusters ({names}); tolerance {args.tolerance:.0f} px")
@@ -987,6 +1041,15 @@ def run_overlaps(args) -> int:
     return 1 if bad else 0
 
 
+def run_covered_text(args) -> int:
+    spec = json.loads(Path(args.clusters).read_text(encoding="utf-8"))
+    found = covered_text(load(args.census), opened_patterns(spec))
+    print(f"{len(found)} text(s) of opened screens drawn under an opaque element above them")
+    for f in found:
+        print(f"  {covered_text_line(f)}")
+    return 1 if found else 0
+
+
 def run_clusters(args) -> int:
     census = load(args.census)
     spec = json.loads(Path(args.clusters).read_text(encoding="utf-8"))
@@ -1025,6 +1088,9 @@ def main(argv=None) -> int:
     o = sub.add_parser("overlaps", help="the overlapping block pairs of one census")
     o.add_argument("census")
     o.add_argument("--clusters", default=str(DEFAULT_CLUSTERS))
+    t = sub.add_parser("covered-text", help="texts of opened screens drawn under an opaque element (w727)")
+    t.add_argument("census")
+    t.add_argument("--clusters", default=str(DEFAULT_CLUSTERS))
     k = sub.add_parser("clusters", help="cluster edges of one census or tour log")
     k.add_argument("census")
     k.add_argument("--clusters", default=str(DEFAULT_CLUSTERS))
@@ -1032,7 +1098,7 @@ def main(argv=None) -> int:
         p.add_argument("--block-depth", type=int, default=2)
     args = ap.parse_args(argv)
     try:
-        return {"check": run_check, "overlaps": run_overlaps, "clusters": run_clusters, "moves": run_moves, "pins": run_pins}[args.cmd](args)
+        return {"check": run_check, "overlaps": run_overlaps, "clusters": run_clusters, "covered-text": run_covered_text, "moves": run_moves, "pins": run_pins}[args.cmd](args)
     except (ValueError, OSError, KeyError) as error:
         print(f"ui_layout: {error}", file=sys.stderr)
         return 2

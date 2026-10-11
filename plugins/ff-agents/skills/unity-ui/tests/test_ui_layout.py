@@ -754,6 +754,54 @@ class RepeatedSiblingsTest(unittest.TestCase):
         self.assertEqual(ul.moved_blocks(census(), moved), {f"{GP}/MiniInventory"})
 
 
+class CoveredTextTest(unittest.TestCase):
+    """w727: the Technology tab's "Excess Research 0.0" label wrapped to a second line that ran under the hub's tab bar. Its
+    RectTransform box was clear of the bar, so every rect check passed; the census now holds `textRect`, the drawn glyph bounds."""
+    HUB = "InGameScene/UI Canvas/StructuredHub/Tab"
+
+    def census(self, text_rect, bar_alpha=1.0, bar_depth=20, text_extra=None):
+        label = dict(path=f"{self.HUB}/Technology/Queue/Excess Research", kind="TextMeshProUGUI", rect=[40, 90, 240, 112],
+                     visible=[40, 90, 240, 112], color="#FFFFFFFF", alpha=1.0, sprite="", raycast=False, selectable=False,
+                     maskOnly=False, canvasOrder=0, depth=10, text="Excess Research 0.0", textRect=text_rect)
+        label.update(text_extra or {})
+        bar = dict(path="InGameScene/UI Canvas/StructuredHub/TabBar/Background", kind="Image", rect=[0, 40, 1280, 100],
+                   visible=[0, 40, 1280, 100], color="#101820FF", alpha=bar_alpha, sprite="background-main", raycast=True,
+                   selectable=False, maskOnly=False, canvasOrder=0, depth=bar_depth)
+        return {"screen": [1280, 800], "elements": [label, bar]}
+
+    def test_a_label_whose_drawn_text_reaches_under_the_bar_is_covered(self):
+        found = ul.covered_text(self.census([40, 70, 200, 112]), OPENED)
+        self.assertEqual(1, len(found))
+        self.assertEqual("Excess Research 0.0", found[0]["text"])
+        self.assertGreater(found[0]["share"], 0.2)
+        self.assertIn("TabBar/Background", found[0]["by"])
+
+    def test_the_same_label_clear_of_the_bar_is_not(self):
+        self.assertEqual([], ul.covered_text(self.census([40, 104, 200, 126]), OPENED))
+
+    def test_a_bar_drawn_below_the_text_does_not_cover_it(self):
+        self.assertEqual([], ul.covered_text(self.census([40, 70, 200, 112], bar_depth=5), OPENED))
+
+    def test_a_translucent_element_does_not_cover_it(self):
+        self.assertEqual([], ul.covered_text(self.census([40, 70, 200, 112], bar_alpha=0.5), OPENED))
+
+    def test_a_census_without_text_bounds_is_not_measured(self):
+        census = self.census([40, 70, 200, 112])
+        del census["elements"][0]["textRect"]
+        self.assertEqual([], ul.covered_text(census, OPENED))
+
+    def test_a_masked_text_is_skipped(self):
+        self.assertEqual([], ul.covered_text(self.census([40, 70, 200, 112], text_extra={"visible": [40, 100, 240, 112]}), OPENED))
+
+    def test_the_command_exits_one_on_a_covered_text(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "c.json"
+            path.write_text(json.dumps(self.census([40, 70, 200, 112])), encoding="utf-8")
+            self.assertEqual(1, ul.main(["covered-text", str(path)]))
+            path.write_text(json.dumps(self.census([40, 104, 200, 126])), encoding="utf-8")
+            self.assertEqual(0, ul.main(["covered-text", str(path)]))
+
+
 class CommandTest(unittest.TestCase):
     def test_check_prints_the_three_lines_and_fails(self):
         with tempfile.TemporaryDirectory() as tmp:

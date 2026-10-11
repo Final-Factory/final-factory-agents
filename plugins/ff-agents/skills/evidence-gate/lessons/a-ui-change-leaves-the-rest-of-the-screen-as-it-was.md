@@ -250,3 +250,20 @@ under the strip is reported. Widen the list only in a harness PR with the person
 and an `intended` quote that is not in the brief. Tests: `unity-ui/tests/test_ui_layout.py` (`WindowOverlapTest`,
 `WindowCheckTest`: the w978 rects, the w873 develop layout, the dock, 1920x1080 Inventory over Station Grid) and
 `evidence-gate/tests/test_pr_evidence.py` (`WindowOverlapTest`).
+
+## Text is covered by its drawn bounds, not its box (w727, 2026-10-11)
+
+**Rule.** A text under something is found from where its glyphs are drawn, not from its RectTransform. `ui_layout.py`
+`covered-text` (and `check`'s `Covered text:` line) reads the census `textRect` and flags a text of an opened screen whose
+drawn bounds lie under an opaque element above it; a new one fails, a standing one is named.
+
+**Why.** On the Steam Deck at UI 0.80 (w727, PR #1291), the Technology tab's "Excess Research 0.0" label wrapped to a
+second line that ran half under the hub's tab bar. The census recorded the label's RectTransform, which was clear of the bar,
+and the hub screens are `openedPanels`, so `Overlaps`, `Window overlaps` and `Opened panels` all read 0; the orchestrator
+found it by looking at the still. The label was already on develop, so it was not the PR's regression, but the census could
+not have told either way.
+
+**How to apply.** [UI checklist](../checklists/ui.md), item 26. Tests: `unity-ui/tests/test_ui_layout.py`
+(`CoveredTextTest`: the label with its glyphs under the bar, clear of it, bar drawn below, translucent bar, no `textRect`,
+masked text). Limits: a text clipped by a mask is skipped (the census has no mask rect for glyphs), and text under a
+translucent element (alpha under 0.9) is not flagged.

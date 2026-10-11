@@ -186,8 +186,10 @@ def ui_problems(section: str, brief: str | None = None) -> tuple[list[str], list
     problems += layout_problems(section)
     window, window_notes = window_overlap_problems(section, brief)
     problems += window
+    covered, covered_notes = covered_text_problems(section)
+    problems += covered
     moved, notes = moved_problems(section, brief)
-    notes = window_notes + notes
+    notes = window_notes + covered_notes + notes
     problems += moved + pinned_problems(section)
     flick = field(section, "Flicker")
     if not re.search(r"flicker", (clips[1] if clips else "") + (flick[1] if flick else ""), re.IGNORECASE):
@@ -461,6 +463,28 @@ def window_overlap_problems(section: str, brief: str | None = None) -> tuple[lis
                      f"change did not move: not this change's to fix, but say so in the report's first lines "
                      f"(ui_layout.py check prints them as STANDING; Ben: \"UI should be clean and flowy\")")
     return problems, notes
+
+
+def covered_text_problems(section: str) -> tuple[list[str], list[str]]:
+    """Text covered by its drawn bounds (w727: the Technology tab's "Excess Research 0.0" label ran half under the hub's tab
+    bar and every check that compared RectTransform boxes read 0). The `Covered text:` line is `ui_layout.py check`'s: a text of
+    an opened screen whose drawn glyphs lie under an opaque element above it. A new one fails; a census without `textRect`
+    is a note ("not measured" is not "clean"). A missing line is a note until the Deck tour census carries `textRect` in every
+    PR's tooling."""
+    line = field(section, "Covered text")
+    if not line:
+        return [], ["no 'Covered text:' line: ui_layout.py check (ff-agents 1.26.39 or later) prints it from a census with "
+                    "`textRect`; a label running under the hub's tab bar is invisible to every other check (w727)"]
+    found = re.search(r"(\d+)\s+new\b", line[1])
+    if not found:
+        return (["'Covered text:' does not say how many covered texts are new: paste ui_layout.py check's line"], [])
+    if re.search(r"not measured", line[1], re.IGNORECASE):
+        return [], ["'Covered text:' was not measured (the census has no `textRect`): take it with the current census snippet "
+                    "or the Deck tour's `setup:census:` step, and look at the hub tab stills at full size"]
+    if int(found.group(1)):
+        return ([f"'Covered text:' has {found.group(1)} new text(s) drawn under an opaque element of an opened screen: "
+                 f"fix the layout so the text clears it (the tool lists each as NEW with the element over it; w727)"], [])
+    return [], []
 
 
 def layout_problems(section: str) -> list[str]:

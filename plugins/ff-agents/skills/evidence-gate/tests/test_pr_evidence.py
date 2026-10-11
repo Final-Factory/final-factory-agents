@@ -340,6 +340,35 @@ class LayoutTest(unittest.TestCase):
         self.assertFalse(pe.comment_refused([]))
 
 
+class CoveredTextTest(unittest.TestCase):
+    """w727: a text whose drawn glyphs run under an opaque element of an opened screen is measured by ui_layout.py from the
+    census `textRect`, not from RectTransform boxes."""
+
+    ui_body = LayoutTest.ui_body
+    reasons = LayoutTest.reasons
+
+    def body(self, line):
+        return re.sub(r"^Alignment:", lambda m: "Covered text: " + line + "\nAlignment:", self.ui_body(), count=1,
+                      flags=re.MULTILINE)
+
+    def test_a_new_covered_text_fails(self):
+        self.assertIn("'Covered text:' has 1 new", self.reasons(self.body("1 text(s) of opened screens under an opaque element "
+                                                                          "after, 0 before, 1 new (ui_layout.py)")))
+
+    def test_none_new_passes_and_standing_ones_do_not_fail(self):
+        self.assertEqual("", self.reasons(self.body("3 text(s) of opened screens under an opaque element after, 3 before, "
+                                                    "0 new (ui_layout.py)")))
+
+    def test_a_line_without_the_count_fails(self):
+        self.assertIn("does not say how many covered texts are new", self.reasons(self.body("none found")))
+
+    def test_a_census_without_text_bounds_is_not_clean(self):
+        # "not measured" is a note, never a pass that reads as a measurement
+        self.assertEqual("", self.reasons(self.body("0 text(s) of opened screens under an opaque element after, 0 before, 0 new "
+                                                    "(ui_layout.py, drawn glyph bounds: needs `textRect`; NOT in this census: "
+                                                    "not measured)")))
+
+
 class WindowOverlapTest(unittest.TestCase):
     """w981: a window drawn over another window or the HUD is measured by ui_layout.py, not by eye. On the Deck's classic
     layout the Station strip stood 11 px over the Player Inventory (#1444, w961); `ui_layout.py overlaps` said 0 because it

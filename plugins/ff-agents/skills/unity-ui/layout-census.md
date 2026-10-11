@@ -114,6 +114,16 @@ foreach (var g in UnityEngine.Object.FindObjectsByType<UnityEngine.UI.Graphic>(U
       ",\"truncated\":" + (tmp.isTextTruncated ? "true" : "false") + ",\"renderedW\":" + rv.x.ToString("F1", ci) +
       ",\"rectW\":" + tmp.rectTransform.rect.width.ToString("F1", ci) + ",\"wrap\":\"" + tmp.textWrappingMode + "\"";
   }
+  // w727: where the glyphs are actually drawn (a text that wraps or overflows reaches past its RectTransform box, under
+  // whatever sits there); ui_layout.py covered-text reads it.
+  if (tmp != null && tmp.textInfo.characterCount > 0)
+  {
+    var tb = tmp.textBounds;
+    var ta = UnityEngine.RectTransformUtility.WorldToScreenPoint(null, tmp.transform.TransformPoint(tb.min));
+    var tz = UnityEngine.RectTransformUtility.WorldToScreenPoint(null, tmp.transform.TransformPoint(tb.max));
+    fit += ",\"textRect\":" + box(UnityEngine.Rect.MinMaxRect(UnityEngine.Mathf.Min(ta.x, tz.x), UnityEngine.Mathf.Min(ta.y, tz.y),
+      UnityEngine.Mathf.Max(ta.x, tz.x), UnityEngine.Mathf.Max(ta.y, tz.y)));
+  }
   sb.Append(n++ == 0 ? "" : ",\n");
   sb.Append("{\"path\":\"" + esc(path(g.transform)) + "\",\"kind\":\"" + g.GetType().Name + "\",\"rect\":" + box(r) +
     ",\"visible\":" + box(v) + ",\"color\":\"#" + UnityEngine.ColorUtility.ToHtmlStringRGBA(g.color) + "\",\"alpha\":" +
@@ -129,7 +139,10 @@ return n + " elements at " + sw + "x" + sh + " -> " + OUT;
 
 Compiled against Unity 6000.3.19f1's `UnityEngine.CoreModule`, `UnityEngine.UIModule` and the
 project's `UnityEngine.UI.dll` (w733), with TextMesh Pro for the text-fit fields (w761: `fontSize`, `font`,
-`lines`, `overflowing`, `truncated`, `renderedW`, `rectW`, `wrap` on every TMP text, for `text_diff.py`).
+`lines`, `overflowing`, `truncated`, `renderedW`, `rectW`, `wrap` on every TMP text, for `text_diff.py`; w727: `textRect`,
+the drawn glyph bounds in screen pixels, for `ui_layout.py covered-text`; the snippet assumes a screen-space overlay canvas,
+which is what the game uses, and the Deck tour's `setup:census:` step writes the same field). Without `textRect` the
+covered-text check says "not measured".
 
 `execute_code` calls time out after about 30 s while the editor keeps running them. To take many censuses, register
 the snippet once as a delegate (`System.AppDomain.CurrentDomain.SetData("census", (System.Func<string, string>)(OUT => { ... }))`)
