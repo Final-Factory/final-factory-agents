@@ -107,6 +107,14 @@ unpause path is `UI.UiController.UnpauseGame()` then `FFSystems.SystemManager.Re
 channel vs `ScreenCapture` + focused GameView, and the never-`gv.Focus()`-with-a-blueprint-in-hand
 trap). Don't re-derive them here.
 
+**Dragging a panel row** (`ffauto:ui.drag`, w944): the optional arguments are POSITIONAL, despite the help's
+`[|frames=40]`. `ui.drag|structure|StopPanel[text=Stop A]|@200,200|40|20|real` works; `...|frames=40|...` fails with the
+usage error. `@x,y` is a screen point (bottom-left origin). Pick a row by its label with `[text=...]`. `real` drives the
+real `InputSystemUIInputModule` and needs `Application.isFocused` true (check it in the same call). Without `real`, the
+automation pointer runs the same drag handlers in a background editor. A station's panel opens with
+`pointer.moveto|<command core tile>` then `pointer.click`, once the tile projects on screen: `movement.goto` takes world
+units, not tiles, so move and re-check the projection.
+
 ## Movement, mining, crafting, combat, research, placement, logistics
 
 Proven driving the full early tutorial with the editor occluded (Step-pumped).

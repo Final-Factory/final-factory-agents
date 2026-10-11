@@ -258,6 +258,21 @@ Target sized [W×H]`). Fix: `execute_menu_item` → `Final Factory/Dev/GameView 
 flaky for the first 1-2 calls after a compile — retry 2-3×.** Manual fallback: the Game view
 toolbar's aspect dropdown → "Free Aspect". The setting persists.
 
+**A fixed 1920x1080 Game view in PLAY mode** (w944): a docked editor view (1447x744 on BEAST) clips tall panels. For
+example, a station's stop list falls below the screen, so its rows cannot be dragged or seen as a player at 1080p
+would see them. Reflection works mid-play, and `Screen.width/height` read 1920x1080 on the next call:
+```csharp
+var asm = typeof(UnityEditor.Editor).Assembly; var gvType = asm.GetType("UnityEditor.GameView");
+var sizesType = asm.GetType("UnityEditor.GameViewSizes");
+var inst = typeof(UnityEditor.ScriptableSingleton<>).MakeGenericType(sizesType).GetProperty("instance").GetValue(null);
+var group = inst.GetType().GetMethod("GetGroup").Invoke(inst, new object[] { (int)UnityEditor.GameViewSizeGroupType.Standalone });
+// find the index i whose GetGameViewSize(i) is 1920x1080, else AddCustomSize(new GameViewSize(FixedResolution=1, 1920, 1080, "1080p")) and take the last
+var gv = UnityEditor.EditorWindow.GetWindow(gvType, false, null, false);
+gvType.GetMethod("SizeSelectionCallback", System.Reflection.BindingFlags.Public | System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Instance).Invoke(gv, new object[] { i, null });
+```
+`ScreenCapture.CaptureScreenshot` then wrote full 1920x1080 stills. Set it back to Free Aspect in edit mode if a later
+capture comes back blank.
+
 **Channel A — composited `manage_camera` (DEFAULT: no focus needed, works occluded, includes the
 UI overlay).**
 
