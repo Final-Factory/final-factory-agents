@@ -66,6 +66,9 @@ with a scripted Deck: `-ffDeckTour <steps.json> -ffDeckTourOut <dir> -ffDeckTour
 (`python scripts/nightly/player_slots.py launch <build> -- <args>`). Each `shot` saves a PNG and a
 census (`<shot>.json`: small, clipped, off-screen and overlapping text, covered controls).
 
+- **Tours stay at real speed (w931).** Most agent play runs at `-ffGameSpeed 4` (drive-game, "Play faster"), but a
+  tour's waits are UI settle times and its checks include a real-rate clip and flicker, which a raised speed would
+  change. Add `-ffGameSpeed` only to a tour leg that waits for the game itself to progress, and take its clips at 1x.
 - **The tour is not a Deck (w770).** It hands the game a scripted Deck, forces its own window size every second and
   starts from clean prefs, so it cannot show Steam's layout choice, the Proton first-frame resolution, the Steam client
   version or touch. Say "verified on a real Deck" or "not verified on a real Deck"
