@@ -138,6 +138,9 @@ def block_of(path: str, depth: int) -> str:
 
 
 IGNORE = ("[Graphy]", "DebugInfo", "AgentControlIndicator")  # development overlays, not in a release build
+# A border, frame or outline sprite is hollow: the census has its rect, not its holes, so it cannot cover a text (the Technology
+# tab's selected tile: `SelectionFrame`, sprite `TechDependencyBorder`, orange ring over the tile's own cost text; w727).
+HOLLOW = re.compile(r"frame|border|outline|highlight|glow|shadow", re.IGNORECASE)
 
 
 def solid(e) -> bool:
@@ -296,7 +299,8 @@ def covered_text(census: dict, patterns: list[str], min_share: float = 0.2, min_
              and opened_prefix(e["path"], patterns) and area(e["textRect"]) >= 4
              and all(abs(a - b) <= 1 for a, b in zip(e.get("visible") or e["rect"], e["rect"]))]
     covers = [e for e in census["elements"] if not e.get("maskOnly") and "Text" not in e.get("kind", "")
-              and e.get("alpha", 1.0) >= 0.9 and not any(i in e["path"] for i in IGNORE) and area(e.get("visible") or e["rect"]) >= 4]
+              and e.get("alpha", 1.0) >= 0.9 and not any(i in e["path"] for i in IGNORE) and area(e.get("visible") or e["rect"]) >= 4
+              and not HOLLOW.search(e["path"].rsplit("/", 1)[-1] + " " + e.get("sprite", ""))]
     found = []
     for t in texts:
         tr = t["textRect"]

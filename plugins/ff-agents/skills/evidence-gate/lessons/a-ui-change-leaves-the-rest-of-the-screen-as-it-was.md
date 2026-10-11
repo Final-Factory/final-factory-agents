@@ -266,4 +266,4 @@ not have told either way.
 **How to apply.** [UI checklist](../checklists/ui.md), item 26. Tests: `unity-ui/tests/test_ui_layout.py`
 (`CoveredTextTest`: the label with its glyphs under the bar, clear of it, bar drawn below, translucent bar, no `textRect`,
 masked text). Limits: a text clipped by a mask is skipped (the census has no mask rect for glyphs), and text under a
-translucent element (alpha under 0.9) is not flagged.
+translucent element (alpha under 0.9) is not flagged. A border, frame or outline graphic (path leaf or sprite named frame, border, outline, highlight, glow or shadow) is skipped as hollow: the first real run, on a late-game Technology tab at 1280x800 (`JustPlay` save, `-ffSoloLoad`, 170 s wait: the world takes over a minute to load, and a tour that starts earlier shows the loading box), flagged the selected tile's `SelectionFrame` ring over its own cost text. That run found no covered text; the Excess Research label wrapped under the bar only with a short value, so the real case itself is covered by the `CoveredTextTest` fixture, not by a live census.
