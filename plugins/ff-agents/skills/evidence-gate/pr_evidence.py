@@ -184,7 +184,10 @@ def ui_problems(section: str, brief: str | None = None) -> tuple[list[str], list
         problems.append(f"'Clips' is a slideshow ('{SLIDESHOW.search(clips[1]).group(0)}'): record each screen at 30 fps "
                         f"or more, idle and while hovering and selecting, so flicker can show (DeckTour `record`)")
     problems += layout_problems(section)
+    window, window_notes = window_overlap_problems(section, brief)
+    problems += window
     moved, notes = moved_problems(section, brief)
+    notes = window_notes + notes
     problems += moved + pinned_problems(section)
     flick = field(section, "Flicker")
     if not re.search(r"flicker", (clips[1] if clips else "") + (flick[1] if flick else ""), re.IGNORECASE):
@@ -410,6 +413,54 @@ def pinned_problems(section: str) -> list[str]:
     if missing:
         problems.append(f"'Pinned:' does not cover {', '.join(missing)}: census every standard screen and layout")
     return problems
+
+
+WINDOW_INTENDED = re.compile(r"\bintended\s*\(([^)]+)\)\s*:\s*[\"“](.{8,}?)[\"”]", re.IGNORECASE)
+
+
+def window_overlap_problems(section: str, brief: str | None = None) -> tuple[list[str], list[str]]:
+    """Window overlaps measured by the tool, not by eye (w981: on the Deck's classic layout the Station strip stood 11 px
+    over the Player Inventory, `ui_layout.py overlaps` said 0 because it counted only always-on HUD blocks, and the w978
+    worker measured the rects by hand). The `Window overlaps:` line is `ui_layout.py check`'s: every open window (the Player
+    Inventory, a Cargo Hold, Station Core or Grid panel, the Station strip, a slide-out) against the other windows and the
+    HUD, each pair allowed only by a quoted entry of hud-clusters.json `windowOverlaps`. A new or kept one fails; one that
+    was there before and neither window moved is a note. The way out for an overlap the requester asked for is an
+    `intended (who): "their words"` on the line, the words found word for word in the brief, or (for good) an allow-list
+    entry in a harness PR."""
+    line = field(section, "Window overlaps")
+    if not line:
+        return (["UI change with no 'Window overlaps:' line: run ui_layout.py check (ff-agents 1.26.25 or later) on the "
+                 "before and after censuses with the windows in reach open (a Cargo Hold or Command Core selected, the "
+                 "Player Inventory up) at 1280x800 classic, and paste its line: windows against the HUD and each other, "
+                 "measured by the tool, not by eye (checklists/ui.md, item 11; w981)"], [])
+    text, problems, notes = line[1], [], []
+    counts = {}
+    for name in ("new", "kept", "standing"):
+        found = re.search(rf"(\d+)\s+{name}\b", text)
+        if not found:
+            return (["'Window overlaps:' does not say how many window overlaps are new, kept and standing: paste "
+                     "ui_layout.py check's line"], [])
+        counts[name] = int(found.group(1))
+    bad = counts["new"] + counts["kept"]
+    if bad:
+        what = f"{counts['new']} new and {counts['kept']} kept"
+        intended = WINDOW_INTENDED.search(text)
+        if not intended:
+            problems.append(f"'Window overlaps:' has {what} overlap(s) of an open window with the HUD or another window: "
+                            f"fix them (the windows keep clear of each other), or quote the requester asking for it, "
+                            f"intended (who): \"their words\"; the tool lists them as NEW / KEPT with both elements and "
+                            f"the overlap rect (w981: the Station strip 11 px over the Player Inventory)")
+        elif brief is None:
+            problems.append("'Window overlaps:' is marked intended but there is no brief to check the quote against: run "
+                            "with --brief <the brief from read_work>, or put the words in a 'Brief (who): \"...\"' line")
+        elif not in_brief(intended.group(2), brief):
+            problems.append(f"'Window overlaps:' intended quote is not in the brief's quotations word for word: "
+                            f"\"{intended.group(2)[:80]}\"")
+    if counts["standing"]:
+        notes.append(f"{counts['standing']} window overlap(s) stand in the census before and after, between windows this "
+                     f"change did not move: not this change's to fix, but say so in the report's first lines "
+                     f"(ui_layout.py check prints them as STANDING; Ben: \"UI should be clean and flowy\")")
+    return problems, notes
 
 
 def layout_problems(section: str) -> list[str]:

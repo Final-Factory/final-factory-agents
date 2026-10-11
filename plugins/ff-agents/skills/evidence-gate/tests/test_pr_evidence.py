@@ -184,6 +184,7 @@ Full content: every tab's grid, list and tree whole or scrolling; fill 78-96 % p
 Style: BlueprintPanelChild (touched) vs InvAndCraft/InventoryPanel: delta E 2.1 (on screen), alpha 1.00 vs 1.00, same art
 Shots: proofs/shots.md, one line per still against Ben's words
 Overlaps: 4 block pairs before, 4 after, 0 new, 0 kept between blocks the change moved (ui_layout.py, whole screen, block depth 2)
+Window overlaps: 0 not allowed after, 0 before, 0 new, 0 kept between windows the change moved, 0 standing; 1 allow-listed with the requester's words (hud-clusters.json windowOverlaps) (ui_layout.py, whole screen, open windows against the HUD and each other)
 Alignment: max drift 0 px over the clusters (bottom-right HUD, top-left HUD); tolerance 2 px
 Moved: 0 element move(s) over 4 px at 1920x1080 undocked, 1280x800 undocked, 1280x800 docked (ui_layout.py moves, the same save and screens before and after)
 Pinned: 3 pin(s) in 3 census(es) (1920x1080 undocked, 1280x800 undocked, 1280x800 docked): 0 broken, 0 not shown (ui_layout.py pins, hud-pins.json: Station Info, building hover card, Player Inventory)
@@ -337,6 +338,53 @@ class LayoutTest(unittest.TestCase):
         self.assertTrue(pe.comment_refused(["a real problem", stale]))
         self.assertFalse(pe.comment_refused(["no 'Overlaps:' line"]))
         self.assertFalse(pe.comment_refused([]))
+
+
+class WindowOverlapTest(unittest.TestCase):
+    """w981: a window drawn over another window or the HUD is measured by ui_layout.py, not by eye. On the Deck's classic
+    layout the Station strip stood 11 px over the Player Inventory (#1444, w961); `ui_layout.py overlaps` said 0 because it
+    counted only always-on HUD blocks, and the w978 worker had to measure the rects by hand from the census."""
+
+    ui_body = LayoutTest.ui_body
+    reasons = LayoutTest.reasons
+
+    LINE = ("0 not allowed after, 0 before, {new} new, {kept} kept between windows the change moved, {standing} standing; "
+            "1 allow-listed with the requester's words (hud-clusters.json windowOverlaps) (ui_layout.py, whole screen)")
+    BRIEF = 'Ben: "put the station panel controls above station info and it should be over the player inventory"'
+
+    def line(self, new=0, kept=0, standing=0, extra=""):
+        return self.LINE.format(new=new, kept=kept, standing=standing) + extra
+
+    def body(self, **kw):
+        body = self.ui_body()
+        return re.sub(r"^Window overlaps:.*$", "Window overlaps: " + self.line(**kw), body, flags=re.MULTILINE)
+
+    def test_a_ui_change_needs_the_window_overlaps_line(self):
+        body = re.sub(r"^Window overlaps:.*\n", "", self.ui_body(), flags=re.MULTILINE)
+        self.assertIn("no 'Window overlaps:' line", self.reasons(body))
+        self.assertEqual(self.reasons(self.body()), "")
+
+    def test_the_line_must_say_new_kept_and_standing(self):
+        body = re.sub(r"^Window overlaps:.*$", "Window overlaps: 0 not allowed after", self.ui_body(), flags=re.MULTILINE)
+        self.assertIn("does not say how many window overlaps are new, kept and standing", self.reasons(body))
+
+    def test_the_strip_over_the_inventory_fails_new_or_kept(self):
+        # 1444's case: the strip is new over the inventory; 1447's: the inventory moved and the overlap was kept
+        self.assertIn("'Window overlaps:' has 1 new and 0 kept", self.reasons(self.body(new=1)))
+        self.assertIn("'Window overlaps:' has 0 new and 1 kept", self.reasons(self.body(kept=1)))
+
+    def test_intended_passes_only_with_words_found_in_the_brief(self):
+        quote = ' intended (Ben): "put the station panel controls above station info and it should be over the player inventory"'
+        body = self.body(new=1, extra=quote)
+        self.assertEqual("\n".join(pe.check(body, None, self.BRIEF)[0]), "")
+        self.assertIn("no brief to check the quote against", self.reasons(body))
+        self.assertIn("not in the brief's quotations word for word",
+                      "\n".join(pe.check(body, None, 'Ben: "move the inventory to the left"')[0]))
+
+    def test_a_standing_overlap_is_a_note_not_a_failure(self):
+        problems, notes = pe.check(self.body(standing=2))
+        self.assertEqual(problems, [])
+        self.assertTrue(any("2 window overlap(s) stand" in n for n in notes), notes)
 
 
 class MovedTest(unittest.TestCase):
