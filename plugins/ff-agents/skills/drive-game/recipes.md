@@ -83,6 +83,10 @@ parent `ButtonPanel`), then pump ~300 steps and re-probe. Enumerate saves on dis
 var dir = Serialization.SaveGameManager.SaveGamePath;
 var files = System.IO.Directory.GetFiles(dir, "*.zip"); // filename minus .zip = the name shown in the UI
 ```
+`SaveGamePath` is `<persistentDataPath>/UserData/saves/` (`GameDataPaths.Saves`, `SaveGameManager.cs:294`; Windows
+`%USERPROFILE%\AppData\LocalLow\Never Games\finalfactory\UserData\saves\`). The older `<persistentDataPath>/saves/`
+still holds copies from before the move, but the game no longer reads it: a save copied there loads as "not found"
+(w1065, lothdesktop, 2026-10-12).
 Headless alternative without UI (what `Assets/Editor/DevLoadSave.cs` does):
 `Serialization.SaveGameManager.LoadGame(FFNetcode.Lobby.LobbyCreationParameters.SinglePlayerGame, "<saveName>", true)`.
 With the editor occluded the title-screen load flow needs PUMPED frames (the frame counter sits
