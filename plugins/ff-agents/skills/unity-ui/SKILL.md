@@ -100,6 +100,14 @@ census (`<shot>.json`: small, clipped, off-screen and overlapping text, covered 
 - **Every sub-view.** Per tab: select an item, hover one, open its preview or second page, scroll
   the list to the end (`at` + `press right_trigger`, `stick`). A tour that only presses R1 tests the
   tab strip.
+- **The pins census needs a building with storage selected (w1064).** `pr_evidence.py` has no way out of a `Pinned:` line that reads
+  "not shown", and `ui_layout.py pins` shows the Player Inventory only when it is up. With the Atomic Printer selected, `ffauto:ui.open|inventory`
+  failed ("toggle ran but the panel stayed closed"), the `I` key opened it in the docked layout only, and selecting a far Assembler selected
+  nothing: six tours (before and after, three sizes) went by before a **Cargo Hold selected, an Assembler hovered** gave `0 broken, 0 not
+  shown` at 1920x1080, 1280x800 and docked. Start from the game repo's `specs/w1064-craft-queue-grouping/make_station_tour.py`.
+- **A tour that ran `ffauto:console.run` has the dev console open over the bottom-left HUD (w1064).** A `record` clip then shows the console, not the
+  queue or panel. Take a `shot` first (it closes the console); the frames of a tour clip at 1920x1080 ran at about 75 fps, so check
+  `frames.txt` before calling a clip real-rate. `make_tour.py --clip` in the same folder does it.
 - **A tutorial step is reached by a save, not by a count of skips (w883).** `ffauto:console.run|completeXObjectives 1` once
   per step advances at the heartbeat, not per call: 34 calls landed on the assembler step in one run and on "Open the map"
   in the next, and `completeXObjectives 33` in one call only completes the first. Skip once with a save after each call
