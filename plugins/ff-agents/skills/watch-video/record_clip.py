@@ -270,8 +270,23 @@ def start_windows(pid, raw, seconds, fps, monitor):
         grab += ",hwdownload,format=bgra"
         enc = ["-c:v", "libx264", "-preset", "ultrafast", "-crf", "16"]
     print(f"  window {w}x{h} at ({x},{y}), monitor {idx}")
-    return subprocess.Popen(["ffmpeg", "-v", "error", "-y", "-init_hw_device", "d3d11va", "-filter_complex", grab,
-                             "-t", f"{seconds:.2f}", *enc, "-g", str(fps), raw])
+    if os.environ.get("FF_CLIP_GRAB") != "gdigrab":
+        proc = subprocess.Popen(["ffmpeg", "-v", "error", "-y", "-init_hw_device", "d3d11va", "-filter_complex", grab,
+                                 "-t", f"{seconds:.2f}", *enc, "-g", str(fps), raw])
+        # ddagrab can deliver no frame at all (Desktop Duplication stalled; w1086: an empty raw file for 20 minutes
+        # while the recorder waited): the container header is written with the first frame, so an empty file after
+        # a few seconds means it is stuck.
+        for _ in range(16):
+            time.sleep(0.5)
+            if proc.poll() is not None or (os.path.exists(raw) and os.path.getsize(raw) > 0):
+                return proc
+        proc.kill()
+        proc.wait()
+        print("  ddagrab delivered no frame in 8 s: falling back to gdigrab (set FF_CLIP_GRAB=gdigrab to start there)")
+    return subprocess.Popen(["ffmpeg", "-v", "error", "-y", "-f", "gdigrab", "-framerate", str(fps), "-draw_mouse", "0",
+                             "-offset_x", str(x), "-offset_y", str(y), "-video_size", f"{w}x{h}", "-i", "desktop",
+                             "-t", f"{seconds:.2f}", "-c:v", "libx264", "-preset", "ultrafast", "-crf", "16",
+                             "-g", str(fps), raw])
 
 
 # ------------------------------------------------------------------------------------ main

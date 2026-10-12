@@ -40,4 +40,16 @@ frame it was drawn (the probe's `S` lines, `ImpactOutlineCheck`).
 - Prove the metric can fail: run it on the "before" arm (a launch flag that restores the old
   behaviour) and show it reading badly there.
 
+**Moving things, and the clips themselves (w1086, 2026-10-12).** Measure a change to how something moves on things that
+MOVE: a backed-up belt parks its items, parked entities are drawn at their simulation position (the interpolation
+render skips them, w950), so a before and after of a full belt are the same picture. Film the first seconds after the
+line is built, or give it a sink that takes the flow (an unpowered Cargo Hold refuses items). Before taking a number
+from a clip, look at its first still (a recorder grabs a screen region, so another window on top is recorded:
+w1086's first clips were WinDirStat, `raise_window` passed HWND_TOPMOST as a 32-bit int) and read its `ffprobe` size
+(the old nightly player re-applies a stored window size on some launches: 1280x800 before, 1920x1080 after).
+w1086, belt items drawn on a quarter circle 2.07 u inside the L-shaped curve piece's middle: lothsahn, "Tell the w1086
+worker to do it rendered and not guess"; the tubes' centre line, fitted from the frame, was the reference, with
+`scripts/feel/run_w1086_belt_corners.py` and `analyze_w1086_corners.py` as the pattern. A stop that wipes the temp
+folder loses clips: `publish_review` them as soon as they exist.
+
 The checklist line: [visual changes](../checklists/visual.md), item 0c.
