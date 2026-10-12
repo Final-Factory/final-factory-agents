@@ -72,3 +72,16 @@
    `ui.hide|true` does not reach it. The camera follows the player: put the ship between the subjects
    (`player.setposition`), and switch `camera.zoom` mid-capture when `frames.csv` spans the time you want
    (each switch is a jump cut that `watch_video` flags as JUMPS/SNAP: expected).
+13. **Below 60 fps, keep every frame at its own time, and check the count** (w1136, BEAST, 2026-10-12). Item 12's async
+   encode (331ed49cc) is NOT on develop (only on `w1065-inserter-art`): a develop player still encodes the JPGs on the
+   main thread, which held it to about 39 fps at 1920x1080 and 51 fps at 1280x800 (measured, `frames.csv` medians 22-25
+   ms). A plain `-r 60` sequence of those frames plays 1.5x fast, so use the frames' own times: a concat list with
+   per-frame `duration` lines and `-fps_mode passthrough -enc_time_base 1/10000 -video_track_timescale 10000`. With
+   `-fps_mode vfr` and the default time base the MP4 kept 337 of 560 frames: the encoder's 1/25 s base dropped every
+   frame closer than 40 ms to the last, silently. Compare the MP4's `ffprobe -count_frames` `nb_read_frames` with the
+   captured count every time, and pass the same three flags to any later cut (a crop, a side-by-side) or it falls back
+   to 25 fps. Two more: `-ffFeelFramesAt -100000+<s>` captures from launch (the key clock is -1 until the local
+   player exists), so a new-game clip can start on the title screen before the start click and end `<s>` seconds after
+   the world is ready; and `time.perf_counter_ns()` taken when a polled (10 ms) player log first shows `status
+   starting-new-game` or `Game setup complete` lands on the same clock as `frames.csv` `t_ns`. Scripts:
+   the w1136 worker's `w1136_intro_frames.py` and `assemble.py` (PR #1566's description).
