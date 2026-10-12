@@ -176,6 +176,24 @@ built player on a shared machine. On beast (2026-10-11) another sandbox's `final
 click point (`WindowFromPoint` named the other pid), so both clicks landed in another worker's game. `PrintWindow`
 captures an occluded window fine, so a still of it is safe; input is not.
 
+### Key chords, relaunch ports and state reads in a built player (w1122)
+
+- **`input.action` chords do not reach legacy-keyboard guards.** It presses the action's binding on a virtual Input
+  System keyboard (`ExecuteInputAction` in `LocalMultiplayerAutomationCommandRunner.cs`). A guard that reads the real
+  keyboard (`InputHelper.IsAnyModifierKeyHeld` -> `RealKeyHeld = Input.GetKey`, plus Steam keys) never sees its Ctrl or
+  Alt. So `input.action|Cut` (Ctrl+X) while riding also fires Toggle Ride Vehicle (plain X, guarded at
+  `VehicleRideAction.cs:32`) and the player gets out, which a real Ctrl+X does not do (w1122, lothdesktop, 0.50.0.99).
+  When a plain-key action shares the chord's key, enter the tool with `player.mode|copy|cut|deconstruct` (the panel's
+  path) and say which path you drove.
+- **Relaunch a killed automation host on a new port.** Its `-ffAutomationPort` can stay bound for minutes: the next
+  player on that port stops at the title menu (`/v1/hello` says `state menu`) with "Unable to start localhost host on
+  port N" in its log.
+- **State reads:** `ui.modal` returns `controllerState` (`Default`, `Copy`, `Cut`, `Deconstruct`, `BlueprintPlacement`,
+  `VehicleRideState`, `AddMoveCommandState`...); read it before pressing Escape, since an Escape that opens the Esc
+  menu strands the session (above). `perf.sample|<seconds>` writes `[PerfProbe] PerfSummary` and `PerfSystems` lines
+  (per-system main-thread ms) to the player log. Saves load by name from `<persistentDataPath>/UserData/saves/`
+  (drive-game `recipes.md`), not the older `saves/` folder beside it.
+
 ### Testing the DEMO build (w1012)
 
 The release lane's demo edition is the main build with one flag flipped: `Editor.ReleaseBuild.Build -ffEdition demo` ->
