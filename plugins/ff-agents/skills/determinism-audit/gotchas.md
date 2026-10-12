@@ -491,7 +491,7 @@ w1115, 2026-10-12, nightly regression check of the Deck perf PRs (#1449, #1458, 
   UPS. On a loaded BEAST a `-ffFeelFps 60` peer reached 23 fps and a 20 fps host 12.7 fps at 11.7 UPS; report the
   measured numbers.
 - **Port 7777 is usually taken on a shared PC.** Another sandbox's audit holds it and the driver refuses to start.
-  `FF_AUDIT_PORT=<free port>` sets the driver's default for every wrapper that passes no `--port` (PR #1556). For
+  `FF_PAIR_PORT=<free port>` sets the driver's default for every wrapper that passes no `--port` (w1121, PR #1548). For
   `ffnightly.py`, copy `scripts/nightly/lab.win.json` into `$TMPDIR` with its own `port`, `workRoot` under `$TMPDIR`,
   `jobs: 1` and `runIn: sandbox`, and pass it as `--lab`. A sandbox has two player slots (`slotK-0`, `slotK-1`): run
   pairs one after another, and a three-peer scenario does not fit.
