@@ -174,7 +174,10 @@ One file each under `lessons/`: the rule, why (the incident, dated), how to appl
   live on its branch AND the patch notes posted as Max in #dev-patch-notes (`post_as_max`, any
   machine); a failed post stays an open step in the report, with FFBox's reason.
 - [Keep rm out of long commands](lessons/keep-rm-out-of-long-commands.md): a deletion chained
-  into a long command waits on a permission prompt nobody sees.
+  into a long command waits on a permission prompt nobody sees; in bypass mode only an `rm` of
+  `$VAR/*` or `$VAR/{a,b}` (or a critical path) asks (measured, w1097). A new folder per run,
+  multi-step logic in a script file in `$TMPDIR`, the game's settings and saves through
+  `scripts/game_data.py`.
 - [Text for the person to paste is plain](lessons/paste-text-is-plain.md): no code block, no
   formatting, their voice.
 - [Say what an id is, every time](lessons/say-what-an-id-is.md): w293, #972, a sha or a sandbox

@@ -101,6 +101,16 @@ loaded the same save twice, in about two minutes of the editor's own frames (pol
 count; do not Step). A Bug Bot `BugReport_*.zip` is a save: copy it into `SaveGamePath` as
 `ffa-<session>-<name>.zip` and load it by that name.
 
+**Back up and restore the game's settings and saves around a test** (w1097, 2026-10-12): the game repo's
+`python scripts/game_data.py`, not a `cp` retry loop into LocalLow in a long Bash command (w1079's waited for a person).
+`snapshot --name <leg> [--save <file.zip>]` copies `UserData/settings/settings.json`, `LocalSettings/settings.json` and the
+named saves (`GameDataPaths.Saves` = `UserData/saves/` since the game's UserData layout of 2026-10-11) into
+`$TMPDIR/game-data/<leg>/`; `restore --name <leg>` puts them back, retrying while the game holds a file;
+`run --name <leg> -- bash "$TMPDIR/leg.sh" 1920` does both around the command and keeps what it left in `after/`, read with
+`get PanelLayout --name <leg> --after`; `put <settings.json>` installs a prepared start state. It writes nothing else in
+the game's folder and deletes nothing there. Settings file format: `{"version":1,"values":{"<key>":{"t":..,"v":..}}}`
+(`Documentation/User-Data-Folder.md`). Put the leg itself in a script file in `$TMPDIR` and run it: a script run never asks.
+
 ⚠️ The `NewGame` save is a **modded** save and the editor disables mods, so it loads with missing
 items/tech — pick a non-modded save for clean loads.
 
