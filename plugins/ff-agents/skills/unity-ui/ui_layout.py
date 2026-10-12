@@ -497,15 +497,19 @@ def moved_units(before: dict, after: dict, spec: dict | None, depth: int = 2, to
 
 def window_diff(before: dict, after: dict, spec: dict | None, depth: int = 2, tolerance: float = 2.0) -> dict:
     """The not-allowed window overlaps of `after` split into new (not in `before`), kept (in both, between windows the
-    change moved: theirs to fix) and standing (in both, neither moved: noted, not this change's)."""
+    change moved, the overlap itself changed: theirs to fix) and standing (in both, neither moved or the overlap rect is
+    the same within `tolerance`: noted, not this change's). A row added inside a full-screen window moves its inner parts
+    but leaves its overlaps with the HUD pixel for pixel; those were called kept (w1058, game PR #1512: the Technology
+    screen's five overlaps with the HUD, identical rects before and after, failed pr_evidence.py)."""
     bad_after = [v for v in window_overlaps(after, spec, depth) if v["status"] == "not allowed"]
-    bad_before = {(v["a"], v["b"]) for v in window_overlaps(before, spec, depth) if v["status"] == "not allowed"}
+    bad_before = {(v["a"], v["b"]): v for v in window_overlaps(before, spec, depth) if v["status"] == "not allowed"}
     moved = moved_units(before, after, spec, depth, tolerance)
     new, kept, standing = [], [], []
     for v in bad_after:
-        if (v["a"], v["b"]) not in bad_before:
+        was = bad_before.get((v["a"], v["b"]))
+        if was is None:
             new.append(v)
-        elif v["a"] in moved or v["b"] in moved:
+        elif (v["a"] in moved or v["b"] in moved) and                 max(abs(a - b) for a, b in zip(was["rect"], v["rect"])) > tolerance:
             kept.append(v)
         else:
             standing.append(v)

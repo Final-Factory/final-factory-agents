@@ -666,6 +666,16 @@ class WindowCheckTest(unittest.TestCase):
         self.assertIn("0 new, 0 kept between windows the change moved, 1 standing", the_line(out, "Window overlaps"))
         self.assertIn("  STANDING: ", out)
 
+    def test_parts_moved_inside_a_window_leave_an_unchanged_overlap_standing(self):
+        # w1058, game PR #1512: one row added inside the full-screen Technology screen moved its inner parts; its
+        # overlaps with the HUD were the same rects before and after, and were called kept.
+        others = [(STRIP, [193, 713, 482, 791]), (STATION_INFO, [489, 639, 773, 725])]
+        before = screen((INVENTORY, self.INVENTORY_BOX), ("MiniInventory/Content/Row", [40, 500, 200, 520]), *others)
+        after = screen((INVENTORY, self.INVENTORY_BOX), ("MiniInventory/Content/Row", [40, 540, 200, 560]), *others)
+        code, out = Cmd.run(before, after)
+        self.assertEqual(code, 0, out)
+        self.assertIn("0 new, 0 kept between windows the change moved, 1 standing", the_line(out, "Window overlaps"))
+
     def test_overlaps_command_reports_every_window_overlap_and_fails_on_one(self):
         import contextlib
         import io

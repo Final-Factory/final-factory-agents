@@ -68,6 +68,16 @@ Recording notes:
   by a script must be raised with `SetWindowPos` argtypes set (a 32-bit HWND_TOPMOST does nothing on 64-bit Windows),
   and the old nightly player may ignore `-screen-width`: `ffprobe` every clip's size before comparing two. It must run in the logged-in desktop
   session: over ssh, launch it with `schtasks /create ... /it` then `schtasks /run`.
+- **Windows, a desktop shared with other agents (w1058, lothdesktop)**: record the window, not the screen:
+  `ffmpeg -init_hw_device d3d11va -filter_complex "gfxcapture=hwnd=<hwnd>:max_framerate=60:capture_cursor=0,hwdownload,format=bgra,fps=60"`
+  (Windows Graphics Capture, ffmpeg 8+) records the player's own client area whatever covers it. Other sandboxes'
+  players opened over ours on both monitors and pinned themselves on top, so `ddagrab` clips showed their game, not
+  ours; and pinning yours on top covers theirs. Both `ddagrab` and `gfxcapture` deliver no frame while the monitor is
+  asleep (GDI still does, which hides the cause): wake it with one zero-distance `SendInput` mouse move, then hold
+  `SetThreadExecutionState(ES_CONTINUOUS|ES_SYSTEM_REQUIRED|ES_DISPLAY_REQUIRED)` for the recording
+  (`ES_DISPLAY_REQUIRED` alone does not switch a sleeping display back on). The game repo's
+  `scripts/narration/record_story_cinematic.py` and `specs/w884-one-tutorial/oswin.wake_display()` do both. Stop a
+  window capture before its window closes: one closed under it never wrote the mp4 index.
 - **Editor Game view crop** (macOS, docked Game view): `execute_code` → `var gv =
   Resources.FindObjectsOfTypeAll(typeof(Editor).Assembly.GetType("UnityEditor.GameView"))[0] as
   EditorWindow; var m = EditorGUIUtility.GetMainWindowPosition(); var k =
