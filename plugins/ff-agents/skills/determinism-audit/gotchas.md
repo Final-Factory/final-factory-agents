@@ -32,6 +32,7 @@ load-bearing for future runs even where the original defect is fixed.
 - [Fixture determinism can be CPU-load-dependent even with no cross-peer comparison — unverified](#fixture-load-dependence) (055 R35)
 - [Host-frame profiling: a probe, not a determinism gate](#perf-probe) (055 flag lane 3)
 - [A big save: the full capture keeps the client out; the runtime detector and a capped host](#big-save-pair) (w780)
+- [Old against new in one pair: a PR's A/B switches on one peer](#ab-switch-one-peer) (w1115)
 
 ## Full-window rule: never diagnose from a partial window {#full-window-rule}
 
@@ -467,3 +468,30 @@ w780, 2026-10-09, °Life°'s Build 91 save (177,779 entities, 577 haulers), m5, 
 - Both peers outlive their dwell with the audit off (the publish step fails: `The determinism audit is disabled`);
   stop them yourself at the end of the window.
 
+## Old against new in one pair: a PR's A/B switches on one peer {#ab-switch-one-peer}
+
+w1115, 2026-10-12, nightly regression check of the Deck perf PRs (#1449, #1458, #1491), BEAST, built Windows players.
+
+- **One paired run compares the old code path with the new one.** Perf PRs leave A/B switches that each process
+  reads from its own command line (`Environment.GetCommandLineArgs`): `-ffLegacyKnnSort`, `-ffLegacySerialSettle`,
+  `-ffLegacySerialRailSeed`, `-ffLegacyRailProvisioningSync`, `-ffLegacyDeathSync`, `-ffLegacyCometSync`,
+  `-ffLegacyProjectileBirthSync`, `-ffLegacyVacuum`, `-ffLegacyLtWToggle`, `-ffLegacyInterpolationOverwrite`
+  (grep `"-ffLegacy` for the current list). Put them on ONE peer (`--host-extra` on
+  `run_build_multiplayer_audit.sh`, or `ffnightly.py run --peer-arg host=<flag>`) and the full fingerprint comparison
+  is an equivalence check of the two paths: w1115's host on every switch at 19.9 fps against a client on the new paths
+  matched on 1833 heartbeats. Check which surfaces moved (distinct values per field) before calling it a pass: on the
+  enemy economy fixture `power` and `grids` never changed, so the settlement switch needed the battery scenario.
+- **A nightly scenario without the audit has no per-heartbeat fingerprints.** Scenarios whose `peerArgs` do not set
+  `-ffAutomationDeterminismAudit true` (most; `MP-W998-aggro-splash-join` does) leave the runtime detector as the only
+  verdict, and `compare_determinism_reports.sh` answers `No fingerprint lines found`. Add
+  `--peer-arg host=-ffAutomationDeterminismAudit --peer-arg host=true --peer-arg a=-ffAutomationDeterminismAudit
+  --peer-arg a=true`; the players' own logs (`<out>/<scenario>-try1/host.log`, `a.log`) then compare directly.
+- **Measure the slow peer, do not assume it.** `-ffFeelProbe` writes `feel_probe_<pid>.csv` in the game's data root
+  (header line has the full command line; `t0` in ns, `hb` the heartbeat): frames over the steady window give fps and
+  UPS. On a loaded BEAST a `-ffFeelFps 60` peer reached 23 fps and a 20 fps host 12.7 fps at 11.7 UPS; report the
+  measured numbers.
+- **Port 7777 is usually taken on a shared PC.** Another sandbox's audit holds it and the driver refuses to start.
+  `FF_PAIR_PORT=<free port>` sets the driver's default for every wrapper that passes no `--port` (w1121, PR #1548). For
+  `ffnightly.py`, copy `scripts/nightly/lab.win.json` into `$TMPDIR` with its own `port`, `workRoot` under `$TMPDIR`,
+  `jobs: 1` and `runIn: sandbox`, and pass it as `--lab`. A sandbox has two player slots (`slotK-0`, `slotK-1`): run
+  pairs one after another, and a three-peer scenario does not fit.
