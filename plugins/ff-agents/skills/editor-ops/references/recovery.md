@@ -240,6 +240,20 @@ refuses any command line that combines `taskkill` with the words `Unity` or `Pow
 a built player's PID in one call (PowerShell tool, `Get-CimInstance Win32_Process` filtered on
 your `-ffAutomationLabel`) and `taskkill /PID <n> /F` in another.
 
+### "Scripts have compiler errors." with no `error CS` line: a stale `Library`, not the code
+
+A batchmode build or prepare step that ends `Scripts have compiler errors.` is a code error only
+when its `-logFile` holds an `error CS` line. Grep for it before blaming a commit. With none, look
+for a Bee or ILPP exception that names a path outside `-projectPath`: the checkout was moved or
+copied to another root, and `Library/Bee/*.dag*` still holds absolute paths to the old one.
+Measured 2026-10-12 (w1114, the nightly lab's w1113): the nightly build of develop 3596c18db
+failed in 80 s. Its prepare.log had 0 `error CS` lines and
+`DirectoryNotFoundException: ... "D:/work/ffw/nightly/FinalFactory/Library/Bee/artifacts/1900b0aEDbg.dag/FFCore.dll.mvfrm"`
+(backslashes in the log) while the project was `V:/ffw/nightly/FinalFactory`, and the `.dag` files dated from the last
+run at the old root. CI's editor compile was green on pull requests containing that commit.
+Recovery: delete that checkout's `Library/Bee` (the editor stopped, its slot free) and build
+again; nothing in the code changes.
+
 ### An ffsb sandbox shared by two sessions: `switch_branch` refuses, and a commit without switching
 
 `mcp__sandbox__switch_branch` refuses while another session is mid-turn in the same sandbox, even
