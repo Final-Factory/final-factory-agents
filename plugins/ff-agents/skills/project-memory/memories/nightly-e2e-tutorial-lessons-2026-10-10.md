@@ -39,6 +39,7 @@ assembler's one primary slot blocks the next recipe's input.
 
 **Harness traps.** `build_player.sh` restores every tracked file the tree shows as changed when it ends, yours included: it undid two
 edits to `ffnightly.py` and `coverage.json` made while a build ran (it now keeps `restored.patch`). Two agents' ffnightly runs on one
-PC share lab port 7890+attempt: copy `lab.win.json` with another port and set `FF_NIGHTLY_ROOT` to your temp folder (no lab.lock).
+PC share lab port 7890+attempt: superseded (w1046 followed this line and ran beside another worker's run): the lab lock is the
+machine's on purpose; retry `ffnightly.py run` every 30 s and never point `FF_NIGHTLY_ROOT` elsewhere (the `playtest` skill, "the lab is locked").
 `poke.py up` plus a small shim that wraps its peers as a runner `run` object replays a step recipe against live players and leaves them
 up after a failure.
