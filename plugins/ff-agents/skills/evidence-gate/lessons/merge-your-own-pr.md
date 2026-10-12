@@ -65,6 +65,17 @@ or forgotten, so the person has to ask.
   so let its exit code decide and pin the head:
   `sha=$(gh pr view N --json headRefOid -q .headRefOid) && gh pr checks N && gh pr merge N --merge --match-head-commit "$sha"`.
   A wake-up that says CI is green is a reason to look, not the verdict.
+- **When the token cannot read checks** (`gh pr checks` and the check-runs API answer "Resource not accessible by
+  personal access token", w905 2026-10-12 on Lothsahn's vault token), gate on the workflow runs of the PR's head
+  instead: every `gh run list --branch <head branch> --json headSha,status,conclusion` entry whose `headSha` is the head
+  must be `completed`/`success`, then `gh pr merge N --merge --match-head-commit "$head"`. Use `gh`'s own `--jq`: the
+  sandboxes have no `jq` binary, and a loop that pipes to `jq` never ends.
+- **A merge of main into your branch is committed only without conflict markers.** w905 chained a resolver script, a
+  `git add` and a `git commit`; the script was missing, the chain went on with `;` and committed `<<<<<<<` lines into
+  CHANGELOG.md (caught before the push). Run `git diff --cached --check` before `git commit` (it exits non-zero on
+  leftover markers), and chain the steps with `&&`.
+- **`blocked_on` cancels your pending `wake_me`, whichever request it was for.** w905's CI wait cancelled w864's check-in
+  for a night's run; set the check-in again when the wait clears, and say so in the report.
 - **Post the evidence verdict from the newest ff-agents.** `pr_evidence.py --comment` now refuses to
   post when its own copy is older than the released one (that FAIL is about the copy; it was posted on
   a PR twice and deleted by hand); update the plugin first.
