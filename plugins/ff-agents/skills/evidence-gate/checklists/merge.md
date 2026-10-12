@@ -9,6 +9,11 @@ your report which it is and when it will merge
 ([merge your own pull request](../lessons/merge-your-own-pr.md)). This list is what "verified"
 means, and `pr_evidence.py` checks the part a script can check.
 
+**Read the PR's base and the trunk rule again just before you merge** (w1065, 2026-10-12): a base can change after
+you open the PR. When w1137 retired `develop`, GitHub moved every open PR based on it to `master`, and the branch's own
+CLAUDE.md still said develop. `gh pr view <n> --json baseRefName`, and the rule from `git show origin/master:CLAUDE.md`,
+not from your branch's copy. A base you did not pick is a question to stop on, not a detail.
+
 ## What goes in the pull request
 
 ```markdown
