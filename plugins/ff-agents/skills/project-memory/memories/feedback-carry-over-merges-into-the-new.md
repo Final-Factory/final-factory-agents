@@ -1,7 +1,9 @@
 ---
-name: carry-over-merges-into-the-new
+name: feedback-carry-over-merges-into-the-new
 description: "When a person asks for an old thing's duties to carry over into its replacement, merge what was lost into the new thing's own structure and words. Never paste the old text back, re-point at the old, or keep a history of the old inside the new; list each item merged and where it now sits, and what you left out and why."
 date: 2026-10-12
+metadata:
+  type: feedback
 ---
 
 # Carrying over means merging into the new, not restoring the old
