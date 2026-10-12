@@ -262,6 +262,8 @@ One file each under `lessons/`: the rule, why (the incident, dated), how to appl
   measured agent time from a named comparable run, never in human days or weeks (w545: the Steam
   Deck report's "1–2 weeks" and "weeks to months"; Ben: "stop giving human time estimates").
 
+- [Carrying over means merging into the new](lessons/carry-over-merges-into-the-new.md): a replacement
+  absorbs the old one's lost duties in its own structure and words; no copied text, no pointers to the old (w905).
 - [A wait on a person is declared, not polled](lessons/a-person-wait-is-declared-not-polled.md): when only a
   person can move you on, call `waiting_on_person` and end the turn naming who and what; a `wake_me` check-in
   shows the request Working (w665: Working for 10 h while it waited for Ben to reboot the m3). First check a
