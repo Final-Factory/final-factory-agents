@@ -236,6 +236,16 @@ def ffmpeg_has(encoder):
     return f" {encoder} " in out
 
 
+def nvenc_works():
+    """Listed is not usable: ffmpeg lists h264_nvenc on every build, and on a PC without an NVIDIA GPU (lothdesktop,
+    Intel Arc) it dies with 'Cannot load nvcuda.dll' after the recording, leaving an empty raw file (w1055)."""
+    if not ffmpeg_has("h264_nvenc"):
+        return False
+    probe = subprocess.run(["ffmpeg", "-v", "error", "-f", "lavfi", "-i", "nullsrc=s=256x256", "-frames:v", "1",
+                            "-c:v", "h264_nvenc", "-f", "null", "-"], capture_output=True)
+    return probe.returncode == 0
+
+
 def start_windows(pid, raw, seconds, fps, monitor):
     x, y, w, h = win_client_rect(pid)
     mons = win_monitors()
@@ -246,7 +256,7 @@ def start_windows(pid, raw, seconds, fps, monitor):
     w, h = w & ~1, h & ~1
     grab = (f"ddagrab=output_idx={idx}:framerate={fps}:draw_mouse=0:"
             f"offset_x={x - left}:offset_y={y - top}:video_size={w}x{h}")
-    if ffmpeg_has("h264_nvenc"):
+    if nvenc_works():
         enc = ["-c:v", "h264_nvenc", "-preset", "p5", "-rc", "vbr", "-cq", "16", "-b:v", "0"]
     else:
         grab += ",hwdownload,format=bgra"

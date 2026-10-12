@@ -63,7 +63,7 @@ Recording notes:
   when it is covered, but delivers ~58 fps with gaps, so ~25% of frames are repeats. Judge judder on
   Windows.
 - **Windows**: `ddagrab` records the window's client area off the monitor, so keep it on top and
-  unobstructed (toasts and overlapping windows are recorded). It must run in the logged-in desktop
+  unobstructed (toasts and overlapping windows are recorded). A built player started by `poke.py`/the nightly is NOT on top: other windows (WinDirStat, Explorer) were recorded instead of the game (w1055). Put it topmost first (PowerShell: `SetWindowPos(hwnd, HWND_TOPMOST=-1, ...)` on `(Get-Process -Id <pid>).MainWindowHandle`) and look at one frame before the real take. On a PC without an NVIDIA GPU the encoder falls back to libx264 by itself (`nvenc_works`). It must run in the logged-in desktop
   session: over ssh, launch it with `schtasks /create ... /it` then `schtasks /run`.
 - **Editor Game view crop** (macOS, docked Game view): `execute_code` → `var gv =
   Resources.FindObjectsOfTypeAll(typeof(Editor).Assembly.GetType("UnityEditor.GameView"))[0] as
