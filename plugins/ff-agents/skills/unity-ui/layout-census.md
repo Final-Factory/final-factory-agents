@@ -204,6 +204,13 @@ python "<this skill's base directory>/ui_layout.py" pins a-1920.json a-1280.json
   and the middle half of its width); the hover card the same over the minimap (or bottom right); the Player Inventory's
   left edge at least 2 % of the width from the screen's edge. A pin whose element is not on screen is "not shown" and
   fails too: take the census with it up. A pin changes only when Ben asks, in a harness PR with his words.
+  **Docked, all three up at once: dock a Cargo Hold and move the pointer off every structure** (`ffauto:pointer.moveto`
+  to an empty tile), as `specs/w895-info-panels/make_tour.py` does: it has an inventory (the Player Inventory is up), and
+  its window and card are short. With nothing hovered, both panels describe the selection (`PanelSubject.Choose`). The
+  nightly `UI-w1052-deck-layout` docked stills never show all three (w1119, 2026-10-12, seven tries): docking a Mass Driver
+  or Atomic Printer hides the card under the dock window (`HoverCardFit.HideWhereCovered`, w895), Station Info and the card
+  always describe one subject, and the pointer on an unpowered structure lands on its low-power warning icon (a tooltip,
+  no card). The Cargo Hold census passed: 0 broken, 0 not shown.
 - Measured in the editor, a new game with the tutorial objectives and a station from w813's blueprint selected:
   between 4762a5bc3 and 102e46bed (#1282) `moves` prints 7 lines, Station Info first (x -312, y -736 px at 1920x1080;
   `tests/fixtures/w826-1282-*.json`). On develop 9798f308c (`tests/fixtures/w894-develop-*.json`) `pins` breaks Station
