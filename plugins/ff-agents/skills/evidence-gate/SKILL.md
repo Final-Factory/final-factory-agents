@@ -247,7 +247,7 @@ One file each under `lessons/`: the rule, why (the incident, dated), how to appl
   line in the PR, or the id as a request subject; a brief's ids claim nothing, and FFBox keeps the
   report open (w414 / #1064 left two Build 76 crash reports NEEDS-INFO).
 - [Workers do not clean up; the harness does](lessons/clean-up-after-yourself.md): leave builds, clones, logs and scratch in `$TMPDIR`
-  (the daemon sweeps it when your process ends, w913: "Random clean up commands take a lot of approvals"); no rm, no
+  (the daemon sweeps it once no request waits for you, not on a pause or a wait for CI, w913 and w1097: "Random clean up commands take a lot of approvals"); no rm, no
   `player_slots.py prune`, no clean-up step before DONE, and no rm to reuse a folder: each test leg writes to a new
   `$TMPDIR/<leg>-<timestamp>` (w1097); only when the disk is short mid-task, an `rm -rf` under `$TMPDIR`; low disk is
   fixed by the harness or by filed clean-up work, never by asking a person (w596/w626).

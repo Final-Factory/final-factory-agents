@@ -1,6 +1,6 @@
 ---
 name: clean-up-after-yourself
-description: "Workers do NOT clean up (w913): leave everything you make in your own $TMPDIR (clones, logs, builds, tour output, scratch); the daemon removes it a few minutes after your process ends and your sandbox's build and capture output when it is released, so no rm, no player_slots prune and no clean-up step before DONE, and no rm mid-task to reuse a folder: each test leg writes to a new $TMPDIR/<leg>-<timestamp> (w1097). The one delete left to a worker (a huge build mid-task, disk short) is a plain rm -rf under $TMPDIR, which the session answers itself with no approval, and a save copy you put in the saves folder, named with your temp folder's name in front. Low disk on a machine is fixed by the harness or by filed clean-up work, never by asking a person. Every delete is strictly inside the machine's worker install folder (root.json's root, $FF_WORKER_ROOT); outside it a worker only measures and reports (w896). A -batchmode build you started is ended before DONE."
+description: "Workers do NOT clean up (w913): leave everything you make in your own $TMPDIR (clones, logs, builds, tour output, scratch); the daemon removes it a few minutes after no request waits for you any more (closed, or moved to another worker; a wait for CI or a person, a stop or a pause keeps it whole, since w1097) and your sandbox's build and capture output when it is released, so no rm, no player_slots prune and no clean-up step before DONE, and no rm mid-task to reuse a folder: each test leg writes to a new $TMPDIR/<leg>-<timestamp> (w1097). The one delete left to a worker (a huge build mid-task, disk short) is a plain rm -rf under $TMPDIR, which the session answers itself with no approval, and a save copy you put in the saves folder, named with your temp folder's name in front. Low disk on a machine is fixed by the harness or by filed clean-up work, never by asking a person. Every delete is strictly inside the machine's worker install folder (root.json's root, $FF_WORKER_ROOT); outside it a worker only measures and reports (w896). A -batchmode build you started is ended before DONE."
 date: 2026-10-10
 ---
 
@@ -17,14 +17,18 @@ $TMPDIR/f1280` inside its long test command; Claude Code's dangerous-rm check st
 evidence was re-run until both legs agreed"). lothsahn: "For w1097 why are workers deleting stuff in temp? Can't we have
 the cleanup process when a worker is done do this for them so the worker doesn't have to worry about it?" It does: write
 each leg to `$TMPDIR/<leg>-<timestamp>` (`OUT="$TMPDIR/f1920-$(date +%H%M%S)"`) and point the report at the newest; the old
-ones go with the folder. Measured that day: the sweep had emptied a stopped worker's folder (ffa-b3327616) of everything
-but its git clones within the hour, and the portal's clean-up log on lothdesktop lists whole finished sessions' folders
-removed (`ffa-dd8193f8` 5.3 GB, `ffa-476c7481` 3.8 GB).
+ones go with the folder. Measured that day: the portal's clean-up log on lothdesktop lists whole finished sessions'
+folders removed (`ffa-dd8193f8` 5.3 GB, `ffa-476c7481` 3.8 GB). It also showed the sweep was wrong about pauses: it
+emptied the folders of b3327616 (w1097) and dcf976fc (w1086, its "before" clips and a player build in progress) while they
+were only stopped for LothDesktop's V: grow. FF Factory now keeps a stopped worker's folder while a request still waits
+for it (FF Factory PR #350, `server/resumable.ts`); on a machine whose daemon predates that, a long wait can still lose
+scratch, so publish proofs as soon as you have them.
 
 What removes it, and when (FF Factory `docs/self-recovery.md`, "Workers do not clean up"):
 
-- your temp folder, a few minutes after your process ends (a request closed, a wait for CI or a person, a stop): everything
-  but git clones; the clones six hours after, unless one holds work nothing else has (that one is kept and listed);
+- your temp folder, a few minutes after no request waits for you any more (your requests closed, or moved to another
+  worker; a wait for CI or a person, a stop or a pause keeps it whole, w1097): everything but git clones; the clones six hours
+  after that, unless one holds work nothing else has (that one is kept and listed);
 - your sandbox's cached builds beyond the newest, benchmark builds and capture output, when the sandbox is released;
 - old nightly output, per-commit builds, stale scratch and runaway task output in the daily pass; player slots nobody holds
   and pushed agent worktrees when the disk is low.
