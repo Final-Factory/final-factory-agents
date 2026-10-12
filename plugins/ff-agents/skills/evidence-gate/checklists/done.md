@@ -30,6 +30,8 @@ holds, or the report says what is left instead of DONE.
 6. **Open waits.** Every `wNNN: still open:` line that names a person (a reboot, a login, a decision, an
    approval) was declared with `waiting_on_person` before the turn ended, and no `wake_me` stands in
    for it ([a wait on a person is declared, not polled](../lessons/a-person-wait-is-declared-not-polled.md)).
+   Every other wait left open is a harness timer (`wake_me`, `blocked_on`, `set_timer`), never a background shell
+   loop, `nohup`, `&` or Monitor left to finish it ([a wait is a harness timer](../lessons/a-person-wait-is-declared-not-polled.md#a-wait-on-a-machine-is-a-harness-timer-never-a-background-loop-w1106), w1106).
 7. **A Deck-facing fix names its real-Deck status** (w770). A change a Steam Deck player meets (glyphs, Steam Input,
    launch resolution, Deck UI, touch) is reported "verified on a real Deck" (who, Steam client and SteamOS versions,
    what they saw) or "not verified on a real Deck: <what stays open>", never a bare done on a tour
