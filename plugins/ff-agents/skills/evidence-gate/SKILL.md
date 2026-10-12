@@ -208,8 +208,6 @@ One file each under `lessons/`: the rule, why (the incident, dated), how to appl
   they draw, spinning and moving ones included, and a discriminating component is counted against
   every archetype that carries it (w586: w453 turned every `Placeable`'s box with its target, so
   comet fragments' boxes spun from 0.50.0.80).
-- [Measure moving presentation on moving things, and check the clips](lessons/measure-moving-presentation-on-moving-things-and-check-the-clips.md):
-  a fix to how something moving is drawn is filmed on moving, free-flowing things (parked ones are drawn at their simulation position), and each clip's first still and size are checked before anything is measured (w1086).
 - [Verify UI with full content, like a player](lessons/verify-ui-with-full-content-like-a-player.md):
   every screen and sub-view in a late-game save, whole, on the classic look, still in a real-rate
   clip, each still checked against the requester's words (w718: the w644 hub, #1251, passed a tour

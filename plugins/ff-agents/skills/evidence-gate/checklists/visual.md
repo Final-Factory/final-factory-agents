@@ -29,7 +29,7 @@ on stills and broke on Ben's Deck).
 0d. **Moving things are filmed moving, and the clips are checked first.** A change to how something moving is drawn is
    measured on free-flowing things: parked ones (a backed-up belt) are drawn at their simulation position and look the
    same before and after. Look at each clip's first still (is it the game?) and its `ffprobe` size before you
-   take a number from it ([lesson](../lessons/measure-moving-presentation-on-moving-things-and-check-the-clips.md); w1086).
+   take a number from it ([lesson](../lessons/measure-against-what-the-player-sees.md); w1086).
 1. **The intended look, in the person's words.** Quote what they said ("the other player appears
    outside of the ship behind it"). If they have not said, write it yourself and say it is yours.
    A review against your own description of a mistake will pass the mistake.
