@@ -63,7 +63,10 @@ Recording notes:
   when it is covered, but delivers ~58 fps with gaps, so ~25% of frames are repeats. Judge judder on
   Windows.
 - **Windows**: `ddagrab` records the window's client area off the monitor, so keep it on top and
-  unobstructed (toasts and overlapping windows are recorded). It must run in the logged-in desktop
+  unobstructed (toasts and overlapping windows are recorded). If `ddagrab` delivers no frame (Desktop Duplication stalled; w1086)
+  `record_clip` falls back to `gdigrab` after 8 s (`FF_CLIP_GRAB=gdigrab` starts there). A player launched
+  by a script must be raised with `SetWindowPos` argtypes set (a 32-bit HWND_TOPMOST does nothing on 64-bit Windows),
+  and the old nightly player may ignore `-screen-width`: `ffprobe` every clip's size before comparing two. It must run in the logged-in desktop
   session: over ssh, launch it with `schtasks /create ... /it` then `schtasks /run`.
 - **Editor Game view crop** (macOS, docked Game view): `execute_code` → `var gv =
   Resources.FindObjectsOfTypeAll(typeof(Editor).Assembly.GetType("UnityEditor.GameView"))[0] as
