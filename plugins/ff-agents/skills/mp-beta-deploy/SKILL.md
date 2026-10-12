@@ -1,6 +1,6 @@
 ---
 name: mp-beta-deploy
-description: LAST-RESORT FALLBACK — the manual M5 build and Steam upload of the multiplayer Mac + Windows players. The normal route is a develop release through ci-release. Use only when ffbox CI is actually down AND Ben has OK'd a manual build, or Ben explicitly asks for a special build that must not come from a develop release. A failed player on ffbox is not "ffbox down". Never start it on your own initiative.
+description: LAST-RESORT FALLBACK — the manual M5 build and Steam upload of the multiplayer Mac + Windows players. The normal route is a master version bump through ci-release. Use only when ffbox CI is actually down AND Ben has OK'd a manual build, or Ben explicitly asks for a special build that must not come from a master bump. A failed player on ffbox is not "ffbox down". Never start it on your own initiative.
 ---
 
 # Manual M5 build and Steam upload (last-resort fallback)
@@ -10,12 +10,12 @@ a build that other people download, so never start it on your own initiative; if
 needed, say so and wait for him to ask. Proven end to end on 2026-09-23 (0.50.0.21, develop `f594db63d`, BuildID 25471784); both players built on the M5 on 2026-09-25 (0.50.0.28, `75afa459d`, BuildID 25540837).
 
 **Last-resort fallback (Lothsahn, 2026-09-26; tightened 2026-09-28).** ffbox CI is THE way to
-build a release: a develop release through `ci-release` has multiplayer (`FF_ENABLE_MULTIPLAYER_BUILD`
-in develop's ProjectSettings, #613/#614), and ffbox sets its main app live on `development` as it
-uploads (a master release's on `pre-release`; ffbox `release_lane.SETLIVE`). Asked for "a new build
-for the testers", use `ci-release` on develop. Come here only when ffbox CI is actually down AND Ben
-OKs the manual build, or for a special build Ben explicitly asks for that must not be a develop
-release; say which in your report. A player that fails on ffbox is reported with the job log's
+build a release: a master bump through `ci-release` has multiplayer (`FF_ENABLE_MULTIPLAYER_BUILD`
+in ProjectSettings, #613/#614), and ffbox sets its main app live on `development` as it
+uploads (nothing sets `pre-release` or the default branch; ffbox `release_lane.SETLIVE`, w1137). Asked
+for "a new build for the testers", use `ci-release`. Come here only when ffbox CI is actually down AND Ben
+OKs the manual build, or for a special build Ben explicitly asks for that must not be a master
+bump; say which in your report. A player that fails on ffbox is reported with the job log's
 reason and fixed there (re-run or bump), never quietly replaced by an M5 build.
 
 **Both players are built on the M5, never on BEAST** (Ben, 2026-09-25, standing rule): the M5
@@ -26,8 +26,7 @@ ffsb sandbox, even when the M5 is busy: wait for it, or ask Ben. BEAST sandboxes
 test-leg and play-client players (`honest-coop-play`), which are never uploaded.
 
 **Branch and sign-in:** set the main app live on the branch ffbox would have set for the same
-release: **`development`** for a develop build, **`pre-release`** for a master build. Never the
-default branch: Ben or Lothsahn move that by hand. Uploads use steamcmd on the M5 with its own home
+release: **`development`**. Never `pre-release` or the default branch: Ben or Lothsahn move those by hand. Uploads use steamcmd on the M5 with its own home
 and a cached token (§6), so normally nobody signs in. When the token is rejected, steamcmd prompts
 and Ben signs in; agents need no Steam password and never ask for one. A branch's tester password
 (for `app_update 1383150 -beta <branch> -betapassword <pw>` to install or verify the build as a
@@ -42,12 +41,12 @@ match `BuildCommand2.BuildAndUploadAllInternal`. No other shortcuts ("no hacks" 
 
 ## 0. Preconditions
 - You are on the M5 (rule above).
-- develop is pushed and in sync (`git fetch && git status -sb`). The build source is a pushed commit.
+- The commit is on master (`git fetch && git status -sb`; master takes only pull requests). The build source is a pushed commit.
   Never commit Ben's unrelated local edits (the two `.mat` files, `ProjectSettings.asset`).
 - Pin the Unity MCP instance whose `path` is this repo (`ff-agents:editor-ops`). Editor not playing,
   not compiling; standalone define includes `FF_ENABLE_MULTIPLAYER_BUILD`, active target StandaloneOSX
   (else run `LocalMultiplayerVerificationBuild.PrepareMacMultiplayerBuild` in a batchmode pass first).
-- **Pulling develop drops the define, and a running editor keeps stale settings.** Resetting
+- **Pulling master drops the define, and a running editor keeps stale settings.** Resetting
   `ProjectSettings.asset` so the fast-forward can go through removes the local
   `FF_ENABLE_MULTIPLAYER_BUILD`. An editor that was open during the pull still holds the OLD
   ProjectSettings (e.g. a stale `bundleVersion`) in memory and can write them back. So after the pull:

@@ -39,7 +39,7 @@ and confirm 0 `No script asset for Platform`, 0 `missing RendererFeatures`, and 
 `StreamingAssets`. Found by rediscovering it: grep project-memory for the symptom before debugging a build.
 
 **A script that updates its own checkout must be parsed before it runs.** `nightly.sh` runs
-`git switch --detach origin/develop` on the clone it lives in. Bash reads a plain script as it executes, so it
+`git switch --detach origin/develop` (origin/master since w1137) on the clone it lives in. Bash reads a plain script as it executes, so it
 carried on at the old byte offset in the new file and ran spliced text: the old M3 lines (`df -g`, then
 `build_player.sh … mac`) started a Mac build on Windows. Wrap the body in `main() { … }`, then
 `main "$@"; exit $?`. Any unattended script that pulls or switches its own repo needs the same.

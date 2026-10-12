@@ -31,7 +31,7 @@ fields at hb 1198-1201; `RuntimeDesyncDetectorSystem` verdict `surfaces: asteroi
    (a deleted `.cs` needs the asset rescan -- [[git-deleted-cs-under-live-editor-cs2001]]), prove the
    editor is on the scratch tree by reflection (the fix's test type must be ABSENT), then schedule
    `BuildPipeline.BuildPlayer` from a one-shot `EditorApplication.update` callback with a marker file
-   (~5 min, universal binary). Afterwards `git checkout develop`, refresh `scope=all`, and prove the
+   (~5 min, universal binary). Afterwards `git checkout master`, refresh `scope=all`, and prove the
    type is PRESENT again before any other editor work.
 5. Leg: same shape as the GREEN leg (actions -> throttle LAST -> checkpoint after). Read
    `fpcompare.py` per epoch and the host's `desyncReports/*.txt` (`divergedSurfaces=`); the typed

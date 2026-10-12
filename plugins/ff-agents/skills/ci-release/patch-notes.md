@@ -73,8 +73,8 @@ branch moves before you trigger, re-read the new commits and add them.
 script's `--notes` commits it as `cicd/release-notes/<version>.md`.
 
 - **Line 1**: `steam_description: ` then a short change list for the partner site's Builds page.
-  Start with the build kind and number ("Dev build 76:" for develop, "Release build 76:" for
-  master), then the three or four biggest changes, comma-separated, plus a count of the rest. ffbox
+  Start with the build kind and number ("Dev build 76:" for a master bump, which is every build ffbox
+  makes now; "Release build 76:" only if Ben or Lothsahn say the build goes to players), then the three or four biggest changes, comma-separated, plus a count of the rest. ffbox
   prefixes the version and sha, so keep the line under about 170 characters. No quotes or
   backslashes (they are dropped).
 - **Line 2**: blank.
@@ -116,8 +116,9 @@ Restart Steam to pick up the update on the development branch.
 * A research tile you can't drop ahead of its prerequisite now says why for a few seconds
 ```
 
-The title and restart line name the branch the build landed on: `development` for a develop release,
-`pre-release` for a master release. Omit a section that would be empty.
+The title and restart line name the branch the build landed on: `development` for a master bump (the
+branch ffbox sets). If Ben or Lothsahn later move it to `pre-release` or the default branch, a post on
+that move names that branch. Omit a section that would be empty.
 
 Before triggering, check the post's length, dashes and version names:
 
@@ -132,11 +133,10 @@ grep -nE '[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+' Temp/release-notes-<version>.md   # no
 "Confirmed live" means `python scripts/release-status.py <version>` (game repo) says **LANDED**, and
 you name the branch it landed on. Never wait for a branch ffbox does not set:
 
-- **develop:** ffbox sets main live on **`development`** (ffbox `release_lane.SETLIVE`). Post once it
+- **A master bump:** ffbox sets main live on **`development`** (ffbox `release_lane.SETLIVE`). Post once it
   LANDED there; title and restart line name `development`.
-- **master:** ffbox sets main live on **`pre-release`**. Post once it LANDED there; title and restart
-  line name `pre-release`. The default branch is moved by hand by Ben or Lothsahn; a post that says
-  "default branch" waits for one of them to say it is there.
+- **`pre-release` and the default branch** are moved by hand by Ben or Lothsahn (nothing sets them). A post
+  that says "pre-release" or "default branch" waits for one of them to say it is there.
 - Unposted earlier releases (the script's verdict for them is LANDED or SUPERSEDED, with no post in
   #dev-patch-notes) are folded into the next post, newest first.
 

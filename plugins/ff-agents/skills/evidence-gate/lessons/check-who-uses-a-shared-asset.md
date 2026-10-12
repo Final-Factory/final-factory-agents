@@ -37,7 +37,7 @@ making changes to materials in unity without first checking what uses them".
 
 - Run the tool before the first edit, not at PR time: the answer decides the design.
 - The pull request carries a `## Used by` section: `python3 scripts/asset_usage.py --changed
-  origin/develop --markdown` prints it for every shader and material the branch changed. Give each
+  origin/master --markdown` prints it for every shader and material the branch changed. Give each
   user a basis: `TARGET:` (the change is meant for it; shown under Evidence), `MEASURED:` (a
   built-player before/after of that user; name the stills or clip) or `SOURCED:` (why it cannot look
   different, e.g. the graph is restored byte for byte). A guess is not a basis.

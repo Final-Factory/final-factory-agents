@@ -1,6 +1,6 @@
 ---
 name: a-release-lands-where-setlive-says
-description: "Where a release goes live is ffbox's SETLIVE table, read from ffbox's code or by scripts/release-status.py, never recalled: a develop release lands on development, a master release on pre-release. Never propose moving a Steam branch by hand while the script says BUILDING or WAITING."
+description: "Where a release goes live is ffbox's SETLIVE table, read from ffbox's code or by scripts/release-status.py, never recalled: since w1137 (2026-10-12) a version bump merged into master lands on development and nothing sets pre-release or the default branch. Never propose moving a Steam branch by hand while the script says BUILDING or WAITING."
 date: 2026-10-03
 ---
 
@@ -28,7 +28,13 @@ measured range.
   branch and BuildID; LATE (over 60 min after the Release jobs end) is a question for the ffbox owner;
   NOT UPLOADED means a test job failed.
 - Notes go out for the branch the build LANDED on (`ci-release`, `patch-notes.md`).
-- The default (public) branch, or any branch `SETLIVE` does not name, is Ben's or Lothsahn's
-  partner-site move. Say so once, as a choice; don't do it and don't keep asking.
+- Since w1137 (2026-10-12; ffbox 8fbb8d5) `SETLIVE = {("master", "main"): ("development",)}`: a version
+  bump merged into master is a dev build and lands on `development`, which tracks master's tip. `develop`
+  is in `RETIRED_BRANCHES` and a bump there builds nothing. Ben: "keep development steam branch at the
+  tip of master until we are ready to release a batch of updates into main"; Lothsahn: "have pre-release
+  and default be manual tags".
+- `pre-release`, the default (public) branch, or any branch `SETLIVE` does not name, is Ben's or
+  Lothsahn's partner-site move; nothing sets them, and an agent never sets, moves or plans one. Say so
+  once, as a choice; don't do it and don't keep asking.
 - If ffbox's `SETLIVE` changes, the script follows it by itself; fix the prose here and in
   `ci-release` in the same change.

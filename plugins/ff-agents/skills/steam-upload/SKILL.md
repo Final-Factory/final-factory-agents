@@ -14,14 +14,14 @@ An upload made here is still a release to the testers, so it ends with the patch
 `mp-beta-deploy` (§8: the `ci-release` skill's `patch-notes.md`, posted as Max in #dev-patch-notes), and
 its vdf `"desc"` comes from the same notes file (`mp-beta-deploy` §5).
 
-**Which build skill, in one line:** a new dev build is a develop `ci-release` (ffbox sets its main app
-live on `development`); a release is a master `ci-release` (main live on `pre-release`);
+**Which build skill, in one line:** a new dev build is a `ci-release`, a version bump merged into master (ffbox sets its main app
+live on `development`); a release to players is Ben or Lothsahn moving `pre-release` or the default branch by hand;
 `mp-beta-deploy` (this skill's upload mechanics) is only the fallback when ffbox is down or for a
 special build. Full decision table: project-memory `which-build-skill`.
 
 **Branch and sign-in:** the fallback sets the main app live on the branch ffbox would have set:
-`development` for a develop build, `pre-release` for a master build, never the default branch (Ben or
-Lothsahn move that by hand). Uploads use steamcmd on the M5 with its own home and a cached token
+`development`, never `pre-release` or the default branch (Ben or
+Lothsahn move those by hand). Uploads use steamcmd on the M5 with its own home and a cached token
 (below), so normally nobody signs in. When the token is rejected, steamcmd prompts and Ben signs in;
 agents need no Steam password and never ask for one. A branch's tester password (for
 `app_update 1383150 -beta <branch> -betapassword <pw>` to install or verify the build as a tester) is

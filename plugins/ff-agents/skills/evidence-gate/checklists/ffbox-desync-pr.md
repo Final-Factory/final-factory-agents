@@ -9,7 +9,7 @@ docs/intake.md, "FFBox desync PRs"); this page is the checklist and the commands
 
 ## 1. Classify before anything else
 
-Read the whole diff against `origin/develop`. Write the class and the reason (the files, and when the
+Read the whole diff against `origin/master`. Write the class and the reason (the files, and when the
 changed code runs) in your first report and in the PR description.
 
 | Class | What it changes | What it needs |
@@ -27,13 +27,13 @@ changed code runs) in your first report and in the PR description.
   heartbeat path (w817, PR #1327: FFBox changed `DescribeBotOwner` to print `bot=dead`, and
   `DescribeConstruction` feeds both the report's `DetailDumps` and
   `DeterminismFingerprintSystem.RecordDetail` every heartbeat in audit sessions). It is class 3
-  unless you split the change so that path prints exactly what develop prints (there: a report-only
+  unless you split the change so that path prints exactly what master prints (there: a report-only
   `DescribeConstructionForReport` overload, plus a test that the audit dump is unchanged).
   Second case, w1013 (PR #1472): FFBox reordered `FleetMoverInputDiagnostics.Describe` (shooters
   first, a character budget, new header fields, an extra projectile query) for the report's
   `FleetInputsDetail`. The Diagnostic audit profile appends the same `Describe` to `DescribeMovers`,
   which `DeterminismFingerprintSystem` records on audit heartbeats. The split: `Describe(em)` kept
-  develop's code path and `DescribeForReport(em, budget)` took the new behaviour. FFBox's PRs keep
+  master's code path and `DescribeForReport(em, budget)` took the new behaviour. FFBox's PRs keep
   doing this, so grep every changed `Describe*` and every function it calls for callers outside
   `DesyncReportCollector`.
 - A class 2 fix that also adds capture is class 3 for the capture part.
@@ -61,8 +61,8 @@ changed code runs) in your first report and in the PR description.
 
 ## 3. Class 2: proven red, then green
 
-- [ ] A test that fails on develop and passes with the fix: run both and quote the results.
-- [ ] A 2-peer built-player check that reproduces the fork: red on develop, green with the fix,
+- [ ] A test that fails on master and passes with the fix: run both and quote the results.
+- [ ] A 2-peer built-player check that reproduces the fork: red on master, green with the fix,
       with the heartbeat count (the `determinism-audit` skill; players start from the slot pool,
       never a new exe path).
 - [ ] The repo's rules: `fp` only, no wall-clock or frame dependence, the crown-jewel surfaces,
@@ -74,11 +74,11 @@ changed code runs) in your first report and in the PR description.
 
 **What to measure.** Tick time: the heartbeat's main-thread cost, mean and p95 (a capture that runs
 every Nth heartbeat, like the fingerprint sampler every 8, hides in the median). Frame time: the
-heartbeat-frame wall median. Develop against the branch.
+heartbeat-frame wall median. Master against the branch.
 
 **Method** (game repo; `Documentation/Performance-Simulation-Big-Saves-2026-10-03.md` for the setup):
 
-1. Two bench players, one from `origin/develop` and one from the branch, the same way on the same
+1. Two bench players, one from `origin/master` and one from the branch, the same way on the same
    machine: `Unity -batchmode -quit -projectPath . -buildTarget Win64 -executeMethod
    Editor.ShaderBenchBuild.BuildWindows -ffBenchBuildOutput "$PWD/builds/<name>/finalfactory.exe"`.
 2. The biggest save you can load (JustPlay where present: on BEAST it is
@@ -92,12 +92,12 @@ heartbeat-frame wall median. Develop against the branch.
    `scripts/bench/analyze_frames.py`. Start every player through the slot pool
    (`scripts/nightly/player_slots.py launch`; in a worker-root sandbox that is its own pair, slotK-0 and slotK-1,
    and `--peer 1` gives a same-build client its own folder).
-4. Interleave: develop, branch, develop, branch, at least 3 runs each. On a shared machine hold the
+4. Interleave: master, branch, master, branch, at least 3 runs each. On a shared machine hold the
    GPU bench lock for each run and note what else ran.
-5. `python scripts/bench/ab_summary.py <runs dir> <prefix> develop branch` (solo runs): mean ± standard
+5. `python scripts/bench/ab_summary.py <runs dir> <prefix> master branch` (solo runs): mean ± standard
    deviation per build of the heartbeat median, mean and p95 and the heartbeat-frame wall median.
 
-**Negligible** means each of tick mean, tick p95 and frame median rises by less than 1% of develop's
+**Negligible** means each of tick mean, tick p95 and frame median rises by less than 1% of master's
 value, and the runs resolve it: the difference of the means is clear of the run-to-run spread, or
 add runs until it is. A difference you cannot resolve is not negligible.
 

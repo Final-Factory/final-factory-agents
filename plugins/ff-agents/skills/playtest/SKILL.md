@@ -86,7 +86,7 @@ applies. What it has is `ffplaytest --chain 'ffauto:...;ffauto:...'`
 on its PATH: one host session, the chain run as `PreConnectCommand` (a solo host never reaches the
 post-join chain — it clamps `TargetClientCount` to 1 and then waits 900s for a peer), the journal
 reported as JSON, and the automation config deleted on every exit path. Two limits: the automation
-harness is on **develop, not master**, so a master-based run gets exit 3 and a message saying so;
+harness was on **develop, not master** until w1137 (2026-10-12, master the one trunk), so a run on a workspace cut from the old master gets exit 3 and a message saying so;
 and there is **no GPU** in that container (software GL under Xvfb), so functional repro is sound
 and frame timings are meaningless. `unity-editor` is also directly runnable there — the allow list
 is bare `Bash` — but prefer the wrapper, which owns the cleanup, the licence seat and the

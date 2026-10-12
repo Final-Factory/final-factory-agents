@@ -38,9 +38,9 @@ to prefer it over a hand-rolled `unity-editor` launch:
   (Unity's shared `TestResults.xml` under `$HOME/.config/unity3d/Never Games/finalfactory/` is
   still never read — that rule is unchanged.)
 
-**Two limits worth knowing before spending the minutes.** The automation harness lives on
-**develop, not master** — master is the default base for a run, and on a master-based workspace
-`ffplaytest` exits 3 and says so rather than booting an editor that ignores its config. And there
+**Two limits worth knowing before spending the minutes.** The automation harness lived on
+**develop, not master** until w1137 (2026-10-12, develop retired, master the one trunk): on a workspace
+cut from the old master `ffplaytest` exits 3 and says so rather than booting an editor that ignores its config. And there
 is **no GPU** in the container (`/dev/dri` absent), so it is llvmpipe software GL under Xvfb:
 functional repro is sound, frame timing is worthless, and the report carries
 `timing_valid: false` so a number cannot be quoted out of context. Do perf work on real hardware.

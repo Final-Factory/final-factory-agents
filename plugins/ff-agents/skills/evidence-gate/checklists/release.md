@@ -6,7 +6,7 @@ adds what a release rests on and the first check after it.
 
 ## Before the bump
 
-1. **What is in it.** `git log <previous release>..origin/<branch>`, as for the notes.
+1. **What is in it.** `git log <previous release>..origin/master`, as for the notes.
 2. **Every "fixed" in the notes rests on something.** For each player-visible fix, find its pull
    request's `## Evidence`. Looked at in a built player: write "Fixed". Otherwise say what changed
    ("Changed how riders are drawn on a moving station") or leave it out, and tell whoever asked
@@ -28,9 +28,9 @@ adds what a release rests on and the first check after it.
 ## After it is live: the first check, within an hour
 
 6. **It is the build you meant, on the branch ffbox actually sets.** `python scripts/release-status.py
-   <version>` (game repo) says LANDED, with the BuildID on `development` for a develop release or on
-   `pre-release` for a master release (ffbox `release_lane.SETLIVE`, read by the script). Any
-   other branch is moved by a person; never propose moving one while the script says BUILDING or
+   <version>` (game repo) says LANDED, with the BuildID on `development` (a master bump; ffbox
+   `release_lane.SETLIVE`, read by the script). `pre-release` and the default branch are set by nothing:
+   a person moves them; never propose moving one while the script says BUILDING or
    WAITING (lesson: [a release lands where SETLIVE says](../lessons/a-release-lands-where-setlive-says.md)).
 7. **Players are not worse off than on the previous build.** Read, by version and by platform
    (Windows, Mac): the crash and desync reports players' games uploaded for the new version

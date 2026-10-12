@@ -9,9 +9,10 @@ assume you already know whether the editor is occluded or free-running.
 
 > ⚠️ **`ffauto:` availability is branch-dependent.** Several recipes below use
 > `ffauto:` commands via `LocalMultiplayerAutomationCommandRunner.TryExecute` (the feature-020
-> harness), which lives on `develop`: neither `ffauto` nor `LocalMultiplayerAutomation` appears
-> anywhere under `Assets/` on `master`. Grep before relying on it; where it is missing, use the
-> `execute_code` equivalents.
+> harness). Before w1137 (2026-10-12, develop retired, master the one trunk) it lived on `develop` only:
+> neither `ffauto` nor `LocalMultiplayerAutomation` appeared anywhere under `Assets/` on the old
+> `master`, and a checkout or branch cut from that master still lacks it. Grep before relying on it;
+> where it is missing, use the `execute_code` equivalents.
 
 ## Driving the menus
 

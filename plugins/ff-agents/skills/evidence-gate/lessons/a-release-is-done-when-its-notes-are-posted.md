@@ -1,16 +1,16 @@
 ---
 name: a-release-is-done-when-its-notes-are-posted
-description: "A requested release is done only when release-status.py says LANDED on its branch (develop: development, master: pre-release) AND its patch notes are posted once, as Max, in #dev-patch-notes, with post_as_max (any machine; FFBox posts). A failed post is reported as an open step with FFBox's reason instead of finishing."
+description: "A requested release is done only when release-status.py says LANDED on development (a master bump; pre-release and the default branch are a person's move) AND its patch notes are posted once, as Max, in #dev-patch-notes, with post_as_max (any machine; FFBox posts). A failed post is reported as an open step with FFBox's reason instead of finishing."
 date: 2026-10-03
 ---
 
 # A release is done when its notes are posted
 
-**Rule.** Every requested release (a version bump on develop or master) ends with two checks, and is
+**Rule.** Every requested release (a version bump merged into master) ends with two checks, and is
 not reported done until both hold:
 
 1. it is live on its Steam branch: `python scripts/release-status.py <version>` says LANDED, on
-   `development` for develop or `pre-release` for master;
+   `development` (the one branch ffbox sets; since w1137 develop is retired);
 2. its patch notes (`cicd/release-notes/<version>.md`, player-facing, no internal ids) are posted
    once, as Max, in #dev-patch-notes, and the report carries the message link.
 

@@ -78,7 +78,7 @@ ffdiscord download <thread_id> <message_id> --dir <scratch>/ffbug-<thread_id>
 `<scratch>` is any writable temp dir — `$TMPDIR` on macOS/Linux, `%TEMP%` on Windows.
 
 Read the log for exceptions, and note the game version — a bug against an old version may
-already be fixed on `develop`. Check that with `git log`, and path-trace the claim.
+already be fixed on `master`. Check that with `git log`, and path-trace the claim.
 
 If more than ~5 new reports are waiting, handle the oldest 5 this pass and say so; the next
 pass picks up the rest. Never batch-skim a backlog into snap verdicts.
@@ -95,7 +95,7 @@ Assign exactly one verdict per report. When torn between two, take the more cons
 | **NEEDS-INFO** | Plausible but not actionable — no repro, no log, ambiguous description | §5 |
 | **NOT-A-BUG** | Working as designed, user error, or a feature request | §5 |
 | **DUPLICATE** | Same root cause as an open issue or an earlier thread | §5 |
-| **ALREADY-FIXED** | Reproduced against the reported version, fixed on `develop` since | §5 |
+| **ALREADY-FIXED** | Reproduced against the reported version, fixed on `master` since | §5 |
 
 Ground every verdict in source. Per `CLAUDE.md`, cite `file.cs:line` for every claim about
 what the code does — including "this isn't a bug because X". A verdict from memory or from a
@@ -115,10 +115,9 @@ the `discord-triager` agent for the investigation, then an implementing agent fo
 the Agent tool isn't available in this session, do the same work inline in a worktree
 (`EnterWorktree`), one bug at a time — never in the shared checkout. The agent runs the
 speckit flow, implements fix + regression test, verifies through the bridge, and opens a PR
-against the branch it based the work on — `master` for a small, low-risk fix to a bug in the
-released build, `develop` for anything else. Full step list and the close-the-loop message
-templates: `reference.md` §AUTOFIX flow. **Never merge the PR** on either base — a human
-decides what lands, and reaching `master` is always Ben's call.
+into `master`, the one trunk (develop is retired, w1137). Full step list and the close-the-loop message
+templates: `reference.md` §AUTOFIX flow. **Never merge the PR** — a human
+decides what lands.
 
 If the agent's verification fails, or it discovers the fix is larger than believed, it must
 STOP and hand back — the verdict silently becomes ESCALATE, and you file the issue in §4

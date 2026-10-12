@@ -1,6 +1,6 @@
 ---
 name: machine-global-state-multi-session
-description: "What is SHARED across all checkouts and concurrent Claude sessions on one machine — the LocalLow finalfactory folder (saves/, DeterminismAudit/, TestResults.xml), the per-user Editor.log, UDP port 7777, origin/develop, and RAM — and the safety rules for touching any of it"
+description: "What is SHARED across all checkouts and concurrent Claude sessions on one machine — the LocalLow finalfactory folder (saves/, DeterminismAudit/, TestResults.xml), the per-user Editor.log, UDP port 7777, origin/master, and RAM — and the safety rules for touching any of it"
 metadata:
   type: project
 ---
@@ -44,7 +44,7 @@ Everything below IS machine-global and must be treated as shared with live neigh
   - Genuine exhaustion (all of 7777–9999 taken) throws `Unable to start network host`.
   - Master (0.21.x) has none of this: its only host path is Unity Relay, so it binds no fixed port
     and cannot contend. This is develop-line harness infrastructure only.
-- **`origin/develop`** — fetch + rebase before every push, per CLAUDE.md's two-agent etiquette;
+- **`origin/master`** (develop before w1137) — fetch + merge before every push, per CLAUDE.md's two-agent etiquette;
   expect other lanes' commits to land underneath you mid-feature and re-run your suite after a
   rebase pulls them in.
 - **RAM** — editors run ~8–9 GB each and a full-save load loop can push one past 15 GB. Four

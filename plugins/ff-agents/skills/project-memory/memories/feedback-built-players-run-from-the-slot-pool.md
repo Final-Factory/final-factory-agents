@@ -58,7 +58,7 @@ eight slot paths once per machine (32 rules), so a slot never prompts.
   around it) raised a prompt: four on lothdesktop in 40 minutes. Code that constructs `ScenarioRun` or
   `lab.Peer` and launches must lease first (`player_slots.acquire_or_fallback`; a short-lived
   launcher whose players outlive it gives each its own lease with `player_slots.share(lease, pid)`).
-  A checkout from before #993 still has the old `poke.py`: rebase onto develop.
+  A checkout from before #993 still has the old `poke.py`: merge origin/master in.
 - **Finding what prompted** (Windows): `Get-WinEvent -LogName 'Microsoft-Windows-Windows Firewall
   With Advanced Security/Firewall'`. Event 2097 added by `svchost.exe` = a prompt appeared
   (`Application Path` names the exe); 2099 by `dllhost.exe` = someone answered it. Match that local

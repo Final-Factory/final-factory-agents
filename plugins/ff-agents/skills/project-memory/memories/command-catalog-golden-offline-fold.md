@@ -5,7 +5,7 @@ description: "CommandTiersTest's catalog-hash golden after a merge brought new f
 
 # The ffauto catalog golden, folded offline (2026-10-12, w1046)
 
-`CommandTiersTest.CatalogHash_IsStableAndMatchesTheGolden` pins `CommandCatalogHash.Compute()`. A merge where develop
+`CommandTiersTest.CatalogHash_IsStableAndMatchesTheGolden` pins `CommandCatalogHash.Compute()`. A merge where master
 and your branch both added commands leaves a conflict in the golden that neither side's value answers.
 
 **The fold** (`Behaviours/Multiplayer/AgentControl/CommandCatalogHash.cs`, `PeerCompatibilityToken.Fnv1a`): FNV-1a 64
@@ -24,7 +24,7 @@ def fold(names):
 ```
 
 1. `python scripts/generate-ffauto-reference.py` on the merged tree (its "total" is the name count).
-2. Fold the names minus yours: it must equal develop's golden (w1046: `0x9a9b09ccac2f737c`, reproduced). Only then
+2. Fold the names minus yours: it must equal master's golden (develop's then) (w1046: `0x9a9b09ccac2f737c`, reproduced). Only then
    trust the fold with yours (`0x098cfe147d342293`).
 3. Update both the `ulong` golden and the `ComputeHex()` string, with a comment naming the parents. CI's full suite is
    the check.

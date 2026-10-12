@@ -61,7 +61,7 @@ station". Write-ups: `specs/mp-station-riders/`.
   do not edit tracked files during a build. New untracked files survive.
 - It needs the editor stopped, a clean tracked tree and `HEAD` equal to the sha it is given.
 - From Python on BEAST, call `C:/Program Files/Git/bin/bash.exe`: plain `bash` resolves to WSL.
-- When develop moves under a simulation pull request that is already recorded, merge it, build that head and run
+- When master moves under a simulation pull request that is already recorded, merge it, build that head and run
   one paired audit and one recorded session again before merging (#916 changed the station grid's systems between
   the recording and the merge of #936).
 - A session interrupted by an app restart leaves its batch dead and its run folder half written: make every batch

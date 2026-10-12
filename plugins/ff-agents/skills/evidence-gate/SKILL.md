@@ -168,8 +168,8 @@ One file each under `lessons/`: the rule, why (the incident, dated), how to appl
 - [No merge before the review](lessons/no-merge-before-the-review.md): "pending" is not done.
 - [Merge your own pull request](lessons/merge-your-own-pr.md): verified and green means merge;
   hold only for exceptional risk or a timing reason, and say which and when. mechanics: check `git branch --show-current` after a wait, gate `gh pr merge` on a passing check (`gh pr checks N && gh pr merge N --match-head-commit <sha>`: exit 8 is pending; w864), post the verdict only from the newest ff-agents (w807).
-- [A release lands where SETLIVE says](lessons/a-release-lands-where-setlive-says.md): develop on
-  `development`, master on `pre-release`; run `release-status.py`, never recall it.
+- [A release lands where SETLIVE says](lessons/a-release-lands-where-setlive-says.md): a master bump
+  on `development`, nothing sets `pre-release` or the default; run `release-status.py`, never recall it.
 - [A release is done when its notes are posted](lessons/a-release-is-done-when-its-notes-are-posted.md):
   live on its branch AND the patch notes posted as Max in #dev-patch-notes (`post_as_max`, any
   machine); a failed post stays an open step in the report, with FFBox's reason.

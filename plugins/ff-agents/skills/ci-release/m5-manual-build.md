@@ -1,13 +1,15 @@
 # The m5 manual build: Windows + Mac main (and the demo when asked), main set live on development, by hand
 
-**When:** only while Ben has moved develop builds to his m5. Ben, 2026-10-10 (w930), verbatim:
+**When:** only while Ben has moved dev builds (a master bump) to his m5. Ben, 2026-10-10 (w930), verbatim:
 "for the next build, please just do the process on my m5 and just do the windows and mac builds (we
 dont need demo or linux builds yet) ffbox is having issues with build speed so we are going to
 manually use my m5 for builds for a couple days, remember this", and "also when you do a m5 build
 have all the workers stop and close out the open unity editors or game instance so we can use the
 full power of my m5 to do builds. remember this". It is the one exception to "releases only through
-FFBox's lane", and it covers **develop builds set live on `development` only**: never the default
-branch, never pre-release, no Linux. When Ben or Lothsahn says FFBox builds again,
+FFBox's lane", and it covers **dev builds (a master bump) set live on `development` only**: never the default
+branch, never pre-release, no Linux. (Wording updated for w1137, 2026-10-12: the rule said "develop builds" when develop
+was the dev branch; Ben's quote above is unchanged. w1137, filed by Ben on 2026-10-12, describes the first master
+bump after the cut-over as built through FFBox's lane.) When Ben or Lothsahn says FFBox builds again,
 go back to `SKILL.md` section 1.
 
 **The demo, when the request asks for it** (Build 99, w1006; Ben, 2026-10-11: "remember we need win/mac
@@ -34,10 +36,10 @@ First run: Build 97 (0.50.0.97, bump `ca8185dd6`, w930, 2026-10-11). Every numbe
   A `*` in the title: ask, do not quit it.
 - When the upload is done, say in a turn report that the other m5 workers can be resumed.
 
-## 2. Bump develop with `--skip-ci`, so FFBox builds nothing
+## 2. Bump master with `--skip-ci`, so FFBox builds nothing
 
 ```sh
-scripts/trigger-ci-release.sh develop --skip-ci --notes Temp/release-notes-<version>.md
+scripts/trigger-ci-release.sh master --skip-ci --notes Temp/release-notes-<version>.md
 ```
 
 The bump commit's message gets a `[skip ci]` line. GitHub then starts no `main.yml` run for that
@@ -52,7 +54,7 @@ makes FFBox **build** both editions for symbols, only skipping the upload (`rele
 
 **No release run means no test gate.** Dispatch the suite on the bump commit and report it beside
 the build (it never releases, `main.yml` header):
-`gh workflow run main.yml -R Final-Factory/FinalFactory --ref develop`. Ben's rule for these builds:
+`gh workflow run main.yml -R Final-Factory/FinalFactory --ref master`. Ben's rule for these builds:
 don't hold the upload for it, report any real failure.
 
 `release-status.py` cannot see a manual build (it reads the release run and FFBox's ledger). Verify
@@ -66,7 +68,7 @@ per-player entry point (ffbox `scripts/ffrelease-build.sh`): localization harves
 Addressables, the player with `BuildOptions.None`, Localization copied in, the Burst
 `*_DoNotShip` folder moved out to `symbols/`.
 
-In your sandbox, on the bump commit (`git merge --ff-only origin/develop`), editor stopped, one
+In your sandbox, on the bump commit (`git merge --ff-only origin/master`), editor stopped, one
 target per batchmode session (it never switches target itself), each under `unity-slot`:
 
 ```sh
@@ -111,7 +113,7 @@ python3 -I <ffbox clone>/scripts/ffrelease-check.py chk/win64 --version <version
 
 The harvest and the bundleVersion sync can leave tracked files changed in the sandbox (FFBox would
 open its `ffbox/release-<version>-regenerated` PR for them). Commit any that changed on a branch and
-open a PR into develop for them. On Build 97 they were the same seven files FFBox's release PRs carry
+open a PR into master for them. On Build 97 they were the same seven files FFBox's release PRs carry
 (`main.unity` and the Noto Sans JP/KR/SC atlases and character sets; #1377, #1387, #1421): PR #1441.
 The re-saved `main.unity` can rewrite a TMP `m_text` from `"a\nb"` into a single-quoted string folded over
 lines (same value): on Build 99 that failed `MapControlsPanelSceneTest`, which matched the quoted text;

@@ -260,22 +260,22 @@ again; nothing in the code changes.
 when that session never touches the worktree (its background agents keep it mid-turn after it
 says it stopped). Ask it first (`ListAgents`, then `SendMessage`): what it reads, writes and
 runs there. If the switch still refuses and the peer does not use the tree, a commit can go onto
-develop without moving `HEAD`:
+master without moving `HEAD`:
 
 ```sh
-git fetch origin && git merge origin/develop          # the checked-out branch is now develop + its own work
-git diff --stat HEAD origin/develop -- <your files>   # must be empty: their base equals develop
+git fetch origin && git merge origin/master           # the checked-out branch is now master + its own work
+git diff --stat HEAD origin/master -- <your files>    # must be empty: their base equals master
 export GIT_INDEX_FILE="$(git rev-parse --git-dir)/tmp.index"
-git read-tree origin/develop
+git read-tree origin/master
 git update-index --add <changed and new files>         # runs the same filters as git add (LFS, line endings)
 git update-index --force-remove <deleted files>
-commit=$(git commit-tree "$(git write-tree)" -p origin/develop -F message.txt)
+commit=$(git commit-tree "$(git write-tree)" -p origin/master -F message.txt)
 git update-ref refs/heads/<new-branch> "$commit"; unset GIT_INDEX_FILE
 git push origin <new-branch>
 ```
 
 Then put the working tree back (`git checkout -- <files>`, delete the new files). The runs were
-made on develop plus the checked-out branch plus the change, so say so in the PR; CI runs the
+made on master plus the checked-out branch plus the change, so say so in the PR; CI runs the
 suite on the branch as pushed.
 
 ### The branch-switch hook also refuses `git checkout <branch>` in a scratch clone

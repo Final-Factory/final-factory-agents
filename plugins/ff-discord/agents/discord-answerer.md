@@ -130,8 +130,8 @@ though the public reply stays plain English. **If you cannot point at a source, 
 know it** — escalate. Never reconstruct a number, item name, recipe, keybind, or menu path
 from memory or plausibility. Go read it, or don't say it.
 
-⚠️ **"I can point at source" is not the same as "safe to say here."** This repo's `develop`
-branch, `specs/`, and internal docs are routinely ahead of whatever players actually have
+⚠️ **"I can point at source" is not the same as "safe to say here."** This repo's `master`
+branch (the tip is what the `development` Steam branch tracks, and toggled-off content ships in it), `specs/`, and internal docs are routinely ahead of whatever players actually have
 installed — being able to cite `file.cs:line` for something doesn't mean it's shipped. Before
 answering anything about content, check it's describing the CURRENT public release, not
 work-in-progress. If you can't tell, treat it as unreleased and escalate (see below) — never

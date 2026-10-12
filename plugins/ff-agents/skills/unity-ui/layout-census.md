@@ -223,12 +223,12 @@ python "<this skill's base directory>/ui_layout.py" pins a-1920.json a-1280.json
 "no way out": a PR that only changes the title screen's New Game panel and a tutorial chain was held for it. Do not look for
 an `n/a`; take it once, early, with the tour that already exists: `specs/w895-info-panels/make_tour.py` (a new game with a Cargo
 Hold, a Defense Platform, an Assembler and a Command Core put down, each selected, the census written beside each still).
-Build the develop tip and your branch with `scripts/nightly/build_player.sh` (`git branch -f x origin/develop` then
+Build the master tip and your branch with `scripts/nightly/build_player.sh` (`git branch -f x origin/master` then
 `switch_branch`, the build is cached by commit; about 15 minutes each on lothdesktop-class hardware), run the tour three times per
 build (`--layout classic` at 1920x1080 scale 0.9 and 1280x800 scale 0.8, `--layout docked` at 1280x800), then `ui_layout.py moves`,
 `pins` and `check` on the `cargo-hold.layout.json` pairs. Measured (w884, 2026-10-10): 0 moves, 3 pins kept, 0 new overlaps, 0 px
 drift, 3 tour runs of about 100 s per build. The `Clips:` line must name a video file and say where the event is in seconds.
-Merge develop first: a landed PR (w921) changed the same panels while the builds ran, and the HUD pairs stayed valid because it
+Merge origin/master first: a landed PR (w921) changed the same panels while the builds ran, and the HUD pairs stayed valid because it
 touched no HUD.
 
 ## A HUD piece the requester asked to draw over an opened panel (w835)
@@ -257,7 +257,7 @@ new rows on an item's hover card) two development players take it without `execu
 `<shot>.layout.json` for every `shot` step:
 
 1. **The base build is a throwaway commit of the same tree.** `build_player.sh` wants HEAD at a clean 40-hex sha. Build your tip first,
-   then `git checkout origin/develop -- <the UI files you changed>` (scripts, the scene), commit it locally with a TEMP subject, build that,
+   then `git checkout origin/master -- <the UI files you changed>` (scripts, the scene), commit it locally with a TEMP subject, build that,
    then `git reset --hard <your pushed tip>` (the commit was never pushed). The base build then differs from yours by exactly the UI
    change, with no second checkout to import.
 2. **The same tour on both**, one after the other (the agent port is fixed), at `-ffDeckTourSize 1920x1080 -ffDeckTourUiScale 0.9` and

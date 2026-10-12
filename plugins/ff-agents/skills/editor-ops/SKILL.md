@@ -165,8 +165,8 @@ game, Unity Hub, or another checkout's editor. The full cross-machine evidence g
 [project memory](../project-memory/memories/cross-machine-built-player-gameplay-acceptance.md).
 
 Also relevant when a leg runs from a worktree: `EnterWorktree` branches from `origin/MASTER` in
-this repo, not `develop` (`git reset --hard origin/develop` first — see
-[project memory](../project-memory/memories/enterworktree-cuts-from-master-not-develop.md)), and
+this repo, which since w1137 (develop retired) is the right base (see
+[project memory](../project-memory/memories/enterworktree-cuts-from-master.md)), and
 a worktree has no `Library/`, so compile verification still happens in the MAIN editor after an
 ff-merge, not in the worktree.
 
@@ -249,7 +249,7 @@ Open it when the editor or bridge misbehaves:
 Run tests through the MCP bridge with the instance pinned: start a run with `run_tests` and
 poll `get_test_job` for results. **After a change, run the tests it touches, not the whole fast
 suite** (lothsahn, 2026-10-06, w546): `python scripts/test_select.py` in the game repo reads the
-branch's diff against `origin/develop` (plus uncommitted files) and prints the `run_tests`
+branch's diff against `origin/master` (plus uncommitted files) and prints the `run_tests`
 arguments: `assembly_names ["FFEditorTests"]` and `test_names`, the exact test class names.
 CI runs the whole suite on every pull request, so anything the selection leaves out is caught
 there. For #1137's change the selection ran in 75 s against 376 s for the full fast suite
@@ -563,8 +563,8 @@ and read a `dialog`'s text with `get value of every static text of window 1`.
 
 Release builds and Steam uploads are NOT made from an editor: they go through CI on the ffbox build
 server, via the `ci-release` skill. Never make a release with `Build > Build and Upload All` or
-steamcmd. ffbox sets a develop release live on `development` and a master release on
-`pre-release`; `mp-beta-deploy` is the last-resort M5 fallback, only when ffbox CI is actually down and only with
+steamcmd. ffbox sets a master version bump live on `development` (since w1137, 2026-10-12);
+nothing sets `pre-release` or the default branch; `mp-beta-deploy` is the last-resort M5 fallback, only when ffbox CI is actually down and only with
 Ben's OK.
 
 ## Capturing editor memory

@@ -1,13 +1,16 @@
 ---
 name: sandbox-branch-after-rebase-without-force
-description: After rebasing a sandbox branch onto develop, its remote copy can no longer fast-forward and force-push is forbidden; push a tree-equal merge made with git commit-tree to the branch ref instead. Also, git add <dir> in a shared sandbox sweeps in other agents' untracked files.
+description: After rebasing a sandbox branch onto master, its remote copy can no longer fast-forward and force-push is forbidden; push a tree-equal merge made with git commit-tree to the branch ref instead. Also, git add <dir> in a shared sandbox sweeps in other agents' untracked files.
 ---
 
 # Keep a sandbox branch pushable after a rebase, without force
 
-The sandbox rule is: rebase onto `origin/develop`, `git push origin HEAD:develop`, and also push
-your own branch. Once the branch was pushed before the rebase, the second push is rejected as
-non-fast-forward, and force-pushing is forbidden everywhere.
+The old sandbox rule (written for develop, 087, 2026-09-28) was: rebase onto `origin/develop`,
+`git push origin HEAD:develop`, and also push your own branch. Since w1137 (2026-10-12) master takes only
+pull requests, so there is no direct push of the rebased commits: rebase onto `origin/master` before the
+first push, push the branch, open the PR. Once the branch was pushed before a rebase, the next push is
+rejected as non-fast-forward, and force-pushing is forbidden everywhere (prefer `git merge origin/master`
+then, see [[no-force-push-means-merge-not-rebase-after-push]]).
 
 Keep the remote branch fast-forward with a merge whose tree is exactly your rebased HEAD, built
 without touching your local branch:
@@ -17,7 +20,7 @@ M=$(git commit-tree 'HEAD^{tree}' -p HEAD -p origin/<branch> -m "Keep <branch> f
 git diff --quiet HEAD "$M" && git push origin "$M:refs/heads/<branch>"
 ```
 
-Develop still gets the linear rebased commits from `git push origin HEAD:develop`. Every later branch
+The PR into master then carries the rebased commits (merge it `--merge`). Every later branch
 push needs a fresh merge the same way, because your local branch never contains `$M`. Used for every
 branch push after the rebases in 087 (2026-09-28).
 
