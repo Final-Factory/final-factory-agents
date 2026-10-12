@@ -40,6 +40,13 @@ description: Cut a release through CI on the ffbox build server — write the re
 > set live on `development`, verify on Steam. The notes (section 0.5, 3) and the first-hour check
 > (section 4) are unchanged. First run: Build 97, BuildID 25859327. A request may add the demo (Build 99,
 > w1006: built beside main, uploaded with nothing set live; `m5-manual-build.md`).
+> **Build 100 went back to FFBox, on Lothsahn's word for that build** (2026-10-12, w1107: "Do w1107 on
+> FFBox once the settings race condition is fixed"): a normal bump (no `--skip-ci`), `6cc31edee` at 15:14
+> UTC, tests 11832 run, 0 failed, LANDED on `development` as BuildID 25886178 at 15:46 UTC, 31 min.
+> Lothsahn's words lifted the m5 rule for Build 100 only: Ben's w930 rule still applies to the next build
+> unless Ben or Lothsahn says otherwise. When a brief says "FFBox's lane" but neither has said FFBox builds
+> again, don't bump: the brief may be a dispatcher's assumption. Ask the requester which route
+> (`waiting_on_person`), and recommend the m5 while the rule stands.
 >
 > History: the 0.50.0.36/.37/.39 Mac players failed with "Disk full" on the `ffghr-loth2400-*`
 > runners (2026-09-27). Lothsahn fixed it in ffbox (the nightly cache rebuild, FinalFactory #651, and
