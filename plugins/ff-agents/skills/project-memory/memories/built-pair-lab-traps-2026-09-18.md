@@ -57,8 +57,8 @@ no `GIT_TERMINAL_PROMPT=0`, `git fetch` HANGS INDEFINITELY with zero output — 
 stall that looks like a slow network, not an auth failure. Diagnose it by re-running with
 `export GIT_TERMINAL_PROMPT=0` so it fails fast and names the cause. Two gotchas in the workaround
 itself: (a) `git bundle create f.bundle <sha>..<sha>` refuses with "Refusing to create empty
-bundle" — a bundle needs a REF range, so use `<base>..develop`; (b) receive it with
-`git fetch /c/Users/rydin/ff-worker/f.bundle develop:refs/remotes/origin/develop` then
+bundle" — a bundle needs a REF range, so use `<base>..master` (`develop` before w1137); (b) receive it with
+`git fetch /c/Users/rydin/ff-worker/f.bundle master:refs/remotes/origin/master` then
 `git merge --ff-only`. `mk-leg.sh` already emits a `beast-sync-<TO>.sh` doing exactly this — use
 it rather than improvising. Worth fixing at the source (an SSH remote, or a credential store that
 persists) instead of re-bundling every session.

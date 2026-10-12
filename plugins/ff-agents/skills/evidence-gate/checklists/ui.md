@@ -53,7 +53,7 @@ anyone says done.
    unless the requester asked for it, quoted; an approved mock is not an approved skin (#1251 built
    the hub from the round-3 mocks; Ben: "you made the inventory panel hub thing dark blue, why did you
    change that? it should show the right colors"). "Before" is the classic screen with the same content,
-   not develop with nothing open.
+   not master with nothing open.
 7. **No flicker: a real-rate clip.** Each screen idle for 3 s or more, and while hovering,
    selecting and scrolling, recorded at 30 fps or more (the Deck tour's `record` step, or
    `record_clip`). `ui_check.py flicker` reports 0 regions. A 1 fps slideshow of the stills is not

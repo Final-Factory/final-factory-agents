@@ -26,7 +26,7 @@ build system compares content, and the file on disk already had the content it h
 
 **Tell.** A test of code you did not touch fails locally and passes in CI, and the failing code
 differs between the branch you came from and the one you are on
-(`git diff <old-branch> origin/develop -- <file>`). Compare the times:
+(`git diff <old-branch> origin/master -- <file>`). Compare the times:
 `ls -la --time-style=+%H:%M:%S Library/ScriptAssemblies/FFSystems.dll <the changed .cs>`.
 
 **Fix.** Force a real rebuild of that assembly: append a comment line to one of its files,

@@ -46,7 +46,7 @@ assuming a previous lane's success carries over.
 
 Before each lane, read the machine's branch, HEAD, working changes, existing job state and editor
 state. One writer/build/editor owner per checkout. Never sync C# into a checkout while another
-job owns its editor. Use an isolated checkout based explicitly on `origin/develop` for concurrent
+job owns its editor. Use an isolated checkout based explicitly on `origin/master` for concurrent
 code work. Do not reset or clean shared state to manufacture parity.
 
 Before a platform build, record the target machine's free bytes and the expected output, staging,

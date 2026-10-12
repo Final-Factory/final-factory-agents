@@ -14,7 +14,7 @@ with a basis for each, and a Deck-facing change says 'Real Deck: verified ...' o
     pr_evidence.py --repo OWNER/NAME --pr N --comment     the same, and post the verdict on it
     pr_evidence.py --body-file F [--files-file G]         the same, offline (a description and a file list)
     ... [--brief B]                                       also: every 'Moved:' quote is in the request's brief (w826)
-    pr_evidence.py --repo OWNER/NAME --audit --since 2026-10-01 [--base develop]
+    pr_evidence.py --repo OWNER/NAME --audit --since 2026-10-01 [--base master]
                                                           merged pull requests: the verdict now, and
                                                           whether a PASS was posted before the merge
 """
@@ -146,7 +146,7 @@ def used_by_problems(body: str, files: list[str] | None) -> list[str]:
     section = evidence_section(body or "", "Used by")
     if section is None:
         return [f"this PR changes {', '.join(changed[:3])}{' and more' if len(changed) > 3 else ''} with no '## Used by' "
-                f"section: run `python3 scripts/asset_usage.py --changed origin/develop --markdown` in the game repo, "
+                f"section: run `python3 scripts/asset_usage.py --changed origin/master --markdown` in the game repo, "
                 f"paste it, and give every user a basis. More users than the target: give the target its own "
                 f"shader or material instead (lessons/check-who-uses-a-shared-asset.md)"]
     tables, problems = usage_tables(section), []
@@ -729,7 +729,7 @@ def main(argv=None) -> int:
     ap.add_argument("--audit", action="store_true", help="list merged pull requests and their verdicts")
     ap.add_argument("--offline", action="store_true", help="skip the check that this copy is the released version")
     ap.add_argument("--since", help="--audit: merged on or after this date (YYYY-MM-DD)")
-    ap.add_argument("--base", default="develop", help="--audit: the base branch (default develop)")
+    ap.add_argument("--base", default="master", help="--audit: the base branch (default master)")
     ap.add_argument("--limit", type=int, default=100, help="--audit: at most this many pull requests")
     args = ap.parse_args(argv)
 

@@ -41,7 +41,7 @@ Ad-hoc work in the old checkout collides with it and is invisible to it.
 - **Switching a sandbox is the worker's first step:**
   1. `git status` must be clean. If not, STOP and ask Ben — never stash or discard earlier work.
   2. Push the old branch if it has unpushed commits.
-  3. `git fetch`, then `git switch <existing-branch>` or `git switch -c NNN-short-name origin/develop`.
+  3. `git fetch`, then `git switch <existing-branch>` or `git switch -c NNN-short-name origin/master`.
      A branch can be checked out in only one worktree at a time. Set no label: your title already says the task.
   4. Wait for the editor to finish reimport + compile before using it.
 - **When done with the sandbox** (work pushed, nothing left running), just end: with no live agent it is FREE again.
@@ -59,7 +59,7 @@ Ad-hoc work in the old checkout collides with it and is invisible to it.
 **How to apply:**
 - Tools: `mcp__ffsb__*` (load via ToolSearch `select:`). `list_sandboxes` first and reuse an idle
   pool sandbox (above). Creating one (only with Ben's OK): `create_sandbox(name,
-  base=origin/develop or the exact sha's branch, seed_library=true, start_unity=<only if an editor
+  base=origin/master or the exact sha's branch, seed_library=true, start_unity=<only if an editor
   is needed>)`. It returns at once;
   provisioning (checkout, then a ~60+ GB warm Library copy, several minutes) runs in the
   background — wait for `list_sandboxes` to show it ready before a batchmode build.
@@ -74,7 +74,7 @@ Ad-hoc work in the old checkout collides with it and is invisible to it.
   `unity(action=stop)` first.
 - **Proven recipe (074 leg r2, 2026-09-23; scripts in the 074 lab
   `E=/Users/benryding/nevergames/ff-audit-artifacts/074-20260921`):**
-  1. `create_sandbox(name, base=origin/develop, seed_library=true, start_unity=false)` —
+  1. `create_sandbox(name, base=origin/master, seed_library=true, start_unity=false)` —
      ~4 min to `ready` (checkout, then a ~60 GB Library copy).
   2. scp `$E/sandbox-build-r2.sh` (retarget its `PROJECT`/`OUT`) into `F:/ffsb/<name>/Builds/<leg>/`
      and start it detached: `ssh -n … '"C:\Program Files\Git\bin\bash.exe" -lc "cd … && (nohup bash

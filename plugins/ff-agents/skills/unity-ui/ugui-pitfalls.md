@@ -153,7 +153,7 @@ manual pages for these components are the source for the rules: "Auto Layout", "
   shrinks it below the 9 px rule. The census reports clipped text and capital height; a long
   localized string (German, Russian) is the usual trigger, so check one long-text locale.
 - **The Deck text floor is 16, and it comes back.** `UiScaler.MinLegibleFontSize` is 16 (Liberation
-  Sans; Khyay holds at 15); `TextLegibilityTest` fails any text under it. A merge of develop brings
+  Sans; Khyay holds at 15); `TextLegibilityTest` fails any text under it. A merge of master (develop before w1137) brings
   scene texts back under it (#1151, 79adbb3db, 0908270df): after every merge into a UI branch run
   `Tools/UI/Raise Text To The Deck Legibility Floor` (`TextLegibilityCensus.cs:172`) and the test.
   `ControllerGlyphSize.FloorFontSize` is `MinLegibleFontSize` (`ControllerGlyphSize.cs:39`), so

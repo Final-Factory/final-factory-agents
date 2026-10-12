@@ -30,7 +30,7 @@ Lothsahn: put the original message link in the PR so FFBox can report it.
 - Copy the link from the report itself (the request's source URL, the escalation brief's `Discord:`
   line), not a link to a reply or a later message.
 - Several reports, several lines, at most ten. A link quoted mid-sentence is not read.
-- Pushing straight to develop with no PR: put the line in the commit body.
+- A change that did not come through a pull request (master takes none directly): put the line in the commit body.
 - Never post the "fixed" notice yourself: FFBox does, once, from these lines.
 - `RESOLVED: already fixed by PR #N` with exactly one PR number in the line: FF Factory looks up that
   PR's merge and release and the escalated thread hears "Fixed in PR #N, coming in version X".

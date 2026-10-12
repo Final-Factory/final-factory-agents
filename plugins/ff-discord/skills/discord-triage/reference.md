@@ -59,7 +59,7 @@ Second, triage-specific zones:
     and `run_tests` through the bridge is the test channel, because one project cannot hold two
     editors. You can also reproduce a runtime bug
     with `ffplaytest --chain 'ffauto:...'` (one play-mode session, journal reported as JSON;
-    needs a develop-based workspace, and its frame timings mean nothing — no GPU in that
+    needs a workspace with the automation harness (master since w1137), and its frame timings mean nothing — no GPU in that
     container). Neither is a fence around Unity: the allow list is bare `Bash`, so a direct
     `unity-editor` launch is available when the wrappers do not cover the job — prefer them
     anyway, because they own the results path, the licence seat and the automation-config
@@ -85,7 +85,7 @@ Second, triage-specific zones:
 Give the agent the complete report text, the log excerpt, your root-cause analysis with
 `file.cs:line` citations, and the thread id. The agent must:
 
-1. Claim a spec number per `CLAUDE.md` (fetch `origin/develop` first; take the next number
+1. Claim a spec number per `CLAUDE.md` (fetch `origin/master` first; take the next number
    not present on origin and not reserved in the newest handoff commits).
 2. Run the speckit flow, kept proportionate to a bug fix:
    `/speckit-specify` → `/speckit-plan` → `/speckit-tasks` → `/speckit-implement`.
@@ -99,12 +99,11 @@ Give the agent the complete report text, the log excerpt, your root-cause analys
    - *ffbox batchmode*: run `ffverify` and read its JSON report. The container is fresh, so the
      compile is cold and a `PASSED` cannot be stale. The harness re-runs it after you exit
      regardless, and its result — not your claim — is what gates the PR.
-5. Commit, push the branch, open a PR against the branch you based the work on: `master` when
-   the bug is in the build players are running and the fix is small and low-risk, `develop` for
-   anything that can wait for the next version, is large, or wants soak time. An AUTOFIX reached
-   this point because a stranger's bug report said so, so when the call is not obvious take the
-   more conservative branch and say in your summary which you picked and why.
-6. **Never merge it.** Opening the PR is where your work ends, on either base — a human decides
+5. Commit, push the branch, open a PR into `master`, the one trunk (develop is retired, w1137).
+   Anything unfinished or risky goes in behind a feature toggle; an AUTOFIX reached this point
+   because a stranger's bug report said so, so keep the change small and say in your summary what
+   it touches and why.
+6. **Never merge it.** Opening the PR is where your work ends — a human decides
    what lands. Say in the thread and in your summary that the fix is up for review, never that
    it shipped.
 

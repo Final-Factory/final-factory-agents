@@ -27,8 +27,10 @@ or forgotten, so the person has to ask.
 - Verification first, unchanged: the evidence gate, the visual checklist, the tests, the audit.
   [No merge before the review](no-merge-before-the-review.md) still holds. This rule starts where
   that one ends.
-- Then merge. In the game repo that means `develop`; `master` stays Ben's call, and a release
-  still starts only when Ben or Lothsahn asks.
+- Then merge. In the game repo that means into `master`, the one trunk (w1137, 2026-10-12: develop is
+  retired; master takes only a pull request with green CI, no direct push, no force-push; `gh pr merge
+  <n> --merge`). A version bump merged into master is a dev build, so a release still starts only when
+  Ben or Lothsahn asks; nothing unfinished goes in without its feature toggle.
 - A hold needs one of two reasons, named in the report:
   - **exceptional risk**: a wrong merge would be costly and hard to undo (a save-layout change
     without its golden fixture, a crown-jewel determinism surface you could not audit on two
@@ -50,7 +52,7 @@ or forgotten, so the person has to ask.
 - **Check your branch first.** After any long wait (`wake_me`, a declared person wait, a background
   build) the sandbox's worktree may have been given to another worker. `git branch --show-current`
   must name your branch before the first git write; if it does not, `switch_branch` back (editor
-  stopped). w807 ran `git merge origin/develop` on `ffbox-f/w817-supply-bots-cache-drift` at 19:50
+  stopped). w807 ran `git merge origin/develop` (then the integration branch) on `ffbox-f/w817-supply-bots-cache-drift` at 19:50
   after slot2 had been moved there at 19:04, and reset it to its own tip (`fd7ae757d`, tree clean,
   nothing pushed) once `Assets/Scripts/UI/HotbarRadial/` was missing. The reflog shows the move.
   Say in the report that you touched the other branch and that it is back.

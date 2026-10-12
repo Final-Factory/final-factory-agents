@@ -47,7 +47,7 @@ Then **end your turn**. Do not work around it. Specifically, do NOT:
 - edit `~/.claude/plugins/marketplaces/final-factory-agents/` (Claude Code's managed clone —
   marketplace updates reset it, so edits there are silently lost)
 - edit any `.claude/skills/` or `.claude/agents/` directory in the game repo — there are none on
-  `develop` or `master`, and a legacy copy left on an older branch shadows the plugin locally
+  `master` (develop is retired, w1137), and a legacy copy left on an older branch shadows the plugin locally
   while reaching nobody else
 - make the requested change anywhere else, or hold it "for later"
 

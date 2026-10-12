@@ -1,26 +1,33 @@
 ---
 name: ci-release
-description: Cut a release through CI on the ffbox build server — write the release notes, bump the version (FFVersion.cs + bundleVersion) and push, follow CI through the Windows/Mac main+demo builds, tests and Steam uploads, then post the patch notes as Max in #dev-patch-notes. A requested release is done only when it is live on its Steam branch AND its notes are posted. ffbox sets a develop release's main app live on `development` and a master release's on `pre-release`, automatically; Ben or Lothsahn move the default branch by hand. `scripts/release-status.py` says where a release is. Use when Ben or Lothsahn asks for either in any words ("push a new dev build", "a build for the testers", "cut a release on master"). Never start it on your own initiative or as a side step of other work. While Ben has develop builds made on his m5 (w930, 2026-10-10), follow m5-manual-build.md beside it.
+description: Cut a release through CI on the ffbox build server — write the release notes, bump the version (FFVersion.cs + bundleVersion) and push, follow CI through the Windows/Mac main+demo builds, tests and Steam uploads, then post the patch notes as Max in #dev-patch-notes. A requested release is done only when it is live on its Steam branch AND its notes are posted. A version bump merged into master IS a dev build: ffbox sets its main app live on `development`, automatically. Nothing sets `pre-release` or the default branch; Ben or Lothsahn move those by hand. `scripts/release-status.py` says where a release is. Use when Ben or Lothsahn asks for a build in any words ("push a new dev build", "a build for the testers", "cut a release"). Never start it on your own initiative or as a side step of other work. While Ben has dev builds (master bumps) made on his m5 (w930, 2026-10-10), follow m5-manual-build.md beside it.
 ---
 
-# Trigger a CI release on master or develop
+# Trigger a CI release (a version bump merged into master)
 
 > **WHERE A RELEASE LANDS (ffbox `scripts/release_lane.py`, `SETLIVE`).** Read it there, or run
 > `python scripts/release-status.py [<version>]` in the game repo, which reads it from ffbox and the
 > branches from Steam. Never from memory.
 >
 > ```python
-> SETLIVE = {("develop", "main"): ("development",), ("master", "main"): ("pre-release",)}
+> SETLIVE = {("master", "main"): ("development",)}
+> RETIRED_BRANCHES = ("develop",)
 > ```
 >
-> - **A develop release:** ffbox sets the **main** app live on **`development`**, automatically, as it
->   uploads.
-> - **A master release:** ffbox sets the main app live on **`pre-release`**, automatically. master has
->   multiplayer since develop's ProjectSettings were merged up (`FF_ENABLE_MULTIPLAYER_BUILD`, #614).
-> - **The default (public) branch** is moved by hand by Ben or Lothsahn on the partner site. An agent
->   never moves any Steam branch, and never proposes it while `release-status.py` says BUILDING or
+> (ffbox commit 8fbb8d5, 2026-10-12, w1137: Ben, "i want to get off develop as a branch and do
+> everything off master ... keep development steam branch at the tip of master until we are ready to
+> release a batch of updates into main"; Lothsahn, "Let's just have steam development branch track
+> master and have pre-release and default be manual tags".)
+>
+> - **A version bump merged into master IS a dev build:** ffbox builds it and sets the **main** app live
+>   on **`development`**, automatically, as it uploads. `development` tracks the tip of master.
+> - **develop is retired** (locked read-only on GitHub). A bump on develop is declined and builds
+>   nothing.
+> - **`pre-release` and the default (public) branch are set by nothing.** A release to players is Ben
+>   or Lothsahn moving `pre-release` or the default by hand on the partner site. An agent never sets,
+>   moves or plans a Steam branch, and never proposes it while `release-status.py` says BUILDING or
 >   WAITING.
-> - **Never:** the demo app is set live nowhere; ffbox never sets the default branch.
+> - **Never:** the demo app is set live nowhere; ffbox never sets `pre-release` or the default branch.
 > - **Timing, measured** (CI run start to the branch moving, 0.50.0.57 to .67, nine uploads): 22 to
 >   78 min, median 36; after the Release jobs ended, -7 to +43 min (main uploads before the demo is
 >   built). `release-status.py` calls it LATE only past 60 min after the Release jobs end.
@@ -30,11 +37,11 @@ description: Cut a release through CI on the ffbox build server — write the re
 > down, and only with Ben's OK. A failed player is not "ffbox down": get the reason from the job log,
 > report it, and fix it here (re-run the job or bump again); never switch to `mp-beta-deploy` on your own.
 >
-> **FOR NOW, DEVELOP BUILDS ARE MADE ON BEN'S M5, NOT ON FFBOX** (Ben, 2026-10-10, w930: "for the
+> **FOR NOW, DEV BUILDS (A MASTER BUMP) ARE MADE ON BEN'S M5, NOT ON FFBOX** (Ben, 2026-10-10, w930: "for the
 > next build, please just do the process on my m5 and just do the windows and mac builds (we dont need
 > demo or linux builds yet) ffbox is having issues with build speed so we are going to manually use my
 > m5 for builds for a couple days, remember this"). Until Ben or Lothsahn says FFBox builds again,
-> a develop build follows **`m5-manual-build.md`** beside this file: stop the other m5 workers and
+> a dev build follows **`m5-manual-build.md`** beside this file: stop the other m5 workers and
 > close every editor and player, bump with `trigger-ci-release.sh --skip-ci` (FFBox then builds
 > nothing), build Windows + Mac main with `Editor.ReleaseBuild`, upload with steamcmd's cached login,
 > set live on `development`, verify on Steam. The notes (section 0.5, 3) and the first-hour check
@@ -46,7 +53,9 @@ description: Cut a release through CI on the ffbox build server — write the re
 > Lothsahn's words lifted the m5 rule for Build 100 only: Ben's w930 rule still applies to the next build
 > unless Ben or Lothsahn says otherwise. When a brief says "FFBox's lane" but neither has said FFBox builds
 > again, don't bump: the brief may be a dispatcher's assumption. Ask the requester which route
-> (`waiting_on_person`), and recommend the m5 while the rule stands.
+> (`waiting_on_person`), and recommend the m5 while the rule stands. **w1137** (filed by Ben on
+> 2026-10-12, the cut-over from develop to master) describes the first master bump after the cut-over
+> as built through FFBox's lane.
 >
 > History: the 0.50.0.36/.37/.39 Mac players failed with "Disk full" on the `ffghr-loth2400-*`
 > runners (2026-09-27). Lothsahn fixed it in ffbox (the nightly cache rebuild, FinalFactory #651, and
@@ -57,7 +66,7 @@ download, so never start one yourself; if you think one is due, say so and wait.
 
 ## How it works (so you can tell what went wrong)
 
-**The version bump IS the release.** A commit on master or develop whose `FFVersion.cs` version differs
+**The version bump IS the release.** A commit on master whose `FFVersion.cs` version differs
 from its first parent's is built; nothing else is. `main.yml`'s `versionBump` job (ubuntu-latest) checks
 that first; on any other push the `Release` jobs show as **skipped**, which is normal. On a bump
 they run on the ffbox runners **beside the tests, not after them**: `Release (win64)` and
@@ -81,9 +90,8 @@ version.
 **Each app uploads on its own, and only after the tests pass.** Once an app's two players (Windows and
 Mac) are GOOD, the host waits until every `Test in …` job of the same CI run has succeeded, then
 uploads that app to Steam as `Lothsahn_FFBox`, exactly as Build and Upload All did: `desc` is the
-version and **nothing is set live, except the main app on the branch `SETLIVE` names: `development`
-for develop, `pre-release` for master** (the notice: "main uploaded to Steam, set live on
-<branch> (BuildID …)"). So main (app 1383150) goes up as soon as its players and the tests
+version and **nothing is set live, except the main app on the branch `SETLIVE` names: `development`**
+(the notice: "main uploaded to Steam, set live on <branch> (BuildID …)"). So main (app 1383150) goes up as soon as its players and the tests
 are done, without waiting for the demo, and the demo (app 2387320) follows. If a test job fails, both
 uploads are skipped with a notice; the players are still built and their symbols filed. Every other build
 Lothsahn and Ben promote to Steam branches by hand. The host also posts notices to #release-build-announce
@@ -96,15 +104,16 @@ with two more jobs, "Branch tip for the cache refresh" and "Refresh the branch e
 release" (dc38316bd, w578), about 15 min after the uploads: the run still shows in progress after
 main and the demo are up, and that is normal. The regenerated-files PR settles itself: the lane
 merges it when clean and closes it when conflicted (ffbox 5a25bf1, w562; Lothsahn: "please
-automatically merge these if there are no conflicts, and close them if there are"); master's waits
-for Ben. Don't merge, close or chase it.
+automatically merge these if there are no conflicts, and close them if there are"). Don't merge,
+close or chase it; if one is still open after the run, say so in the report.
 
 Design and code: ffbox repo `design/ffbuild_release_design.txt`, `scripts/release_lane.py`,
 `scripts/ffsteam.py`; README "Release players and the Steam upload"; config.md "release".
 
 ## 0. Preconditions
 
-- Which branch: master or develop only, as asked. Never bump a feature branch: that is not a release.
+- Which branch: master only. A bump on develop is declined (retired, w1137) and builds nothing; a bump on
+  a feature branch is not a release.
 - Which version: the RC (the fourth number) plus one, unless you were told otherwise (e.g. a minor
   bump `0.21.0.30` → `0.22.0.0`, which is `--version 0.22.0.0` below). Say the version before you push.
   **To players it is "Build R", its last number** (Ben, 2026-10-04, w395): 0.50.0.76 is Build 76 in
@@ -131,7 +140,7 @@ Design and code: ffbox repo `design/ffbuild_release_design.txt`, `scripts/releas
   `[Save]` struct, `SaveState` or an `ISerializableSystem` payload, find the matching `UpgradeStep`;
   if there is none, stop and say so. A step versioned at the release version runs for older saves
   and never again once the bump stamps saves with it (`UpgradeChain.Applicable`: `from <
-  step.Version`). After a develop release, mint a golden fixture from a save that release writes
+  step.Version`). After a release, mint a golden fixture from a save that release writes
   when it starts a new layout generation, so the next beta is tested against it.
 
 **Do not run tests for the bump commit itself.** The script below is the whole of it, and a
@@ -140,7 +149,7 @@ change to two version lines (plus its notes) has nothing to test beyond the HEAD
 ## 0.5. Write the release notes first (they ride in the bump)
 
 **Every release carries its notes** (Ben, 2026-09-28). Before triggering, write
-`Temp/release-notes-<version>.md` in your checkout from `git log <previous release>..origin/<branch>`,
+`Temp/release-notes-<version>.md` in your checkout from `git log <previous release>..origin/master`,
 exactly as **`patch-notes.md`** beside this file says: line 1 is `steam_description: <short change
 list>` (ffbox makes it the Steam build's description, `<version> (<sha9>): <that line>`), line 2 is
 blank, and the rest is the player-facing #dev-patch-notes post. Then pass it to the script with
@@ -156,7 +165,8 @@ leave it out, and tell whoever asked for the release which fixes are unseen. `pr
 
 ## 1. Start it: one command
 
-The game repo's `scripts/trigger-ci-release.sh` makes the bump: the `FinalFactoryVersion` line in
+The game repo's `scripts/trigger-ci-release.sh` makes the bump (master is protected: PR plus green CI, no
+direct push, so the script ships it as a pull request): the `FinalFactoryVersion` line in
 `FFVersion.cs`, the `ReleasedUtc` line under it (the bump's time in UTC, which the main menu shows
 beside the version, w395) and `bundleVersion` in `ProjectSettings.asset`, committed alone with the
 version as the message. With `--notes FILE` it adds that file as `cicd/release-notes/<version>.md` in the same
@@ -165,30 +175,34 @@ Steam description is only the version: prefer the command line).
 
 **Where you can push** (a session on a dev machine, or on the ffbox host itself; `gh auth status`),
 from any FinalFactory clone, on any branch, with any uncommitted work. The script builds the commit
-on origin's tip of the branch without touching your checkout, pushes it, and retries if the branch
-moved:
+on origin/master's tip without touching your checkout, pushes it on a branch `release/<version>`, opens
+a pull request into master and prints the merge command. Wait for that PR's checks (an FF Factory
+worker: `blocked_on` with `prs: ["ci:Final-Factory/FinalFactory#<n>"]`), then merge it with the printed
+`gh pr checks <n> && gh pr merge <n> --merge --match-head-commit <sha>`. **The merge commit on master is
+the release** (it changes `FFVersion.cs` against its first parent), so the build starts when the PR
+merges, not when the branch is pushed:
 
 ```sh
-scripts/trigger-ci-release.sh develop --dry-run --notes Temp/release-notes-0.50.0.43.md   # shows it, changes nothing
-scripts/trigger-ci-release.sh develop --notes Temp/release-notes-0.50.0.43.md             # bumps origin/develop's tip and pushes it
+scripts/trigger-ci-release.sh master --dry-run --notes Temp/release-notes-0.50.0.43.md   # shows it, changes nothing
+scripts/trigger-ci-release.sh master --notes Temp/release-notes-0.50.0.43.md             # bumps origin/master's tip through a PR
 scripts/trigger-ci-release.sh master --version 0.22.0.0 --notes Temp/release-notes-0.22.0.0.md
 ```
 
-**In an ffbox container** (a Discord or web turn on the build server), which cannot push to master
-or develop:
+**In an ffbox container** (a Discord or web turn on the build server), which cannot push or open
+the PR itself:
 
 ```sh
-scripts/trigger-ci-release.sh develop --commit-only --notes Temp/release-notes-<version>.md
+scripts/trigger-ci-release.sh master --commit-only --notes Temp/release-notes-<version>.md
 ```
 
-That commits the bump on a new branch `release-<version>` off `origin/develop` and checks it out.
+That commits the bump on a new local branch `release-<version>` off `origin/master` and checks it out.
 Then end your turn, leaving HEAD there. The harness skips the test run for a version-only change (the
 notes file counts as part of it once ffbox PR #3 is merged; until then it runs the suite) and
-opens a pull request against develop; **merging that PR is what starts the release**, so say so in
+opens a pull request against master; **merging that PR is what starts the release**, so say so in
 your reply with the version. Do not run `ffverify` for it.
 
-If the checkout you are in predates the script, run the branch's copy:
-`git show origin/develop:scripts/trigger-ci-release.sh | bash -s -- develop` (same arguments).
+If the checkout you are in predates the script, run master's copy:
+`git show origin/master:scripts/trigger-ci-release.sh | bash -s -- master` (same arguments).
 
 **Never use Build → Build and Upload All for this.** It builds and uploads on your machine and commits
 `cicd/depot_build_*.vdf`. The host treats that mark as "already uploaded by hand", so it builds that
@@ -197,7 +211,7 @@ version for its symbols but does not upload it.
 ## 2. Follow it and report
 
 ```sh
-gh run list -R Final-Factory/FinalFactory -b <branch> -L 3        # the run for your commit
+gh run list -R Final-Factory/FinalFactory -b master -L 3          # the run for the merge commit
 gh run view <run id> -R Final-Factory/FinalFactory --json jobs -q '.jobs[] | "\(.name): \(.status) \(.conclusion)"'
 ```
 
@@ -214,11 +228,10 @@ release run's `Test in editmode` result (ran, passed, its counts), the
 four results, the two BuildIDs (main app 1383150, demo app 2387320), and the regenerated-files PR if
 there is one. **Run `python scripts/release-status.py <version>`** (game repo): it prints the run,
 the branch `SETLIVE` names for this release, every Steam branch's BuildID and time, a verdict and the
-next step. Report the BuildID on that branch: **`development` for develop, `pre-release` for
-master** (the notice: "set live on <branch> (BuildID …)"; the ledger's `uploads.main.setlive` and
-`uploads.main.live_builds`). Then say plainly where it is not: a develop build reaches
-`pre-release` only as a master release, and no build is on the default branch until Ben or Lothsahn
-moves it there. BUILDING or WAITING is normal (measured 22-78 min from the
+next step. Report the BuildID on that branch: **`development`** (the notice: "set live on <branch>
+(BuildID …)"; the ledger's `uploads.main.setlive` and `uploads.main.live_builds`). Then say plainly
+where it is not: no build reaches `pre-release` or the default branch until Ben or Lothsahn moves it
+there by hand. BUILDING or WAITING is normal (measured 22-78 min from the
 bump; about 100 min after a shader or render-pipeline change misses the shader cache: 0.50.0.81's
 URP light layers, Builds 81-82 and master 82 at 95-108 min); only LATE is an ffbox problem for its owner.
 **A target's first release on a branch starts cold and takes far longer** (0.50.0.94, the first Linux
@@ -246,7 +259,7 @@ and never tell Ben a branch must be moved for the build to count**: report where
 build is complete and uploaded"). A release is **done only when both** are true:
 
 - [ ] **Live on its Steam branch**: `python scripts/release-status.py <version>` says LANDED, on
-  `development` for a develop release or `pre-release` for a master release.
+  `development` (the one branch ffbox sets).
 - [ ] **Notes posted once, as Max, in #dev-patch-notes** (channel `1072387196927094845`): the body of
   the release's `cicd/release-notes/<version>.md` (everything after its first two lines),
   player-facing, no internal ids, never with @everyone; the message link is in the release report.
@@ -254,7 +267,7 @@ build is complete and uploaded"). A release is **done only when both** are true:
 The procedure, the exact format with a template, and the 403 rule are in **`patch-notes.md`** beside
 this file; follow it as written. Check the main upload notice's desc too if you can see it (the
 ledger's `desc`). A release bumped without notes (the Build menu) still gets them: write them from
-the commits then, and add the file to develop afterwards for the record.
+the commits then, and add the file to master afterwards (a pull request) for the record.
 
 **Post with `mcp__machine__post_as_max` from any machine** (w901, Lothsahn, 2026-10-10: "workers can
 request FFBox send a discord message"). FFBox holds the Discord bot and posts for you, so no machine
@@ -303,7 +316,8 @@ release"), in `release.decided`, and in the ffbox journal (`journalctl -u ffwatc
 | upload skipped: `the tests did not pass: …` | A `Test in …` job of the release's run failed. The players were built but not uploaded. Fix the test, then bump again. |
 | upload waiting, players GOOD | The run's tests have not finished yet; the host asks GitHub once a minute. Normal. |
 | declined: `does not change the version` | The pushed commit is not a bump. Bump and push again. |
-| declined: `not on <branch>'s first-parent history` | The bump arrived only through a merge's second parent. Bump directly on the branch. A master release is the exception that works: a develop→master merge PR (#1158, merge 6eac4d00d) changes the version against its first parent, so the merge commit is the bump; `release-status.py` finds it there (162de7b37). |
+| declined: `not on <branch>'s first-parent history` | The bump arrived only through a merge's second parent. A release PR merged with a merge commit works: the merge commit changes the version against its first parent, so it is the bump (a develop→master merge PR, #1158, merge 6eac4d00d, was one; `release-status.py` finds it there, 162de7b37). Otherwise bump again so the commit on master changes the version itself. |
+| declined: the branch is retired (`RETIRED_BRANCHES`) | A bump on `develop` (retired by w1137, 2026-10-12). Nothing was built. Bump on master through a pull request. |
 | declined: `already built at <sha>` / `already built` | That version exists already. Bump again; a version is built once. |
 | declined: `<target>-<edition> is already being built`, after the release run was **cancelled** | A cancelled run leaves each worker it was granted at `"granted"` in the host's ledger, and `release_lane.decide()` refuses a granted worker for `GRANT_TTL_SECS` = 5 hours (ffbox `scripts/release_lane.py:138, 410`), so re-running that version is refused for 5 hours. Bump to the next version instead. Players see that build number skipped, which is fine: the cancelled one never shipped (w902: 0.50.0.95 cancelled at 21:47 UTC 2026-10-10 on Ben's hold, released as 0.50.0.96, LANDED 23:08). Cancel a release run only on a person's word, and only before its upload notice: the upload waits for the run's `Test in` jobs, so while they run nothing is on Steam (`release-status.py <version>` then says NOT UPLOADED). A cancelled job's log can be gone (GitHub answers BlobNotFound); the lane's FAILED notices in #release-build-announce carry the reason. |
 | declined: `job identity not confirmed` | The host could not confirm the job with GitHub (the GitHub App needs Actions:Read and Contents:Read). Tell the ffbox owner. |

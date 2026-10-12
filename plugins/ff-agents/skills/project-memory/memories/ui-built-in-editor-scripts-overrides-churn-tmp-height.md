@@ -29,10 +29,10 @@ your new ids after the last entry. Verify by diffing object ids (no removals) an
 rows. Close the editor before replacing a scene it has open, or it raises the "modified
 externally" modal.
 
-**Merging develop into a branch that appended table rows conflicts at the end of every table**
-(both sides append there). Resolve each table as develop's file plus the branch's added `m_Id`
+**Merging master into a branch that appended table rows conflicts at the end of every table**
+(both sides append there). Resolve each table as master's file plus the branch's added `m_Id`
 blocks (relative to the merge base), not by keeping both sides of git's hunk, which can leave
-develop's entry without its `m_Metadata` lines. Check there are no duplicate ids afterwards.
+master's entry without its `m_Metadata` lines. Check there are no duplicate ids afterwards.
 
 **A TextMeshPro with `overflowMode` Ellipsis or Truncate draws nothing when its rect is shorter
 than one line.** Status and route lines at 16 pt in 22-unit `LayoutElement` boxes rendered blank in

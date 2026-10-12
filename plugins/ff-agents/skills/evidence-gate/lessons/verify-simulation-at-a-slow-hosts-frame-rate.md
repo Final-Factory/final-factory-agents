@@ -100,4 +100,4 @@ under 33 ms and failed 2 of 2, the interactive editor passed.
 - CI-speed frames locally: stop your editor, then
   `unity-slot run -- Unity -batchmode -nographics -projectPath . -runTests -testPlatform EditMode -testFilter <name> -testResults <xml>`.
 - A failure that repeats across unrelated branches inside one day and not afterwards is a broken
-  develop, not a flake; one that passes on re-run is.
+  master, not a flake; one that passes on re-run is.

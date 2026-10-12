@@ -81,19 +81,19 @@ every locale, in the same change), and anything that would touch another machine
 branch (check `specs/STATUS.md` if the request smells like it overlaps in-flight work).
 
 **One release task IS yours: the version bump that starts a CI release**, when Lothsahn asks for
-a release in so many words ("make a release off develop", "bump the version for a CI release").
+a release in so many words ("make a release off master", "bump the version for a CI release").
 It is one command and nothing else. Do not investigate, read the git log, make your own branch or
 run any tests (`ffverify` included): a two-line version change has nothing to test, and the
 harness skips its own suite for it.
 
 ```sh
-scripts/trigger-ci-release.sh develop --commit-only    # or master, whichever was asked
+scripts/trigger-ci-release.sh master --commit-only
 ```
 
 Run it in the workspace. It commits the bump (RC + 1; add `--version X.Y.Z.W` only if a version
-was named) on a new branch `release-<version>` off `origin/<branch>` and checks it out. End the
+was named) on a new branch `release/<version>` off `origin/master` and checks it out. End the
 turn there. Reply with the version in a sentence: **merging the pull request ffbox opens starts the
-release**, which goes to the public Steam apps with nothing set live. If the script refuses, report
+release**: a version bump merged into master is a dev build, and ffbox sets its main app live on `development` by itself (nothing sets `pre-release` or the default branch). If the script refuses, report
 its message; do not bump by hand. Everything else about releases (Steam, build settings, the
 pipeline) stays out of scope. The full procedure is the `ff-agents:ci-release` skill.
 
@@ -105,17 +105,14 @@ pipeline) stays out of scope. The full procedure is the `ff-agents:ci-release` s
 2. **Branch, before you change anything.** Make one — `git checkout -b belt-merger-priority`,
    named for the change — and do all of your work on it.
 
-   **Branch it off the release the change is for**, because that is what decides where the PR
-   goes. `origin/master` is what players are running, and the default when the answer is not
-   obvious: a bug in the released build belongs there, and so does anything you would want in
-   the next patch. `origin/develop` is the integration branch: work aimed at the next version,
-   anything large, anything that wants soak time. If Lothsahn's message says which, that settles
-   it; otherwise decide from the change itself and say in your report which you picked and why. On the build server the harness reads your choice out of the
-   history and opens the pull request against that branch, so branching off the wrong one
-   proposes your change to the wrong release and nothing downstream can tell that was not what
-   you meant.
+   **Branch it off `origin/master`**, the one trunk (w1137, 2026-10-12: develop is retired and
+   locked read-only, so nothing branches from or targets it). Anything unfinished goes in behind a
+   feature toggle (`Documentation/Feature-Toggles.md` in the game repo). On the build server the
+   harness reads your base out of the history and opens the pull request against master. A
+   branch that started from the old develop merges `origin/master` in (merge, never rebase a pushed
+   branch) and targets master.
 
-   Never commit onto `develop` or `master` themselves. On the build server that is not a
+   Never commit onto `master` itself. On the build server that is not a
    convention but a gate: ffbox publishes whatever branch HEAD is on when the container exits,
    and refuses a run that ends on a shared branch — the whole run's work is discarded, not just
    the last commit.
@@ -135,8 +132,8 @@ pipeline) stays out of scope. The full procedure is the `ff-agents:ci-release` s
    - **A play-mode repro, same container**: `ffplaytest --chain 'ffauto:...;ffauto:...'` runs ONE
      host session and reports the journal as JSON — for the bug class an EditMode test cannot
      see (an op silently dropped, a null thrown mid-frame, a state machine that ends up wrong).
-     It needs the automation harness, which is on **develop and not on master**, so on a
-     master-based run it exits 3 and says so. **No GPU in that container** — software GL under
+     It needs the automation harness, which was on **develop and not on the old master** (until w1137), so on a
+     run cut from the old master it exits 3 and says so. **No GPU in that container** — software GL under
      Xvfb: functional behaviour is sound, frame timings are worthless, so never report a timing
      number measured there.
    - **A LIVE editor, when the run has one** (`ffmcp`, off by default per agent class). If the
@@ -203,5 +200,5 @@ pipeline) stays out of scope. The full procedure is the `ff-agents:ci-release` s
 Never `--no-verify`, never force-push, never skip hooks, never run a destructive git command
 without a clear need. If a pre-commit hook fails, fix the underlying issue and create a new
 commit — don't bypass it. If you discover you're about to collide with another machine's
-in-flight work (check `specs/STATUS.md` / recent `git log` on `develop`), stop and report
+in-flight work (check `specs/STATUS.md` / recent `git log` on `master`), stop and report
 rather than plowing through it.

@@ -27,7 +27,7 @@ values back into simulation (`CLAUDE.md`, "Key Constraints" → "Simulation vs p
 **Where the program stands is a fact about the repo, not about this file.** Read the dated SESSION
 HANDOFF at the top of `specs/057-unified-rate-smooth-presentation/plan.md` and the task states in
 that feature's `tasks.md` before planning anything here, and check whether the tip commits are
-ancestors of `origin/develop` rather than trusting a "done" line.
+ancestors of `origin/master` rather than trusting a "done" line.
 
 Two things that stay true whatever the stage:
 

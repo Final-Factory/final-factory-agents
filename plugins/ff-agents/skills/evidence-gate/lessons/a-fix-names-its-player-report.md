@@ -30,7 +30,7 @@ them only as references. Lothsahn: "make it automatic going forward".
 - Write the line when you confirm it, before the PR merges; FF Factory reads merged PRs' `Report:`
   lines every five minutes and marks the reports fixed once the fix is in a release.
 - Several reports, several lines, at most twenty. An id quoted mid-sentence is not read.
-- Pushing straight to develop with no PR: ask your orchestrator to add the subjects instead.
+- A change that did not come through a pull request (master takes none directly): ask your orchestrator to add the subjects instead.
 - Nothing is posted to Discord about a report; FFBox only records it.
 
 Related: [a fix PR names its Discord report](a-fix-pr-names-its-discord-report.md). The checklist

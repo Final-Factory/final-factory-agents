@@ -17,8 +17,8 @@ CLAUDE.md still listed them as "active".)
 1. **Establish ground truth FIRST — from code and git, never from the docs themselves.**
    - What actually shipped: `git log --oneline` over the recent window; group by feature prefix.
      For each spec under `specs/`, check whether its tip commits are ancestors of `origin/<branch>`
-     (`git merge-base --is-ancestor <sha> origin/develop`) — "DONE + committed" in a handoff does
-     NOT mean pushed, and "NOT pushed" notes go stale the moment develop advances past them.
+     (`git merge-base --is-ancestor <sha> origin/master`) — "DONE + committed" in a handoff does
+     NOT mean pushed, and "NOT pushed" notes go stale the moment master advances past them.
    - Confirm feature status by the code, not the prose: does the named class/system/fingerprint
      surface exist? did the audited defect actually get fixed? Build a short written ground-truth
      list (feature → done/pushed/proven, plus any genuinely-open items and the documented
