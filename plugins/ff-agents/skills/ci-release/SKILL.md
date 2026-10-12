@@ -176,9 +176,11 @@ Steam description is only the version: prefer the command line).
 **Where you can push** (a session on a dev machine, or on the ffbox host itself; `gh auth status`),
 from any FinalFactory clone, on any branch, with any uncommitted work. The script builds the commit
 on origin/master's tip without touching your checkout, pushes it on a branch `release/<version>`, opens
-a pull request into master and merges it when its CI is green. **The merge commit on master is the
-release** (it changes `FFVersion.cs` against its first parent), so the build starts when the PR merges,
-not when the branch is pushed:
+a pull request into master and prints the merge command. Wait for that PR's checks (an FF Factory
+worker: `blocked_on` with `prs: ["ci:Final-Factory/FinalFactory#<n>"]`), then merge it with the printed
+`gh pr checks <n> && gh pr merge <n> --merge --match-head-commit <sha>`. **The merge commit on master is
+the release** (it changes `FFVersion.cs` against its first parent), so the build starts when the PR
+merges, not when the branch is pushed:
 
 ```sh
 scripts/trigger-ci-release.sh master --dry-run --notes Temp/release-notes-0.50.0.43.md   # shows it, changes nothing
@@ -193,7 +195,7 @@ the PR itself:
 scripts/trigger-ci-release.sh master --commit-only --notes Temp/release-notes-<version>.md
 ```
 
-That commits the bump on a new branch `release/<version>` off `origin/master` and checks it out.
+That commits the bump on a new local branch `release-<version>` off `origin/master` and checks it out.
 Then end your turn, leaving HEAD there. The harness skips the test run for a version-only change (the
 notes file counts as part of it once ffbox PR #3 is merged; until then it runs the suite) and
 opens a pull request against master; **merging that PR is what starts the release**, so say so in
