@@ -46,7 +46,8 @@ bypass mode, where workers run, a function, a loop, several lines, `&&`, a pipe,
 path). Plain `rm -rf "$TMPDIR/f1920"` does not. FF Factory now answers such a prompt itself when every delete in the
 command is written out under `$TMPDIR` (after the portal deploy that carries w1097), but the routes below never ask at all:
 
-- Give each run a new folder: `mktemp -d "$TMPDIR/leg-XXXX"`, or `$TMPDIR/leg-1920-2`. Nothing to delete.
+- Give each leg a new folder, `$TMPDIR/<leg>-<timestamp>` (`OUT="$TMPDIR/f1920-$(date +%H%M%S)"`), never a cleared
+  one: the daemon removes your whole temp folder when the session ends (w913). Nothing to delete.
 - Put multi-step test logic in a script file in `$TMPDIR`, written with the Write tool, and run `bash "$TMPDIR/leg.sh" 1920`.
 - Back up and restore the game's settings and saves with the game repo's `python scripts/game_data.py`
   (`snapshot`, `restore`, `run --name <leg> -- <command>`, `get <key> --name <leg> --after`), not a `cp` loop into

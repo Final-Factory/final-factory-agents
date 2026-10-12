@@ -3,6 +3,12 @@
 For any `rm`, `Remove-Item`, `del`, `rd`, `git clean`, `shutil.rmtree` or clean-up script, a disk clean-up above all
 (a low-disk request, a `machine_cleanup` follow-up, "free some space").
 
+0. **Is it in your own temp folder (`$TMPDIR`, `$env:TEMP`)? Then do not delete it.** Not to clean up, and not to
+   reuse a folder for the next test leg: give every leg a new folder, `$TMPDIR/<leg>-<timestamp>` (e.g.
+   `OUT="$TMPDIR/f1920-$(date +%H%M%S)"`), and the daemon removes the whole folder when your session ends (w913). w1079's
+   worker deleted `$TMPDIR/f1920 $TMPDIR/f1280` to rerun its tour legs into the same folders, and the command waited on
+   a person (w1097; lothsahn, 2026-10-12: "Can't we have the cleanup process when a worker is done do this for them so the
+   worker doesn't have to worry about it?"). The one delete left: the disk is short mid-task (`df` says so).
 1. **Where is the machine's worker install folder?** `echo $FF_WORKER_ROOT` (D:\work\ffw, F:\ffw, ~/ffw), or `root` in
    its `root.json`. No root known: you delete nothing outside your own `$TMP` and sandbox.
 2. **Is every path of this delete strictly inside it?** Write the list of paths first and compare each to the root
