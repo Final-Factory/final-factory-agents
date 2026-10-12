@@ -55,6 +55,14 @@ probe passes far too early (frame ~20 on a fresh boot); starting a game mid-boot
 missing `ItemConfig`/`MapGenerationData` singletons, an NRE in `TitleScreenManager.PrepareSceneForGame`,
 and `MePlayer` never appears, with no loud failure at the call site.
 
+**⚠️ Open `Assets/Scenes/main.unity` before play mode.** A fresh sandbox editor opens an Untitled scene, and play mode
+there never loads configs: `Ecs.Ready` is true but `ItemConfig`, `MapGenerationData` and `CombatUpgradeContainer` never
+appear, with no error and no "Loading item configs" line in the log. Check
+`UnityEngine.SceneManagement.SceneManager.GetActiveScene().path` first; if it is empty, leave play mode,
+`UnityEditor.SceneManagement.EditorSceneManager.OpenScene("Assets/Scenes/main.unity")`, then enter play mode. w934 lost ten
+minutes to it and w1072 waited 1855 frames for a boot gate that could not pass; `Assets/Editor/DevLoadSave.cs` and
+the project-memory `save-that-never-ticks-find-the-stack` note it too.
+
 **Start a new game**: click `New Game` → the panel opens (world-type tabs
 Standard/Explorer/Hardcore/Custom, pre-rolled seed field, Tutorial/Enemy Difficulty/Attack Frequency
 toggles) → click `Begin Game` → pump ~200+ steps for world-gen → probe `CurrentMode == InGame`.
