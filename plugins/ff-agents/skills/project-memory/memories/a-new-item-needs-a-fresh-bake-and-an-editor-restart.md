@@ -22,4 +22,6 @@ saw 200 of 201 configs. A new worker saw all 201.
 of `.asset` files in `Assets/Resources/ItemConfig`), refresh, enter play mode. Compare N with the file count
 before trusting a boot.
 
+**Also seen (2026-10-11, w1046).** After the restart, forcing the entity scenes' global dependency also rebaked the container in a running editor: `execute_code` finding `Unity.Scenes.EntitiesCacheUtility` (assembly `Unity.Scenes.Editor`) and invoking its static `UpdateEntitySceneGlobalDependency` by reflection, then entering play mode (the bake logged 202 configs against 202 files). The same call rebakes after editing an item's variant list (Art Variants, FinalFactory #1515).
+
 **Also.** A player build bakes at build time from the same assets, so it is right whenever the editor was.
