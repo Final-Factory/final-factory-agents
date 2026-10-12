@@ -87,6 +87,10 @@ Recording notes:
   `ffauto:console.run` leaves the Quantum console open over the picture, so do an in-session before/after with a dev
   verb (w1067's `vfx.miningforge|show|0/1`); and a Development player's Debug Info panel sits in the top-right, so
   crop it off (`crop=1120:720:0:0` on a 1280x720 capture) instead of toggling it through the console.
+  Below 60 fps (a develop player encodes on the main thread: about 39 fps at 1920x1080, w1136), keep each frame at its
+  own `t_ns` instead: concat `duration` lines with `-fps_mode passthrough -enc_time_base 1/10000
+  -video_track_timescale 10000`, and check the MP4's frame count against `frames.csv`; the default time base dropped 223
+  of 560 frames without a word (project-memory `beast-clip-capture-and-slot-launch-traps`, item 13).
 - **Editor Game view crop** (macOS, docked Game view): `execute_code` → `var gv =
   Resources.FindObjectsOfTypeAll(typeof(Editor).Assembly.GetType("UnityEditor.GameView"))[0] as
   EditorWindow; var m = EditorGUIUtility.GetMainWindowPosition(); var k =
