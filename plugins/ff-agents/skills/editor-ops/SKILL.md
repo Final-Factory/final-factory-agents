@@ -227,7 +227,8 @@ a sandbox's editor and for a machine's main clone, a person's own project folder
    reserve to them (approvals, design decisions, spending, publishing, admin acts that need their own words;
    [evidence-gate lesson](../evidence-gate/lessons/a-person-wait-is-declared-not-polled.md)).
 
-Known traps, with signature, diagnosis and recovery, in [references/recovery.md](references/recovery.md).
+Known traps, with signature, diagnosis and recovery, in [references/recovery.md](references/recovery.md)
+(a batch build's "Scripts have compiler errors." with no `error CS` line is a stale `Library/Bee`, not the code).
 Open it when the editor or bridge misbehaves:
 
 - `busy: compiling` forever = the editor is stuck in PLAY MODE
