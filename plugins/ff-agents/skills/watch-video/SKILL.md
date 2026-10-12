@@ -78,6 +78,15 @@ Recording notes:
   (`ES_DISPLAY_REQUIRED` alone does not switch a sleeping display back on). The game repo's
   `scripts/narration/record_story_cinematic.py` and `specs/w884-one-tutorial/oswin.wake_display()` do both. Stop a
   window capture before its window closes: one closed under it never wrote the mp4 index.
+- **The game's own frames (`-ffFeelFrames`) when no desktop capture works** (w1067, lothdesktop, 2026-10-12): launch
+  from the slot pool with `-ffFeelLoad <save> -ffFeelProbe <csv> -ffFeelFrames <dir> -ffFeelFramesAt <start>+<seconds>
+  -ffFeelFramesWidth 1280 -ffFeelVsync 0 -ffFeelFps 60`, stamp each `ffauto:` fire with `time.perf_counter_ns()` (the
+  QPC clock of `frames.csv` `t_ns`), and build a constant 60 fps MP4 by holding the latest frame at each 1/60 s tick.
+  Measured: the capture itself caps the game at about 30-34 fps at 1280 wide (median 29.5 and 31.2 ms per frame, with
+  the PC busy and then idle), so the clip repeats frames and `STUTTER` fires; say so in the clip notes. Two traps:
+  `ffauto:console.run` leaves the Quantum console open over the picture, so do an in-session before/after with a dev
+  verb (w1067's `vfx.miningforge|show|0/1`); and a Development player's Debug Info panel sits in the top-right, so
+  crop it off (`crop=1120:720:0:0` on a 1280x720 capture) instead of toggling it through the console.
 - **Editor Game view crop** (macOS, docked Game view): `execute_code` → `var gv =
   Resources.FindObjectsOfTypeAll(typeof(Editor).Assembly.GetType("UnityEditor.GameView"))[0] as
   EditorWindow; var m = EditorGUIUtility.GetMainWindowPosition(); var k =
