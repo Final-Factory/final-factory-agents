@@ -236,17 +236,35 @@ def ffmpeg_has(encoder):
     return f" {encoder} " in out
 
 
+def encoder_works(encoder):
+    """Whether this machine can encode with `encoder`: ffmpeg lists NVENC whenever it was built with it, and on a PC
+    without an NVIDIA GPU (lothdesktop's Intel Arc, w1065) the capture then hung instead of failing. Try one."""
+    if not ffmpeg_has(encoder):
+        return False
+    try:
+        r = subprocess.run(["ffmpeg", "-v", "error", "-f", "lavfi", "-i", "color=s=256x256:d=0.2", "-c:v", encoder,
+                            "-f", "null", "-"], capture_output=True, timeout=20)
+        return r.returncode == 0
+    except subprocess.TimeoutExpired:
+        return False
+
+
 def start_windows(pid, raw, seconds, fps, monitor):
     x, y, w, h = win_client_rect(pid)
     mons = win_monitors()
     idx = monitor
     if idx is None:
         idx = next((k for k, m in enumerate(mons) if m[0] <= x < m[2] and m[1] <= y < m[3]), 0)
-    left, top = mons[idx][0], mons[idx][1]
+    left, top, right, bottom = mons[idx][0], mons[idx][1], mons[idx][2], mons[idx][3]
+    if x < left or y < top or x + w > right or y + h > bottom:
+        # ddagrab cannot grab past its monitor's edge; it hung on a 1920x1080 window on a 1920x1080 monitor (w1065)
+        sys.exit(f"record_clip: the window's client area {w}x{h} at ({x},{y}) does not fit monitor {idx} "
+                 f"({right - left}x{bottom - top} at ({left},{top})). Use a smaller window, or record the game's own "
+                 "frames (-ffFeelFrames; project-memory beast-clip-capture-and-slot-launch-traps, items 1 and 12).")
     w, h = w & ~1, h & ~1
     grab = (f"ddagrab=output_idx={idx}:framerate={fps}:draw_mouse=0:"
             f"offset_x={x - left}:offset_y={y - top}:video_size={w}x{h}")
-    if ffmpeg_has("h264_nvenc"):
+    if encoder_works("h264_nvenc"):
         enc = ["-c:v", "h264_nvenc", "-preset", "p5", "-rc", "vbr", "-cq", "16", "-b:v", "0"]
     else:
         grab += ",hwdownload,format=bgra"
@@ -328,7 +346,14 @@ def main():
     for c in do:
         print(f"  fire: {c}")
         ch.cmd(fill(c, xz))
-    rec.wait()
+    try:
+        rec.wait(timeout=seconds + 30)
+    except subprocess.TimeoutExpired:
+        # Desktop duplication delivers no frames while the display sleeps (BEAST w139, lothdesktop w1065).
+        rec.kill()
+        sys.exit("record_clip: the recorder got no frames in time (display asleep or locked?). Record the game's "
+                 "own frames instead: -ffFeelFrames (project-memory beast-clip-capture-and-slot-launch-traps, items "
+                 "1 and 12).")
     if not os.path.exists(raw):
         sys.exit("record_clip: the recorder wrote nothing")
     # constant 60 fps H.264 (a frame the game did not redraw becomes a repeat: watch_video counts them)

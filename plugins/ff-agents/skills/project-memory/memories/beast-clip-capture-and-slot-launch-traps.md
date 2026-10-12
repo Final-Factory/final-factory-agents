@@ -57,3 +57,18 @@
    `perf_counter_ns()`, cut frames and samples by the same marks, and mux. The music stays on (PlayerPrefs are
    shared by every checkout on the machine: do not change volumes), so take sound onsets from the review, not
    from a loudness envelope.
+12. **The same on lothdesktop, and the game's own frames at a real 60 fps** (w1065, 2026-10-12). Desktop duplication
+   gave no frames there either (a one-frame `ddagrab` grab timed out on both monitors), `record_clip` picked NVENC
+   because ffmpeg lists it although the PC has an Intel Arc GPU (it now test-encodes first, `encoder_works`), and a
+   1920x1080 window's client area does not fit a 1920x1080 monitor (it now refuses that with a message). So use the
+   frame capture: `-ffFeelProbe <csv> -ffFeelFrames <dir> -ffFeelFramesAt <start>+<s> -ffFeelFramesWidth 1280
+   -ffFeelVsync 0 -ffFeelFps 60` on a 1920x1080 window. Before the game's commit 331ed49cc the JPG encode ran on the
+   main thread and held the player to about 36 fps (26 ms a frame); since then it encodes on worker threads and ran
+   at 60 fps (median 16.7 ms, p95 20.5 ms over 1259 frames, measured). Rows of `frames.csv` can now come out of
+   order: sort by `frame`. **Assemble the JPGs as a plain 60 fps sequence** (`ffmpeg -r 60 -f concat -i list.txt -r 60
+   ...`, one `file` line per frame). A concat list with per-frame `duration` lines plus an `fps=60` filter repeated
+   58% of the frames and `watch_video` flagged STUTTER on clips whose every source frame differed. Hide the
+   development build's Debug Info panel with `ffauto:console.run|toggleDebugPanel` then `ffauto:console.close`;
+   `ui.hide|true` does not reach it. The camera follows the player: put the ship between the subjects
+   (`player.setposition`), and switch `camera.zoom` mid-capture when `frames.csv` spans the time you want
+   (each switch is a jump cut that `watch_video` flags as JUMPS/SNAP: expected).
