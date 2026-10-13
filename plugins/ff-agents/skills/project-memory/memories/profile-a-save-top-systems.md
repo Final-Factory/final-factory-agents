@@ -40,5 +40,12 @@ Traps seen in w1199:
 - **No `wmic` on beast** (Windows 11 26200), so a contention log built on it prints nothing. List other
   `finalfactory.exe` with `tasklist`, and batch editors with `unity-slot status`.
 
+- **Do not edit the worktree while a batchmode build of it compiles** (w1200): the "master" player built from a
+  sandbox compiled an edit made a few minutes into its build. Build each side from a clean, pinned worktree (stash
+  nothing: check out the base file with `git checkout <base> -- <file>`, build, `git checkout HEAD -- <file>`), and
+  verify each player before timing it: `LC_ALL=C grep -c -a <member unique to one side> <player>_Data/Managed/FFSystems.dll`.
+- **Disable `AutosaveController` the moment a person's save is loaded in an editor** (drive-game recipes.md says so;
+  w1200 missed it once and the editor wrote `_autosave_4.zip` into the shared saves folder).
+
 Related: [[measure-a-systems-cost-in-a-built-player]], [[heartbeat-perf-a-removed-wait-moves-to-the-next-system]],
 [[beast-shared-machine-perf-ab-side-by-side]].
