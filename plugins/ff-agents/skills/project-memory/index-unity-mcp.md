@@ -3,6 +3,7 @@
 Part of the `project-memory` skill; links are relative to the skill directory. Add new
 entries for this area here, one line each.
 
+- [Editor wedges when a test job starts during a reload](memories/editor-wedges-when-a-test-job-starts-during-a-reload.md) — w1227: `run_tests` right after `refresh_unity` (or a file edit mid-reload) leaves MCP "Command TCS timed out" for good; edit, compile, wait for ready state, read the console, then run; restart is the cure; stop the editor before `build_player.sh`
 - [Unity MCP server](memories/unity-mcp-server.md) — Coplay MCP-for-Unity via stdio (multi-instance safe); Claude spawns server, editor must be set to Stdio transport in Window>MCP for Unity; tools load only at Claude restart
 - [Unity MCP resource URIs](memories/unity-mcp-resource-uris.md) — resource URIs use slashes and differ from the `name` field; editor readiness is `mcpforunity://editor/state` NOT `editor_state`; read the `uri` field, don't build from name
 - [UnityMCP per-project config](memories/unitymcp-per-project-config.md) — the Unity bridge tools require a per-project UnityMCP server in ~/.claude.json (claude mcp add + restart)
