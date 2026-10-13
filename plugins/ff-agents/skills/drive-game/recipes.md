@@ -441,6 +441,23 @@ saves before and after the fix (35 kills from 36 slugs against 3 from 10 on mast
 - **A real fight needs ammo.** By heartbeat ~600 most of the reporters' guns had run dry; setting each chamber slot
   (`InventorySlot` 0: `Identifier` the slug id, `Quantity` 40) in the throwaway session gave a second sample.
 
+## Hovering a ship, and a Simulation toggle in an editor look-check (w1241, 2026-10-13)
+
+- **`pointer.moveto|<x>|<z>` cannot hover a flying ship.** It projects the tile's ground point, and its optional grid
+  height reaches only a few units (`GridHelper.GridHeightToWorldHeight`, heights -1..5), while every fleet and enemy
+  ship flies at y = 40 (`CrafterUpdateSystem.FleetY`). From the game's oblique camera the pointer lands on whatever is
+  under the ship: w1241's hover card said "Main Sequence Star" instead of "Super Stinger". Hover a ship by its drawn
+  screen position instead: `Camera.WorldToScreenPoint` (`CameraContainer.WorldToScreenPoint(PlayersManager.Me.ActiveCamera,
+  LocalToWorld.Position)`, Unity screen pixels, bottom-left origin) and `pointer.moveto|<px>|<py>|screen`, again every
+  few tenths of a second while the ship moves. `ffauto:vfx.superenemies` prints `screen=(px,py)` per super enemy for
+  this (`scripts/feel/run_super_enemies.py` in the game repo).
+- **A Simulation toggle set before play mode does not stick in the editor.** `FeatureToggles.SetRequested(...)` and then
+  `EnterPlaymode` start the game with the toggle off: the boot's feature bootstrap resets the requested set from the
+  editor's Feature Toggles menu. For a look-check, turn it on in the running game after it starts:
+  `SessionFeatures.Begin(new List<string>(SessionFeatures.Ids) { "<id>" })` (systems that read `IsOn` each update pick
+  it up at once; content already spawned stays as it was). In a built player pass `-ffFeatures <id>`; for a lasting
+  editor setting use Final Factory > Feature Toggles before play.
+
 ## Marketing and store stills from a built player (w827, 2026-10-10)
 
 Proven on BEAST for Ben's Steam event cover (Build 92 release, 800x450). The finished covers were published
