@@ -334,6 +334,39 @@ and deconstruction 790-791, repeatable to 1 heartbeat across runs.
 - Revert the change under test with `git diff <merge>^1 <merge> -- <files> | git apply -R`, recompile,
   run the same hook again, then re-apply it.
 
+## Live counts of a background writer or a HUD alert in the editor (w1218, 2026-10-13)
+
+Proven on beast slot4, master b8ed45c678. Two measurements: how many times the Command Core "Update blueprint" switch
+rewrote its library file while 8 construction bots built 287 pieces onto a station (8 writes), and how many
+landing-blocked alerts four stations sharing one pad raised in 29 game minutes (0, plus a positive control that raised one).
+
+- **Never let a measurement touch the player's own files.** Point `BlueprintManager` at a scratch library by
+  reflection, in play mode: set its private `_blueprintPath` to a folder (with a trailing `/`) and `_library` to null.
+  The `Library` getter then builds and loads the new one. Both fields are `[NonSerialized]`, so leaving play mode
+  restores the real library.
+- **`TMPDIR` is not set inside the daemon-launched editor.** `Environment.GetEnvironmentVariable("TMPDIR")` is null, and
+  `Path.GetTempPath()` is the system temp (`C:/Users/<you>/AppData/Local/Temp`). That is outside the worker root, where
+  nothing may be deleted. Write the absolute path of your own `ffa-<session>` folder into the `execute_code` text.
+- **Count game time, not `HeartbeatData.TickCount`.** TickCount jumped by hundreds of thousands between reads; it is not
+  a heartbeat counter. Use `FFTimeData.simulationElapsedTime * 16` (the 16 UPS heartbeat). A writer that runs on
+  `Time.unscaledTime` needs a 1x run on a free-running editor: LinkedBlueprintUpdater's 0.5 s poll and 1.5 s settle, or
+  WarningIconButton's 3 s raise delay (`frameCount` advanced about 4 frames per heartbeat here). Count its effect
+  directly instead of inferring it: the file's `GetLastWriteTimeUtc`, or the indicator's `gameObject.activeSelf`.
+- **Bots build only near the player.** `observe.state|player` gives `actionRange: 200` world units (20 tiles); tasks
+  further away sit "on-cooldown". A long `construction.place`, such as the 278-tile `lifeastwo-big-station` fixture,
+  needs the player walked along. Use a second `EditorApplication.update` hook that runs `player.setposition` 30 tiles
+  on whenever no open `ConstructionTaskData` tile is within 18 tiles.
+- **To build onto an existing station from one fixture**, split its JSON into a seed (the Command Core) and the rest,
+  keeping Width/Length. `blueprint.place` the seed, then commit the rest at
+  `coreTile - core.OriginalPlacedTile - core.OriginalTileOffset + mid`. Here `mid = min + (max - min) / 2` over the
+  rest's footprints: `GridHelper.GetPlaceableBounds` of `OriginalPlacedTile + OriginalTileOffset`, the
+  `ClipboardProcessingSystem` re-anchor. Every piece then lands where it stood relative to the core.
+- **A zero needs a positive control in the same run.** After 29 quiet game minutes, a generated strut ring placed with
+  `blueprint.place` around the P pads made two stations `docking + LandingBlocked` and raised the indicator. That proved
+  the probe could see an alert at all.
+- To retire a hook, remove the `EditorApplication.update` delegates whose declaring assembly name contains
+  `MCPDynamic`. For a log hook, remove those entries from `Application.s_LogCallbackHandler` as well.
+
 ## Real-save A/B of a simulation change in the editor (w870, 2026-10-10)
 
 Proven on lothdesktop, develop 8caa350be: production and the full determinism fingerprint of a real save, at
