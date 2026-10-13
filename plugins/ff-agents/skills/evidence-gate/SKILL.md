@@ -185,6 +185,7 @@ One file each under `lessons/`: the rule, why (the incident, dated), how to appl
 - [A visual fix is verified by looking](lessons/visual-fixes-are-verified-by-looking.md): a built
   player, a clip that contains the event, the intended look in the person's words; `watch_video`
   is a second opinion; also hunt for what should not be there (ghosts, leftovers, overlaps, z-order) before saying "matches" ([section](lessons/visual-fixes-are-verified-by-looking.md#hunt-for-what-should-not-be-there-w895-w1015), w895, w1015).
+- [New art matches the art language](lessons/new-art-matches-the-art-language.md): two solid main colours + one bright bloomy HDR accent; a highlight is the object's own emissive/rim light, never a world-space halo or UI-like indicator; compare side by side with a reference asset (Railgun, powered buildings, enemy ships) and name it in the PR (checklist 5c; w1066, w1241).
 - [No merge before the review](lessons/no-merge-before-the-review.md): "pending" is not done.
 - [Merge your own pull request](lessons/merge-your-own-pr.md): verified and green means merge;
   hold only for exceptional risk or a timing reason, and say which and when. mechanics: check `git branch --show-current` after a wait, gate `gh pr merge` on a passing check (`gh pr checks N && gh pr merge N --match-head-commit <sha>`: exit 8 is pending; w864), post the verdict only from the newest ff-agents (w807).

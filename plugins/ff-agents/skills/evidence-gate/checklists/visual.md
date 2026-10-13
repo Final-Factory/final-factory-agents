@@ -57,6 +57,14 @@ in the built player (drive-game, "The mouse cursor in a built player"; w980).
    not this pass ([lesson](../lessons/visual-fixes-are-verified-by-looking.md#hunt-for-what-should-not-be-there-w895-w1015); Ben, w895: "the hover
    panel is clearly showing over the defense platform"; w1015: "why is there a black ghost vessel
    that stays behind").
+5c. **Art language: two solid main colours + one bright, bloomy HDR accent, and a highlight is the object's own
+   material (w1066, w1241).** New models and materials are compared with an existing reference asset (the Railgun,
+   other powered buildings, existing enemy ships) in the same still: same camera, lighting and bloom. A highlight
+   on something in the world drives its own emissive/HDR accent or rim light, never a world-space sprite, halo, ring
+   or UI-like indicator (unless the brief asks for an indicator). The PR's evidence names the reference asset and
+   shows the side-by-side still ([lesson](../lessons/new-art-matches-the-art-language.md); Ben, w1066: "you didnt
+   add this to the assemblers here"; w1241: "more like a world space UI indicator, isntead of making the ship
+   itself glow more naturally").
 6. **`watch_video` and the blind model review are a second opinion.** They have passed clips
    that did not contain the event, and agreed with a mistake the brief described as intended.
    Quote them, and say where the frames contradict them.
@@ -70,4 +78,5 @@ In a pull request these go into `## Evidence` (the format is in [merge.md](merge
 
 Lessons behind this list:
 [a visual fix is verified by looking](../lessons/visual-fixes-are-verified-by-looking.md),
-[no merge before the review](../lessons/no-merge-before-the-review.md).
+[no merge before the review](../lessons/no-merge-before-the-review.md),
+[new art matches the art language](../lessons/new-art-matches-the-art-language.md).
