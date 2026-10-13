@@ -113,11 +113,23 @@ few hundred REST calls, and take the cheap path:
    checkout, a quick `exit code 1` with no results a compile error, `exit code 139` a segfault.
 5. **The budget of the token you actually spend.** `gh api rate_limit` can answer `remaining: 5000` while your calls
    get 403: read `X-RateLimit-Remaining` from a real call's headers (`gh api -i <endpoint>`), and stop when it falls
-   toward a few hundred.
+   to about 1,500: the portal's pollers (an estimated 25-40 calls a minute) and every other worker spend from the same
+   budget (w1185). `gh api rate_limit` gave the false 5000 five times that night, on beast and on lothdesktop.
+6. **Two calls at a time, not eight.** `xargs -P 8` or `ThreadPoolExecutor(8)` empties the hour in minutes, before
+   any header check can stop it.
+7. **No gh poll loops.** A wait for CI is `blocked_on` with `ci:<owner/repo>#<n>`. An `until gh run list …; sleep 15`
+   makes about 400 calls an hour and keeps calling after the limit (w1185: 153 refusals in 25 minutes). When refused,
+   stop every gh call until the 403's `X-RateLimit-Reset`.
 
 **Why.** On 2026-10-13, around 00:04 UTC, two surveys spent the account's budget together: w1173 read 1,963 job
 logs, and w1175 read 4,349 runs of FinalFactory's main.yml with their jobs and then started on job logs. CI and
 every other worker's `gh` stalled until the reset (lothsahn, w1187: "Please add it to both lessons, yes"). w1175
 finished its census on the cheap path, about 60 REST calls for the run list and about 130 GraphQL queries for jobs,
-steps and failed test names. The game repo's recipe for its own CI: FinalFactory `Documentation/CI-Runs.md`,
+steps and failed test names. w1185 (lothsahn: "Why was github rate limiting us? What was causing the majority of the
+github calls?") counted the two hours. The first ran out at 00:03:56, mostly on w1167's (CI placement) `minutes.py`:
+one REST jobs call per run for 1,887 runs, 8 threads, five runs of the script, about 4,600 calls in 33 minutes (job
+calls measured, the rest estimated). The second ran out by 00:12:58, mostly on w1173's `survey2.sh` with `xargs -P 8`
+(1,963 job logs, each a `gh run view --job --log`). w1175's 4,349 runs went through GraphQL, which has its own budget;
+it made only about 12 REST log calls before the refusals. A refusal's request id ends in the call's Unix time in hex
+(`…:6ACD756C` = 00:03:56 UTC). The game repo's recipe for its own CI: FinalFactory `Documentation/CI-Runs.md`,
 "Reading weeks of CI history without spending the account's API budget".
