@@ -181,6 +181,18 @@ python scripts/release_notes_lint.py Temp/release-notes-<version>.md   # game re
 
 If your checkout predates it: `git show origin/master:scripts/release_notes_lint.py > "$TMPDIR/release_notes_lint.py"`.
 
+**Notes list only what a release player can get** (Ben, 2026-10-13, w1242, about Build 104's draft line "Mobile
+stations take their bots and barges with them": "Isnt this behind a feature toggle?"). Every feature toggle is off
+for a release player, so a change that sits behind a toggle still declared in `FeatureToggles.cs` at the release
+commit is not a note. The lint cannot see that (the line has no forbidden word), so run the second check, which
+also runs the lint (`patch-notes.md` section 3; lesson `evidence-gate`,
+`lessons/patch-notes-list-only-what-players-can-use.md`):
+
+```sh
+CHECK=$(ls -d ~/.claude/plugins/cache/final-factory-agents/ff-agents/*/skills/evidence-gate/release_notes_check.py | sort -V | tail -1)
+python "$CHECK" Temp/release-notes-<version>.md --repo . --range <previous release sha>..origin/master   # exit 0
+```
+
 **"Fixed" in the notes rests on something** (2026-10-02; `evidence-gate`, `checklists/release.md`). 0.50.0.64
 told players two things were fixed that nobody had seen in a built game. For each player-visible fix, find
 its pull request's `## Evidence`: looked at in a built player, write "Fixed"; otherwise say what changed, or
@@ -287,7 +299,8 @@ build is complete and uploaded"). A release is **done only when both** are true:
 - [ ] **Notes posted once, as Max, in #dev-patch-notes** (channel `1072387196927094845`): the body of
   the release's `cicd/release-notes/<version>.md` (everything after its first two lines),
   player-facing, no internal ids, no branches, dev flow, CI, merge queue or agents (`release_notes_lint.py`
-  exits 0 on the committed copy, w1190), never with @everyone; the message link is in the release report.
+  exits 0 on the committed copy, w1190, and `release_notes_check.py` exits 0 too: no line about a change behind a
+  feature toggle, w1242), never with @everyone; the message link is in the release report.
 
 The procedure, the exact format with a template, and the 403 rule are in **`patch-notes.md`** beside
 this file; follow it as written. Check the main upload notice's desc too if you can see it (the

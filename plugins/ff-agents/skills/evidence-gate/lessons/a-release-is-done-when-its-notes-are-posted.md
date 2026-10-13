@@ -44,6 +44,8 @@ without them, and nothing in its report said the post was missing.
   PR, worker, agent, FF Factory, FFBox, workflow, git, request ids). `trigger-ci-release.sh --notes` runs it
   before the bump; run it on the committed copy before `post_as_max`. A hit is reworded, not argued with, and
   a clean lint is a floor, not a judgment. The posted message is public: no agent edits or reposts it, the
-  owner decides (checklist: `checklists/release.md` item 2b).
+  owner decides (checklist: `checklists/release.md` item 2b). The same day Build 104's draft listed a change
+  behind a feature toggle: [patch notes list only what players can use](patch-notes-list-only-what-players-can-use.md)
+  (`release_notes_check.py`, which also runs this lint).
 - An orchestrator that dispatches a release puts "post the patch notes once live" in the brief, and
   does not close the release until the link is in.

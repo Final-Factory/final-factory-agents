@@ -196,6 +196,11 @@ One file each under `lessons/`: the rule, why (the incident, dated), how to appl
   players only (features, fixes, balance, performance, platform support), never branches, the dev flow,
   CI, merge queue, FFBox or agents (Build 101, w1190); `release_notes_lint.py` runs before the bump and
   before `post_as_max`.
+- [Patch notes list only what players can use](lessons/patch-notes-list-only-what-players-can-use.md): a
+  line about a change behind a feature toggle (every toggle is off for a release player: Build 104's
+  "Mobile stations take their bots and barges with them", w1242) or about our workflow (Build 101, w1190)
+  never ships; `release_notes_check.py <notes> --repo <game clone> --range <prev>..<release>` flags both
+  and runs before the bump and before `post_as_max`.
 - [Keep rm out of long commands](lessons/keep-rm-out-of-long-commands.md): a deletion chained
   into a long command waits on a permission prompt nobody sees; in bypass mode only an `rm` of
   `$VAR/*` or `$VAR/{a,b}` (or a critical path) asks (measured, w1097). A new folder per run,
