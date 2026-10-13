@@ -91,6 +91,11 @@ person asking for that exact element to move. Census 1920x1080, 1280x800 and 128
   settles its own guesses.
 - When you pass on someone's report, keep its labels. A guess never becomes a recommendation on
   the way up.
+- **A crash inside a GPU driver is not "nothing to fix" yet** ([lesson](lessons/settle-your-own-guesses.md#a-crash-inside-a-gpu-driver-is-not-nothing-to-fix-until-four-checks-are-done-w956-2026-10-13)).
+  Before a NOT-A-BUG verdict on a crash with only driver frames, give the driver's date and how far behind
+  current it is (vendor release notes), the CPU from the dump (stream 7; Intel family 6 model 0xB7/0xBF is
+  Raptor Lake), the game step that fed the driver and how long it runs, and a lever that keeps that player
+  booting or why there is none (w956: Ben reopened "driver, nothing to fix").
 - **A claim about what another system does comes from that system** ([lesson](lessons/check-the-other-systems-live-config.md)).
   Before you relay "X is not built", "nothing will investigate this" or "that is off" from one
   system's tool about another, read the other system's live config or state (for FFBox,
@@ -261,6 +266,8 @@ One file each under `lessons/`: the rule, why (the incident, dated), how to appl
 - [A fix PR names its Discord report](lessons/a-fix-pr-names-its-discord-report.md): a
   `Discord: <thread or message link>` line before it merges, and `RESOLVED: already fixed by PR #N`;
   FFBox tells the reporter from those only (w436 / #1076 went untold).
+- [A crash inside a GPU driver is not "nothing to fix"](lessons/settle-your-own-guesses.md#a-crash-inside-a-gpu-driver-is-not-nothing-to-fix-until-four-checks-are-done-w956-2026-10-13): date the
+  driver, read the CPU from the dump, measure the game step that fed it, look for a guard (w956).
 - [A fix names its player report](lessons/a-fix-names-its-player-report.md): a `Report: <id>`
   line in the PR, or the id as a request subject; a brief's ids claim nothing, and FFBox keeps the
   report open (w414 / #1064 left two Build 76 crash reports NEEDS-INFO).
