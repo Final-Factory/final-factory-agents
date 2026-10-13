@@ -164,7 +164,10 @@ screen; on desktop three labels stopped fitting, the two windows left their defa
 22. **Nothing moves that the brief did not ask to move (w826, w894). Checked, no way out.** Take the census before and
     after on every standard screen and layout: 1920x1080 at UI 0.9, 1280x800 at UI 0.8, and 1280x800 docked (the Deck's
     default with a building selected), with a station selected so Station Info and the building hover card are up.
-    Then:
+    The before census is a build of **current master** (the branch's merge base), rebuilt when you merge master in: a
+    "before" build from earlier in the request predates master's own UI changes since, and its census blames them on
+    you (w1155: the old before build put the Player Inventory beside a Cargo Hold 107 px from #1620's place; master's
+    own build showed the same 107 px was #1620's, and two other differences were master's w1154 and w1151). Then:
     - `ui_layout.py moves --pair b-1920.json a-1920.json --pair b-1280.json a-1280.json --pair b-docked.json
       a-docked.json` lists every HUD block, window and hover panel that moved or resized more than 4 px, one per line,
       labelled with its screen and layout. Paste its `Moved:` line and every list line as printed.
