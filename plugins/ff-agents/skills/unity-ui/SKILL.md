@@ -66,6 +66,10 @@ with a scripted Deck: `-ffDeckTour <steps.json> -ffDeckTourOut <dir> -ffDeckTour
 (`python scripts/nightly/player_slots.py launch <build> -- <args>`). Each `shot` saves a PNG and a
 census (`<shot>.json`: small, clipped, off-screen and overlapping text, covered controls).
 
+- **Wake a Mac's display first (w1165).** A locked Mac whose display has gone to sleep stalls every built player at start-up
+  (under 1 % CPU, `tour.log` ends at `screen WxH Windowed`, the first `waitFor` times out after 10 minutes): run
+  `caffeinate -u -d -i -t <seconds>` before the launch (it wakes the display; the lock can stay). Check with
+  `ioreg -n Root -d1 -a | grep -A1 IOConsoleLocked` ([project-memory](../project-memory/memories/feel-measurement-traps-2026-09-27.md)).
 - **Tours stay at real speed (w931).** Most agent play runs at `-ffGameSpeed 4` (drive-game, "Play faster"), but a
   tour's waits are UI settle times and its checks include a real-rate clip and flicker, which a raised speed would
   change. Add `-ffGameSpeed` only to a tour leg that waits for the game itself to progress, and take its clips at 1x.
