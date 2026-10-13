@@ -16,6 +16,13 @@ adds what a release rests on and the first check after it.
    platform goes to whoever asked for the release and into the notes (Build 88 crashed every Steam
    Deck at start-up from `SetInputActionManifestFilePath` under Proton, listed "Not verified" in
    #1249; fixed in #1261).
+2b. **The notes are for players.** Only what a player sees and feels: features, fixes, balance,
+   performance, platform support. No git branches (master, develop), no dev or branching flow, CI,
+   tests, merge queue, FF Factory, FFBox, agents, workers or PRs, and no word on which Steam branch
+   follows which git branch (only the standard "Live on the development branch / Restart Steam" lines).
+   `python scripts/release_notes_lint.py <notes>` (game repo) exits 0 before the bump and again before
+   `post_as_max`; Build 101 told players "Dev builds now come from master" (lesson:
+   [notes are for players](../lessons/a-release-is-done-when-its-notes-are-posted.md)).
 3. **Saves still load.** The hard rule, as `ci-release` section 0 has it: the golden-fixture and
    layout tests pass in the release run, and a layout change has its upgrade step.
 4. **Who asked is on record.** The request for the release, and any hold or lift of a hold, names
@@ -44,7 +51,7 @@ adds what a release rests on and the first check after it.
    version are clearly above the previous one's. Give the evidence and the previous BuildID.
    Rolling back or promoting a branch is the owner's call; never move a Steam branch by hand.
 9. **Patch notes are posted once it is confirmed live**, once, as Max in #dev-patch-notes
-   (`ci-release` section 3, `post_as_max` from any machine), with the wording from step 2. The release is not done without the
+   (`ci-release` section 3, `post_as_max` from any machine), with the wording from step 2, linted (step 2b). The release is not done without the
    message link; a failed post is reported as an open step with FFBox's reason (lesson:
    [a release is done when its notes are posted](../lessons/a-release-is-done-when-its-notes-are-posted.md)).
 
