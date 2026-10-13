@@ -78,6 +78,13 @@ Recording notes:
   (`ES_DISPLAY_REQUIRED` alone does not switch a sleeping display back on). The game repo's
   `scripts/narration/record_story_cinematic.py` and `specs/w884-one-tutorial/oswin.wake_display()` do both. Stop a
   window capture before its window closes: one closed under it never wrote the mp4 index.
+- **BEAST's shared desktop (w1232, 2026-10-13): go straight to the game's own frames.** `record_clip --pid` on a
+  built player: `ddagrab` delivered no frame, and the `gdigrab` fallback recorded the FF Factory dashboard window
+  covering the player (80 s of the wrong picture, exit 0). Its ffmpeg (2025-07 git) has no `gfxcapture`. The frame dump
+  below gave 59.8 fps at 1280x720 there: load a save with `-ffFeelLoad`, wait for `[FeelProbe] local player present`
+  in the player log, then send the framing and the event (`ffauto:ui.hide|true`, `camera.zoom`, `ui.selecttile`, the
+  trigger) over the agent channel (drive-game: wait for a session file newer than the launch). The Development build's
+  Debug Info panel stays on screen with the UI hidden: crop it (`crop=1040:720:20:0` at 1280x720).
 - **The game's own frames (`-ffFeelFrames`) when no desktop capture works** (w1067, lothdesktop, 2026-10-12): launch
   from the slot pool with `-ffFeelLoad <save> -ffFeelProbe <csv> -ffFeelFrames <dir> -ffFeelFramesAt <start>+<seconds>
   -ffFeelFramesWidth 1280 -ffFeelVsync 0 -ffFeelFps 60`, stamp each `ffauto:` fire with `time.perf_counter_ns()` (the

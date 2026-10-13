@@ -111,7 +111,9 @@ what it ended (not `ff-leftovers end` before the w1222 fix: it ended the worker'
 `lessons/clean-up-after-yourself.md`) (w1196: two leftover players ran 27 h and 34 h on biscuit; evidence-gate `checklists/done.md` item 4).
 On a worker-root install (LothDesktop since w576) each sandbox slotK has its own two player folders, `players/slotK-0` and `slotK-1`: `launch` picks them from the sandbox it runs in, and `--peer 1` puts a same-build client in `slotK-1` (project-memory `feedback-built-players-run-from-the-slot-pool`).
 Launch it with `-ffAgentControl true` and it publishes `session-{pid}.json` (port + bearer token)
-under `<persistentDataPath>/AgentControl/`; from there an outside process drives the same bounded
+under `<persistentDataPath>/AgentControl/` (**wait for one written after your launch**: the folder keeps hundreds of
+dead players' files, Windows reuses pids, and a stale one names a port that refuses every connection; w1232 lost 2 of
+4 clip runs on beast to it, so check the file's mtime against your launch time); from there an outside process drives the same bounded
 `ffauto` vocabulary over loopback HTTP — `POST /v1/command` instead of `execute_code`, a blocking
 `GET /v1/chain/{id}?timeoutMs=…` (`ff-agent … --wait`) instead of pump-and-poll, `GET
 /v1/snapshot/<scope>` instead of `observe.state`, and `GET /v1/screenshot` for a real game frame
