@@ -91,6 +91,14 @@ census (`<shot>.json`: small, clipped, off-screen and overlapping text, covered 
   `PanelLayout.cs:95,123`) make a window "placed by the player", which the layout then skips; a Mac
   player shares PlayerPrefs with the Steam install. Clear them, or say which were set, before a tour
   (GUESS whether any merged still was affected; w741's sweep found the keys, not a bad still).
+- **Judge a dropped window where it opens again, not where it was dropped (w1217).** While a window is dragged and
+  after the drop it sits on the drag canvas (`PersistentObjects/Canvas/PanelShowcase`), above the whole HUD, until it
+  is closed. Opened again (the next session, with its saved `PanelPosition`) it is back under `GamePanels`, where the
+  Player Inventory (`MiniInventory`) and the structure windows draw before `TopInfoPanel`, the top bar. A still taken
+  right after the drop cannot show a header that bar will cover: for any placement claim, run a second player with
+  the saved place and measure the header's points against the topmost raycast target in that census (w1217: #1581
+  let a top-left drop leave 57 of 57 header points of the Player Inventory under the top bar at 1280x800, so it could
+  not be dragged out or closed by its X; the drop's own still looked fine).
 - **Development overlays are not the game.** The Debug Info counters, "Agent control ON" and Graphy
   draw in a development player and show up as overlaps and flicker; `ui_layout.py` ignores them,
   `ui_check.py` does not. Hold keys by `seconds`, not frames: a frame count is gone in a blink at
