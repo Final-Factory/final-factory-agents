@@ -118,6 +118,10 @@ person asking for that exact element to move. Census 1920x1080, 1280x800 and 128
   cancelled at its timeout with no log at all (`BlobNotFound`) lost its runner; one with its log names the hung test
   (a watchdog prints it); "coverage file is empty" with every test green is a node child ended mid-exit. Name the
   cause before any re-run (w906: 27 coverage failures in 30 days and two lost jobs, each re-run blind).
+- **Bulk GitHub reads take the cheap path and stay inside the shared budget** ([lesson](lessons/settle-your-own-guesses.md#read-github-history-the-cheap-way-well-inside-the-shared-budget-w1175-2026-10-13)).
+  Before bulk GitHub API reads (CI history, many runs or logs), use the cheap path (one day per page, GraphQL batches,
+  check-run annotations instead of log downloads), cap the call count, and check the budget of the token you actually
+  spend (w1173 and w1175 spent the account's ~5,000 calls an hour together on 2026-10-13 and stalled CI for everyone).
 - **Every new system runs in a test** ([lesson](lessons/verify-simulation-at-a-slow-hosts-frame-rate.md#a-new-system-runs-in-a-test-before-the-first-in-game-run-w809-2026-10-09)). Before you report a change
   that adds an `ISystem` or `SystemBase` (presentation and animation systems too), name the test that schedules it in a
   world with a matching entity. A system nobody runs throws on its first frame in a real world (w809: an aliasing error
