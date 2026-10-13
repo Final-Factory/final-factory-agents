@@ -10,8 +10,14 @@ metadata:
 Background: `docs/Smoothness-Investigation.md` in the game repo; tools in `scripts/feel/`
 (`FeelProbe` via `-ffFeelProbe`, `ffcap.swift`, the analyzers, `README.md`).
 
-- **A locked Mac is only half a lab.** The game renders normally behind the lock screen (vsync still
-  paces it), but ScreenCaptureKit gets the occluded window at about 30 Hz (a content change every
+- **A locked Mac is only half a lab, and with its display asleep it is none** (correction, w1165, 2026-10-13, m5). With the
+  display ON the game renders normally behind the lock screen (vsync still paces it). With the screen locked AND the
+  display asleep (`ioreg -n Root -d1 -a`: `IOConsoleLocked` true, `CGSSessionScreenIsLocked` true), three built dev
+  players (two Deck tours at 1920x1080 and 1280x800, another session's `-ffBench` player) sat at 0.2 to 0.7 % CPU for
+  10+ minutes and never reached the game: `tour.log` stopped at `screen 1920x1080 Windowed`, `waitFor` never fired.
+  `caffeinate -u -d -i -t 900` (declares user activity, wakes the display; the screen stays locked) and the same tour
+  finished in 32 s. So before a built-player run on a Mac, wake the display with `caffeinate -u`; a player stuck under
+  1 % CPU at start-up is this, not the build. Even with the display on, ScreenCaptureKit gets the occluded window at about 30 Hz (a content change every
   ~33 ms while the game ran at 60 fps), so photon and present-cadence measurements are impossible.
   A system-wide `CGEvent.post(tap:)` goes to the lock screen's password field. Post keys to the game
   only (`CGEvent.postToPid`, `ffcap --to-pid`) or inject them in the game (`-ffFeelKeys`, Input System
