@@ -120,6 +120,38 @@ The commonest cause is a `CS0052`/`CS0050` "inconsistent accessibility" pair —
 declared `internal` while a `public` job struct holds it as a field — left on disk across a
 relaunch.
 
+**Any assembly counts, the test assemblies too** (w1157, biscuit, 2026-10-12): a compile error left
+only in `FFEditorTests` (a missing `using Tests.Framework;`) put the editor on the Safe Mode prompt
+at boot just like one in `FFSystems`. The signature on a headless Linux host, where nobody sees the
+dialog: `scripts/unity-bridge.py` refuses (exit 3), the editor idles at ~0% CPU and looks hung, and
+`Logs/sandbox-editor*.log` ends at `AssetDatabase: script compilation time`. w1157 restarted into it
+three times before checking the code offline.
+
+**Check the code compiles before you (re)start an editor after code edits**, with Unity's own
+compiler and the response file the editor last used for that assembly; no editor needed:
+
+```sh
+U=<Editor>/Data            # e.g. ~/Unity/Hub/Editor/6000.3.19f1/Editor/Data
+A=FFCore; DIR=Assets/Scripts/FFCore   # one run per assembly you touched, and its asmdef folder
+RSP=$(ls -t Library/Bee/artifacts/*E.dag/$A.rsp | head -1)   # newest EDITOR dag; *P.dag are player builds
+OUT="$TMPDIR/csc-$A-$(date +%H%M%S)"; mkdir -p "$OUT"
+sed -e "s#^-out:.*#-out:\"$OUT/$A.dll\"#" -e "s#^-refout:.*#-refout:\"$OUT/$A.ref.dll\"#" \
+    -e '/^-doc:/d' -e "s#^-generatedfilesout:.*#-generatedfilesout:\"$OUT/gen\"#" "$RSP" > "$OUT/$A.rsp"
+# the rsp lists only the files the editor last compiled: append the ones added since
+echo >> "$OUT/$A.rsp"     # the rsp has no final newline
+git ls-files "$DIR/*.cs" | while read -r f; do grep -qF "\"$f\"" "$RSP" || echo "\"$f\""; done >> "$OUT/$A.rsp"
+"$U/NetCoreRuntime/dotnet" exec "$U/DotNetSdkRoslyn/csc.dll" /nostdlib /noconfig /shared "@$OUT/$A.rsp" \
+  | grep -E 'error CS' | sort -u
+```
+
+No `error CS` = it compiles, against the last good reference DLLs of the assemblies it depends on,
+so check the lower assemblies first (FFCore, FFComponents, FFSystems, then FFSpaghetti, then the
+tests). An `error CS0103`/`CS0246` naming a type that does exist means a file is missing from the
+rsp: the append line covers files in `git ls-files`; add an untracked new one by hand, and skip a
+nested asmdef's folder (`find "$DIR" -name '*.asmdef'`). It never writes into `Library/`. Codegen
+(ILPP) and Burst are not checked. Measured on biscuit/slot3 (w1157): the newest FFCore rsp lacked 5
+files merged since; without the append it reported 3 false errors, with it none.
+
 ### A stalled RUNNING editor (Windows): system + editor modals, and FindWindow lies
 
 Same symptom family as the boot modal but on ALREADY-RUNNING editors: process
