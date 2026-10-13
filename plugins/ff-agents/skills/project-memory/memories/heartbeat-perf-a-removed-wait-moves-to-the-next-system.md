@@ -36,3 +36,14 @@ changed system's own time. Before proposing to remove a wait, name the next main
 `JobHandle.Complete` part and its self time first: a wait is only worth removing together with every later
 wait on the same chain. Contention from other sandboxes still applies:
 [[beast-shared-machine-perf-ab-side-by-side]].
+
+**w1203 (2026-10-13, LifeSave, lothdesktop): the per-frame case.** Four job-only `Ecs.CollisionWorld` callers moved to
+`SystemAPI.GetSingleton<PhysicsWorldSingleton>()` (the job chains after the build, nothing syncs in a player).
+FindNearbyHaulers fell from 0.7-1.3 to 0.01-0.05 ms a heartbeat, MouseRaycast from about 1 ms a frame to 0.04-0.10,
+and frame and heartbeat stayed the same in eight 180 s runs: `FFEarlyBufferSystem` took the wait, because an
+`EntityCommandBufferSystem` completes its producer jobs and the raycast job now chained after the physics build.
+Two traps on the way: MouseRaycast's wait was not the getter at all but `PlayerDataController.SimulationPosition`, a
+main-thread `LocalTransform` read, which completes Unity Physics' `ExportPhysicsWorld` (a registered `LocalTransform`
+writer) and so the whole physics pipeline; and its `JobHandle.Complete` sits directly under the system's marker, so
+only a wait-path digest (`rawreader/WaitPaths.cs`) plus reading the update's main-thread calls finds which call it is.
+Game repo `Documentation/Performance-CollisionWorld-Sync-2026-10-13.md`.
