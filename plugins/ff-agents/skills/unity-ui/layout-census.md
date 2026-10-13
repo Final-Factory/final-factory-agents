@@ -149,6 +149,22 @@ the snippet once as a delegate (`System.AppDomain.CurrentDomain.SetData("census"
 and call it from later snippets (`GetData`); it lasts until the next domain reload (a script compile; entering play
 mode keeps it in this project) (w761).
 
+**Three editor-census traps (w1183, measured on beast, 2026-10-13).** (1) **Each side in a fresh play session, with the
+same steps.** An after census taken in a session where windows had been dragged and the layout then reset
+(`PanelLayout.ResetAll`) listed 3 window moves (Station Grid, Player Inventory, Station Core, up to 374 px); the same
+code, censused in a fresh session of the same save with the same steps, gave 0. Loading the save again
+(`Final Factory/Dev/Load Save`) is a fresh session; a domain reload (a compile) drops the registered delegates, so send
+the snippet again. (2) **Classic before docked, every session.** `UI.Structured.StructuredLayout` keeps its docked hold
+(`_holds`) across play sessions in the editor (domain reload is off on entering play mode): after a docked census, a
+classic one stays docked even with `Forced = false` (measured `_holds` 2, `IsOn` true). Take 1920x1080 and 1280x800
+classic first, docked last, or set `_holds` to 0 by reflection before the classic one. Read `Screen.width` inside the
+census call and refuse a mismatch: one census in w1183 was written at 2534x1385 right after a size change. (3) **What
+the editor adds that is not layout.** A hover tooltip following the real mouse over the Game view
+(`Tooltips/Tooltip(Clone)`, which `pointer.moveto` does not clear), the "[X] to enter or exit structure" hint
+(`GamePanels/MiddleInstructionText`) and the attack banner (`GamePanels/NotificationCenter`) come and go between sides
+and show as 155 "under the HUD" or new window overlaps. When both sides carry them, drop those paths from both censuses
+before `check` and `moves` (as the held-item icon below) and say so in the PR; never from one side only.
+
 ## Text that no longer fits (a font-size change)
 
 A change to text sizes (the w727 Deck floor raised about 300 texts from 14 to 15/16 pt on every screen) is checked by
