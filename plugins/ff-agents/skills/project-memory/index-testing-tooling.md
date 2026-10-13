@@ -3,7 +3,7 @@
 Part of the `project-memory` skill; links are relative to the skill directory. Add new
 entries for this area here, one line each.
 
-- [A workflow-file push needs the workflow scope](memories/a-workflow-file-push-needs-the-workflow-scope.md) — `gh auth status` without `workflow` (beast, w1137) refuses any push whose commits touch `.github/workflows`; split that commit out and hand it to a machine with the scope
+- [A workflow-file push needs the workflow scope](memories/a-workflow-file-push-needs-the-workflow-scope.md) — `gh auth status` without `workflow` (beast, w1137) refuses any push whose commits touch `.github/workflows`; split that commit out and hand it to a machine with the scope; check `gh auth status` at the START of a request that names .github/workflows (w1180 hit it again a day later)
 - [The ffauto catalog golden, folded offline](memories/command-catalog-golden-offline-fold.md) — after a merge where both sides added ffauto commands, fold `CommandTiersTest`'s golden offline (FNV-1a 64 of `ffauto-catalog:v1` and `|name` per sorted name, names from the regenerated reference), checking it reproduces the parent's golden first
 - [Measure a system's cost in a built player](memories/measure-a-systems-cost-in-a-built-player.md) — ProfilerRecorder on every marker holding the system's name (jobs included), per heartbeat plus per-frame p50/p95/p99 to see whether the work spikes on one heartbeat; a measurement verb writes the worst-case load on a big save; editor numbers with safety checks differ several-fold
 - [Native build success with errors](memories/build-report-success-with-errors.md) — require a zero-error BuildReport, C#/Burst checks, baked SubScene files, and real startup; CleanBuildCache recovered an observed missing-scene build

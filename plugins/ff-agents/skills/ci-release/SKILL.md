@@ -121,6 +121,12 @@ Design and code: ffbox repo `design/ffbuild_release_design.txt`, `scripts/releas
   everything else (the bump, file names, `release-status.py`, ffbox).
 - Nothing already in flight for that branch: check that the latest version bump's release has finished
   (section 2) before starting another.
+- **The master batch is green** (w1180, 2026-10-13). Pull requests merge on a fast `Merge gate`, and
+  the whole suite runs after the merge in `master-batch.yml`: `gh run list -R Final-Factory/FinalFactory
+  --workflow master-batch.yml --branch master -L 3`. The newest completed run must be green (or
+  flaky only) at a commit at or behind the tip you bump. A red one names its culprit pull request in
+  its summary: wait for that revert to merge, then bump. A bump on a red batch fails its own `Test in
+  editmode` and does not ship (ffbox `ci_lane.release_tests`), so it only costs a version number.
 - **Tests: the release run's own `Test in editmode` job is the gate; run none yourself**
   (Lothsahn, 2026-09-28, replacing the local-precheck rule of 1.16.3). The bump push runs the full
   EditMode suite on ffbox beside the builds, and the host uploads nothing until every `Test in …`
