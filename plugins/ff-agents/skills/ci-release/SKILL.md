@@ -121,6 +121,12 @@ Design and code: ffbox repo `design/ffbuild_release_design.txt`, `scripts/releas
   everything else (the bump, file names, `release-status.py`, ffbox).
 - Nothing already in flight for that branch: check that the latest version bump's release has finished
   (section 2) before starting another.
+- **The master batch is green** (w1180, 2026-10-13). Pull requests merge on a fast `Test in editmode` (on a pull request it runs only the tests the change touches), and
+  the whole suite runs after the merge in `master-batch.yml`: `gh run list -R Final-Factory/FinalFactory
+  --workflow master-batch.yml --branch master -L 3`. The newest completed run must be green (or
+  flaky only) at a commit at or behind the tip you bump. A red one names its culprit pull request in
+  its summary: wait for that revert to merge, then bump. A bump on a red batch fails its own `Test in
+  editmode` and does not ship (ffbox `ci_lane.release_tests`), so it only costs a version number.
 - **Tests: the release run's own `Test in editmode` job is the gate; run none yourself**
   (Lothsahn, 2026-09-28, replacing the local-precheck rule of 1.16.3). The bump push runs the full
   EditMode suite on ffbox beside the builds, and the host uploads nothing until every `Test in …`
@@ -155,7 +161,25 @@ list>` (ffbox makes it the Steam build's description, `<version> (<sha9>): <that
 blank, and the rest is the player-facing #dev-patch-notes post. Then pass it to the script with
 `--notes`, which commits it with the bump as `cicd/release-notes/<version>.md`. The script refuses a
 file without the `steam_description:` line, and (since w395) one that names a four-part version or
-whose post does not call the release `Build <R>`.
+whose post does not call the release `Build <R>`, and (since w1190) one that names internal process
+(`scripts/release_notes_lint.py`, below).
+
+**Notes are for players, never for the dev team** (Ben, 2026-10-13, w1190, about Build 101's post, which told
+players dev builds now come from master: "please dont put that kind of specific workflow information in patch
+notes for users. like what the hell man? please remember this"). They cover only what a player sees and feels:
+features, fixes, balance, performance, platform support. They never mention git branches (master, develop), the
+development or branching flow, CI, tests, the merge queue, FF Factory, FFBox, agents, workers, pull requests, or
+which Steam branch follows which git branch. The standard `(Live on the development branch)` title and `Restart
+Steam to pick up the update on the development branch.` line stay: players need to know where to find the build.
+A change to how we work is not a note; if it changes nothing a player sees, leave it out. Run the lint on the
+file before `--notes` (the script runs it too, and refuses the bump) and again on the committed copy before
+`post_as_max`:
+
+```sh
+python scripts/release_notes_lint.py Temp/release-notes-<version>.md   # game repo; exit 0, or reword
+```
+
+If your checkout predates it: `git show origin/master:scripts/release_notes_lint.py > "$TMPDIR/release_notes_lint.py"`.
 
 **"Fixed" in the notes rests on something** (2026-10-02; `evidence-gate`, `checklists/release.md`). 0.50.0.64
 told players two things were fixed that nobody had seen in a built game. For each player-visible fix, find
@@ -262,7 +286,8 @@ build is complete and uploaded"). A release is **done only when both** are true:
   `development` (the one branch ffbox sets).
 - [ ] **Notes posted once, as Max, in #dev-patch-notes** (channel `1072387196927094845`): the body of
   the release's `cicd/release-notes/<version>.md` (everything after its first two lines),
-  player-facing, no internal ids, never with @everyone; the message link is in the release report.
+  player-facing, no internal ids, no branches, dev flow, CI, merge queue or agents (`release_notes_lint.py`
+  exits 0 on the committed copy, w1190), never with @everyone; the message link is in the release report.
 
 The procedure, the exact format with a template, and the 403 rule are in **`patch-notes.md`** beside
 this file; follow it as written. Check the main upload notice's desc too if you can see it (the

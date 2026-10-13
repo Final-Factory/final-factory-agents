@@ -18,3 +18,14 @@ does not help.
   the scope (`publish_attachment`; in w1137 Ben pushed it from his m5 as 2056cea9d, with the noreply
   email, which GitHub's email privacy also requires).
 - Never rewrite a branch that was already pushed to get rid of the commit; it was unpushed here.
+
+**Again in w1180, 2026-10-13 (beast, the game merge queue), a day later:** the worker read this lesson only
+after the push was refused, so a high-priority piece waited for a machine with the scope. The check that
+catches it: **at the start of any request whose brief or plan names `.github/workflows`, run
+`gh auth status` before writing a line**; with no `workflow` scope, say so in your first report and ask
+the dispatcher for a sandbox on a machine whose login has it (m5 had it in w1137 and w1180), instead of
+finding out at the push.
+- A branch that never reached GitHub hands over whole as a git bundle: `git bundle create x.bundle
+  origin/master..<branch> [origin/master..<branch2>]`, `publish_attachment`, and the receiving worker runs
+  `git fetch x.bundle <branch>:<branch>` and pushes (w1180's att_fm8au3x0nsgs carried two branches).
+- Only `.github/workflows/*` needs the scope: scripts under `.github/scripts/` push fine from beast.

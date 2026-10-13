@@ -120,6 +120,18 @@ few hundred REST calls, and take the cheap path:
 7. **No gh poll loops.** A wait for CI is `blocked_on` with `ci:<owner/repo>#<n>`. An `until gh run list …; sleep 15`
    makes about 400 calls an hour and keeps calling after the limit (w1185: 153 refusals in 25 minutes). When refused,
    stop every gh call until the 403's `X-RateLimit-Reset`.
+8. **A question about money or minutes starts at the bill, not the run history.**
+   - `gh api "organizations/<org>/settings/billing/usage?year=Y&month=M"` gives one line per day, SKU and repo; `.../usage/summary` gives the month's totals. Four calls cover four months, and Ben's `bryding` login, an org admin, reads them.
+   - Read `netAmount`: only that is billed. `grossAmount` minus `discountAmount` is the free part: a public repo on standard hosted runners, self-hosted runners, and the plan's included minutes.
+   - The old `orgs/<org>/settings/billing/actions` and `/packages` answer 410 Gone (moved), not a permission refusal.
+   - Only when the bill itself needs explaining, sample jobs per workflow and reconcile the result against the bill.
+   - In Git Bash, write the endpoint without a leading `/`: `gh api /orgs/...` turns into `C:/Program Files/Git/orgs/...`.
+
+**Why item 8** (w1188, 2026-10-13). Ben was told GitHub cost "200 a month last month because of CI runners".
+
+- The billing API answered in 4 calls: net $0 in September and October.
+- The $200 was ff-factory's gross for October 1–13 ($202.52), all discounted because ff-factory is public.
+- Sampled job timings, about 155 REST calls in all, only explained which workflows made that gross figure.
 
 **Why.** On 2026-10-13, around 00:04 UTC, two surveys spent the account's budget together: w1173 read 1,963 job
 logs, and w1175 read 4,349 runs of FinalFactory's main.yml with their jobs and then started on job logs. CI and
