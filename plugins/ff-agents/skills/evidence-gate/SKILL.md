@@ -176,7 +176,10 @@ One file each under `lessons/`: the rule, why (the incident, dated), how to appl
   on `development`, nothing sets `pre-release` or the default; run `release-status.py`, never recall it.
 - [A release is done when its notes are posted](lessons/a-release-is-done-when-its-notes-are-posted.md):
   live on its branch AND the patch notes posted as Max in #dev-patch-notes (`post_as_max`, any
-  machine); a failed post stays an open step in the report, with FFBox's reason.
+  machine); a failed post stays an open step in the report, with FFBox's reason. The notes are for
+  players only (features, fixes, balance, performance, platform support), never branches, the dev flow,
+  CI, merge queue, FFBox or agents (Build 101, w1190); `release_notes_lint.py` runs before the bump and
+  before `post_as_max`.
 - [Keep rm out of long commands](lessons/keep-rm-out-of-long-commands.md): a deletion chained
   into a long command waits on a permission prompt nobody sees; in bypass mode only an `rm` of
   `$VAR/*` or `$VAR/{a,b}` (or a critical path) asks (measured, w1097). A new folder per run,
