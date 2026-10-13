@@ -1,6 +1,6 @@
 ---
 name: settle-your-own-guesses
-description: "The evidence gate is self-enforced. An agent settles a guess by research or measurement and then proceeds; the person is asked only for money values, for what the rules reserve for them, and for a fork research could not settle. A CI job that died at its timeout or with every test green is read before it is re-run. A bulk read of GitHub history takes the cheap path and stays well inside the account's shared API budget."
+description: "The evidence gate is self-enforced. An agent settles a guess by research or measurement and then proceeds; the person is asked only for money values, for what the rules reserve for them, and for a fork research could not settle. A CI job that died at its timeout or with every test green is read before it is re-run. A bulk read of GitHub history takes the cheap path and stays well inside the account's shared API budget. A crash with only GPU-driver frames is not \"nothing to fix\" until the driver is dated, the CPU read from the dump, the game step that fed it measured and a guard looked for."
 date: 2026-10-02
 ---
 
@@ -169,3 +169,44 @@ calls measured, the rest estimated). The second ran out by 00:12:58, mostly on w
 it made only about 12 REST log calls before the refusals. A refusal's request id ends in the call's Unix time in hex
 (`…:6ACD756C` = 00:03:56 UTC). The game repo's recipe for its own CI: FinalFactory `Documentation/CI-Runs.md`,
 "Reading weeks of CI history without spending the account's API budget".
+
+## A crash inside a GPU driver is not "nothing to fix" until four checks are done (w956, 2026-10-13)
+
+**The rule.** When a player's crash has no game or Unity frame on its stack, only a GPU driver's
+(`nvgpucomp64.dll`, `nvwgf2umx.dll`, `amdxx64.dll`, `igd10iumd64.dll`, ...), "driver bug, nothing to
+fix" is a guess. Do these four checks before a NOT-A-BUG verdict, and put each one in the verdict
+with its source:
+
+1. **Date the driver** from the vendor's own release notes. NVIDIA's file version `32.0.15.9186` is
+   GeForce `591.86`, and the notes are at
+   `https://us.download.nvidia.com/Windows/<v>/<v>-win11-win10-release-notes.pdf` (read them with
+   `pdftotext`). Note how many releases behind current it is, and what those notes list as open and
+   fixed.
+2. **Read the CPU from the dump.** The minidump's SystemInfo stream (stream 7) holds the CPU:
+   ProcessorLevel is the family, the high byte of ProcessorRevision is the model, and it also gives
+   the logical processor count. MiscInfo (stream 15) gives the nominal MHz.
+   - Intel family 6 model 0xB7 or 0xBF is Raptor Lake (13th/14th gen). Its Vmin-shift instability
+     is fixed by microcode 0x12B, and it is a known source of `nvgpucomp64.dll` crashes in many
+     games.
+   - A twenty-line Python reader is enough for this. No debugger is needed.
+3. **Find the game step that fed the driver** at that moment, from the log lines before
+   `Crash!!!`: a warm-up, a load, a first draw. Measure how long that step runs in a built player.
+4. **Ask whether the game can keep that player booting** without taking anything from other
+   players. Examples: a guard that turns the step off after a crash during it, a narrower step, a
+   per-driver opt-out. Turning it off for everyone is not the answer. If no lever exists, say why.
+
+**Why (w956, 2026-10-13).** FFBox diagnosed report 20261011T004500Z-crash-f5bded0557 as NOT-A-BUG,
+"NVIDIA's display driver crashed inside its own shader compiler", and the request was closed. Ben
+reopened it: "yea look into the driver isssue more since it was from 2026". He did not accept
+"driver, nothing to fix". The checks found:
+- The driver was 591.86 from January 27, 2026. Its notes list no compiler crash, open or fixed,
+  and 617.42 (October 6, 2026) was current.
+- The dump's CPU was family 6 model 0xB7, 32 threads, nominal 3200 MHz: an i9-class Raptor Lake.
+- The game's boot `PipelineWarmup` was compiling its first Direct3D 11 list, a 6.9 s step measured on
+  lothdesktop.
+- The lever was a guard: after a crash during the warm-up, the next launches of that game version
+  on that graphics device skip it (game PR #1658).
+
+**How to apply.** A crash triage that ends in "driver" carries the four lines above: driver date
+and position, CPU, the game step and its length, and the lever or why there is none. A reviewer who
+sees a NOT-A-BUG crash verdict without them sends it back.
