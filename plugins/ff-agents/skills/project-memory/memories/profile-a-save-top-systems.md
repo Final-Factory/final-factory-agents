@@ -47,5 +47,5 @@ Traps seen in w1199:
 - **Disable `AutosaveController` the moment a person's save is loaded in an editor** (drive-game recipes.md says so;
   w1200 missed it once and the editor wrote `_autosave_4.zip` into the shared saves folder).
 
-Related: [[measure-a-systems-cost-in-a-built-player]], [[heartbeat-perf-a-removed-wait-moves-to-the-next-system]],
+Related: [[profile-a-whole-frame-with-the-in-player-log]] (w1204: the whole frame, render thread, GPU, draw calls; the `jobs ` rows came out in the in-player log), [[measure-a-systems-cost-in-a-built-player]], [[heartbeat-perf-a-removed-wait-moves-to-the-next-system]],
 [[beast-shared-machine-perf-ab-side-by-side]].
