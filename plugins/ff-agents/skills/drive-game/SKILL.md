@@ -106,8 +106,9 @@ none of it: measured **141 fps fully occluded** (against the editor's ~2), so fr
 
 Launch it through the player slot pool, never from its build folder (a new exe path raises the
 Windows Firewall prompt): `python scripts/nightly/player_slots.py launch --detach <build> -- …`.
-Give it a quit timer (`-ffSoloQuitAfterSeconds <n>`), and before DONE run `ff-leftovers end` and say in the report
-what it ended (w1196: two leftover players ran 27 h and 34 h on biscuit; evidence-gate `checklists/done.md` item 4).
+Give it a quit timer (`-ffSoloQuitAfterSeconds <n>`), and before DONE end what `ff-leftovers list` shows and say in the report
+what it ended (not `ff-leftovers end` before the w1222 fix: it ended the worker's own Claude on Windows; evidence-gate
+`lessons/clean-up-after-yourself.md`) (w1196: two leftover players ran 27 h and 34 h on biscuit; evidence-gate `checklists/done.md` item 4).
 On a worker-root install (LothDesktop since w576) each sandbox slotK has its own two player folders, `players/slotK-0` and `slotK-1`: `launch` picks them from the sandbox it runs in, and `--peer 1` puts a same-build client in `slotK-1` (project-memory `feedback-built-players-run-from-the-slot-pool`).
 Launch it with `-ffAgentControl true` and it publishes `session-{pid}.json` (port + bearer token)
 under `<persistentDataPath>/AgentControl/`; from there an outside process drives the same bounded

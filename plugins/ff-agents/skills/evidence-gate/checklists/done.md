@@ -26,9 +26,11 @@ holds, or the report says what is left instead of DONE.
    yours, and a stuck one is cleared with `unity` `clear_batch`, not left running
    ([clean up after yourself](../lessons/clean-up-after-yourself.md), w791). **No runaway process**: nothing of yours is
    looping or writing a huge `.output` file ([clean up after yourself](../lessons/clean-up-after-yourself.md), w899).
-   **Nothing you started still runs** (w1196, w1197): `ff-leftovers list` shows nothing of your session, or you ran
-   `ff-leftovers end` and the report says what it ended (game players, Xvfb and its window manager, ffmpeg, background
-   jobs, servers). Every player you started had a quit timer (`-ffSoloQuitAfterSeconds`). A run you keep going while you
+   **Nothing you started still runs** (w1196, w1197): `ff-leftovers list` shows nothing of your session, or you ended
+   what it listed (game players, Xvfb and its window manager, ffmpeg, background jobs, servers) and the report says
+   what. **No `ff-leftovers end` until `grep -c FF_LEFTOVERS_CALLERS "$(command -v ff-leftovers)"` prints 1 or more**:
+   before FF Factory's w1222 fix it ended the worker's own Claude process on Windows; end what `list` shows by pid
+   ([not `end` before the w1222 fix](../lessons/clean-up-after-yourself.md#not-ff-leftovers-end-before-the-w1222-fix)). Every player you started had a quit timer (`-ffSoloQuitAfterSeconds`). A run you keep going while you
    are stopped has a `wake_me` check-in set for it. Biscuit, 2026-10-13: two headless players of closed requests (w1072,
    w1025) ran 27 h and 34 h on about 6 cores at 100% fans, and nobody's report had said they were still up
    ([processes you started end before DONE](../lessons/clean-up-after-yourself.md#processes-you-started-end-before-done-w1196-w1197)).

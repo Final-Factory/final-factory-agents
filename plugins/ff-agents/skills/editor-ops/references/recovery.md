@@ -69,6 +69,12 @@ Fix: kill the editor (precondition-check its `-projectPath` first), delete
 `Temp/__Backupscenes` and any stale `Temp/UnityLockfile`, then relaunch. Boot proceeds normally
 and the bridge registers.
 
+**Not only after a crash** (w1140, m5/slot1, 2026-10-12): `mcp__machine__unity stop` reported "quit gracefully"
+right after a play-mode session in which `main.unity` had been loaded through `manage_scene load` and lifeSave played,
+yet `Temp/__Backupscenes/0.backup` survived, and the next two starts (one a `restart` with `force`) both hung at this
+dialog. Before stopping a sandbox editor you used in play mode, exit play mode and let the scene settle; when a start
+then shows the triad above, look in `Temp/` before restarting again.
+
 **After a crash the bridge's port may belong to another editor (w719).** The crashed editor's
 `~/.unity-mcp/unity-mcp-status-<hash>.json` keeps its old port (e.g. 6401). If another sandbox's editor
 has bound that port since, `scripts/unity-bridge.py status --project-path <yours>` connects to it and
