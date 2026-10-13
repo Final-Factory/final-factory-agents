@@ -7,6 +7,9 @@ layout also follows [the UI checklist](ui.md)**: a late-game save, every sub-vie
 content, the classic look side by side, a real-rate clip for flicker (w718: the w644 hub passed
 on stills and broke on Ben's Deck).
 
+A **mouse cursor** change is the exception to "on video": no capture contains the OS cursor, so it is read from Windows
+in the built player (drive-game, "The mouse cursor in a built player"; w980).
+
 0. **Who else draws with it.** Before you edit a shader, shader graph, subgraph, include or
    material, run `python3 scripts/asset_usage.py <path>` in the game repo. Anything besides the
    target on the list: give the target its own shader or material, or put every user in scope and

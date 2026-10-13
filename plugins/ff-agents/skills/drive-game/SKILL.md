@@ -126,6 +126,23 @@ desync reports upload to ffintake: never hunt desyncs that way (project-memory
 that no `ffauto` scope exposes, driving uGUI by reflection, or reproducing something that only
 happens in the editor.
 
+### The mouse cursor in a built player (w980)
+
+No game capture contains the OS cursor: `/v1/screenshot`, `record_clip` and `manage_camera` show the frame without it,
+and a GDI `CopyFromScreen` of the game window comes back black. A change to what `Cursor.SetCursor` shows (a tool's
+cursor, the map-marker reticle) is read from Windows instead, with `read_os_cursor.ps1` beside this file
+(`-PlayerPid <pid> -OutPng <icon.png>`): it moves the real mouse over the player window, reads `GetCursorInfo`, says
+whether the handle is the system arrow, saves the icon alone (`DrawIconEx` into a 96x96 bitmap) and puts the mouse back.
+What it needed (lothdesktop, 2026-10-13, PR #1659): `SetProcessDPIAware` first (unaware, a 1280x800 window read
+640x400 and the point missed the window), and `ShowWindow(SW_RESTORE)` plus an Alt `keybd_event` before
+`SetForegroundWindow` (alone, Windows refused it and the window under the mouse was File Explorer). Same handle and
+byte-identical icon PNGs = the same cursor; take one control reading after cancelling the tool, whose handle must change,
+so the reading is shown to follow the cursor. It refuses when `GetLastInputInfo` says the desktop was used within
+`-MinIdleSeconds` (a person's mouse), but its own Alt and mouse moves reset that timer: gate the first read of a leg and
+pass `-MinIdleSeconds 0` to the rest. Pair the icons with the game's screenshot of the same moment. In the PR's
+Evidence, a cursor-only change is `Kind: other` with a claim row "No visible change to the rendered game frame: ...
+no capture contains the OS cursor", and the cursor readings as their own MEASURED rows.
+
 ## Play faster: game speed (w931)
 
 Ben (2026-10-10): "turn up the timescale and play the game faster because you're a computer, not a human". **Default
