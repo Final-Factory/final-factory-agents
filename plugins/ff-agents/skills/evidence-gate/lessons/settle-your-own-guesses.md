@@ -1,6 +1,6 @@
 ---
 name: settle-your-own-guesses
-description: "The evidence gate is self-enforced. An agent settles a guess by research or measurement and then proceeds; the person is asked only for money values, for what the rules reserve for them, and for a fork research could not settle. A CI job that died at its timeout or with every test green is read before it is re-run."
+description: "The evidence gate is self-enforced. An agent settles a guess by research or measurement and then proceeds; the person is asked only for money values, for what the rules reserve for them, and for a fork research could not settle. A CI job that died at its timeout or with every test green is read before it is re-run. A bulk read of GitHub history takes the cheap path and stays well inside the account's shared API budget."
 date: 2026-10-02
 ---
 
@@ -94,3 +94,30 @@ of these it was, and say it in your report:
 - A walk down a Windows process tree takes a child only when it started no earlier than its parent; a walk up keeps a
   set of the ids it has seen.
 - Never end a process by an id parsed from a file without checking that it is above 0.
+
+## Read GitHub history the cheap way, well inside the shared budget (w1175, 2026-10-13)
+
+Every agent on an account shares one GitHub REST budget, about 5,000 calls an hour, and so do the account's CI
+tools. A survey that spends it stalls everyone else's `gh` until the hour resets. **Rule.** Before a bulk read of
+GitHub history (CI runs, jobs, logs, PRs over weeks), count the calls it will make, sample when that is more than a
+few hundred REST calls, and take the cheap path:
+
+1. **The run list one day per query.** `actions/workflows/<id>/runs?created=<day>&per_page=100` returns at most
+   1,000 runs per query whatever the range, silently. Keep each run's `node_id`.
+2. **Job results through GraphQL, 50 runs a query** (`nodes(ids: [...]) { ... on WorkflowRun { checkSuite {
+   checkRuns(filterBy: {checkName: "<job>"}) { conclusion startedAt completedAt steps { ... } } } } }`, cost 1
+   each). GraphQL's hourly budget is separate from REST's.
+3. **Failed test names from check-run annotations, not log downloads.** A results check run (FinalFactory's
+   `editmode Test Results`) carries one annotation per failed test; a log is one REST call per job.
+4. **The job's own annotations name an infrastructure failure**: `upload-pack: not our ref` is a commit gone before
+   checkout, a quick `exit code 1` with no results a compile error, `exit code 139` a segfault.
+5. **The budget of the token you actually spend.** `gh api rate_limit` can answer `remaining: 5000` while your calls
+   get 403: read `X-RateLimit-Remaining` from a real call's headers (`gh api -i <endpoint>`), and stop when it falls
+   toward a few hundred.
+
+**Why.** On 2026-10-13, around 00:04 UTC, two surveys spent the account's budget together: w1173 read 1,963 job
+logs, and w1175 read 4,349 runs of FinalFactory's main.yml with their jobs and then started on job logs. CI and
+every other worker's `gh` stalled until the reset (lothsahn, w1187: "Please add it to both lessons, yes"). w1175
+finished its census on the cheap path, about 60 REST calls for the run list and about 130 GraphQL queries for jobs,
+steps and failed test names. The game repo's recipe for its own CI: FinalFactory `Documentation/CI-Runs.md`,
+"Reading weeks of CI history without spending the account's API budget".
