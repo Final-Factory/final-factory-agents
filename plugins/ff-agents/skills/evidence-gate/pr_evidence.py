@@ -39,6 +39,10 @@ VISUAL_PATH = re.compile(r"/(Presentation|UI|VFX|Vfx|Shaders?)/|\.(shader|shader
                          r"controller|uxml|uss)$", re.IGNORECASE)
 # A screen, panel or HUD element (w718, checklists/ui.md): checked with full content, against the classic look, in motion.
 UI_PATH = re.compile(r"/UI/|\.(uxml|uss)$|^Assets/Scenes/[^/]+\.unity$")
+# A world-space mark drawn as a mesh, not a panel (w1181: the station route arrow, UI/World/StationRouteArrowView.cs, has
+# no canvas, layout or HUD element, so the layout census reads nothing). A 'Not UI: <why>' line takes such a change off
+# the UI rules, only when every UI-path file it touches is a script under UI/World/; a panel, prefab or scene never is.
+NOT_UI_OK = re.compile(r"/UI/World/[^/]+\.cs(\.meta)?$")
 # "1 fps sequences of the tours' shots" (#1251): stills played as a video cannot show flicker.
 SLIDESHOW = re.compile(r"\b[1-9]\s*fps\b|\b(sequences?|slide ?shows?)\s+of\s+(the\s+)?(\w+'?s?\s+)?(shots|stills|screenshots)\b",
                        re.IGNORECASE)
@@ -572,7 +576,22 @@ def check(body: str, files: list[str] | None = None, brief: str | None = None) -
     if not unverified or not unverified[1]:
         problems.append("no 'Not verified:' line: name what you could not check, or write 'nothing'")
 
-    ui = "ui" in kinds or ("visual" in kinds and any(UI_PATH.search(f) for f in files or [] if not NOT_GAME_CODE.search(f)))
+    ui_files = [f for f in files or [] if UI_PATH.search(f) and not NOT_GAME_CODE.search(f)]
+    ui = "ui" in kinds or ("visual" in kinds and bool(ui_files))
+    not_ui = field(section, "Not UI")
+    if not_ui and not_ui[1] and ui:
+        others = [f for f in ui_files if not NOT_UI_OK.search(f)]
+        if "ui" in kinds:
+            problems.append("'Not UI:' and 'Kind: ui' contradict each other: a screen, panel or HUD change keeps the UI rules")
+        elif others:
+            problems.append(f"'Not UI:' covers only scripts under UI/World/ (a world-space mark drawn as a mesh), not "
+                            f"{', '.join(others[:3])}: a panel, prefab or scene keeps the UI rules (checklists/ui.md)")
+        elif len(not_ui[1]) < 30:
+            problems.append("'Not UI:' has to say why: what draws it (a mesh, a line, a world-space marker) and that no "
+                            "canvas, panel or HUD element changes")
+        else:
+            ui = False
+            notes.append(f"not UI (the layout census does not apply): {not_ui[1][:160]}")
     if ui and "visual" not in kinds:
         kinds.append("visual")
 
