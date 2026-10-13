@@ -26,6 +26,12 @@ holds, or the report says what is left instead of DONE.
    yours, and a stuck one is cleared with `unity` `clear_batch`, not left running
    ([clean up after yourself](../lessons/clean-up-after-yourself.md), w791). **No runaway process**: nothing of yours is
    looping or writing a huge `.output` file ([clean up after yourself](../lessons/clean-up-after-yourself.md), w899).
+   **Nothing you started still runs** (w1196, w1197): `ff-leftovers list` shows nothing of your session, or you ran
+   `ff-leftovers end` and the report says what it ended (game players, Xvfb and its window manager, ffmpeg, background
+   jobs, servers). Every player you started had a quit timer (`-ffSoloQuitAfterSeconds`). A run you keep going while you
+   are stopped has a `wake_me` check-in set for it. Biscuit, 2026-10-13: two headless players of closed requests (w1072,
+   w1025) ran 27 h and 34 h on about 6 cores at 100% fans, and nobody's report had said they were still up
+   ([processes you started end before DONE](../lessons/clean-up-after-yourself.md#processes-you-started-end-before-done-w1196-w1197)).
 5. **Labels and ids.** Each number and recommendation is labelled measured, sourced or guess, and
    every id has its plain words beside it ([say what an id is](../lessons/say-what-an-id-is.md)).
 6. **Open waits.** Every `wNNN: still open:` line that names a person (a reboot, a login, a decision, an

@@ -390,8 +390,8 @@ as att_czxzut77aptx, att_bewwrewxiy7h and att_8u6r6t4e4kw9.
     to find structures (for example, whether a save has mobile stations or holo pads).
 - **Check the version you shot.** BEAST's Steam install reported `gameVersion` 0.50.0.83 on `/v1/hello`
   while develop was at 92. Say which build the frame came from.
-- **Close the player with `(Get-Process -Id <pid>).CloseMainWindow()` in PowerShell.** The harness hook
-  blocks `taskkill` from Bash. The slot's build stays until the daemon's pass takes it (w913: no `player_slots.py prune`).
+- **Close the player with `(Get-Process -Id <pid>).CloseMainWindow()` in PowerShell**, or `ff-leftovers end`
+  (FF Factory since w1196: it ends what your session started). The harness hook blocks `taskkill` from Bash. The slot's build stays until the daemon's pass takes it (w913: no `player_slots.py prune`).
 - **The game's own key art is in the repo**: `Assets/Art/Textures/Final Factory_Artworks_02/{Building,Exploration}/PNG/*_Art_01.png`
   (9000x2700). Ben OK'd it for event covers: "you can also just generate something based on the
   illustrations for the game". A 4800x2700 crop is 16:9. The option recommended for the Build 92 event was a crop
