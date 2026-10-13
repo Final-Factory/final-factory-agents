@@ -497,6 +497,10 @@ slots").
   the build passes of the build audits, `run_agent_channel_smoke.sh --build`,
   `bench/capture_raw.sh` (game repo `Documentation/Audit-Script-Index.md`, "Unity slots").
   Launches nested inside a run pass straight through.
+- **`build_player.sh` builds the checkout at its commit and reverts uncommitted tracked edits** (w1155: a probe change,
+  a doc section and a report fix made while a build ran were gone after it). Commit before you start a build, and
+  edit nothing in that tree until it ends; to build another commit (master for a before census), switch the sandbox
+  to a branch at it first (`mcp__machine__switch_branch`, create_from) and back after.
 - An editor you open by hand beside your own (the clone editor of a paired run, via
   `launch-editor.sh`) needs a held slot: `unity-slot acquire --count 1 --label "clone editor"
   --project <clone path>`, then `unity-slot release <id>` once it is closed (`--ttl`, default 120

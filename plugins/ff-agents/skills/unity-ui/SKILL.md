@@ -245,9 +245,27 @@ A still taken a second after the open cannot show either. Measure the open itsel
   the before/after table, `make_review.py` side-by-side clips and time-labelled frame strips. The nightly lane
   `UI-w1155-panel-open` runs it. Before w1155: a Command Core's window 910 px, the Station strip 1104 px, the Player
   Inventory beside a Mass Driver at three places in three frames.
-- **A window you add or place gets `PanelOpenAnimation`** (`Ensure`, or a `Header`): it is held at alpha 0 until it
-  stands still and windows opened together show together, so a placer that settles over a few frames is never seen
-  moving. Something that writes the window's group alpha every frame must leave it to the fade while it plays.
+- **A window you add or place gets `PanelOpenAnimation`** (`Ensure`, or a `Header`), and its placer settles it on the
+  frame it opens: since #1620 the selection column, the dock and the hub run up to 4 more passes on the open frame
+  (lay out, refresh what they keep off, fill rows, refit capped lists, lay windows out from their layout roots, place
+  again) until nothing moves, mark a window they place `PlacesItself` and `Unsettled` when the passes did not settle.
+  The hold until still is only the net. Something that writes the window's group alpha every frame must leave it to
+  the fade while it plays.
+- **Hiding a jump by holding the window costs frames: measure the lag too.** #1585 held each window until it stood
+  still: 0 px jumps, but a building's windows came 3-4 frames after the click where they had come in 1, Technology 2-3,
+  up to 460 ms (Ben noticed; master 80403eb, built players). Report lag frames and ms from the input next to every jump
+  table, before and after, and keep the nightly lane's lag budget at 2 frames. The probe counts a click from the
+  button's release (the tour holds it 8 frames first); a frame's `unscaledDeltaTime` is the length of the frame before.
+- **`Canvas.ForceUpdateCanvases()` only redoes layouts marked dirty**, and it raises `Canvas.willRenderCanvases` in the
+  middle of LateUpdate. A pass that measures a window after it gets a stale size (a Command Core's window 419 units,
+  393 drawn): lay the window out from its topmost parent with a layout group (`PanelOpenAnimation.LayOut`). A
+  once-a-frame check in `willRenderCanvases` acts only after a late (order 32767) LateUpdate has run that frame.
+- **A window that jumps a frame late: trace it, then switch parts off.** `-ffPanelTrace` (development player) logs
+  where each opening window stands at the start of Update, of LateUpdate, at its end and at the draw, with the placers'
+  passes: the stage that moved it names the kind of script. To find which part of a change moves a path-dependent
+  window, build ONE player with a command-line switch per part (`-ff<id>Off=a,b`, a diagnostic commit you revert) and
+  run the census per switch and per subset (about 70 s each) instead of bisecting commits (25 min a build): w1155 found
+  that two open-frame layouts together, not either alone, moved the Player Inventory beside a Cargo Hold 107 px.
 - **Do not fix a jump by laying the canvases out before the placers** (`Canvas.ForceUpdateCanvases()` on the open frame):
   w1155 tried it, and the path-dependent classic packer settled the Player Inventory beside a Cargo Hold 107 px lower at
   1280x800, a move nobody asked for (`ui_layout.py moves` caught it; three before censuses agreed, a build without the
