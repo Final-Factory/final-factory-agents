@@ -53,7 +53,16 @@ branch moves before you trigger, re-read the new commits and add them.
 - **Every bullet comes from a commit in that range, checked against its body** (and the diff when the
   body is unclear). Nothing from memory, from a PR title alone, or from what the fix "probably" does.
   If a commit says a change is hardening and not proven to fix a report, the bullet does not claim a fix.
-- **Player-facing only.** Leave out CI, tooling, docs, tests, and handoff/record commits. Fold
+- **Player-facing only: what a player sees and feels** (features, fixes, balance, performance, platform
+  support). Leave out CI, tooling, docs, tests, and handoff/record commits. **Never write internal process**
+  (Ben, 2026-10-13, w1190, about Build 101's "Dev builds now come from master: every change lands there first,
+  and the development branch follows it": "please dont put that kind of specific workflow information in
+  patch notes for users. like what the hell man? please remember this"): no git branches (master, develop), no
+  development or branching flow, no CI, tests, merge queue, FF Factory, FFBox, agents, workers, pull requests,
+  and no word on which Steam branch follows which git branch. A change to how we build or ship is not a note;
+  leave it out, even when it is the biggest thing in the range. Only the standard Steam-branch title and
+  restart lines name a branch, and only a Steam one. `scripts/release_notes_lint.py` (game repo) fails on these
+  terms; sections 3 and 4 show when to run it. Fold
   developer diagnostics (desync-report detail and the like) into one short bullet at most.
 - **Say what the player sees, in plain words**: no file names, system names, spec or triage numbers,
   PR numbers, or internal terms (heartbeat, `fp`, ECS). A Fix names the symptom that is gone
@@ -120,9 +129,10 @@ The title and restart line name the branch the build landed on: `development` fo
 branch ffbox sets). If Ben or Lothsahn later move it to `pre-release` or the default branch, a post on
 that move names that branch. Omit a section that would be empty.
 
-Before triggering, check the post's length, dashes and version names:
+Before triggering, check the post's length, dashes, version names and internal terms:
 
 ```sh
+python scripts/release_notes_lint.py Temp/release-notes-<version>.md   # no branches, dev flow, CI, agents (w1190)
 tail -n +3 Temp/release-notes-<version>.md | wc -m          # at most 2000
 grep -c '[—–]' Temp/release-notes-<version>.md             # 0
 grep -nE '[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+' Temp/release-notes-<version>.md   # nothing: say Build <R>
@@ -141,11 +151,13 @@ you name the branch it landed on. Never wait for a branch ffbox does not set:
   #dev-patch-notes) are folded into the next post, newest first.
 
 Post the committed copy, so what players read is what the release carried. Put it in your working
-folder, then call the machine tool (it works on every computer; FFBox holds the bot):
+folder, lint it, then call the machine tool (it works on every computer; FFBox holds the bot). **Do not call
+`post_as_max` until the lint exits 0**: a Discord post is public, and you cannot take it back (w1190):
 
 ```sh
 git fetch origin
 git show origin/<branch>:cicd/release-notes/<version>.md > Temp/release-notes-<version>.md
+python scripts/release_notes_lint.py Temp/release-notes-<version>.md
 ```
 
 ```text
