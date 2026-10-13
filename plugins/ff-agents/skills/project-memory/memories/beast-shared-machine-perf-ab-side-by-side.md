@@ -22,5 +22,9 @@ same: p50 3.3 ms, p99 84-168 ms vs 107-169 ms, 126-157 heartbeats per 10 s on bo
   dir, so two can run at once.
 - Not every sandbox honours `/f/ffsb/gpu-bench.lock`, so holding it does not keep the machine quiet.
 - A late-join or first window can differ between runs for reasons of its own; compare the steady windows.
+- **Windowed players launched side by side favour the one launched second** (w1203, lothdesktop, 2026-10-13: it takes
+  the window focus). LifeSave bench pairs gave the second-launched build 18.9 against 46.9 ms frame p50; with the order
+  swapped the other build won, 21.8 against 65.9. Run every pair in both launch orders, and use a system the change
+  does not touch (WanderSystem there) as the control: if it differs, the pair measured the machine, not the change.
 
 Related: [[feedback-beast-work-goes-through-a-sandbox]], [[fmod-init-assert-kills-headless-client]].
