@@ -195,7 +195,10 @@ One file each under `lessons/`: the rule, why (the incident, dated), how to appl
   machine); a failed post stays an open step in the report, with FFBox's reason. The notes are for
   players only (features, fixes, balance, performance, platform support), never branches, the dev flow,
   CI, merge queue, FFBox or agents (Build 101, w1190); `release_notes_lint.py` runs before the bump and
-  before `post_as_max`.
+  before `post_as_max`. A line about a change behind a feature toggle never ships either (every toggle is
+  off for a release player: Build 104's "Mobile stations take their bots and barges with them", w1242):
+  `release_notes_check.py <notes> --repo <game clone> --range <prev>..<release>` flags both kinds and runs
+  before the bump and before `post_as_max` ([section](lessons/a-release-is-done-when-its-notes-are-posted.md#patch-notes-list-only-what-players-can-use-build-104-w1242)).
 - [Keep rm out of long commands](lessons/keep-rm-out-of-long-commands.md): a deletion chained
   into a long command waits on a permission prompt nobody sees; in bypass mode only an `rm` of
   `$VAR/*` or `$VAR/{a,b}` (or a critical path) asks (measured, w1097). A new folder per run,

@@ -64,6 +64,12 @@ branch moves before you trigger, re-read the new commits and add them.
   restart lines name a branch, and only a Steam one. `scripts/release_notes_lint.py` (game repo) fails on these
   terms; sections 3 and 4 show when to run it. Fold
   developer diagnostics (desync-report detail and the like) into one short bullet at most.
+- **Only what a release player can get** (Ben, 2026-10-13, w1242, about Build 104's draft line "Mobile stations
+  take their bots and barges with them" (w243, PR #1666): "Isnt this behind a feature toggle?"). A release
+  player has every feature toggle off. A change whose code or content is behind a toggle that is still declared in
+  `Assets/Scripts/FFCore/Features/FeatureToggles.cs` at the release commit (`FeatureToggles.IsOn`, the Feature
+  Toggle field on an item or research asset, `ContentGates`, `FeatureArt`) is not in the build: leave it out, even
+  when the brief lists its PR. `release_notes_check.py` (section 3) finds those PRs and the bullets that match.
 - **Say what the player sees, in plain words**: no file names, system names, spec or triage numbers,
   PR numbers, or internal terms (heartbeat, `fp`, ECS). A Fix names the symptom that is gone
   ("Zooming panned the minimap"); an Improvement names what is new or better.
@@ -133,6 +139,8 @@ Before triggering, check the post's length, dashes, version names and internal t
 
 ```sh
 python scripts/release_notes_lint.py Temp/release-notes-<version>.md   # no branches, dev flow, CI, agents (w1190)
+CHECK=$(ls -d ~/.claude/plugins/cache/final-factory-agents/ff-agents/*/skills/evidence-gate/release_notes_check.py | sort -V | tail -1)
+python "$CHECK" Temp/release-notes-<version>.md --repo . --range <previous release sha>..origin/master   # exit 0: the lint's terms plus no toggled-off change (w1242)
 tail -n +3 Temp/release-notes-<version>.md | wc -m          # at most 2000
 grep -c '[—–]' Temp/release-notes-<version>.md             # 0
 grep -nE '[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+' Temp/release-notes-<version>.md   # nothing: say Build <R>
@@ -152,12 +160,13 @@ you name the branch it landed on. Never wait for a branch ffbox does not set:
 
 Post the committed copy, so what players read is what the release carried. Put it in your working
 folder, lint it, then call the machine tool (it works on every computer; FFBox holds the bot). **Do not call
-`post_as_max` until the lint exits 0**: a Discord post is public, and you cannot take it back (w1190):
+`post_as_max` until the lint and `release_notes_check.py` exit 0**: a Discord post is public, and you cannot take it back (w1190):
 
 ```sh
 git fetch origin
 git show origin/<branch>:cicd/release-notes/<version>.md > Temp/release-notes-<version>.md
 python scripts/release_notes_lint.py Temp/release-notes-<version>.md
+python "$CHECK" Temp/release-notes-<version>.md --repo . --range <previous release sha>..<release sha>   # CHECK as in section 3; exit 0
 ```
 
 ```text
