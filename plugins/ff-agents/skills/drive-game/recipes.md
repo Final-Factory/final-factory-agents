@@ -212,6 +212,14 @@ Proven driving the full early tutorial with the editor occluded (Step-pumped).
 - **Objectives**: read progress from the `ObjectivesTracker` ECS singleton; the on-screen objective
   panel is the source of truth for what's asked — screenshot and Read it. Every objective also has a
   `Complete` (skip) button — don't use it in a playtest; complete objectives for real.
+- **A still of any tutorial step's card, without playing to it** (w918): start a game with the tutorial on,
+  then `ObjectiveItem.SetObjectiveText(objective)` on the live `ObjectiveItem(Clone)` (objective from
+  `ObjectivesController.LoadObjectives()` by asset name) draws that step's card, display only; its progress
+  text stays the real active step's. On an occluded editor the card and the panel stay hidden while
+  `Audio.NarrationHold.IsNarrating` (the intro's subtitles hold up to 90 s of unscaled time, which `Step()`
+  barely moves): set the internal test hook `NarrationHold.TestNarrating = () => false` by reflection and
+  `PreRoll = false`, pump ~150 frames, capture, then set `TestNarrating` back to null. Capture only, never in
+  a playtest.
 - **Tech/research**: `TechButton` HUD button opens the Technologies panel (the tutorial pre-selects the
   target tech); click the `Research`-labelled button, then `Dismiss` on the unlock dialog. Research
   completes instantly if banked points ≥ cost.
