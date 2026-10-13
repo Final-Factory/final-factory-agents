@@ -251,8 +251,9 @@ poll `get_test_job` for results. **After a change, run the tests it touches, not
 suite** (lothsahn, 2026-10-06, w546): `python scripts/test_select.py` in the game repo reads the
 branch's diff against `origin/master` (plus uncommitted files) and prints the `run_tests`
 arguments: `assembly_names ["FFEditorTests"]` and `test_names`, the exact test class names.
-CI runs the whole suite on every pull request, so anything the selection leaves out is caught
-there. For #1137's change the selection ran in 75 s against 376 s for the full fast suite
+The pull request's `Test in editmode` runs the same selection plus the guard tests, and the whole suite runs after the merge in the master batch (w1180,
+`Documentation/Merge-Queue.md`), so anything the selection leaves out is caught there and bisected
+to its pull request. For #1137's change the selection ran in 75 s against 376 s for the full fast suite
 (measured, lothdesktop).
 
 - **Do not change the editor's scene or locale from `execute_code` between test runs** (w813): `NewScene(EmptyScene)` and

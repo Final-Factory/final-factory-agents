@@ -60,7 +60,10 @@ Ask the person only for:
    recommend.
 
 **Merging is not on that list.** Once the verification is done and CI is green, merge your own
-pull request. Don't stop at an open PR waiting for the person. Hold one only for exceptional risk
+pull request. In the game repo, "CI is green" means its required `Test in editmode` check, which on a pull request now runs only the compile, the
+tests the change touches and one smoke PlayMode test; the whole suite runs after the merge in
+`master-batch.yml`, and a pull request that breaks it comes back as an urgent revert request (w1180,
+the game repo's `Documentation/Merge-Queue.md`). Don't stop at an open PR waiting for the person. Hold one only for exceptional risk
 or a concrete timing reason, and say in your report which it is and when it will merge.
 
 ## After the action
