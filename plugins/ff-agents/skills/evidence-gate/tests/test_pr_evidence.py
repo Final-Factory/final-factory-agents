@@ -219,6 +219,32 @@ Pinned: 3 pin(s) in 3 census(es) (1920x1080 undocked, 1280x800 undocked, 1280x80
         self.assertIn("say Kind: visual (ui for a screen)",
                       "\n".join(self.problems(body, ["Assets/Scripts/UI/Structured/StructuredHub.cs"])))
 
+    NOT_UI = ("Not UI: a world-space mesh (StationRouteArrowView draws one quad per arrow with "
+              "Graphics.RenderMesh); no canvas, panel or HUD element changes\n")
+    ARROW_FILES = ["Assets/Scripts/UI/World/StationRouteArrowView.cs", "Assets/Scripts/UI/World/StationRouteArrowFlow.cs",
+                   "Assets/Scripts/UI/World/StationRouteArrowFlow.cs.meta"]
+
+    def with_not_ui(self, line=None):
+        return edit(GOOD, "Built player: yes\n", "Built player: yes\n" + (line or self.NOT_UI))
+
+    def test_1604_a_world_space_arrow_under_ui_world_needs_no_layout_census_with_not_ui(self):
+        """w1181 (#1604): the route arrow's speed fix touched UI/World scripts and failed every census line."""
+        self.assertIn("UI change with no 'Content:' line", "\n".join(self.problems(GOOD, self.ARROW_FILES)))
+        body = self.with_not_ui()
+        self.assertEqual(self.problems(body, self.ARROW_FILES), [])
+        self.assertIn("not UI", "\n".join(pe.check(body, self.ARROW_FILES)[1]))
+
+    def test_not_ui_does_not_cover_a_panel_a_prefab_a_short_reason_or_kind_ui(self):
+        body = self.with_not_ui()
+        panel = self.ARROW_FILES + ["Assets/Scripts/UI/Panels/StationInfoPanel.cs"]
+        self.assertIn("'Not UI:' covers only scripts under UI/World/", "\n".join(self.problems(body, panel)))
+        prefab = ["Assets/Prefabs/UI/World/NameTag.prefab"]
+        self.assertIn("'Not UI:' covers only scripts under UI/World/", "\n".join(self.problems(body, prefab)))
+        short = self.with_not_ui("Not UI: a mesh\n")
+        self.assertIn("'Not UI:' has to say why", "\n".join(self.problems(short, self.ARROW_FILES)))
+        ui = edit(body, "Kind: visual, simulation", "Kind: ui, simulation")
+        self.assertIn("contradict each other", "\n".join(self.problems(ui, self.ARROW_FILES)))
+
     def test_a_slideshow_is_named(self):
         for text in ("1 fps sequences of the tours' shots", "a sequence of the stills", "slideshow of screenshots"):
             self.assertTrue(pe.SLIDESHOW.search(text), text)

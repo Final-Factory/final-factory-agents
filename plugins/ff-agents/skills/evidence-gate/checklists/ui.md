@@ -5,6 +5,11 @@ the structured layout, Steam Deck sizing). The [visual checklist](visual.md) app
 adds what a screen needs. The recipe (the Deck tour, the pixel checks, uGUI pitfalls) is the
 `unity-ui` skill.
 
+Not a screen: a world-space mark drawn as a mesh or line (w1181, the station route arrow's chevron speed, game PR
+#1604: no canvas, panel or HUD element) keeps the [visual checklist](visual.md) and skips this one with a
+`Not UI: <what draws it, and that no canvas, panel or HUD element changes>` line in `## Evidence`. `pr_evidence.py`
+accepts it only when every UI-path file the PR touches is a script under `UI/World/`.
+
 **Hard rule: move only what the person asked to move** (w894, Ben's fourth correction of the same kind, 2026-10-10: "stop
 moving panels around that I don't ask you to move around. It's driving me crazy. Please update the harness to not fucking
 move panels around unless I tell you to."). Never move, re-anchor, restack or regroup an existing panel, HUD element or
