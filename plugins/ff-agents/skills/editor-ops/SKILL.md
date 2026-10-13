@@ -234,7 +234,7 @@ Open it when the editor or bridge misbehaves:
 - `busy: compiling` forever = the editor is stuck in PLAY MODE
 - NUnit `TestCaseSource` is enumerated at DISCOVERY, not at run
 - A hung BOOT is usually a native modal — relaunching reproduces it
-- A compile error present at BOOT lands in native Safe Mode — no automation channel can click it
+- A compile error present at BOOT lands in native Safe Mode — no automation channel can click it (test assemblies too; compile-check offline with the editor's rsp before a restart)
 - A stalled RUNNING editor (Windows): system + editor modals, and FindWindow lies
 - The scene-modified modal on macOS: signature, recovery, and the prevention that beats both
 - A long-uptime Steam client can wedge play-mode entry (~26h uptime)
