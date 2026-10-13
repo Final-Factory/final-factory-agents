@@ -271,6 +271,13 @@ to its pull request. For #1137's change the selection ran in 75 s against 376 s 
   selection above 60% of the suite's time) or when someone asks for it. Pass both
   `FFEditorTests` and `FFEditorTestsSlow` (or all EditMode assemblies) only when all tests are
   explicitly requested; run slow tests only if asked.
+- **Never run the suite in an editor that has been in play mode since it started.** A play session
+  leaves state the EditMode tests trip on, and the failures look like a regression: w169 (2026-10-01)
+  got three `SelectedLocale is null` failures, w918 (2026-10-13, lothdesktop) 31 NullReferenceExceptions
+  across eight UI test classes (blueprint drag, station strip, exit-game, tutorial toggle), all 59/59 green
+  after `mcp__machine__unity restart`. Run the suite before driving the game, or restart the editor first,
+  and rerun any failure cluster on a fresh editor before calling it real
+  (project-memory `play-mode-before-the-fast-suite-breaks-locale-tests`).
 - **Edit nothing under `Assets/` while a run is going in that editor.** Finish or stop the run
   first. A run that sees half an edit reports failures that are not real. In w1009 (2026-10-11,
   lothdesktop) an objective asset was deleted and a fixture JSON edited during a full
