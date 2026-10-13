@@ -118,7 +118,7 @@ person asking for that exact element to move. Census 1920x1080, 1280x800 and 128
   cancelled at its timeout with no log at all (`BlobNotFound`) lost its runner; one with its log names the hung test
   (a watchdog prints it); "coverage file is empty" with every test green is a node child ended mid-exit. Name the
   cause before any re-run (w906: 27 coverage failures in 30 days and two lost jobs, each re-run blind).
-- **A GitHub script counts its calls first** ([lesson](lessons/share-the-github-budget.md)). Every agent and the
+- **A GitHub script counts its calls first** ([lesson](lessons/look-early-by-breakdown.md#a-bulk-github-read-counts-its-calls-and-watches-the-shared-budget-w1185-2026-10-13)). Every agent and the
   portal share one 5,000-an-hour REST budget. Before a script or loop makes more than about 500 REST calls (one per run,
   per job, per log), read the history through GraphQL batches instead, cap it at 2 at a time, and stop below 1,500
   `X-RateLimit-Remaining` read from its own calls' headers; `gh api rate_limit` misreports the vault token. Never poll
@@ -273,7 +273,7 @@ One file each under `lessons/`: the rule, why (the incident, dated), how to appl
   person is needed: never hand a person a step you, the ops worker or ssh can do, an installer rerun included
   (w855: the dispatcher asked Ben to rerun biscuit's installer for w847) and Unity closed, opened or reopened, git
   commands and file copies (w935: a worker told Ben to close Unity on his m5 main clone; Ben: "You can close Unity").
-- [Share the GitHub budget](lessons/share-the-github-budget.md): one REST budget (5,000 an hour on Lothsahn's account)
+- [Share the GitHub budget](lessons/look-early-by-breakdown.md#a-bulk-github-read-counts-its-calls-and-watches-the-shared-budget-w1185-2026-10-13): one REST budget (5,000 an hour on Lothsahn's account)
   serves every agent and the portal; a survey making one call per run or per job log, 8 at a time, empties it in
   minutes (w1185: w1167's `minutes.py` about 4,600 calls, w1173's job-log survey the next hour). GraphQL batches, a
   budget read from real calls' headers, no gh poll loops.
