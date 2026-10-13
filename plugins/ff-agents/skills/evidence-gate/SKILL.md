@@ -116,6 +116,14 @@ person asking for that exact element to move. Census 1920x1080, 1280x800 and 128
 - **Time the added code when the bench cannot resolve 1%** ([lesson](lessons/settle-your-own-guesses.md#when-a-measurement-cannot-resolve-it-measure-closer-to-the-change-w824-2026-10-09)). A class 3
   desync PR whose before/after runs spread wider than 1% gets the added functions timed directly on the same save,
   with the triggering case present and absent (`checklists/ffbox-desync-pr.md`, w824).
+- **A speed-up is one build, switched off and on, back to back** ([lesson](lessons/settle-your-own-guesses.md#a-speed-up-is-one-build-switched-off-and-on-back-to-back-w1069-2026-10-13)).
+  Before you report a performance gain, measure the same build with the change switched off and on, back to back on
+  the same machine, and check that a system the change does not touch reads the same in both (within about 10%); a
+  run from earlier is not a baseline on a shared machine (w1069: 2.3x against an earlier run, 20% against the switch).
+- **An equivalence test of a pruned search puts a tie on each bound** ([lesson](lessons/settle-your-own-guesses.md#an-equivalence-test-of-a-pruned-search-puts-a-tie-on-each-bound-and-fails-on-the-flip-w1069-2026-10-13)).
+  Before you call an index or pruned search "the same pick as the full scan", have a case with a tie exactly on each
+  bound it stops or skips on, and see the test go RED with that bound's `>` flipped to `>=` (w1069: random worlds all
+  passed the flip).
 - **A CI test does not gate on the clock** ([lesson](lessons/verify-simulation-at-a-slow-hosts-frame-rate.md#a-ci-test-does-not-gate-on-the-clock-w857-2026-10-10)). A test the editmode job runs asserts no wall-clock ratio or time limit (make the benchmark `[Explicit]`, assert the structure), and a `[UnityTest]` waiting on real I/O counts seconds, not frames (w857: a 19 % flake and 422 s of a 14 minute job).
 - **Read why a CI job died before re-running it** ([lesson](lessons/settle-your-own-guesses.md#read-why-a-ci-job-died-before-re-running-it-w906-2026-10-10)). A job
   cancelled at its timeout with no log at all (`BlobNotFound`) lost its runner; one with its log names the hung test

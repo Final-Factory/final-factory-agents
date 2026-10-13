@@ -49,6 +49,30 @@ frame median. Timing the vision hash with a held preview found a cost the bench 
 42.6 ms, every one of 45,566 holders paying a hash-set lookup; the review limited it to Parent-bearing chunks (49.9
 against 50.0 ms after). The steps for class 3 PRs are in `checklists/ffbox-desync-pr.md`.
 
+## A speed-up is one build, switched off and on, back to back (w1069, 2026-10-13)
+
+A run from earlier is not a baseline on a shared machine: other editors, builds and players come and go between the
+two runs. **Rule.** Measure a performance change as the same build with the change switched off, then on (then off or
+on again), back to back on the same machine, and check that a system the change does not touch reads the same in
+both, within about 10%. If it moved, the machine moved, and the comparison says nothing. w1069 step 6 (PR #1635, a
+chunk index for the Supply Bots' source-container search): against the step 5 bench run 35 minutes earlier, the
+assigner looked 2.3x faster at 10,000 bots (16.4 against 7.2 ms), but the bot-task system, which the change never
+touches, was 40% faster too: three editors and a player build had shared the machine during the earlier run, one
+editor during the later. The same build with the index switched off, run between two runs with it on, gave 9.33
+against 7.25 and 7.45 ms: about 20%. A switch for an A/B can be a temporary edit you revert, never a committed
+toggle.
+
+## An equivalence test of a pruned search puts a tie on each bound, and fails on the flip (w1069, 2026-10-13)
+
+An index or a pruned search that must pick exactly what a full scan picks (a different pick is a different trip, and
+on a peer that scans, a desync) is only tested where its prune can be wrong: at equality. **Rule.** For each bound
+the search stops or skips on, add a case whose candidate sits exactly on that bound (the bound's nearest point, with
+the bound's best value) and ties the best score while winning the tie order. Then flip the bound's comparison (`>` to
+`>=`) and see the test go RED before you call it covered. w1069 step 6: five random worlds of 1 to 400 containers and
+a hand-built tie case all passed with both prunes flipped, because none of their ties fell on a bound; only
+`NetworkedProviderIndexTest.ATieOnTheBound_OfTheNextChunk_StillWins` (origin on a chunk's first tile, the tied
+container one tile across the border with the item's largest stock) failed on the flip and passed on the real code.
+
 ## Read why a CI job died before re-running it (w906, 2026-10-10)
 
 A re-run on a guess is acting on a guess. **Rule.** Before re-running a job that was cancelled at its timeout or failed with every test green, find out which
