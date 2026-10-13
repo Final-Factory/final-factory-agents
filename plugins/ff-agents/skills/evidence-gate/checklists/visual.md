@@ -62,7 +62,7 @@ in the built player (drive-game, "The mouse cursor in a built player"; w980).
    other powered buildings, existing enemy ships) in the same still: same camera, lighting and bloom. A highlight
    on something in the world drives its own emissive/HDR accent or rim light, never a world-space sprite, halo, ring
    or UI-like indicator (unless the brief asks for an indicator). The PR's evidence names the reference asset and
-   shows the side-by-side still ([lesson](../lessons/new-art-matches-the-art-language.md); Ben, w1066: "you didnt
+   shows the side-by-side still ([lesson](../lessons/visual-fixes-are-verified-by-looking.md#new-art-matches-final-factorys-art-language-w1066-w1241); Ben, w1066: "you didnt
    add this to the assemblers here"; w1241: "more like a world space UI indicator, isntead of making the ship
    itself glow more naturally").
 6. **`watch_video` and the blind model review are a second opinion.** They have passed clips
@@ -78,5 +78,4 @@ In a pull request these go into `## Evidence` (the format is in [merge.md](merge
 
 Lessons behind this list:
 [a visual fix is verified by looking](../lessons/visual-fixes-are-verified-by-looking.md),
-[no merge before the review](../lessons/no-merge-before-the-review.md),
-[new art matches the art language](../lessons/new-art-matches-the-art-language.md).
+[no merge before the review](../lessons/no-merge-before-the-review.md).
