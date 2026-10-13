@@ -57,6 +57,10 @@ DECK_WORDS = re.compile(r"\bDeck\b|Steam ?Input|SteamOS|Proton|gamescope")
 MEDIA = re.compile(r"\.(png|jpe?g|gif|mp4|webm|mov|mkv)\b|built player", re.IGNORECASE)
 SIMULATION_PATH = re.compile(r"^Assets/Scripts/(FFSystems|FFComponents|FFCore|FFNetcode|FFConfiguration|FFTechnology)/"
                              r"|NetworkOperations")
+# Tutorial and objective cards (w918): an asset edit a player reads on the card, never a code path. PR #1408 added the
+# Production tab's icon to a tip, passed as 'Kind: other' on editor play-mode stills, and was sent back for a built
+# player. Such a change says 'Built player: yes ...' (a still of the card there is enough; no clip unless it moves).
+OBJECTIVE_PATH = re.compile(r"^Assets/Resources/Objectives/.+\.asset$")
 NOT_GAME_CODE = re.compile(r"^Assets/(Tests|TestsSlow|Editor)/|^Assets/Scripts/PlayModeTests/|\.(meta|md)$")
 
 
@@ -648,6 +652,13 @@ def check(body: str, files: list[str] | None = None, brief: str | None = None) -
         visual = [f for f in code if VISUAL_PATH.search(f)]
         if visual and not {"visual", "ui"} & set(kinds) and not any("no visible change" in c.lower() and has_basis(b) for c, b in rows):
             problems.append(f"the changed files look visual ({', '.join(visual[:3])}): say Kind: visual (ui for a screen), or add a claim "
+                            f"row 'No visible change' with its basis")
+        cards = [f for f in files if OBJECTIVE_PATH.search(f)]
+        built = field(section, "Built player")
+        if (cards and not {"visual", "ui"} & set(kinds) and not (built and built[1].lower().startswith("yes"))
+                and not any("no visible change" in c.lower() and has_basis(b) for c, b in rows)):
+            problems.append(f"tutorial or objective cards changed ({', '.join(cards[:3])}): a player reads them, so show the "
+                            f"card in a built player and say 'Built player: yes, <how you reached it>' (w918), or add a claim "
                             f"row 'No visible change' with its basis")
         simulation = [f for f in code if SIMULATION_PATH.search(f) and "/Presentation/" not in f]
         if simulation and "simulation" not in kinds and not any("no simulation" in c.lower() and has_basis(b) for c, b in rows):

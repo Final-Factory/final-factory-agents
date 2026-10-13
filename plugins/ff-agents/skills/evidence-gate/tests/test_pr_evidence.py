@@ -118,6 +118,13 @@ class CheckTest(unittest.TestCase):
         self.assertFails(edit(GOOD, "Determinism audit: 2354 shared heartbeats, no divergence", "Determinism audit: not needed"),
                          "has to say why")
 
+    def test_an_objective_card_change_needs_a_built_player(self):
+        # w918: PR #1408 changed a tutorial tip's icons as 'Kind: other' with editor stills only
+        other = edit(GOOD, "Kind: visual, simulation", "Kind: other")
+        card = ["Assets/Resources/Objectives/ObjectivesTryHard/3z_CraftMiningStationTH.asset"]
+        self.assertFails(other.replace("Built player: yes", "Built player: no"), "tutorial or objective cards changed", files=card)
+        self.assertNotIn("tutorial or objective cards changed", " ".join(self.problems(other, card)))
+
     def test_the_changed_files_have_to_match_the_kind(self):
         other = edit(GOOD, "Kind: visual, simulation", "Kind: other")
         self.assertFails(other, "the changed files look visual", files=["Assets/Scripts/UI/Crafting/QuickCraftPanel.cs"])
