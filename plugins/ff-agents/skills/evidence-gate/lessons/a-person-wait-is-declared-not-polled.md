@@ -101,3 +101,11 @@ hour, and a sandbox released for other work ends it too. A loop that finds its c
 - When the condition is met or the request closes, cancel what you set (`cancel_wake`, `cancel_timer`).
 - The ops worker's guard refuses a backgrounded loop or sleep, in the command or in a scratch script it runs
   (ff-factory `pollProblem`, `server/opsWorker.ts`; docs/ops-worker.md, "Polls and waits: timers").
+- **Stopping a background task does not stop the script it ran** (w1201, 2026-10-13). TaskStop on a Bash
+  `run_in_background` task ended the tool's shell wrapper, and the bench script it had started (`quiet_ab.sh`) kept
+  going: it launched LifeSave bench legs and a two-player pair beside the replacement A/B rounds, so four legs ran on
+  top of each other and were thrown away. Before a replacement run, list your own processes (PowerShell
+  `Get-CimInstance Win32_Process`, `CommandLine` matching your `$TMPDIR` scripts and your player slots) and end the old
+  script's tree yourself (`taskkill /T /F /PID <its bash pid>`; never Unity, which goes through `mcp__machine__unity`).
+  A timing leg starts only when that list is empty. On Windows, `scripts/bench/quiet_gate.sh` passed at once until
+  w1201's #1630 (Git Bash's `ps` has no `-A`), so a gate that returns instantly there is a sign it checked nothing.
