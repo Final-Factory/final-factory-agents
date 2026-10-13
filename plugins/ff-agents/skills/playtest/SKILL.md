@@ -107,7 +107,7 @@ menu verbs, so the channel cannot start a game itself):
 ```sh
 python scripts/nightly/player_slots.py launch --detach "<build>/finalfactory.exe" -- \
   -ffAgentControl true -ffAgentControlDev true -screen-fullscreen 0 \
-  -ffSoloNewGame my-seed -ffSoloFlatMap true -logFile <tmp>/player.log
+  -ffSoloNewGame my-seed -ffSoloFlatMap true -ffSoloQuitAfterSeconds 3600 -logFile <tmp>/player.log
 ```
 
 Then wait until `ffauto:observe.state|player` answers without an error before the first command (world generation).
@@ -124,7 +124,9 @@ a temp dir): every new exe path raises the Windows Firewall "allow finalfactory.
 stalls the run. `player_slots.py launch` (game repo, `scripts/nightly/`) runs it from a player slot,
 a firewall-allowed path (On a worker-root install (LothDesktop since w576) each sandbox slotK has its own two player folders, `players/slotK-0` and `slotK-1`: `launch` picks them from the sandbox it runs in, and `--peer 1` puts a same-build client in `slotK-1` (project-memory `feedback-built-players-run-from-the-slot-pool`).), and and takes `finalfactory.exe`, its folder, a `.app` or the binary
 inside one. `--detach` prints `{"pid", "player", "slot"}` and returns; without it the launcher waits
-and returns the player's exit code. Stop the player by that pid. Mark it by its `-ffAutomationLabel`
+and returns the player's exit code. Stop the player by that pid; `-ffSoloQuitAfterSeconds <n>` ends it by itself,
+and before DONE `ff-leftovers end` ends whatever of your session still runs and says what (evidence-gate
+`checklists/done.md` item 4, w1196: two leftover players ran 27 h and 34 h on biscuit). Mark it by its `-ffAutomationLabel`
 or `-logFile`, not its build path (the command line names the slot). Bash scripts: source
 `scripts/nightly/player_launch.sh` and start `"${FF_LAUNCH[@]}" "$PLAYER" -- <args> &`.
 

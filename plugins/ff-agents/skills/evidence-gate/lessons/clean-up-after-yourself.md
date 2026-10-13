@@ -135,6 +135,37 @@ learns from a repeated problem.
   other); `unity stop` first.
 - FF Factory side: `docs/unity-lifecycle.md`, "Orphaned and hung batch builds are ended".
 
+## Processes you started end before DONE (w1196, w1197)
+
+**Rule.** Files you leave; processes you end. Before you report DONE, and before you end a turn that leaves no
+`wake_me` check-in for a run still going, run `ff-leftovers list`, then `ff-leftovers end`, and say in the report
+what it ended or that nothing was left. It ends what your own session started that still runs (by the
+`FF_SESSION_ID` every process you start inherits): game players, Xvfb and its window manager, ffmpeg, background
+jobs and scripts, batch builds, servers. It never ends your own shell chain, claude's MCP servers, an interactive
+editor or another worker's processes. Give every player you start a way to end by itself: `-ffSoloQuitAfterSeconds
+<n>`, or `timeout -s TERM <n>` around its launch. A run you need while you are stopped needs a check-in set for when
+you will look at it.
+
+**Why.** 2026-10-13, biscuit: Ben's fans ran at 100% around the clock. Two headless players that workers had started,
+pid 2459040 (slot1-1, Xvfb :101, worker a33e1437, w1072) and pid 2311211 (slot2-0, Xvfb :62, worker 1290a5e0,
+w1025), were still up 27 h and 34 h after those workers stopped and their requests closed, about 6 cores between
+them, beside 17 Xvfb displays of earlier workers and a 38-hour-old dbus/gvfs session of a third. Nothing reaped them
+and no report had said they were still running. Ben (w1197): "please update the fff harness to ensure everything is
+properly cleaned up so we arent wasting system resources on our machines after work is done".
+
+**How to apply.**
+
+- FF Factory's daemon ends the rest by itself (ff-factory `machine/leftovers.ts`, docs/self-recovery.md): everything
+  a session started, 2 min after its process stops once no request waits for it, 10 min after it stops while one still
+  does, and never before a pending check-in is due plus 10 min; a game player nobody owns 10 min after it is first
+  seen so. That is a safety net, not the teardown: the report still says what you ended.
+- `ff-leftovers` comes with the FF Factory daemon (w1196). On a machine whose daemon predates it (the command is not
+  found), end your own players by pid: `player_slots.py status` lists the leases, and `kill <pid>` of a player passes
+  the hook (it refuses a kill whose command names Unity, node, claude or PowerShell).
+- A player paused in its Esc menu or back at the title cannot be closed through the agent channel
+  ([project-memory `visual-check-players-must-quit-themselves`](../../project-memory/memories/visual-check-players-must-quit-themselves.md)):
+  the quit timer or `ff-leftovers end` does it.
+
 ## A runaway task output, and `python -` through `eval` (w876, w899)
 
 **Rule.** Do not run `python - <<'E' ... E` inside `eval '...'`, `bash -c "..."` or any wrapper that re-parses
