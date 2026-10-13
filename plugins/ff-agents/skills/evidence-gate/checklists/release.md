@@ -29,7 +29,7 @@ adds what a release rests on and the first check after it.
    `python release_notes_check.py <notes> --repo <game clone> --range <previous release>..<release>` (beside
    `pr_evidence.py`) lists the toggled PRs in the range and fails on a bullet that matches one, and on workflow
    words (2b). Exit 0 before the bump and before `post_as_max`; read its list of toggled PRs against the notes
-   once (lesson: [patch notes list only what players can use](../lessons/patch-notes-list-only-what-players-can-use.md)).
+   once (lesson: [patch notes list only what players can use](../lessons/a-release-is-done-when-its-notes-are-posted.md#patch-notes-list-only-what-players-can-use-build-104-w1242)).
 3. **Saves still load.** The hard rule, as `ci-release` section 0 has it: the golden-fixture and
    layout tests pass in the release run, and a layout change has its upgrade step.
 4. **Who asked is on record.** The request for the release, and any hold or lift of a hold, names

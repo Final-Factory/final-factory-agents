@@ -186,7 +186,7 @@ stations take their bots and barges with them": "Isnt this behind a feature togg
 for a release player, so a change that sits behind a toggle still declared in `FeatureToggles.cs` at the release
 commit is not a note. The lint cannot see that (the line has no forbidden word), so run the second check, which
 also runs the lint (`patch-notes.md` section 3; lesson `evidence-gate`,
-`lessons/patch-notes-list-only-what-players-can-use.md`):
+`lessons/a-release-is-done-when-its-notes-are-posted.md#patch-notes-list-only-what-players-can-use-build-104-w1242`):
 
 ```sh
 CHECK=$(ls -d ~/.claude/plugins/cache/final-factory-agents/ff-agents/*/skills/evidence-gate/release_notes_check.py | sort -V | tail -1)
