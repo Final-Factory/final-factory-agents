@@ -110,3 +110,22 @@ emissive colour or intensity on the object's own material (a property block or a
 instance), not a new child sprite or mesh that sits around it. Name the reference asset and
 attach the side-by-side still in the PR's `## Evidence` (the `Intended look` line or the
 `Shots:` line). If you think the brief really wants an indicator, quote where it says so.
+
+### A glow's colour on screen is measured, not read off the HDR value (w1066)
+
+**Rule.** Before you report a glow's colour ("redder", "more like the Guardian's seams"), measure
+it where the player sees it: crop the glow in a built-player still and average the lit pixels
+(red, green, blue and green over red). Compare that number with the reference and with the last
+round. The HDR value you typed is not the colour on screen.
+
+**Why.** On thin, bright emissive lines the hue comes from intensity, not from the HDR ratio: past
+a point the red channel clips through bloom and the tonemapper, and the small green share decides
+the hue. w1066 measured it in one scene (green over red of the lit pixels): HDR red 4.6 read 0.58,
+3.0 read 0.62, 2.0 read 0.50, 1.3 read 0.36. Round 4's (4.4, 0.55, 0.38) was "pink" on paper and
+measured warm orange (239, 173, 102) in the built player; three later rounds changed the HDR ratio
+and the screen colour hardly moved. Ben said "not red enough" again and again ("the lines arent red
+enough, push it more towards what the guardian looks like with its molten effect actually").
+
+**How to apply.** Lower the intensity for a deeper, redder hue and raise it for a hotter, whiter
+one; set the ratio second. Put the measured mean colour of the lit pixels, before and after, in
+the report and the PR's evidence.

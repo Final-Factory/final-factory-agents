@@ -64,7 +64,10 @@ in the built player (drive-game, "The mouse cursor in a built player"; w980).
    or UI-like indicator (unless the brief asks for an indicator). The PR's evidence names the reference asset and
    shows the side-by-side still ([lesson](../lessons/visual-fixes-are-verified-by-looking.md#new-art-matches-final-factorys-art-language-w1066-w1241); Ben, w1066: "you didnt
    add this to the assemblers here"; w1241: "more like a world space UI indicator, isntead of making the ship
-   itself glow more naturally").
+   itself glow more naturally"). A glow's colour is reported as measured: the mean of its lit pixels in a built-player
+   crop, before and after, because on thin bright lines bloom and the tonemapper set the hue by intensity, not by the
+   HDR ratio ([lesson](../lessons/visual-fixes-are-verified-by-looking.md#a-glows-colour-on-screen-is-measured-not-read-off-the-hdr-value-w1066);
+   w1066: three rounds of "not red enough").
 6. **`watch_video` and the blind model review are a second opinion.** They have passed clips
    that did not contain the event, and agreed with a mistake the brief described as intended.
    Quote them, and say where the frames contradict them.
