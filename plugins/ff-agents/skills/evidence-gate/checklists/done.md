@@ -3,7 +3,7 @@
 For a worker about to end a report with `DONE: wNNN`, or to say a request is finished. Every line
 holds, or the report says what is left instead of DONE.
 
-1. **Merged.** Every PR of the request merged (verified and CI green, the game repo's `Merge gate`;
+1. **Merged.** Every PR of the request merged (verified and CI green, the game repo's `Test in editmode`, which on a PR runs only the touched tests;
    a master batch that names your PR afterwards reopens the work as an urgent revert request, w1180;
    [merge your own pull request](../lessons/merge-your-own-pr.md)), its `## Evidence` checked
    ([merges](merge.md)).

@@ -4,7 +4,7 @@ For a pull request that changes what a player sees, or simulation, save or netco
 claims to fix a reported bug. Docs, tools and tests of existing behaviour need none of this.
 
 Merge your own pull request once its verification is done and CI is green (in the game repo: the
-required `Merge gate`; the whole suite runs after the merge in the master batch, w1180). Don't leave it open
+required `Test in editmode`, which on a PR runs only the touched tests; the whole suite runs after the merge in the master batch, w1180). Don't leave it open
 waiting for the person. Hold one only for exceptional risk or a concrete timing reason, and say in
 your report which it is and when it will merge
 ([merge your own pull request](../lessons/merge-your-own-pr.md)). This list is what "verified"

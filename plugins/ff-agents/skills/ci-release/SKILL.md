@@ -121,7 +121,7 @@ Design and code: ffbox repo `design/ffbuild_release_design.txt`, `scripts/releas
   everything else (the bump, file names, `release-status.py`, ffbox).
 - Nothing already in flight for that branch: check that the latest version bump's release has finished
   (section 2) before starting another.
-- **The master batch is green** (w1180, 2026-10-13). Pull requests merge on a fast `Merge gate`, and
+- **The master batch is green** (w1180, 2026-10-13). Pull requests merge on a fast `Test in editmode` (on a pull request it runs only the tests the change touches), and
   the whole suite runs after the merge in `master-batch.yml`: `gh run list -R Final-Factory/FinalFactory
   --workflow master-batch.yml --branch master -L 3`. The newest completed run must be green (or
   flaky only) at a commit at or behind the tip you bump. A red one names its culprit pull request in
