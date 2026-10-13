@@ -101,16 +101,23 @@ fully occluded** on the same machine, so attached play has no pump, no `Step()` 
 bridge-timeout risk, and no "did the frame actually run" doubt. It is also the SHIPPING target:
 what you observe is what a player gets.
 
-Boot one with the channel on (the automation bootstrap gives it a world — the v1 vocabulary has no
+Boot one with the channel on (the solo bootstrap gives it a world — the v1 vocabulary has no
 menu verbs, so the channel cannot start a game itself):
 
 ```sh
 python scripts/nightly/player_slots.py launch --detach "<build>/finalfactory.exe" -- \
-  -ffAgentControl true -screen-fullscreen 0 \
-  -ffAutomationRole host -ffAutomationTargetClients 1 \
-  -ffAutomationDeterminismAudit false -ffAutomationWriteReport false \
-  -ffAutomationLabel my-playtest
+  -ffAgentControl true -ffAgentControlDev true -screen-fullscreen 0 \
+  -ffSoloNewGame my-seed -ffSoloFlatMap true -logFile <tmp>/player.log
 ```
+
+Then wait until `ffauto:observe.state|player` answers without an error before the first command (world generation).
+`-ffSoloLoad <save>` loads a save instead (`NightlySoloBootstrap`; the game repo's
+`specs/w884-one-tutorial/play_normal_tutorial.py` and `ffd.py` drive a player this way).
+
+⚠️ **Not `-ffAutomationRole host -ffAutomationTargetClients 1` for one player** (w1146, lothdesktop, 2026-10-12): that
+host waits for its client, and the develop nightly 3596c18d sat at the title menu for over 5 minutes, every command
+answering `state_not_playable` ("the game is 'menu'"). The automation roles are for a host and client pair
+(`scripts/audit/run_build_multiplayer_audit.sh`).
 
 ⚠️ **Never run a built player from its build folder** (a sandbox's `Builds/…`, `builds/<sha>-win`,
 a temp dir): every new exe path raises the Windows Firewall "allow finalfactory.exe?" prompt and
