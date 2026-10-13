@@ -1,6 +1,6 @@
 ---
 name: unity-ui
-description: "Build and verify Final Factory's Unity uGUI screens (panels, windows, tabs, HUD, popups, the structured layout and Steam Deck sizing) so they work the way a player sees them. Covers the project's UI map, uGUI layout rules and the pitfalls that broke the w644 Deck hub (layout groups, ContentSizeFitter, anchors, scroll views, grids, canvas scaling at 1280x800, layout fights that flicker, hard-coded colours), the editor rect audit, the Deck tour with full content, and the pixel checks (scripts/deck_audit/ui_check.py: flicker, fill, style, the per-still sheet), and the whole-screen layout census with ui_layout.py (new overlaps between HUD blocks, anchored clusters drifting over 2 px, every touched panel's colour and alpha against a classic panel, every HUD element the change moved at 1920x1080, 1280x800 and 1280x800 docked, each asked for in the brief's own words, and the places Ben fixed himself pinned in hud-pins.json: move only what the person asked to move). Use before changing or reviewing any UI, and before calling a UI change verified."
+description: "Build and verify Final Factory's Unity uGUI screens (panels, windows, tabs, HUD, popups, the structured layout and Steam Deck sizing) so they work the way a player sees them. Covers the project's UI map, uGUI layout rules and the pitfalls that broke the w644 Deck hub (layout groups, ContentSizeFitter, anchors, scroll views, grids, canvas scaling at 1280x800, layout fights that flicker, hard-coded colours), the editor rect audit, the Deck tour with full content, and the pixel checks (scripts/deck_audit/ui_check.py: flicker, fill, style, the per-still sheet), and the whole-screen layout census with ui_layout.py (new overlaps between HUD blocks, anchored clusters drifting over 2 px, every touched panel's colour and alpha against a classic panel, every HUD element the change moved at 1920x1080, 1280x800 and 1280x800 docked, each asked for in the brief's own words, and the places Ben fixed himself pinned in hud-pins.json: move only what the person asked to move), and how a window opens (lag and a jump after it appears: the probe tour, the open hold). Use before changing or reviewing any UI, and before calling a UI change verified."
 ---
 
 # Unity UI: build it, then verify it like a player
@@ -232,6 +232,30 @@ locales), not the one its prefab names. A layout or size change made for the Dec
 (1920x1080 and 2560x1440 at the default 0.90): the I-key windows open where they did, stay put while the pointer
 crosses buildings, and a dragged window does not get another laid over it (w761, the evidence-gate UI checklist
 items 15 and 16).
+
+## 5d. How a window opens: lag and jumps (w1155)
+
+Ben, 2026-10-12: "they are often either laggy, or the appear then shift to a new position suddenly just after appearing".
+A still taken a second after the open cannot show either. Measure the open itself, frame by frame, in a built player:
+
+- **The probe tour.** The game repo's `specs/w1155-panel-open/` (`make_tour.py`, `run_tour.sh`): the Deck tour's `probe`
+  step (`PanelOpenProbe`) follows every window an input brings up at the end of every frame, and `panel_open_report.py`
+  gives per window the lag (frames and ms from the input to its first drawn frame), the jump (the largest distance any
+  edge stood, on a drawn frame, from where it settled) and how far a second open settled from the first; `compare.py`
+  the before/after table, `make_review.py` side-by-side clips and time-labelled frame strips. The nightly lane
+  `UI-w1155-panel-open` runs it. Before w1155: a Command Core's window 910 px, the Station strip 1104 px, the Player
+  Inventory beside a Mass Driver at three places in three frames.
+- **A window you add or place gets `PanelOpenAnimation`** (`Ensure`, or a `Header`): it is held at alpha 0 until it
+  stands still and windows opened together show together, so a placer that settles over a few frames is never seen
+  moving. Something that writes the window's group alpha every frame must leave it to the fade while it plays.
+- **Do not fix a jump by laying the canvases out before the placers** (`Canvas.ForceUpdateCanvases()` on the open frame):
+  w1155 tried it, and the path-dependent classic packer settled the Player Inventory beside a Cargo Hold 107 px lower at
+  1280x800, a move nobody asked for (`ui_layout.py moves` caught it; three before censuses agreed, a build without the
+  pass put it back). Take the census before and after any change to when or how a placer runs.
+- **Look at the lag in ms, not only frames.** The hold costs a frame, and the frame after a selection is often a 100-200
+  ms one (the panels' first update): say so, measured, beside the jumps it removes.
+- `Canvas.willRenderCanvases` runs more than once a frame in the editor (Game and Scene views): a once-a-frame check in
+  it keys on `Time.frameCount`, or two looks in one frame always agree.
 
 ## Related notes
 
