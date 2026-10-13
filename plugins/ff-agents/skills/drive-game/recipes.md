@@ -416,6 +416,31 @@ develop and with a merged change reverted, to show whether the change alters any
 - An equivalence test with pinned values (old vs new code) needs a power check: reverse one loop or switch one
   rule off and confirm every case fails (w870: one reversed neighbour loop and "locks off" each changed all 6 seeds).
 
+## Following a weapon's shots in a player's save (w1229, 2026-10-13)
+
+Proven on m5 slot3, master 271796bb08: the Railgun reports (misses, no fire), measured in the reporters' own Bug Bot
+saves before and after the fix (35 kills from 36 slugs against 3 from 10 on master, same heartbeat window).
+
+- **A per-heartbeat hook.** One `execute_code` installs an `EditorApplication.update` delegate that returns unless
+  `Heartbeat.CurrentHeartbeatFrame` changed, calls `em.CompleteAllTrackedJobs()`, and appends lines to a file in your
+  own `ffa-<session>` folder (absolute path, see w1218). It keeps logging across turns until play mode stops, so a
+  `Bash` until-loop on the file is the wait. Log each shot by entity (its `Projectile.Destination`, closest approach)
+  and each gun's state every 32 heartbeats (target, `ReadyToFire`, chamber, `SatisfactionRatio`, vision count).
+- **Damage lands a heartbeat after the hit.** The collision appends `IncomingHealthChange` and
+  `IncomingHealthChangeSystem` applies it in the next heartbeat's `FFFixedEarlyGroup`; the death follows. Follow each
+  target for about 6 heartbeats before you call a shot a miss. w1229's first probe read `Health` in the heartbeat the
+  slug vanished and reported every hit as a miss. A splash entry (`Source.ProjectileImpactAoe`) is still in the
+  buffers at the end of its own heartbeat. Code facts: the game repo's `Documentation/Knn-System.md`.
+- **A/B with the same probe, the same window.** Copy the fix's files to `$TMPDIR`, `git checkout --` them, compile,
+  load, probe; copy back, compile, load, probe. Compare only shots fired inside one heartbeat range both runs covered:
+  the probe goes in a few seconds after the load, at a different heartbeat each time.
+- **`LinearMotion.Velocity` is stale on a disabled mover.** An idle enemy keeps its last move's velocity with
+  `Disable = true`: log the real displacement per heartbeat beside it before you trust a lead.
+- **Leave play mode before the next `Load Save (from dev_loadsave.trigger)`.** Run from play mode it failed in
+  `CombatUpgradesSystem.Reset` ("CombatUpgradeContainer ... there are none"); from edit mode it loaded each time.
+- **A real fight needs ammo.** By heartbeat ~600 most of the reporters' guns had run dry; setting each chamber slot
+  (`InventorySlot` 0: `Identifier` the slug id, `Quantity` 40) in the throwaway session gave a second sample.
+
 ## Marketing and store stills from a built player (w827, 2026-10-10)
 
 Proven on BEAST for Ben's Steam event cover (Build 92 release, 800x450). The finished covers were published
