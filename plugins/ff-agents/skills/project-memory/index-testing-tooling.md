@@ -3,6 +3,7 @@
 Part of the `project-memory` skill; links are relative to the skill directory. Add new
 entries for this area here, one line each.
 
+- [The agent shell eats backslashes in inline Python](memories/agent-shell-eats-backslashes-in-inline-python.md) — w1227: backslash escapes in a Bash-tool heredoc Python source arrive as real newlines and bare quotes and broke C#, bash and JSON edits three times; Write/Edit for such text, `git diff` after a scripted edit, `MSYS_NO_PATHCONV=1` for `git show branch:path`, cut PR branches with a temporary index when a commit touches a workflow file
 - [A workflow-file push needs the workflow scope](memories/a-workflow-file-push-needs-the-workflow-scope.md) — `gh auth status` without `workflow` (beast, w1137) refuses any push whose commits touch `.github/workflows`; split that commit out and hand it to a machine with the scope; check `gh auth status` at the START of a request that names .github/workflows (w1180 hit it again a day later)
 - [Unity's -testFilter is a slow regex filter](memories/unity-testfilter-regex-is-slow-in-batchmode.md) — on the command line it waits 34 s unfiltered, 4 min at ~50 classes, 19 min at 918 (w1180 merge gate, measured), and filtered tests run several times slower; cap the classes or run unfiltered; exact `test_names` through the MCP bridge do not pay it
 - [gh api job logs need --allow-escape-sequences](memories/gh-api-job-log-needs-allow-escape-sequences.md) — gh 2.102 prints nothing and exits 1 on a Unity job log without it, so a redirected log looks empty (w1180)

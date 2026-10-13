@@ -200,7 +200,11 @@ screen; on desktop three labels stopped fitting, the two windows left their defa
     person's quote or "not asked". w722 / w723 moved the Station Info box to the top-left corner as a side effect of
     packing windows around the strip; nobody asked, and it shipped until Ben, 2026-10-10: "why is station info at the top
     left? i didnt tell you to move that". The evidence for a moved element is a still of it before and after, not the
-    tests of the layout around it.
+    tests of the layout around it. The base build is the pull request's merge-base with master (`git merge-base`),
+    built by `build_player.sh`, not an older build that happens to be in the cache: w1227's first "before" was a
+    master build from before another pull request, and `ui_layout.py moves` listed that pull request's hover tooltip
+    as a move. For a change that touches only a title-menu screen, the in-game census (`pins`, `moves`) is still
+    required by `pr_evidence.py`: take it with the w1145 station tour (`specs/w1145-blueprint-folder-share/`) on both builds.
 23. **A tour that switches layouts is not a classic still (w813).** In the built player the structured dock stays open
     when the tour switches back to classic with a building selected, so a "classic" still shot after a docked pass was the
     dock (the census names it: `StructuredDock`, `StructuredStation`). Run one layout per player launch, and read the census
