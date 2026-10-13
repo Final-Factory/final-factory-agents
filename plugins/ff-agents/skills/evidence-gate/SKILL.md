@@ -118,11 +118,10 @@ person asking for that exact element to move. Census 1920x1080, 1280x800 and 128
   cancelled at its timeout with no log at all (`BlobNotFound`) lost its runner; one with its log names the hung test
   (a watchdog prints it); "coverage file is empty" with every test green is a node child ended mid-exit. Name the
   cause before any re-run (w906: 27 coverage failures in 30 days and two lost jobs, each re-run blind).
-- **A GitHub script counts its calls first** ([lesson](lessons/look-early-by-breakdown.md#a-bulk-github-read-counts-its-calls-and-watches-the-shared-budget-w1185-2026-10-13)). Every agent and the
-  portal share one 5,000-an-hour REST budget. Before a script or loop makes more than about 500 REST calls (one per run,
-  per job, per log), read the history through GraphQL batches instead, cap it at 2 at a time, and stop below 1,500
-  `X-RateLimit-Remaining` read from its own calls' headers; `gh api rate_limit` misreports the vault token. Never poll
-  `gh` in a sleep loop (w1185: two CI-history surveys spent about 7,000 calls in 50 minutes and locked everyone out).
+- **Bulk GitHub reads take the cheap path and stay inside the shared budget** ([lesson](lessons/settle-your-own-guesses.md#read-github-history-the-cheap-way-well-inside-the-shared-budget-w1175-2026-10-13)).
+  Before bulk GitHub API reads (CI history, many runs or logs), use the cheap path (one day per page, GraphQL batches,
+  check-run annotations instead of log downloads), cap the call count, and check the budget of the token you actually
+  spend (w1173 and w1175 spent the account's ~5,000 calls an hour together on 2026-10-13 and stalled CI for everyone).
 - **Every new system runs in a test** ([lesson](lessons/verify-simulation-at-a-slow-hosts-frame-rate.md#a-new-system-runs-in-a-test-before-the-first-in-game-run-w809-2026-10-09)). Before you report a change
   that adds an `ISystem` or `SystemBase` (presentation and animation systems too), name the test that schedules it in a
   world with a matching entity. A system nobody runs throws on its first frame in a real world (w809: an aliasing error
@@ -273,10 +272,6 @@ One file each under `lessons/`: the rule, why (the incident, dated), how to appl
   person is needed: never hand a person a step you, the ops worker or ssh can do, an installer rerun included
   (w855: the dispatcher asked Ben to rerun biscuit's installer for w847) and Unity closed, opened or reopened, git
   commands and file copies (w935: a worker told Ben to close Unity on his m5 main clone; Ben: "You can close Unity").
-- [Share the GitHub budget](lessons/look-early-by-breakdown.md#a-bulk-github-read-counts-its-calls-and-watches-the-shared-budget-w1185-2026-10-13): one REST budget (5,000 an hour on Lothsahn's account)
-  serves every agent and the portal; a survey making one call per run or per job log, 8 at a time, empties it in
-  minutes (w1185: w1167's `minutes.py` about 4,600 calls, w1173's job-log survey the next hour). GraphQL batches, a
-  budget read from real calls' headers, no gh poll loops.
 - [A wait is a harness timer, never a background loop](lessons/a-person-wait-is-declared-not-polled.md#a-wait-on-a-machine-is-a-harness-timer-never-a-background-loop-w1106): what must be checked
   after the turn goes to `wake_me`, `blocked_on`, `set_timer` or `waiting_on_person`, which the portal keeps across
   deploys and restarts. Never a backgrounded `sleep` loop, `nohup`, `&` or Monitor: the process ends at an idle reap, a
