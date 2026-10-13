@@ -220,6 +220,14 @@ Proven driving the full early tutorial with the editor occluded (Step-pumped).
   barely moves): set the internal test hook `NarrationHold.TestNarrating = () => false` by reflection and
   `PreRoll = false`, pump ~150 frames, capture, then set `TestNarrating` back to null. Capture only, never in
   a playtest.
+- **The same card in a built player, reached by real play** (w918; a card change needs it, `pr_evidence.py` checks):
+  build the head with `scripts/nightly/build_player.sh <project> <sha> win "$TMPDIR/builds"` (editor stopped, tree
+  clean; ~12 min with `FF_BUILD_BURST_X64_TARGETS=24`), then a one-off solo scenario in `scripts/nightly/scenarios/`
+  (`"solo": true`, `"gameSpeed": 1`, world seed `nightly-tutorial-e2e`, peerArgs `-ffSoloObjectives Normal`) that plays
+  each step's `do` from `tutorial-recipes.json`, `poll`s `ffauto:observe.state|objectives` for the step's
+  `shortDescription`, waits ~25 s for its narration and card, and takes a `screenshot`. Run it with
+  `ffnightly.py run --player <build>/player --sha <sha> --scenario <id> --no-retry --game-speed 1 --out <dir>`; the
+  Normal tutorial's step 6 took 2.2 min. Keep the scenario file out of the commit.
 - **Tech/research**: `TechButton` HUD button opens the Technologies panel (the tutorial pre-selects the
   target tech); click the `Research`-labelled button, then `Dismiss` on the unlock dialog. Research
   completes instantly if banked points ≥ cost.
