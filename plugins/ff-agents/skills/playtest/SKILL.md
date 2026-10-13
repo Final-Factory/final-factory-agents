@@ -125,7 +125,8 @@ stalls the run. `player_slots.py launch` (game repo, `scripts/nightly/`) runs it
 a firewall-allowed path (On a worker-root install (LothDesktop since w576) each sandbox slotK has its own two player folders, `players/slotK-0` and `slotK-1`: `launch` picks them from the sandbox it runs in, and `--peer 1` puts a same-build client in `slotK-1` (project-memory `feedback-built-players-run-from-the-slot-pool`).), and and takes `finalfactory.exe`, its folder, a `.app` or the binary
 inside one. `--detach` prints `{"pid", "player", "slot"}` and returns; without it the launcher waits
 and returns the player's exit code. Stop the player by that pid; `-ffSoloQuitAfterSeconds <n>` ends it by itself,
-and before DONE `ff-leftovers end` ends whatever of your session still runs and says what (evidence-gate
+and before DONE end what `ff-leftovers list` shows of your session and say what (not `ff-leftovers end` before the
+w1222 fix: on Windows it ended the worker's own Claude; evidence-gate `lessons/clean-up-after-yourself.md`) (evidence-gate
 `checklists/done.md` item 4, w1196: two leftover players ran 27 h and 34 h on biscuit). Mark it by its `-ffAutomationLabel`
 or `-logFile`, not its build path (the command line names the slot). Bash scripts: source
 `scripts/nightly/player_launch.sh` and start `"${FF_LAUNCH[@]}" "$PLAYER" -- <args> &`.

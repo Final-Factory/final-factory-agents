@@ -16,7 +16,8 @@ ended up holding both of the sandbox's player slots (3-0, 3-1) with no way to cl
 - one was at the **title screen** after `ffauto:net.hostquit` ("host ended the session ... shutdown"), which ends
   the session but not the process; the agent channel refuses commands on the title screen too;
 - (Corrected 2026-10-13, w1196: the hook refuses a kill whose command names Unity, node, claude or PowerShell; a bare
-  `kill <pid>` of your own player passes, and `ff-leftovers end` ends everything your session started. Left running,
+  `kill <pid>` of your own player passes. Not `ff-leftovers end` before FF Factory's w1222 fix: on Windows it ended the
+  worker's own Claude (evidence-gate `lessons/clean-up-after-yourself.md`). Left running,
   such players ran 27 h and 34 h on biscuit. What follows is what the agent saw on 2026-10-07.)
 - `kill` of a game process is refused by the FF Factory harness hook ("Killing Unity ... processes by hand is
   blocked"), so only a person or the daemon could free the slots. `ffnightly.py run` was refused meanwhile

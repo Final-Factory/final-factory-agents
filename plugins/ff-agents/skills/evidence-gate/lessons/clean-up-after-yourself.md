@@ -137,6 +137,17 @@ learns from a repeated problem.
 
 ## Processes you started end before DONE (w1196, w1197)
 
+### Not `ff-leftovers end` before the w1222 fix
+
+**Do not run `ff-leftovers end` until FF Factory's w1222 fix is on your machine**: it is there once
+`grep -c FF_LEFTOVERS_CALLERS "$(command -v ff-leftovers)"` prints 1 or more. On 2026-10-13 four workers on Windows (w1203, w1215, w1216, w1219) ran
+`ff-leftovers end` and their own Claude process died at once with exit code 1: Git Bash's fork+exec broke the
+parent chain the command walks, so it took claude.exe, its shell and its MCP server for leftovers and ended them.
+Until the fix is there, run `ff-leftovers list` only (it reads, it ends nothing), end a player or job it lists by its
+pid yourself (`kill <pid>`; never claude, bash, sh, node, conhost, uv, uvx or an MCP server's python), say in the
+report what you ended, and leave the rest to the daemon, which ends what your session started 2 min after your
+process stops. Wherever this skill set says `ff-leftovers end`, read this first.
+
 **Rule.** Files you leave; processes you end. Before you report DONE, and before you end a turn that leaves no
 `wake_me` check-in for a run still going, run `ff-leftovers list`, then `ff-leftovers end`, and say in the report
 what it ended or that nothing was left. It ends what your own session started that still runs (by the
