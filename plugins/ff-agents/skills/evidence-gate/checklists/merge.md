@@ -95,10 +95,10 @@ Not verified: the Bats' slot lag (simulation, follow-up PR)
 - **A fix for a Discord report** has its `Discord: https://discord.com/channels/<guild>/<thread>` line
   (or the original message's `/<guild>/<channel>/<message>` link for a message in a channel) in the
   description before it merges, one per report: FFBox tells the reporter from it and nothing else
-  ([a fix PR names its Discord report](../lessons/a-fix-pr-names-its-discord-report.md)).
+  ([a fix PR names its reports](../lessons/a-fix-pr-names-its-reports.md#its-discord-report)).
 - **A fix for a player's crash or desync report** has a `Report: <report id>` line per report it
   fixes in the description (or the id among its request's subjects): FFBox shows the report fixed
-  only from that ([a fix names its player report](../lessons/a-fix-names-its-player-report.md)).
+  only from that ([a fix PR names its reports](../lessons/a-fix-pr-names-its-reports.md#its-player-report)).
 - **An FFBox branch is reviewed file by file against its report**: its run can end with a commit
   `ffbox <run>: uncommitted work at exit` that sweeps in editor serialization noise. In w944, #1422's fix for a stop
   drag also carried `DysonBeam.mat` `m_CustomRenderQueue` 3000 -> 2000, a render change nobody asked for. Run

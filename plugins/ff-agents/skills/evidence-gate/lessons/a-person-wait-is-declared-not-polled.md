@@ -10,7 +10,9 @@ date: 2026-10-10
 harness's tools or the ops worker can do. That covers closing or opening Unity, git commands, copying a file or a
 save, and an installer rerun. A person is asked only for what the rules reserve to them: approvals, design decisions,
 spending, publishing, and admin acts that need their own words (money, deleting, releases, app settings, a secret), or
-a physical act (reboot, login).
+a physical act (reboot, login). The wider rule, for anything you would call impossible or hand back (w1287: a Claude
+Design project "can't" be made while Ben's m5 was signed in to claude.ai): [research the route, then try it or file
+it](research-the-route-before-you-say-cant.md).
 
 - **An editor open on a project you must change** (your sandbox's, or a machine's main clone, a person's own project
   folder included): you close it cleanly, do the work, and reopen it if a person was using it. Save its scenes first
