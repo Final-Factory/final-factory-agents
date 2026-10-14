@@ -187,6 +187,57 @@ class DevWorkflow(Fixture):
             self.assertTrue(problems, line)
 
 
+class SyncMergeOnTheBumpBranch(unittest.TestCase):
+    """w1242: the bump branch merged origin/master in before its PR merged, and the check was run on
+    <previous release>..<bump branch tip>. The sync merge was read as one PR carrying #1666's toggle, so the
+    Railgun line (from #1671, also brought in by it) was flagged too."""
+
+    @classmethod
+    def setUpClass(cls):
+        cls._folder = tempfile.TemporaryDirectory()
+        repo = cls.repo = Path(cls._folder.name)
+        run(repo, "init", "-q", "-b", "main")
+        write(repo, rnc.TOGGLES_PATH, TOGGLE_TEMPLATE % PLAIN_RELEASE)
+        commit(repo, "base")
+        cls.base = run(repo, "rev-parse", "HEAD")
+        run(repo, "checkout", "-q", "-b", "release/0.50.0.104")
+        write(repo, "ProjectSettings/version.txt", "0.50.0.104\n")
+        commit(repo, "0.50.0.104")
+        run(repo, "checkout", "-q", "main")
+
+        def declare():
+            write(repo, rnc.TOGGLES_PATH, TOGGLE_TEMPLATE % (RIDE + PLAIN_RELEASE))
+            write(repo, "Assets/Scripts/Station/MobileStationUndockingSystem.cs",
+                  "if (FeatureToggles.IsOn(FeatureToggles.InsertersRideStations)) TakeUnitsAlong();\n")
+        merge_pr(repo, "ffbox-f-slot5-w243", 1666, declare)
+        merge_pr(repo, "w1237-railgun-splash", 1671,
+                 lambda: write(repo, "Assets/Scripts/Railgun/Splash.cs", "radius = 20;\n"))
+        run(repo, "checkout", "-q", "release/0.50.0.104")
+        run(repo, "-c", "user.name=t", "-c", "user.email=t@example.com", "merge", "--no-ff", "-q", "main", "-m",
+            "Merge origin/master into release/0.50.0.104")
+        write(repo, "cicd/release-notes/0.50.0.104.md", "notes\n")
+        commit(repo, "0.50.0.104 notes")
+        cls.rng = f"{cls.base}..{run(repo, 'rev-parse', 'HEAD')}"
+
+    @classmethod
+    def tearDownClass(cls):
+        cls._folder.cleanup()
+
+    def test_the_sync_merge_is_read_as_the_prs_it_brought_in(self):
+        numbers = [pr["number"] for pr in rnc.merged_prs(self.repo, self.rng)]
+        self.assertIn(1666, numbers)
+        self.assertIn(1671, numbers)
+        self.assertNotIn(None, [pr["number"] for pr in rnc.merged_prs(self.repo, self.rng) if pr["merge"]])
+
+    def test_only_the_toggled_line_is_flagged(self):
+        problems, gated, _ = rnc.check(self.repo, self.rng, "* Railgun splash reaches 20 u\n", set())
+        self.assertEqual([], problems)
+        self.assertEqual([1666], [pr["number"] for pr in gated])
+        problems, _, _ = rnc.check(self.repo, self.rng, "* Mobile stations take their bots and barges with them\n",
+                                   set())
+        self.assertEqual(["toggled-off"], [p[0] for p in problems])
+
+
 class Cli(Fixture):
     def test_exit_codes(self):
         bad = Path(self._folder.name) / "bad.md"
