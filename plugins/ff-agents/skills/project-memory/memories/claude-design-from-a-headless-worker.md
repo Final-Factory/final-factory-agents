@@ -77,6 +77,16 @@ look at the screenshot (the text in once), then click Send by coordinates.
 stall the shell. An `osascript` `make new document` to a Safari that is still launching timed out after 120 s
 (AppleEvent -1712); `open -a Safari "<url>"` is the reliable way to start it.
 
+**Revising a doc you already delivered (w1295 reopen, 2026-10-14).** When the request closed on DONE, the harness
+swept `$TMPDIR` within minutes; Ben's revision reopened it and every source part, chart script and red-team note was
+gone. Recovery worked from the delivered HTML (`DesignSync get_file`, or the copy committed on the branch): split it
+by `<section id=` into parts, edit, reassemble. Before DONE, commit or publish the **editable** sources, not only the
+rendered HTML (the review-folder zip is the cheap place). In a docs-only scratch clone of the game repo
+(`git clone --filter=blob:none --no-checkout --depth 1 -b <branch>` + `sparse-checkout`), do not pass your own
+`user.email`: GitHub refused a personal address with GH007 ("would publish a private email address"); use the
+author the branch already has (`481770+bryding@users.noreply.github.com`). Overwriting the same project path with
+`finalize_plan` + `write_files` replaces the file in place; the project link stays the same.
+
 **Note:** in October 2026 Claude Design shows "Claude Design is moving to Artifacts in the Claude app. You can keep
 using this version until December 14."
 
