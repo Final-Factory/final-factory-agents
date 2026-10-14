@@ -109,6 +109,12 @@ person asking for that exact element to move. Census 1920x1080, 1280x800 and 128
   system's. Only a concrete blocker reaches the person, with its evidence and the smallest step only they can take
   (their own login, password or 2FA code, an approval). Ben corrected this twice: w935 (Unity on his m5: "You can close
   Unity") and w1287 (the Factions design doc in Claude Design: "I already asked for this").
+- **Drive only the windows you opened** ([lesson](lessons/research-the-route-before-you-say-cant.md#drive-only-the-windows-you-opened-w1287-2026-10-14)). Before any
+  computer-use click or key on a person's computer, name the app and the window id you opened in this request and pass
+  that window to every call; never click, type or scroll in a window they had open (their Claude desktop app, chat,
+  editor, terminal, dashboard), even when it holds the signed-in session you need: open your own browser window or use
+  Claude Code's own tool. Touched one by mistake: put it back and report each click (w1287; Ben: "WHY IS IT POKING
+  AROUND IN MY CLAUDE DESKTOP APP").
 - **Say what every id is, every time** ([lesson](lessons/say-what-an-id-is.md)). Before you send
   anything a person reads, scan it for request ids (w293), PR numbers (#972), commits, worker or
   session ids and sandbox names: each one gets its plain-English words beside it, on every
@@ -309,6 +315,10 @@ One file each under `lessons/`: the rule, why (the incident, dated), how to appl
   it; only a concrete blocker with evidence and the smallest step only the person can take reach them (w935; w1287:
   the orchestrator told Ben twice it could not make a Claude Design project while his m5 was signed in; Ben: "I
   already asked for this").
+- [Drive only the windows you opened](lessons/research-the-route-before-you-say-cant.md#drive-only-the-windows-you-opened-w1287-2026-10-14): computer-use on a person's
+  computer touches only windows you opened and your own tools, never their Claude desktop app or other open apps,
+  even the signed-in one (w1287: a worker switched Ben's desktop app to Chat mode looking for Design while his
+  thread ran; Safari, in its own window, and Claude Code's DesignSync were the routes).
 - [A wait is a harness timer, never a background loop](lessons/a-person-wait-is-declared-not-polled.md#a-wait-on-a-machine-is-a-harness-timer-never-a-background-loop-w1106): what must be checked
   after the turn goes to `wake_me`, `blocked_on`, `set_timer` or `waiting_on_person`, which the portal keeps across
   deploys and restarts. Never a backgrounded `sleep` loop, `nohup`, `&` or Monitor: the process ends at an idle reap, a

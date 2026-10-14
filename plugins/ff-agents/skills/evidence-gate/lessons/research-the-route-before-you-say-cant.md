@@ -1,6 +1,6 @@
 ---
 name: research-the-route-before-you-say-cant
-description: "Before an agent (an orchestrator included) tells a person something can't be done, or asks them to do a step themselves, it researches the route (the tool's own docs, the harness's skills and briefs, the machines and the sessions already signed in on them, the tools it and the workers have) and then tries the work or files it for an agent that can. Only a concrete blocker reaches the person, with its evidence, together with the smallest step only they can take (a login, a password or 2FA code typed by them, an approval, a design decision). An orchestrator's own limits (no shell, no browser) are not the system's: it files the work instead of saying can't. Ben corrected this twice: w934/w935 (close Unity on his m5) and w1268/w1287 (the Factions design doc in Claude Design)."
+description: "Before an agent (an orchestrator included) tells a person something can't be done, or asks them to do a step themselves, it researches the route (the tool's own docs, the harness's skills and briefs, the machines and the sessions already signed in on them, the tools it and the workers have) and then tries the work or files it for an agent that can. Only a concrete blocker reaches the person, with its evidence, together with the smallest step only they can take (a login, a password or 2FA code typed by them, an approval, a design decision). An orchestrator's own limits (no shell, no browser) are not the system's: it files the work instead of saying can't. Ben corrected this twice: w934/w935 (close Unity on his m5) and w1268/w1287 (the Factions design doc in Claude Design). A route on a person's computer drives only the windows the agent opened, never their Claude desktop app or other open apps (w1287: \"WHY IS IT POKING AROUND IN MY CLAUDE DESKTOP APP\")."
 date: 2026-10-14
 ---
 
@@ -46,7 +46,12 @@ main clone too), git commands, copying files or saves, installers and daemon upd
    Claude desktop app are signed in to claude.ai on it. Ben, 2026-10-14: "I want the html design doc in a Claude design
    document for ease of viewing and sharing. I already asked for this." Only then was it filed as w1287, to research
    Claude Design's import routes and try them on the m5 through its signed-in session, stopping with a screenshot at a
-   login wall (open when this lesson was written).
+   login wall. **How it ended:** the w1287 worker first stopped at a locked screen and at "/design-login cannot run in
+   this non-interactive session" and declared both as Ben's steps. Ben: "YOU CAN USE CLAUDE DESIGN FROM CLAUDE CODE".
+   The route was a pty: an interactive `claude` under `expect`, `/design-login`, Authorize in a signed-in browser window
+   the worker opened, then DesignSync wrote the HTML into a new project (project-memory
+   `claude-design-from-a-headless-worker`). A tool's "needs an interactive session" means start one in a pty; it is
+   not a person's step.
 
 Both times the agent's own reach was taken for the system's reach, and the person got the work back. lothsahn's
 correction of w847 (2026-10-10: "don't ask ben to run installers. Update your instructions. Stop doing that.") was the
@@ -68,3 +73,38 @@ same kind, for a machine step.
   offer the nearest route that works.
 
 The checklist lines: [done](../checklists/done.md) item 8, and "Reports and briefs" in [SKILL.md](../SKILL.md).
+
+## Drive only the windows you opened (w1287, 2026-10-14)
+
+**Rule.** On a person's own computer (Ben's m5, a lothsahn machine), computer-use and browser automation touch only:
+
+- windows and tabs **you opened yourself** in this request (`open -a Safari <url>`, a browser you launched), and
+- your own tools (Claude Code's DesignSync, `gh`, the `mcp__machine__*` tools, a pty session you started).
+
+Never click, type or scroll in a window the person had open: their Claude desktop app (its chats, threads and
+Code sessions), chat and mail apps, their editors, terminals, the FF Factory dashboard tab, a browser window they
+were using. That holds when that app is the only one signed in to the service you need. Then you find another route
+(a browser window you open, where the session also lives; Claude Code's own tool for the product), or you stop and ask
+for the smallest step.
+
+**Why.** w1287 (2026-10-14, putting the w1268 Multiplayer Factions design doc into Ben's Claude Design). Chrome on the m5 was
+signed out of claude.ai, so the worker went to the Claude desktop app, which was signed in as Ben. Ben was using it at
+the time, with a live thread running. The worker switched it from Code to Chat mode and opened the sidebar's
+More menu twice, looking for Design. Ben: "WHY IS IT POKING AROUND IN MY CLAUDE DESKTOP APP". Two better routes were
+there all along. Safari, in a window the worker had opened itself, turned out to be signed in to claude.ai. And Claude
+Code reaches Claude Design directly (Ben: "YOU CAN USE CLAUDE DESIGN FROM CLAUDE CODE"; the recipe is project-memory
+`claude-design-from-a-headless-worker`). The worker put the app back to Code mode with one click and reported each click.
+
+**How to apply.**
+
+- **Before the first click**, write down the app (bundle id) and the window id you opened, and pass that same
+  `--window-id` to every `orca computer` call. `list-windows` first: a window that was there before you started is not yours.
+- **A signed-in session in someone's app is not an invitation.** Try a browser window you open (`open -a Safari <url>`
+  opens a new tab in a window you can then own; check each browser, since sign-in differs: on the m5 Chrome was signed
+  out and Safari signed in), then the product's own CLI or Claude Code tool, then the smallest step for the person.
+- **If you touched a person's window**, put it back as it was (compare against your first screenshot) and report
+  every click and what it changed. Don't read or publish anything of theirs you saw (chat titles, threads).
+- **At the end**, close what you opened except what the person should see (the project tab), and say which windows
+  you closed and which you left open.
+
+The checklist line: "Drive only the windows you opened" in [SKILL.md](../SKILL.md), "Reports and briefs".
