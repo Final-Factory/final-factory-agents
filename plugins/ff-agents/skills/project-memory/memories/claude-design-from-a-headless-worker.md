@@ -26,11 +26,25 @@ non-interactive session." The authorization is per machine, and headless session
 5. The callback page (platform.claude.com/oauth/code/callback) shows a `code#state` string. Send it to the pty with
    Enter. The pty prints "Design-system access authorized." Then `/exit`.
 
+**Which project type (w1287 reopen, 2026-10-14).** A design-system project's link opens on its landing page
+(Published box, "Check whether this design system can migrate", a card grid), not on a file. Ben opened it on his
+phone: "it doesn't look like it worked." A `<!-- @dsCard group="…" -->` first line makes the HTML a card on that page,
+but the card sits below those panels and is clipped. For a doc to read, use a **regular project**
+(`PROJECT_TYPE_PROJECT`). DesignSync can't create one, but it writes into one: create it in a browser window you
+opened with a short prompt to the Blank template ("holds an existing HTML file I will add. Create no files; reply:
+ready"; Claude names the project, here "Factions plan w1268"), read its id from the URL, `get_project` to confirm the
+type, then `finalize_plan` and `write_files`. With one HTML file in it, the link opens straight on that file, and the
+phone layout opens on its Preview tab. `list_projects` lists design systems only.
+
+**Check before you report: open the exact link fresh, as the person will**, and also at phone width (Safari page zoom
+300% in a 1324 px window is about 441 CSS px). The first report of w1287 checked the doc after opening the file by hand
+and missed that the link itself opened on an empty landing page.
+
 **Then, from the headless session:** `create_project` (name), `finalize_plan` (writes; `deletes: []` is required;
 `localDir` is a folder of your own in `$TMPDIR`), `write_files` with `localPath` (a 5.3 MB self-contained HTML went in
 one call). The project is `https://claude.ai/design/p/<projectId>`.
 
-**Undo what create_project turns on.** It makes a `PROJECT_TYPE_DESIGN_SYSTEM` (the type can't be changed later)
+**Undo what create_project turns on** (if you made a design system). It makes a `PROJECT_TYPE_DESIGN_SYSTEM` (the type can't be changed later)
 that starts **Published** and **Org default**, so every new design the person starts would use it. Unless they asked
 for a design system: open the project, click "Remove as org default" (and confirm), then untick "Published". Sharing
 stays private (the Share button is at the top right of the project view).
@@ -38,7 +52,8 @@ stays private (the Share button is at the top right of the project view).
 **Viewing:** the file opens from the "No file open" picker at the top of the project. The viewer is an iframe. `orca
 computer scroll` reports ok but doesn't move it. Click the margin, then `press-key PageDown`. Screenshots taken
 within about 2 s of a scroll show tearing (overlapping text), so wait 3 s. The zoom menu (100% next to the pointer
-tool) at 75% fits a wide doc into a 1324 px window. Hiding the chat sidebar is the button left of the reload icon.
+tool) at 75% fits a wide doc into a 1324 px window. Hiding the chat sidebar is the button left of the reload icon. Typing into the prompt box with orca: `paste-text`
+lands late or not at all, and `type-text` can enter the text twice; check the box before you send.
 
 **Note:** in October 2026 Claude Design shows "Claude Design is moving to Artifacts in the Claude app. You can keep
 using this version until December 14."
