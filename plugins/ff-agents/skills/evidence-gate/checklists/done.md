@@ -53,6 +53,10 @@ holds, or the report says what is left instead of DONE.
    do the work, reopen it), git commands, copying files and installers are yours. Left to a person: approvals, design
    decisions, spending, publishing and admin acts that need their own words
    ([never hand a person a step a tool can do, first section](../lessons/a-person-wait-is-declared-not-polled.md), w855, w935).
+   Every "can't", "not possible", "no agent can" or "you can ... yourself" names the route you researched (the sources),
+   the try or the filed request (its wNNN), and, for what is left, the blocker's evidence (the error, a screenshot) and
+   the one smallest step only the person can take (their own login, password or 2FA code, an approval)
+   ([research the route before you say can't](../lessons/research-the-route-before-you-say-cant.md), w935, w1287).
 9. **Learned.** The report has `Learned: <file or PR>` or `Learned: nothing new`. A correction or a
    reopen gets the check that would have caught it ([lessons belong in the harness
    repo](../lessons/lessons-belong-in-the-harness-repo.md)).

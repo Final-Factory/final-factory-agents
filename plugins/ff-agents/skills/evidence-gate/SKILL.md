@@ -102,6 +102,13 @@ person asking for that exact element to move. Census 1920x1080, 1280x800 and 128
   `ffbox_activity show config` / `show signatures`) and quote the key and value, or say unknown.
   For what FF Factory itself did (a deploy, a clean-up, an update, a restart), read the portal's own logs with
   `mcp__machine__portal_logs` (w920) and name the source and window; never infer it from the code.
+- **Research the route before you say "can't" or "you do it"** ([lesson](lessons/research-the-route-before-you-say-cant.md)).
+  Before you send a person "I can't", "no agent can", "you can ... yourself" or "<Name> needs to", research the route
+  (the tool's own docs, the skills, the machines and the sessions already signed in on them, the tools you and the
+  workers have), then try it or file it for an agent whose tools reach it; an orchestrator's own limits are not the
+  system's. Only a concrete blocker reaches the person, with its evidence and the smallest step only they can take
+  (their own login, password or 2FA code, an approval). Ben corrected this twice: w935 (Unity on his m5: "You can close
+  Unity") and w1287 (the Factions design doc in Claude Design: "I already asked for this").
 - **Say what every id is, every time** ([lesson](lessons/say-what-an-id-is.md)). Before you send
   anything a person reads, scan it for request ids (w293), PR numbers (#972), commits, worker or
   session ids and sandbox names: each one gets its plain-English words beside it, on every
@@ -268,14 +275,13 @@ One file each under `lessons/`: the rule, why (the incident, dated), how to appl
 - [Say DONE per request](lessons/say-done-per-request.md): end a report with `DONE: wNNN` only when
   every step of the request is finished, post-merge steps included; answer a wrap-up or "Is it
   done?" with DONE or what is left (w419: w342 stayed open with its work done).
-- [A fix PR names its Discord report](lessons/a-fix-pr-names-its-discord-report.md): a
+- [A fix PR names its reports](lessons/a-fix-pr-names-its-reports.md): a
   `Discord: <thread or message link>` line before it merges, and `RESOLVED: already fixed by PR #N`;
-  FFBox tells the reporter from those only (w436 / #1076 went untold).
+  FFBox tells the reporter from those only (w436 / #1076 went untold). And a `Report: <id>` line per
+  player crash or desync report it fixes, or the id as a request subject; a brief's ids claim nothing,
+  and FFBox keeps the report open (w414 / #1064 left two Build 76 crash reports NEEDS-INFO).
 - [A crash inside a GPU driver is not "nothing to fix"](lessons/settle-your-own-guesses.md#a-crash-inside-a-gpu-driver-is-not-nothing-to-fix-until-four-checks-are-done-w956-2026-10-13): date the
   driver, read the CPU from the dump, measure the game step that fed it, look for a guard (w956).
-- [A fix names its player report](lessons/a-fix-names-its-player-report.md): a `Report: <id>`
-  line in the PR, or the id as a request subject; a brief's ids claim nothing, and FFBox keeps the
-  report open (w414 / #1064 left two Build 76 crash reports NEEDS-INFO).
 - [Workers do not clean up; the harness does](lessons/clean-up-after-yourself.md): leave builds, clones, logs and scratch in `$TMPDIR`
   (the daemon sweeps it once no request waits for you, not on a pause or a wait for CI, w913 and w1097: "Random clean up commands take a lot of approvals"); no rm, no
   `player_slots.py prune`, no clean-up step before DONE, and no rm to reuse a folder: each test leg writes to a new
@@ -298,6 +304,11 @@ One file each under `lessons/`: the rule, why (the incident, dated), how to appl
   person is needed: never hand a person a step you, the ops worker or ssh can do, an installer rerun included
   (w855: the dispatcher asked Ben to rerun biscuit's installer for w847) and Unity closed, opened or reopened, git
   commands and file copies (w935: a worker told Ben to close Unity on his m5 main clone; Ben: "You can close Unity").
+- [Research the route before you say "can't"](lessons/research-the-route-before-you-say-cant.md): before "I can't" or
+  "you do it", research the route (docs, the machines and sessions already signed in, the tools), then try it or file
+  it; only a concrete blocker with evidence and the smallest step only the person can take reach them (w935; w1287:
+  the orchestrator told Ben twice it could not make a Claude Design project while his m5 was signed in; Ben: "I
+  already asked for this").
 - [A wait is a harness timer, never a background loop](lessons/a-person-wait-is-declared-not-polled.md#a-wait-on-a-machine-is-a-harness-timer-never-a-background-loop-w1106): what must be checked
   after the turn goes to `wake_me`, `blocked_on`, `set_timer` or `waiting_on_person`, which the portal keeps across
   deploys and restarts. Never a backgrounded `sleep` loop, `nohup`, `&` or Monitor: the process ends at an idle reap, a
