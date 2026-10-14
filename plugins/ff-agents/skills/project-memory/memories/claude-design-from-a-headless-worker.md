@@ -55,6 +55,28 @@ within about 2 s of a scroll show tearing (overlapping text), so wait 3 s. The z
 tool) at 75% fits a wide doc into a 1324 px window. Hiding the chat sidebar is the button left of the reload icon. Typing into the prompt box with orca: `paste-text`
 lands late or not at all, and `type-text` can enter the text twice; check the box before you send.
 
+**The authorization can lapse mid-session (w1295, 2026-10-14, m5).** `get_project` and `list_projects` worked, then
+about 40 minutes later every call, reads included, returned "DesignSync needs design-system authorization". Run the
+pty route above again; it took one pass. This time the authorize URL went straight to the code page with no Authorize
+click, because the account had approved it before. The clean URL is the OSC 8 hyperlink target in the pty log:
+`re.findall(r'8;id=[^;]*;(https://claude\.com/cai/oauth/authorize[^\x07\x1b]*)', log)` gave exactly one copy with
+every query param once. Read the `code#state` from the page's tree text and write it to the pty's key file; never
+echo it into a report.
+
+**When Safari will not take keyboard focus** (orca `window_not_focused` on `press-key`, even with `--restore-window`,
+because another app is in front): `open -a Safari "<url>"` loads the URL into Safari's only window, the one you
+opened, with no focus needed; read the result with `get-app-state`. Check first with `list-windows` that Safari has
+only your window. The same command opened the exact project link for the final check.
+
+**Creating the regular project:** the Blank template's prompt box changes its element index every second (its
+placeholder animates), so `set-value` and index clicks fail as stale. Click the box by window coordinates, `paste-text`,
+look at the screenshot (the text in once), then click Send by coordinates.
+
+**Close what you started.** If Safari or the Orca app was not running before you opened it, quit it at the end:
+`osascript -e 'tell application "Safari" to quit'` (and `"Orca"`), run in the background so a hung AppleEvent cannot
+stall the shell. An `osascript` `make new document` to a Safari that is still launching timed out after 120 s
+(AppleEvent -1712); `open -a Safari "<url>"` is the reliable way to start it.
+
 **Note:** in October 2026 Claude Design shows "Claude Design is moving to Artifacts in the Claude app. You can keep
 using this version until December 14."
 
