@@ -125,6 +125,8 @@ person asking for that exact element to move. Census 1920x1080, 1280x800 and 128
   Before you report a performance gain, measure the same build with the change switched off and on, back to back on
   the same machine, and check that a system the change does not touch reads the same in both (within about 10%); a
   run from earlier is not a baseline on a shared machine (w1069: 2.3x against an earlier run, 20% against the switch).
+  Before each leg, nothing of yours still runs: `TaskStop` does not end the loop script or its player, so list the processes and
+  `ff-leftovers list` first ([w1258](lessons/settle-your-own-guesses.md#before-every-leg-nothing-of-yours-is-still-running-w1258-2026-10-14)).
 - **An equivalence test of a pruned search puts a tie on each bound** ([lesson](lessons/settle-your-own-guesses.md#an-equivalence-test-of-a-pruned-search-puts-a-tie-on-each-bound-and-fails-on-the-flip-w1069-2026-10-13)).
   Before you call an index or pruned search "the same pick as the full scan", have a case with a tie exactly on each
   bound it stops or skips on, and see the test go RED with that bound's `>` flipped to `>=` (w1069: random worlds all
@@ -296,7 +298,6 @@ One file each under `lessons/`: the rule, why (the incident, dated), how to appl
   person is needed: never hand a person a step you, the ops worker or ssh can do, an installer rerun included
   (w855: the dispatcher asked Ben to rerun biscuit's installer for w847) and Unity closed, opened or reopened, git
   commands and file copies (w935: a worker told Ben to close Unity on his m5 main clone; Ben: "You can close Unity").
-- [An A/B leg starts from a quiet machine of your own](lessons/an-ab-leg-starts-from-a-quiet-machine-of-your-own.md): `TaskStop` does not end the loop scripts or players a wrapper started, your own `find` burns CPU mid-run, and a doc-rewriting script on Windows sets its newlines: list processes and `ff-leftovers list` before every leg.
 - [A wait is a harness timer, never a background loop](lessons/a-person-wait-is-declared-not-polled.md#a-wait-on-a-machine-is-a-harness-timer-never-a-background-loop-w1106): what must be checked
   after the turn goes to `wake_me`, `blocked_on`, `set_timer` or `waiting_on_person`, which the portal keeps across
   deploys and restarts. Never a backgrounded `sleep` loop, `nohup`, `&` or Monitor: the process ends at an idle reap, a
