@@ -54,6 +54,12 @@ Fixed in 0.50.0.46 by `Step0_50_0_45PlayerSimulationVelocity`.
   - `SaveCompatibilityLiveLoadTest` (PlayMode) loads master's and each beta's fixture into a live
     world. Run it for any saved-state change.
   - A proven no-op means those three are green with no step, and the plan says why.
+  - **A spare byte can carry a new flag with no step** (w1306, 2026-10-14): a component's StableTypeHash hashes each
+    field's type, index and offset, never its name (`Library/PackageCache/com.unity.entities*/Unity.Entities/Types/TypeHash.cs`,
+    the field loop), so renaming a `[Save]` struct's always-0 `Reserved`/padding byte to a flag keeps the size, the
+    hash and `SaveLayoutSnapshotTest` unchanged, and old saves read the flag as 0. Prove "always 0" (grep every writer)
+    and mint a golden fixture on the OLD code before the change (w1306: `CircuitCondition.Reserved` became `Negate`,
+    fixture `CircuitsAndOr-0.50.0.105`, `CircuitOldSaveTests`).
 - **New layout generation = new fixture**: when a step pulls the newest fast-path fixture off the
   fast path, mint one from a project-owned save written at or above it (README Rule 4: no player
   saves without consent; confirm every SteamId in it). Add it to the slate and to

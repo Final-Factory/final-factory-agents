@@ -50,6 +50,11 @@ desyncs. Instead:
    precomputed deltas — never re-rolls or re-validates.
 4. Share the host's outcome-builder with the single-player path so results don't drift (see
    `MiningCompletedPayloadBuilder`).
+5. **A field added to an existing JsonUtility payload arrives empty, never null** (w1306, 2026-10-14). JsonUtility
+   writes a null array as `[]`, so a payload built without the new array (an older sender, a test's builder) reaches
+   the validator with `Length == 0`, and a check "null or length n" refuses it. Treat an empty new array as absent
+   (`CircuitConfigApplier.HasNegates`: `payload.Negates is { Length: > 0 }`), and test the old payload shape through
+   `JsonUtility.ToJson` (w1306's first run failed four op tests on exactly this).
 
 ## Boundaries
 
