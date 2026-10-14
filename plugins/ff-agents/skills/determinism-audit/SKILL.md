@@ -60,6 +60,14 @@ Two complementary layers, plus the cross-machine harness:
 
 ## Built-player acceptance for multiplayer gameplay fixes
 
+**A two-peer built-player run cannot happen on a Mac** (w1306, 2026-10-14): `scripts/nightly/player_slots.py` refuses
+to start a Mac multiplayer client (the w665 Metal GPU page fault hung or panicked the m3 seven times), so
+`ffnightly.py run` on a Mac ends `env` before the client joins. A request whose brief asks for a two-peer check and
+lands in a Mac sandbox needs a Windows pair (`lab.win.json`) or Linux pair (biscuit, `lab.linux.json`,
+`ffnightly_linux.py`) from the start: write the scenario, push the branch and ask the orchestrator for that run in your
+first report, instead of building a Mac player for it (w1306 lost a build and an hour learning this). A two-editor
+audit on the Mac risks the same hang on a machine other workers share.
+
 The editor and scripted layers above are necessary checks, but they do not replace a live gameplay
 run for a multiplayer gameplay fix. Run matching current built players on two physical machines,
 including Windows and macOS when the affected path can differ by platform, and replay the reported
