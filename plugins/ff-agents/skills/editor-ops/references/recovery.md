@@ -358,3 +358,17 @@ first error of the session before chasing a downstream singleton error.
 editor before a pull, or let the pull finish before opening it. Reproduced in m5/slot2 by applying the rewritten
 `.meta` (boot fails with the same exception) and cleared by restoring it (new game with the Normal tutorial and
 with it off, and a save load, all clean).
+
+### Editing a file inside a native plugin bundle with the editor open strands the bridge on `port_busy`
+
+**Signature** (macOS, MCP for Unity v10.3.0): after you write a file inside a `.bundle` under `Assets/` (w1277 put CRLF
+in `Assets/Plugins/FMOD/platforms/mac/lib/resonanceaudio.bundle/Contents/Info.plist` as a negative control), the next
+MCP call answers "Unity is reloading; please retry". The log shows "Reloading assemblies after forced synchronous
+recompile.", then "MCP-FOR-UNITY: Port 6404 not released yet after reload; retrying same port." again and again, and
+`~/.unity-mcp/unity-mcp-status-<hash>.json` stays at `"reason":"port_busy"` although `lsof -nP -iTCP:6404` shows
+nobody on the port. It never recovers by itself: still stuck five minutes later, and the same both times it happened
+(m5/slot3, 2026-10-14).
+
+**Fix**: `git checkout -- <the bundle file>`, then `mcp__machine__unity` restart; the bridge comes back `ready` on the
+fresh boot. **Prevent**: never edit a native bundle's files in a running editor's `Assets/`. Make a negative-control edit
+on a copy outside `Assets/` (e.g. `rsync -a --exclude='*.meta'` the bundle to `$TMPDIR`), or stop the editor first.

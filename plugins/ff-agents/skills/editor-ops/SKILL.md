@@ -243,6 +243,7 @@ Open it when the editor or bridge misbehaves:
 - An ffsb sandbox shared by two sessions: `switch_branch` refuses, and a commit without switching
 - The branch-switch hook also refuses `git checkout <branch>` in a scratch clone
 - A pull while the editor starts rewrites `.meta` files: the boot fails and a new game throws missing singletons
+- Editing a file inside a native plugin `.bundle` with the editor open strands the bridge on `port_busy` (restore it, restart)
 
 ## Running tests
 
