@@ -140,6 +140,11 @@ def merged_prs(repo, rng):
             number = int(found.group(1))
         if not parents:
             continue
+        if len(parents) > 1 and number is None:
+            # A sync merge ("Merge origin/master into release/<v>") on a bump branch is not one PR: read the PRs
+            # it brought in one by one (w1242: read as one, it tied six ungated bullets to two toggles).
+            prs.extend(merged_prs(repo, f"{parents[0]}..{parents[1]}"))
+            continue
         prs.append({"sha": sha, "number": number, "title": subject, "base": parents[0],
                     "tip": parents[1] if len(parents) > 1 else sha, "merge": len(parents) > 1})
     return prs
