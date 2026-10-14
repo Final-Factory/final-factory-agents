@@ -109,6 +109,12 @@ The census recipe and `ui_layout.py` are in the `unity-ui` skill, `layout-census
     changed, and every panel the census sees change, against a classic reference panel
     (`--ref`, the Inventory by default) on screen (`--shot`/`--ref-shot`): delta E 10 or less, the
     same art, the same see-through. A sentence ("keeps its translucent look") is not a check.
+    **A translucent panel whose art the change does not touch** (title-menu panels: Mods, lobby settings): its on-screen
+    delta E against another panel measures the animated background behind both (w1314: master's own unchanged Mods panel
+    read 8.9 at 1920x1080 and 21.3 at 1280x800 against `P3_LobbySettings`), and `--ref` naming the touched panel itself is
+    skipped ("Style: nothing checked"). Compare it with itself in the before player, same screen and rect:
+    `scripts/deck_audit/ui_check.py style after.png --rect R --ref before.png --ref-rect R` (w1314: delta E 0.0), beside
+    `ui_layout.py check`'s "no panel changed colour, alpha or art"; paste both and the other-panel numbers with their cause.
 14. **The released checks.** A session loads its plugins when it starts. Before you merge, run the
     released `pr_evidence.py`; its verdict names its version and fails when GitHub has a newer
     one. Re-register and restart when it does. Post its verdict on the PR (`--comment`) before
