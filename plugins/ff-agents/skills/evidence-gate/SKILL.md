@@ -125,6 +125,8 @@ person asking for that exact element to move. Census 1920x1080, 1280x800 and 128
   Before you report a performance gain, measure the same build with the change switched off and on, back to back on
   the same machine, and check that a system the change does not touch reads the same in both (within about 10%); a
   run from earlier is not a baseline on a shared machine (w1069: 2.3x against an earlier run, 20% against the switch).
+  Before each leg, nothing of yours still runs: `TaskStop` does not end the loop script or its player, so list the processes and
+  `ff-leftovers list` first ([w1258](lessons/settle-your-own-guesses.md#before-every-leg-nothing-of-yours-is-still-running-w1258-2026-10-14)).
 - **An equivalence test of a pruned search puts a tie on each bound** ([lesson](lessons/settle-your-own-guesses.md#an-equivalence-test-of-a-pruned-search-puts-a-tie-on-each-bound-and-fails-on-the-flip-w1069-2026-10-13)).
   Before you call an index or pruned search "the same pick as the full scan", have a case with a tie exactly on each
   bound it stops or skips on, and see the test go RED with that bound's `>` flipped to `>=` (w1069: random worlds all

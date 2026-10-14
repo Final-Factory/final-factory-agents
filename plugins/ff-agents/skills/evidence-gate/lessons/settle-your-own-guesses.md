@@ -62,6 +62,19 @@ editor during the later. The same build with the index switched off, run between
 against 7.25 and 7.45 ms: about 20%. A switch for an A/B can be a temporary edit you revert, never a committed
 toggle.
 
+### Before every leg: nothing of yours is still running (w1258, 2026-10-14)
+
+- `TaskStop` on a background `bash` wrapper does not stop what it started: the loop script (`probe_ab_win_switches.sh`) and its
+  `finalfactory.exe` keep running. Worker 28ebd585 found two "stopped" loops still running 40 minutes later, which made its whole
+  Deck-paced frame A/B unusable; the next worker on BEAST hit it again. Before the next leg, list `Get-CimInstance Win32_Process`
+  for the script's name and `Stop-Process` the script and the player.
+- Your own searches count: a `find /` started minutes earlier ran three cores at 100% inside the first A/B run. Run
+  `ff-leftovers list` first, and read the run's `contention.txt` for other sessions' processes (the quiet gate waits for their
+  players and batch builds, not for their `find`s).
+- A script that rewrites the perf doc on Windows reads and writes explicit newlines: `core.autocrlf` checks the doc out with CRLF,
+  so anchors like `'## Ranked weak points
+'` do not match; write with `newline=chr(10)` so the blob stays LF.
+
 ## An equivalence test of a pruned search puts a tie on each bound, and fails on the flip (w1069, 2026-10-13)
 
 An index or a pruned search that must pick exactly what a full scan picks (a different pick is a different trip, and
