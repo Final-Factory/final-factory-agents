@@ -61,7 +61,13 @@ On the Afterburner v2 capture it found the big plume collapsing into the thin tr
 Recording notes:
 - **macOS**: ScreenCaptureKit (`mac/sckrec.swift`, compiled on first use) records the window even
   when it is covered, but delivers ~58 fps with gaps, so ~25% of frames are repeats. Judge judder on
-  Windows.
+  Windows. It can also freeze mid-clip (w375, m5: the picture held 7+ frames, then a barge seemed to
+  vanish mid-screen, and the blind review called it POP_OUT/SNAP), and it hung 24 minutes after its
+  player quit, writing no mp4. Before believing a pop, count freezes:
+  `ffmpeg -i clip.mp4 -vf freezedetect=n=0.0005:d=0.08 -map 0:v -f null - 2>&1 | grep -c freeze_start`
+  (clean 24 s takes gave 0-2, the bad one dozens of 0.3-0.5 s freezes) and re-take. Give the player a
+  quit timer longer than the whole recording leg (`-ffSoloQuitAfterSeconds`), and end only a hung
+  `sckrec`/`record_clip.py` process, never the player or the editor.
 - **Windows**: `ddagrab` records the window's client area off the monitor, so keep it on top and
   unobstructed (toasts and overlapping windows are recorded). If `ddagrab` delivers no frame (Desktop Duplication stalled; w1086)
   `record_clip` falls back to `gdigrab` after 8 s (`FF_CLIP_GRAB=gdigrab` starts there). A player launched
