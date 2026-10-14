@@ -296,6 +296,7 @@ One file each under `lessons/`: the rule, why (the incident, dated), how to appl
   person is needed: never hand a person a step you, the ops worker or ssh can do, an installer rerun included
   (w855: the dispatcher asked Ben to rerun biscuit's installer for w847) and Unity closed, opened or reopened, git
   commands and file copies (w935: a worker told Ben to close Unity on his m5 main clone; Ben: "You can close Unity").
+- [An A/B leg starts from a quiet machine of your own](lessons/an-ab-leg-starts-from-a-quiet-machine-of-your-own.md): `TaskStop` does not end the loop scripts or players a wrapper started, your own `find` burns CPU mid-run, and a doc-rewriting script on Windows sets its newlines: list processes and `ff-leftovers list` before every leg.
 - [A wait is a harness timer, never a background loop](lessons/a-person-wait-is-declared-not-polled.md#a-wait-on-a-machine-is-a-harness-timer-never-a-background-loop-w1106): what must be checked
   after the turn goes to `wake_me`, `blocked_on`, `set_timer` or `waiting_on_person`, which the portal keeps across
   deploys and restarts. Never a backgrounded `sleep` loop, `nohup`, `&` or Monitor: the process ends at an idle reap, a
