@@ -29,3 +29,14 @@ finding out at the push.
   origin/master..<branch> [origin/master..<branch2>]`, `publish_attachment`, and the receiving worker runs
   `git fetch x.bundle <branch>:<branch>` and pushes (w1180's att_fm8au3x0nsgs carried two branches).
 - Only `.github/workflows/*` needs the scope: scripts under `.github/scripts/` push fine from beast.
+
+**A third time in w1191, 2026-10-13 (beast, ff-factory's `ci.yml`):** the worker edited the workflow in a clone of
+its own via a Python script, so no Edit hook could have warned, and it learned at the refused push. Two lessons
+did not catch it because they are read after the fact.
+- **Run `gh auth status` the moment a plan says `.github/workflows`, and before you clone or edit.** If the
+  scope is missing, ask for the m5 at once.
+- ff-factory's own workflows need the scope just as the game repo's do. In w1191, w1250's worker on the m5
+  pushed the bundle and merged it as ff-factory #391.
+- A fix that does not depend on reading this: FF Factory tells each worker its machine's `gh` scopes in its
+  brief, or the dispatcher places requests that name `.github/workflows` on a machine that has the scope. This
+  is proposed to Ben's orchestrator from w1191, and not built yet.
