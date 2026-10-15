@@ -181,5 +181,16 @@ the source branch, don't hunt a source bug first — clear the cache and re-run.
   old code; with `EnableBurstCompilation = false` 18 of 24 failed as they should. So a RED proof of simulation
   code runs with Burst OFF first (it runs the code as compiled now), and the GREEN proof then runs with Burst on
   and `EnableBurstCompileSynchronously = true`; a fresh editor start also compiles Burst from current code.
+- **And a revert-patch A/B that swaps simulation code back and forth in one editor survives a restart** (2026-10-15,
+  w1368, biscuit slot2): after `git apply` of the revert of three merges, a run, and `git apply -R`, the restored HEAD
+  code ran stale native jobs from `Library/BurstCache` even after a domain reload AND an editor restart: a Burst abort
+  "Provided data size=32 for type Unity.Entities.TypeIndex does not match expected SizeInChunk=40" (a struct that had
+  grown a field), a Burst NRE in `InserterMovementSystem.OnUpdate`, and four `StationSidePriorityTests` input cases red
+  every run while all 28 passed with `EnableBurstCompilation = false` and CI's full suite passed them. "A fresh editor
+  start also compiles Burst from current code" (w503 above) did not hold here. Fix: stop the editor, move
+  `Library/BurstCache` (4.7 GB) into `$TMPDIR`, start again: 31 of 31 passed twice. The first start after that peaked
+  near 14 GB RSS while Burst rebuilt everything; on biscuit (26 GB, shared) the kernel OOM-killed one at 10 GB that was
+  also decoding save fixtures, so run nothing heavy in it until `BurstProgressId` goes idle. A test that fails only with
+  Burst on, after you swapped code in and out, is a stale-cache suspect before it is a code bug.
 
 See [[feedback_test_command]].
