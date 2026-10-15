@@ -278,8 +278,17 @@ def start_windows(pid, raw, seconds, fps, monitor):
         # a few seconds means it is stuck.
         for _ in range(16):
             time.sleep(0.5)
-            if proc.poll() is not None or (os.path.exists(raw) and os.path.getsize(raw) > 0):
+            if os.path.exists(raw) and os.path.getsize(raw) > 0:
                 return proc
+            if proc.poll() is not None:
+                # w1335 (lothdesktop, 2026-10-15): "Desktop duplication access denied" ends ffmpeg at once with no frame
+                # (the displays asleep or the session locked). The gdigrab fallback is no answer there: it returned a
+                # frozen desktop from the night before. Say so, instead of a CalledProcessError on the empty file.
+                sys.exit("record_clip: ddagrab ended with no frame (exit %s; 'Desktop duplication access denied' means the "
+                         "displays are asleep or the session is locked, and gdigrab would record a stale picture). Wake the "
+                         "display (SKILL.md, the shared-desktop note) or record the game's own frames: -ffFeelProbe <csv> "
+                         "-ffFeelFrames <dir> -ffFeelFramesAt <start>+<seconds> (-ffFeelFrames does nothing without "
+                         "-ffFeelProbe; SKILL.md, 'The game's own frames')." % proc.returncode)
         proc.kill()
         proc.wait()
         print("  ddagrab delivered no frame in 8 s: falling back to gdigrab (set FF_CLIP_GRAB=gdigrab to start there)")

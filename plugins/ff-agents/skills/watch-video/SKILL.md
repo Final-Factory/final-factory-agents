@@ -104,6 +104,15 @@ Recording notes:
   own `t_ns` instead: concat `duration` lines with `-fps_mode passthrough -enc_time_base 1/10000
   -video_track_timescale 10000`, and check the MP4's frame count against `frames.csv`; the default time base dropped 223
   of 560 frames without a word (project-memory `beast-clip-capture-and-slot-launch-traps`, item 13).
+  **`-ffFeelFrames` needs `-ffFeelProbe` beside it** (w1335, lothdesktop, 2026-10-15): `FeelFrameCapture.ArmFromArgs` runs
+  only from `FeelProbe.Boot`, which returns without `-ffFeelProbe`, so the frames flags alone write nothing and say
+  nothing. For a nightly scenario pass them through `ffnightly.py run --peer-arg "solo=-ffFeelProbe" --peer-arg
+  "solo=<csv>" --peer-arg "solo=-ffFeelFrames" ...` (one flag or value per `--peer-arg`); the key clock starts at
+  `[FeelProbe] local player present`, about when ffnightly logs `solo ready`. An uncapped player with no `-ffFeelFps`
+  renders well above 60 (185 fps at 1600x900 on lothdesktop's B580): keep the first frame of each 1/60 s slot and give
+  each its real duration; clamping every duration up to 1/60 s instead stretched a 25 s landing into a 76 s clip. On
+  that PC `ddagrab` refused outright ("Desktop duplication access denied", displays asleep) and `gdigrab` returned a
+  frame from the night before; `record_clip` now stops there with this recipe.
 - **Editor Game view crop** (macOS, docked Game view): `execute_code` → `var gv =
   Resources.FindObjectsOfTypeAll(typeof(Editor).Assembly.GetType("UnityEditor.GameView"))[0] as
   EditorWindow; var m = EditorGUIUtility.GetMainWindowPosition(); var k =
