@@ -126,9 +126,34 @@ measured warm orange (239, 173, 102) in the built player; three later rounds cha
 and the screen colour hardly moved. Ben said "not red enough" again and again ("the lines arent red
 enough, push it more towards what the guardian looks like with its molten effect actually").
 
-**How to apply.** Lower the intensity for a deeper, redder hue and raise it for a hotter, whiter
-one; set the ratio second. Put the measured mean colour of the lit pixels, before and after, in
-the report and the PR's evidence.
+**How to apply.** Keep green out of a red glow's HDR colour (any green share reads orange, blue reads pink), and set
+the intensity by whether it glows (next section), not by the hue: a lower intensity is redder but stops glowing. Put
+the measured mean colour of the lit pixels, before and after, in the report and the PR's evidence.
+
+### A glow is measured against a glowing reference in the same frame (w1323)
+
+**Rule.** Before a glow change goes to the requester, put the thing and a reference glowing structure (a powered
+mass driver) in the same built-player frame at normal zoom and measure both with the game repo's
+`scripts/feel/glow_compare.py`: the share of each crop's hot pixels in the glow's hue (luma 200+, 45 over their
+surround) and their contrast, with the crops side by side at 1:1. The glow reads like the reference's when the share
+and contrast are comparable. An impression from stills is not this check.
+
+**Why.** w1323 sent Ben two rounds of red glow lines on the new assemblers that a look at the stills said were there.
+He saw none: "you just didn't add any red glow lines. I don't know why you aren't understanding what I'm asking.
+Almost all the structures in final factory have these glowy lines". Measured afterwards, the lines had 0.2-0.3 % hot
+red against the mass driver's 3-5 % cyan: faces 0.12-0.33 units wide (1-2 px at normal zoom), on the tier paint, at
+HDR 1.9-2.2, peaking at the lit body's own brightness (luma about 117 against 235), so they read as red paint. The
+w1066 advice to lower the intensity for a redder hue had set them there.
+
+**How to apply.** Copy the method the game's glowing structures use, measured from their meshes: glow inserts 0.5-0.9
+units wide seen from above, set against steel or black, at HDR 5-8 and up (mass driver `_EmissionAG` (0, 8, 3.7)), so
+the core goes white-hot and the bloom carries the colour; the same white core with a coloured halo is how a red glow
+reads too. Under the game's grade a pure red cannot get brighter than about 2.2 without whitening at the core, and
+green in the HDR colour turns it orange. Bigger models (the 3x3 tiers) bloom more from the same lines: tune each to the
+reference's share, and look for a haze over the body (w1323: 6 hazed the 3x3 bodies, 4 stopped glowing, 5 matched). A
+red glow washes a green body to grey (red and green cancel); measure the body colour under the glow too. Take the
+stills in a run without `-ffFeelFrames` capture: with it on, the player's screenshot came back with a flipped copy of
+the frame drawn into it.
 
 ## Review media goes inline, never as a bare path (w1384)
 
