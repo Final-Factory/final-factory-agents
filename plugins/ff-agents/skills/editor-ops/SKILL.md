@@ -509,6 +509,13 @@ slots").
   a doc section and a report fix made while a build ran were gone after it). Commit before you start a build, and
   edit nothing in that tree until it ends; to build another commit (master for a before census), switch the sandbox
   to a branch at it first (`mcp__machine__switch_branch`, create_from) and back after.
+- **After you stop your editor, `git status` before you wait or end the turn, and `git checkout -- <path>` every asset
+  it rewrote on its own.** An editor that runs or quits rewrites tracked assets nobody asked it to (seen: `Assets/Localization/
+  LocalizationMasterTable Shared Data.asset`, `Assets/UI/Fonts/NotoSansKR-VariableFont_wght SDF.asset`). When your sandbox is
+  released (`blocked_on` CI, a long `wake_me`), FF Factory commits and pushes whatever is uncommitted (w656), so those files land in
+  your pull request. w1370 (PR #1794, 2026-10-15): commit 302b276a24 carried the editor's stale localization table, which dropped
+  rows master had added, and 7 `Tests.Localization.*TableRowsTest` cases failed the PR's CI. `git diff origin/master --stat` should
+  list only the files you meant to change.
 - An editor you open by hand beside your own (the clone editor of a paired run, via
   `launch-editor.sh`) needs a held slot: `unity-slot acquire --count 1 --label "clone editor"
   --project <clone path>`, then `unity-slot release <id>` once it is closed (`--ttl`, default 120
