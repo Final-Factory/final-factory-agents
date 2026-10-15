@@ -415,6 +415,19 @@ develop and with a merged change reverted, to show whether the change alters any
   are both true, so code gated on `IsConnected` (e.g. `MiningAction.UsesSharedProgress`) runs in single player.
 - An equivalence test with pinned values (old vs new code) needs a power check: reverse one loop or switch one
   rule off and confirm every case fails (w870: one reversed neighbour loop and "locks off" each changed all 6 seeds).
+- **Against an older commit, swap the whole tree with the editor stopped** (w1369, beast slot3, 2026-10-15:
+  `cb1e72b134` against master, 516 files). Reverting merges leaves the old side's tests unable to compile against
+  the new code, and Unity refuses play mode on any compile error, so check out the old commit's files instead:
+  `mcp__machine__unity` stop, `git checkout <old> -- Assets Packages ProjectSettings`, remove the files added since
+  (`git diff --name-only --diff-filter=A <old> HEAD -- Assets Packages ProjectSettings`), then start. With the editor
+  open, the checkout changed `Assets/Scenes/main.unity` and the editor sat on "scene changed on disk, reload?" until
+  the dispatcher restarted it. Restore the same way (stop, `git checkout HEAD -- Assets Packages ProjectSettings`,
+  start): that start reimported for about 10 minutes (title "Opening project...", 12 GB) before port 6400 listened.
+- **Compare at absolute heartbeats.** Arm the per-heartbeat hook as soon as the log says "In game scene is
+  prepared" and dump at `CurrentHeartbeatFrame % 8 == 0` (after the grid publishes at step 7). Two runs of one
+  commit on one save matched byte for byte at the same heartbeat (w1369: 115 dumps of 207 grids), so compare only
+  the heartbeats both runs cover. A pump call of 8 s still timed out at the client: end it with `isPaused = false`
+  so the editor keeps ticking, and wait on the output file with a Bash until-loop.
 
 ## Following a weapon's shots in a player's save (w1229, 2026-10-13)
 
