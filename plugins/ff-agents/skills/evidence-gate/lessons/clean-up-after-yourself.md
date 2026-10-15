@@ -162,7 +162,7 @@ yours to judge whether the work matters.
 clone `ff` of the nightly merge review w1367) and `V:fw	mpfa-28ebd585` (45 MB, the worktree `wt-w1258-claims-gather-parallel`) on DELETE
 rows: their requests were done, and `ff-leftovers` judged by the ledger alone. The portal's clean-up log had kept both "for a person:
 holds a git repo with uncommitted or unpushed work" (31ffe8cc at 21:11Z, 21:32Z and 22:11Z; 28ebd585 at every pass since 2026-10-14
-05:40Z). The uncommitted files went with them. FF Factory PR (w1387) makes `ff-leftovers folders|check` run the sweeps' own git check, so a
+05:40Z). The uncommitted files went with them. FF Factory PR #405 (w1387) makes `ff-leftovers folders|check` run the sweeps' own git check, so a
 daemon updated after it shows these as KEEP; until a machine's daemon is, this check is yours.
 
 **How to apply.** The [delete checklist](../checklists/delete.md) item 2b is the line that would have caught it.
