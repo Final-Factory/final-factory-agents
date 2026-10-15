@@ -68,6 +68,13 @@ in the built player (drive-game, "The mouse cursor in a built player"; w980).
    crop, before and after, because on thin bright lines bloom and the tonemapper set the hue by intensity, not by the
    HDR ratio ([lesson](../lessons/visual-fixes-are-verified-by-looking.md#a-glows-colour-on-screen-is-measured-not-read-off-the-hdr-value-w1066);
    w1066: three rounds of "not red enough").
+5d. **A glow is measured against a glowing reference in the same frame (w1323).** A new or changed glow (emissive
+   lines, an HDR accent) is put beside a powered mass driver in one built-player frame at normal zoom and measured with
+   the game repo's `scripts/feel/glow_compare.py` (hot glow-hue pixels as a share of each crop, their contrast, the
+   crops side by side at 1:1) before it goes to the requester; the share and contrast are comparable to the
+   reference's, and the numbers and the 1:1 crops go in the report and the PR. Thin glow faces at HDR about 2 read as
+   paint ([lesson](../lessons/visual-fixes-are-verified-by-looking.md#a-glow-is-measured-against-a-glowing-reference-in-the-same-frame-w1323);
+   w1323, Ben after two rounds that an impression from stills passed: "you just didn't add any red glow lines").
 6. **`watch_video` and the blind model review are a second opinion.** They have passed clips
    that did not contain the event, and agreed with a mistake the brief described as intended.
    Quote them, and say where the frames contradict them.
