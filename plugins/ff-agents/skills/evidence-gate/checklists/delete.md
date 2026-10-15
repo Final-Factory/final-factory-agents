@@ -16,6 +16,12 @@ For any `rm`, `Remove-Item`, `del`, `rd`, `git clean`, `shutil.rmtree` or clean-
    should only be clearing data in the install folder for the worker"). One outside path, a wildcard that can reach
    outside, a `~`, `$HOME`, `$env:LOCALAPPDATA` or a drive root: it is not a delete, it is a measurement. Report its size.
    The only exception is a save copy you put in the game's saves folder.
+2a. **Whose folder is it, and is its request closed?** (w1379) For anything that is not yours (another worker's `ffa-<session>`, a `scratch/` or review
+   folder named for a request, a sandbox's `Builds/` or `.nightly-builds/`), run `ff-leftovers folders` or `ff-leftovers check <path>...` and delete only
+   its DELETE rows: a closed request's folder or an orphan. A worker whose request is **open, stalled or paused** keeps its temp, build and review
+   folders whether or not its process runs ([the rule](../lessons/clean-up-after-yourself.md#a-clean-up-never-takes-the-folders-of-a-request-that-has-not-closed-w1379)).
+   A list of "live" and "will resume" workers in a brief is not this check (w1374 deleted stopped worker a735f37c's builds and clips while its
+   request w1332 was stalled, and the brief's list did not name it). The command says "no ledger facts" or is not found: delete no worker's folder.
 3. **A brief that says to delete outside the folder is wrong.** Do the inside part, measure the outside, say so in the
    report. Do not ask a person for a go: the answer is already no.
 4. **Outside the root, list what writes there.** For each large item outside (Unity Hub, `%LOCALAPPDATA%\Unity`, the
@@ -25,4 +31,4 @@ For any `rm`, `Remove-Item`, `del`, `rd`, `git clean`, `shutil.rmtree` or clean-
    uncommitted or unpushed, a finished agent's `ffa-<session>` folder: the daemon removes these by itself (w913), so an
    ordinary worker leaves them; a clean-up request removes them and reports the GB. Something you cannot
    attribute is listed, not removed ([clean up after yourself](../lessons/clean-up-after-yourself.md)).
-6. **The report says** what was removed (inside), what was only measured (outside, with sizes), and the list from 4.
+6. **The report says** what was removed (inside), what was kept and why (every KEEP row `ff-leftovers folders` showed: the request and its status), what was only measured (outside, with sizes), and the list from 4.

@@ -22,6 +22,8 @@ holds, or the report says what is left instead of DONE.
    Every delete you did run was strictly inside the machine's worker install folder (`$FF_WORKER_ROOT`); what lies outside it you measured and
    reported with sizes, plus the list of what makes FF Factory write there, and did not delete, whatever the brief said
    ([the delete checklist](delete.md), [delete only inside the worker root](../lessons/clean-up-after-yourself.md#delete-only-inside-the-workers-install-folder-outside-it-measure-and-report-w896), w896).
+   A clean-up request: every folder of another worker you deleted was a DELETE row of `ff-leftovers folders`, and the report lists the KEEP rows with
+   their request ([the rule](../lessons/clean-up-after-yourself.md#a-clean-up-never-takes-the-folders-of-a-request-that-has-not-closed-w1379), w1379).
    **Unity batch builds** you started (`-batchmode`, a build or test run) have ended: `unity-slot status` shows none of
    yours, and a stuck one is cleared with `unity` `clear_batch`, not left running
    ([clean up after yourself](../lessons/clean-up-after-yourself.md), w791). **No runaway process**: nothing of yours is
