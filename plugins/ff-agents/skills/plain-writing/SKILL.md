@@ -94,6 +94,23 @@ as plain text: no code block, no Markdown, nothing they would have to strip. Cod
 and code. Give one version in their own voice, and get their sign-off before anything is sent or
 published (Ben, 2026-10-02; `evidence-gate`, `lessons/paste-text-is-plain.md`).
 
+## Applying it to design docs and studies
+
+A design doc or investigation for Ben is read by him and passed to others (Lothsahn) cold. Ben, 2026-10-15, on the
+w1295 engine study (about 16,400 words): "take a pass and just make it less verbose so he can digest it easier and
+understand what we're doing here".
+
+- Open with the person's own reasons in their words when they gave them, then a short-version box (about eight
+  bullets, each with its label), then the sections.
+- Keep the main read to about 3,000-4,000 words: one table or a few bullets per section, each point said once.
+  Move inventories, option tables, evidence tables and sources into collapsible `<details>` appendices, not out of
+  the doc.
+- Before delivering, count the words outside `<details>` (strip tags, styles and SVG) and cut if it is over about
+  4,000. The w1295 study went from about 16,400 to about 3,200 words in the main read with every label and key
+  number kept.
+- A goal the person states in calendar time (a release "within about six months") is quoted as their goal; the doc
+  still sizes nothing in human time.
+
 ## Applying it to slides
 
 Slides amplify every habit above, because a headline has room for exactly one idea and the
