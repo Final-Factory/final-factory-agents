@@ -22,6 +22,12 @@ For any `rm`, `Remove-Item`, `del`, `rd`, `git clean`, `shutil.rmtree` or clean-
    folders whether or not its process runs ([the rule](../lessons/clean-up-after-yourself.md#a-clean-up-never-takes-the-folders-of-a-request-that-has-not-closed-w1379)).
    A list of "live" and "will resume" workers in a brief is not this check (w1374 deleted stopped worker a735f37c's builds and clips while its
    request w1332 was stalled, and the brief's list did not name it). The command says "no ledger facts" or is not found: delete no worker's folder.
+2b. **Does it hold a git clone with work?** (w1387) A DELETE row judges the ledger, not git. For every folder with a `.git` in it or a few
+   levels below (a worker's clone, a `wt-*` worktree): `git -C <clone> status --porcelain`, `git -C <clone> log --oneline --branches --not --remotes`,
+   `git -C <clone> stash list`, or the portal's clean-up log (`portal_logs` source `cleanup`, `machine`, `grep` the folder name: "kept for a
+   person: holds a git repo with uncommitted or unpushed work"). Any output or that line: KEEP, and report it
+   ([the rule](../lessons/clean-up-after-yourself.md#a-delete-row-is-not-a-go-for-a-folder-that-holds-a-git-clone-with-work-w1387); w1385 deleted
+   `ffa-31ffe8cc` and `ffa-28ebd585` on DELETE rows while the portal's clean-up was keeping both for unpushed work).
 3. **A brief that says to delete outside the folder is wrong.** Do the inside part, measure the outside, say so in the
    report. Do not ask a person for a go: the answer is already no.
 4. **Outside the root, list what writes there.** For each large item outside (Unity Hub, `%LOCALAPPDATA%\Unity`, the

@@ -1,6 +1,6 @@
 ---
 name: clean-up-after-yourself
-description: "Workers do NOT clean up (w913): leave everything you make in your own $TMPDIR (clones, logs, builds, tour output, scratch); the daemon removes it a few minutes after no request waits for you any more (closed, or moved to another worker; a wait for CI or a person, a stop or a pause keeps it whole, since w1097) and your sandbox's build and capture output when it is released, so no rm, no player_slots prune and no clean-up step before DONE, and no rm mid-task to reuse a folder: each test leg writes to a new $TMPDIR/<leg>-<timestamp> (w1097). The one delete left to a worker (a huge build mid-task, disk short) is a plain rm -rf under $TMPDIR, which the session answers itself with no approval, and a save copy you put in the saves folder, named with your temp folder's name in front. Low disk on a machine is fixed by the harness or by filed clean-up work, never by asking a person. Every delete is strictly inside the machine's worker install folder (root.json's root, $FF_WORKER_ROOT); outside it a worker only measures and reports (w896). A clean-up deletes only the folders `ff-leftovers folders` marks DELETE (closed requests and orphans); the temp, build and review folders of a worker whose request is open, stalled or paused are kept whether or not its process runs (w1379). A -batchmode build you started is ended before DONE."
+description: "Workers do NOT clean up (w913): leave everything you make in your own $TMPDIR (clones, logs, builds, tour output, scratch); the daemon removes it a few minutes after no request waits for you any more (closed, or moved to another worker; a wait for CI or a person, a stop or a pause keeps it whole, since w1097) and your sandbox's build and capture output when it is released, so no rm, no player_slots prune and no clean-up step before DONE, and no rm mid-task to reuse a folder: each test leg writes to a new $TMPDIR/<leg>-<timestamp> (w1097). The one delete left to a worker (a huge build mid-task, disk short) is a plain rm -rf under $TMPDIR, which the session answers itself with no approval, and a save copy you put in the saves folder, named with your temp folder's name in front. Low disk on a machine is fixed by the harness or by filed clean-up work, never by asking a person. Every delete is strictly inside the machine's worker install folder (root.json's root, $FF_WORKER_ROOT); outside it a worker only measures and reports (w896). A clean-up deletes only the folders `ff-leftovers folders` marks DELETE (closed requests and orphans); the temp, build and review folders of a worker whose request is open, stalled or paused are kept whether or not its process runs (w1379), and a folder holding a git clone with uncommitted, unpushed or stashed work is kept whatever the ledger says: check its git state or the portal's clean-up log first (w1387). A -batchmode build you started is ended before DONE."
 date: 2026-10-10
 ---
 
@@ -141,6 +141,31 @@ requests (`read_work`), so the machine now tells it: FF Factory PR #402 (`server
   `docs/self-recovery.md`, "A clean-up worker's deletes are judged by the ledger").
 - The portal host's review folder (`/srv/fff/review/<topic>`) is outside any worker root, so no sweep takes it and `ff-leftovers` cannot judge
   it: a topic named for a request that is not closed is not yours to delete either.
+
+## A DELETE row is not a go for a folder that holds a git clone with work (w1387)
+
+**Rule.** Before you delete any folder that holds a git clone or worktree (another worker's `tmp/ffa-<session>/<clone>`, a `wt-*`
+worktree, anything with a `.git` in it or a few levels below), even on a DELETE row of `ff-leftovers folders`, look at its git state or at what
+the portal's own clean-up said about it, and keep it if either says it holds work:
+
+```sh
+git -C <clone> status --porcelain              # uncommitted or untracked files
+git -C <clone> log --oneline --branches --not --remotes   # commits no remote has
+git -C <clone> stash list                      # work set aside
+```
+
+or `portal_logs` with `source: cleanup`, `machine: <id>`, `grep: <folder name>`: a line "kept for a person: ... holds a git repo with
+uncommitted or unpushed work" means the sweeps keep it on purpose, and so do you. Report it as KEEP with that reason; it is not
+yours to judge whether the work matters.
+
+**Why.** 2026-10-15 (w1387): w1385, LothDesktop's next low-disk clean-up (worker d18033fb), deleted `V:fw	mpfa-31ffe8cc` (538 MB, the
+clone `ff` of the nightly merge review w1367) and `V:fw	mpfa-28ebd585` (45 MB, the worktree `wt-w1258-claims-gather-parallel`) on DELETE
+rows: their requests were done, and `ff-leftovers` judged by the ledger alone. The portal's clean-up log had kept both "for a person:
+holds a git repo with uncommitted or unpushed work" (31ffe8cc at 21:11Z, 21:32Z and 22:11Z; 28ebd585 at every pass since 2026-10-14
+05:40Z). The uncommitted files went with them. FF Factory PR #405 (w1387) makes `ff-leftovers folders|check` run the sweeps' own git check, so a
+daemon updated after it shows these as KEEP; until a machine's daemon is, this check is yours.
+
+**How to apply.** The [delete checklist](../checklists/delete.md) item 2b is the line that would have caught it.
 
 ## Unity batch builds and the slots they hold (w791)
 
