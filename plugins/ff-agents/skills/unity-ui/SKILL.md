@@ -153,6 +153,18 @@ census (`<shot>.json`: small, clipped, off-screen and overlapping text, covered 
   `specs/w1124-hud-regress/make_load_scan.py`). (5) In a seed with enemies near a tour's "far" spot the ship dies there, which
   hides the station strip in one build's census and not the other's; compare in a seed where it lives (w961's).
 - **A tour's pointer, three traps (w957, w959).** (1) `{"at": "x,y"}` counts y from the BOTTOM of the screen (as `drag` does, `docs/UI-Architecture.md`): a marker seen at pixel (1094, 688) from the top is `0.57,0.363`; clicking `0.637` hit empty space and looked like a hit-test bug for four builds. Read a target's pixel from the census/`rect:` line (bottom-origin) and divide. (2) A `press` of fewer than about 3 frames never reaches the game (the Deck bridge polls the held state once a frame, and the clip recorder runs a dev player at 15 fps): click with `hold`, `wait 0.08`, `unhold`; two of those are a 0.3 s double-click at 15 fps. Run a double-click leg alone: three players on one PC run at 9 fps. (3) A scripted pointer cannot pan the map: `WorldMapControlAction.UpdateDragPan` and `UiHelper.IsPointerOverInteractiveUi()` read `Input.mousePosition` (the real mouse), so a `drag` step moves nothing; say "drag-pan not shown" rather than showing a still where nothing moved. A new player-facing pointer reader should use `AutomationPointer.MousePosition`, so a tour can drive it.
+- **A tour's keys, its coordinates and a timing's content, three traps (w1371).** (1) Before the game repo's w1371 fix
+  (`DeckTour.PressRealKey`, 2026-10-15), a `{"key": ...}` step only queued an Input System keyboard state, which the legacy
+  readers never see: `UiController` reads Escape through `InputHelper.GetKeyDown` (legacy `Input`, the injection seam,
+  Steam's keys), so every `{"key": "escape"}` did nothing (the map, Inventory and Technology stayed open, and no `Escape is
+  held by` line was logged). A tour on a build older than the fix sends Escape as `{"press": "button_escape"}` (the Deck's B,
+  Steam's path); the fix also injects the key (`InputHelper.InjectKey`). A dead step looks like a game bug: compare it with
+  the Deck button before filing one. (2) `ffauto:player.setposition` and `ui.selecttile` take tiles; `LocalToWorld` and
+  `LocalTransform` positions are 10 times that, and so is the minimap's readout (`setposition|16|-28` shows `160, -298`). A
+  timing aimed at a base by its `LocalToWorld` coordinates measured empty space in both builds. (3) Look at the stills of a
+  timing before reading its numbers: the frame times of an empty view agree perfectly and prove nothing. In the editor, a
+  key event queued with `InputSystem.QueueStateEvent(Keyboard.current, ...)` did not reach the game's actions (E, T, M) while
+  the Game view had no focus: send legacy keys with `dev_command.trigger` and Input System keys from a built-player tour.
 - **The tour needs a development player, and its setups do not wait (w1231, biscuit Linux).** (1) `-ffDeckTour` arms only
   when `Debug.isDebugBuild` (`DeckTour.Arm`): a player from `Editor.ReleaseBuild.Build` ignores the flag without a word
   (one 6-minute build wasted). On Linux build the tour player with `-buildTarget StandaloneLinux64 -executeMethod
