@@ -77,7 +77,7 @@ in the built player (drive-game, "The mouse cursor in a built player"; w980).
 
 **How review media is shown** (w1384): each clip and still goes into the report, the relay and the PR as its own
 `![name](<absolute path>)` line, which the page plays or shows inline; never a bare path or a folder
-([review media goes inline](../lessons/review-media-goes-inline.md)).
+([review media goes inline](../lessons/visual-fixes-are-verified-by-looking.md#review-media-goes-inline-never-as-a-bare-path-w1384)).
 
 **Where review media goes** (w309, Lothsahn 2026-10-03): publish the stills, clips and review report with FF Factory's `publish_review` tool (`mcp__sandbox__publish_review` in a BEAST sandbox, `mcp__machine__publish_review` on a machine; `topic`, `files`, `note`). It puts them in the review folder on BEAST (`F:\ffsb\_review\<topic>\`) and answers the paths to put in your report and the PR. Never ssh, scp or copy review files across machines. A session without the tool (FF Factory not yet updated) keeps them in its worktree, lists the local paths, and says they are not published.
 

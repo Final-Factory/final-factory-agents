@@ -119,7 +119,7 @@ person asking for that exact element to move. Census 1920x1080, 1280x800 and 128
   anything a person reads, scan it for request ids (w293), PR numbers (#972), commits, worker or
   session ids and sandbox names: each one gets its plain-English words beside it, on every
   appearance, not only the first.
-- **Review media goes inline, never as a bare path** ([lesson](lessons/review-media-goes-inline.md)). Before you
+- **Review media goes inline, never as a bare path** ([lesson](lessons/visual-fixes-are-verified-by-looking.md#review-media-goes-inline-never-as-a-bare-path-w1384)). Before you
   send anything a person reads, scan it for review paths (`/srv/fff/review/…`), folders, wildcards and
   `.mp4`/`.png`/`.jpg` names: each still and clip is its own `![name](<absolute path>)` line, a folder is each of its
   files (newest first, never `.preview/`). Ben, 2026-10-15: "Stop giving me paths to videos and inline the videos like
@@ -227,7 +227,7 @@ One file each under `lessons/`: the rule, why (the incident, dated), how to appl
   `scripts/game_data.py`.
 - [Text for the person to paste is plain](lessons/paste-text-is-plain.md): no code block, no
   formatting, their voice.
-- [Review media goes inline](lessons/review-media-goes-inline.md): every still and clip as `![name](<absolute path>)`,
+- [Review media goes inline](lessons/visual-fixes-are-verified-by-looking.md#review-media-goes-inline-never-as-a-bare-path-w1384): every still and clip as `![name](<absolute path>)`,
   a folder as its files, never a bare path (w1384).
 - [Say what an id is, every time](lessons/say-what-an-id-is.md): w293, #972, a sha or a sandbox
   name means nothing to a person; put what it is beside it, every time.
