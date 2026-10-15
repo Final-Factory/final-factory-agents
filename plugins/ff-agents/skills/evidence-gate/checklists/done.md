@@ -38,6 +38,11 @@ holds, or the report says what is left instead of DONE.
    ([processes you started end before DONE](../lessons/clean-up-after-yourself.md#processes-you-started-end-before-done-w1196-w1197)).
 5. **Labels and ids.** Each number and recommendation is labelled measured, sourced or guess, and
    every id has its plain words beside it ([say what an id is](../lessons/say-what-an-id-is.md)).
+   **Review media inline** (w1384): every still and clip the person must look at is its own `![name](<absolute path>)`
+   line. Scan the report for review paths (`/srv/fff/review/…`), folders, wildcards and `.mp4`/`.png`/`.jpg` names: one
+   not inside `![..](<..>)` is a miss, and a folder is each of its files, newest first, never `.preview/`
+   ([review media goes inline](../lessons/review-media-goes-inline.md)). Ben, 2026-10-15: "Stop giving me paths to
+   videos and inline the videos like you should be doing and I've reminded you as such like 100 times".
 6. **Open waits.** Every `wNNN: still open:` line that names a person (a reboot, a login, a decision, an
    approval) was declared with `waiting_on_person` before the turn ended, and no `wake_me` stands in
    for it ([a wait on a person is declared, not polled](../lessons/a-person-wait-is-declared-not-polled.md)).
