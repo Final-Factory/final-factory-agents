@@ -1,6 +1,6 @@
 ---
 name: clean-up-after-yourself
-description: "Workers do NOT clean up (w913): leave everything you make in your own $TMPDIR (clones, logs, builds, tour output, scratch); the daemon removes it a few minutes after no request waits for you any more (closed, or moved to another worker; a wait for CI or a person, a stop or a pause keeps it whole, since w1097) and your sandbox's build and capture output when it is released, so no rm, no player_slots prune and no clean-up step before DONE, and no rm mid-task to reuse a folder: each test leg writes to a new $TMPDIR/<leg>-<timestamp> (w1097). The one delete left to a worker (a huge build mid-task, disk short) is a plain rm -rf under $TMPDIR, which the session answers itself with no approval, and a save copy you put in the saves folder, named with your temp folder's name in front. Low disk on a machine is fixed by the harness or by filed clean-up work, never by asking a person. Every delete is strictly inside the machine's worker install folder (root.json's root, $FF_WORKER_ROOT); outside it a worker only measures and reports (w896). A -batchmode build you started is ended before DONE."
+description: "Workers do NOT clean up (w913): leave everything you make in your own $TMPDIR (clones, logs, builds, tour output, scratch); the daemon removes it a few minutes after no request waits for you any more (closed, or moved to another worker; a wait for CI or a person, a stop or a pause keeps it whole, since w1097) and your sandbox's build and capture output when it is released, so no rm, no player_slots prune and no clean-up step before DONE, and no rm mid-task to reuse a folder: each test leg writes to a new $TMPDIR/<leg>-<timestamp> (w1097). The one delete left to a worker (a huge build mid-task, disk short) is a plain rm -rf under $TMPDIR, which the session answers itself with no approval, and a save copy you put in the saves folder, named with your temp folder's name in front. Low disk on a machine is fixed by the harness or by filed clean-up work, never by asking a person. Every delete is strictly inside the machine's worker install folder (root.json's root, $FF_WORKER_ROOT); outside it a worker only measures and reports (w896). A clean-up deletes only the folders `ff-leftovers folders` marks DELETE (closed requests and orphans); the temp, build and review folders of a worker whose request is open, stalled or paused are kept whether or not its process runs (w1379). A -batchmode build you started is ended before DONE."
 date: 2026-10-10
 ---
 
@@ -108,6 +108,39 @@ the worker".
   and a variable it cannot expand are the guard's known holes, and the rule binds you there too).
 - A machine without a root install (the portal's own host, an old install) has no folder to name: say so and measure
   only, and an owner can name the folder for it.
+
+## A clean-up never takes the folders of a request that has not closed (w1379)
+
+**Rule.** Before you delete a folder that is not yours (another worker's `tmp/ffa-<session>`, a `scratch/` or review folder named for a
+request, a sandbox's `Builds/` or `.nightly-builds/` output), run `ff-leftovers folders` (the whole list) or `ff-leftovers check <path>...` (the
+paths you mean to delete; exit 1 means keep) and delete **only what it marks DELETE**. It judges the ledger's facts, which you cannot read
+yourself: a folder is deletable only when its request is closed (done, merged, rejected, cancelled) or it belongs to no worker at all (an
+orphan). The temp, build and review folders of a worker whose request is **open, stalled or paused** are KEEP rows **whether or not the worker's process runs**:
+a usage limit, a wait for CI, a wait for a person's OK or a hold stops the process and not the request. A KEEP row you report with its reason
+("skipped: w1332 stalled, a735f37c resumes"); you do not weigh it against the space you need. When the command answers "no ledger facts", "not
+connected", "predates w1379" or is not found (an older daemon), **delete no worker's folder at all**, say so in the report, and let your orchestrator get
+the daemon updated; the space you can still free is your own sandbox and what is clearly FF Factory's own and inside the install folder.
+
+**Never take a list of live or "will resume" workers from a brief and delete the rest.** A brief's list is a guess of the dispatcher at
+the minute it wrote it; the ledger moves (a request stalls on a usage limit, a person asks for a change, a hold ends). Brief writers (the
+dispatcher, the orchestrators): a clean-up brief says "run `ff-leftovers folders` and delete only its DELETE rows", never "these workers are live".
+
+**Why.** 2026-10-15 (w1379): w1374, LothDesktop's low-disk clean-up (worker d314b54b, V:\ffw), deleted the temp folder of stopped worker
+a735f37c, which is on w1332 (the comet catch-tail VFX). The ledger had stalled w1332 at 13:15 on a usage limit (revived at 13:59) and it was then
+waiting for Ben's OK of the look; it lost its player builds and preview clips and rebuilt them (the look itself was committed). The brief
+listed five live workers and "39b00201 and d4c4ff2c are stopped but will resume", and a735f37c was on neither list. The daemon's own sweeps
+keep such a session (FF Factory `server/resumable.ts`, w1097); the by-hand delete had no ledger behind it. A worker can read only its own
+requests (`read_work`), so the machine now tells it: FF Factory PR #402 (`server/cleanupFolders.ts`, `ff-leftovers folders|check`).
+
+**How to apply.**
+
+- The [delete checklist](../checklists/delete.md) item 2a is the line that would have caught it: whose folder is it, and what does the ledger say about its request.
+- Not provable means KEEP: old facts (the daemon writes them every 30 s), a daemon not connected to the portal, a folder naming no request,
+  a path outside the install folder (w896). The command says why in its answer.
+- The daemon's own passes follow the same rule, and wait for the portal's welcome before they judge any worker folder (FF Factory
+  `docs/self-recovery.md`, "A clean-up worker's deletes are judged by the ledger").
+- The portal host's review folder (`/srv/fff/review/<topic>`) is outside any worker root, so no sweep takes it and `ff-leftovers` cannot judge
+  it: a topic named for a request that is not closed is not yours to delete either.
 
 ## Unity batch builds and the slots they hold (w791)
 

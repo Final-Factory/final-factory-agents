@@ -298,6 +298,9 @@ One file each under `lessons/`: the rule, why (the incident, dated), how to appl
   sizes and list what makes FF Factory write there, whatever the brief says (w876 cleared dotnet temp, the Unity Hub installer,
   Temp, test output and old transcripts on LothDesktop's C:; lothsahn: "in general we should only be clearing data in the
   install folder for the worker"; [checklist](checklists/delete.md)).
+  And (w1379): a clean-up deletes only what `ff-leftovers folders` marks DELETE (closed requests, orphans); the temp, build and review
+  folders of a worker whose request is open, stalled or paused stay, running or not, and a brief's list of live workers is not the ledger
+  (w1374 deleted stopped worker a735f37c's builds and clips while its request w1332 was stalled; [the rule](lessons/clean-up-after-yourself.md#a-clean-up-never-takes-the-folders-of-a-request-that-has-not-closed-w1379)).
   Same lesson, Unity slots: your own `-batchmode` builds end before DONE (`unity-slot status`); a start refused for a
   stuck batch holder gets `unity clear_batch`, not a multi-hour wait or a request to end it by hand (w791: two builds
   held slots for hours).
