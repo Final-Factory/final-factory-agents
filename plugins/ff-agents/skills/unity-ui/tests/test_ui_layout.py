@@ -232,6 +232,17 @@ class OpenedPanelTest(unittest.TestCase):
         self.assertEqual(code, 1)
         self.assertIn("NOT RESTORED: ", out)
 
+    def test_siblings_sharing_a_name_are_matched_by_place_not_order(self):
+        # w1329: an objective's three tips are all ObjectivesPanel/.../TipParent/TipText; the census after the close listed
+        # them in another order at the same three places, and the check said one was "not where it was".
+        tip = "ObjectivesPanel/Content/ObjectiveItem(Clone)/TipParent/TipText"
+        places = [[20, 140, 310, 190], [20, 194, 310, 228], [20, 231, 310, 290]]
+        covered = {el(tip, places[0])["path"]: list(places)}
+        closed = {"elements": [el(tip, r) for r in (places[1], places[2], places[0])]}
+        self.assertEqual(ul.restored(closed, covered), [])
+        closed["elements"][0] = el(tip, [20, 260, 310, 294])
+        self.assertTrue(any("not where it was" in p for p in ul.restored(closed, covered)))
+
     def test_a_census_without_draw_order_says_it_did_not_measure(self):
         after = hud(slideout=True)
         for e in after["elements"]:

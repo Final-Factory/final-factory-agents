@@ -135,6 +135,7 @@ person asking for that exact element to move. Census 1920x1080, 1280x800 and 128
   desync PR whose before/after runs spread wider than 1% gets the added functions timed directly on the same save,
   with the triggering case present and absent (`checklists/ffbox-desync-pr.md`, w824).
 - **A speed-up is one build, switched off and on, back to back** ([lesson](lessons/settle-your-own-guesses.md#a-speed-up-is-one-build-switched-off-and-on-back-to-back-w1069-2026-10-13)).
+- **An A/B on one machine: prove the action happened, run both builds at once and swap the CPU sets** ([lesson](lessons/settle-your-own-guesses.md#an-ab-on-one-machine-check-the-thing-happened-and-run-both-builds-at-once-w1329-2026-10-15)).
   Before you report a performance gain, measure the same build with the change switched off and on, back to back on
   the same machine, and check that a system the change does not touch reads the same in both (within about 10%); a
   run from earlier is not a baseline on a shared machine (w1069: 2.3x against an earlier run, 20% against the switch).

@@ -75,6 +75,23 @@ toggle.
   so anchors like `'## Ranked weak points
 '` do not match; write with `newline=chr(10)` so the blob stays LF.
 
+## An A/B on one machine: check the thing happened, and run both builds at once (w1329, 2026-10-15)
+
+w1329 (the Technology window's open cost on Life's save) ran master and the fix as two game players on beast at the same
+time. The tour opened the window with the T key, and only the focused window gets keystrokes: neither client ever opened
+it, its "open" frames showed no spike, and the table looked like a result until the log was read. Sequential runs on the
+same shared machine swung more than the effect under test: one build's closed-window frame read 27-28 ms in two runs and
+48.9 ms in a profiler capture half an hour later, the other 32-36 ms and 32.7 ms.
+
+- **Prove each measured action happened**: open panels by the automation command (`ffauto:ui.open|<panel>`), never a key,
+  when more than one game window is up, and find the line that says it did in the run's log (`opened panel 'research'`)
+  before reading any number.
+- **Run before and after together, then swap**: two players at once, each pinned to its own CPU set
+  (`(Get-Process -Id <pid>).ProcessorAffinity`), then again with the sets swapped, so machine load and core speed cancel.
+  A difference that flips sign when the sets swap is the machine's, not the change's.
+- **Name the per-marker cost** of what the change leaves running (a profiler log of a few seconds, `profile:<name>` in the
+  Deck tour), and say a frame-time gap smaller than the run-to-run swing is not measured.
+
 ## An equivalence test of a pruned search puts a tie on each bound, and fails on the flip (w1069, 2026-10-13)
 
 An index or a pruned search that must pick exactly what a full scan picks (a different pick is a different trip, and

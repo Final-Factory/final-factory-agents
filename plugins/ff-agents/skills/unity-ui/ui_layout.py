@@ -259,7 +259,11 @@ def opened_over_hud(census: dict, patterns: list[str], depth: int = 2, min_px: f
         hud_block = block_of(b["path"], depth)
         entry = out["pairs"].setdefault((label, hud_block), {"px": 0.0, "example": (a["path"], b["path"])})
         entry["px"] += px
-        out["covered"][b["path"]] = b.get("visible") or b["rect"]
+        # Every rect per path: siblings can share a name (three ObjectiveItem tips are all TipParent/TipText, w1329).
+        rects = out["covered"].setdefault(b["path"], [])
+        rect = b.get("visible") or b["rect"]
+        if rect not in rects:
+            rects.append(rect)
         order = above(a, b)
         if order is None:
             out["measured"] = False
@@ -328,14 +332,20 @@ def covered_text_line(f: dict) -> str:
 
 def restored(closed: dict, covered: dict, tolerance: float = 2.0) -> list[str]:
     """The HUD elements an opened panel covered, in the census taken after closing it: each must be there, drawn, at
-    the same place (the HUD is back as it was)."""
-    now = {e["path"]: e.get("visible") or e["rect"] for e in closed["elements"] if solid(e)}
+    the same place (the HUD is back as it was). `covered` maps a path to its rects (or one rect). Siblings that share a
+    name are matched by place, not by their order in the census (w1329: three objective tips, all TipParent/TipText,
+    listed in another order read as 'not where it was' at the same three places)."""
+    now: dict[str, list] = {}
+    for e in closed["elements"]:
+        if solid(e):
+            now.setdefault(e["path"], []).append(e.get("visible") or e["rect"])
     problems = []
-    for path, rect in sorted(covered.items()):
-        r = now.get(path)
-        if r is None:
+    for path, rects in sorted(covered.items()):
+        rects = [rects] if rects and not isinstance(rects[0], (list, tuple)) else rects
+        there = now.get(path)
+        if not there:
             problems.append(f"{short(path, 2)} is gone from the screen after closing the panel")
-        elif max(abs(x - y) for x, y in zip(r, rect)) > tolerance:
+        elif any(min(max(abs(x - y) for x, y in zip(r, rect)) for r in there) > tolerance for rect in rects):
             problems.append(f"{short(path, 2)} is not where it was after closing the panel")
     return problems
 
@@ -966,7 +976,8 @@ def run_check(args) -> int:
     if args.closed:
         gone = restored(load(args.closed), over["covered"], args.tolerance) if over["covered"] else []
         problems += gone
-        back = f"{'no' if gone else 'yes'} ({len(over['covered'])} covered HUD element(s) checked in {Path(args.closed).name})"
+        back = (f"{'no' if gone else 'yes'} ({sum(len(r) for r in over['covered'].values())} covered HUD element(s) checked in "
+                f"{Path(args.closed).name})")
     else:
         gone, back = [], "not checked: pass --closed, a census taken after closing the panel"
     print(f"Opened panels: {len(over['pairs'])} opened panel pair(s) over the HUD (allowed: Ben, w732 and w742), "
