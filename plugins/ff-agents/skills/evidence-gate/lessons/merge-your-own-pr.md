@@ -109,3 +109,20 @@ and the merge ran anyway. The newer checker then wanted a `Window overlaps:` lin
 orchestrator had asked for that overlap check before the merge); it was added to the merged PR afterwards. A FAIL that
 says a newer version is released is not a pass: update the plugin (`claude plugin marketplace update
 final-factory-agents`), run the checker alone with `--brief`, fix the PR body, then merge in its own call.
+
+## A red check that is not your change: read the failing test, then the cause (w1337, 2026-10-15)
+
+w1337 (two prefab lines and a test) took six CI cycles to merge on a Windows worker, none of them its own fault:
+
+1. **A change that reaches prefabs or configs runs the whole suite on the PR** (`test_select.py`: "FULL SUITE: ... is
+   configuration the simulation loads"), so it meets every test master is red on, while other PRs ran only their own
+   classes and merged. Download the check's results XML (`gh run download <run> -D dir`, `editmode-results.xml`) and list
+   the `result="Failed"` cases before touching anything. Two failures there were not w1337's: a UI test master's batch
+   had gone red on (#1766, reverted by #1780), then new circuit tooltips that said a bare "Click" (#1735's w1306, fixed
+   by someone else's reword). Wait for that fix with `blocked_on` its PR, merge master in, push; do not edit another
+   worker's strings or panels to get green.
+2. **`fatal: remote error: upload-pack: not our ref <sha>` in the checkout step means the PR's temporary merge ref went
+   stale** (master moved while the run started). No test ran. `gh run rerun --failed` reuses the dead ref and fails the
+   same way; push a new commit (`git commit --allow-empty`) so GitHub builds a fresh one.
+3. **Run the newest `pr_evidence.py`** before the merge (`.../ff-agents/<highest version>/skills/evidence-gate/`); an
+   older copy answers FAIL "a newer version is released" even on a good body.
