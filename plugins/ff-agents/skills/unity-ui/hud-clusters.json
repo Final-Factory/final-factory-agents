@@ -54,7 +54,8 @@
       "ObjectivesPanel": "Objectives card",
       "ActionBarParent": "ability row and hotbar",
       "MinimapParent": "minimap",
-      "QuickButtons": "minimap buttons"
+      "QuickButtons": "minimap buttons",
+      "FarStationHint": "far-station hint"
     },
     "hosting": [
       {
@@ -85,6 +86,20 @@
         "b": "ActionBarParent/Hotbars",
         "who": [
           "Ben, w732, 2026-10-09: \"Put the slide out back just make it appear over the hot bar. The user can then close it to show the hotbar again\""
+        ]
+      },
+      {
+        "a": "FarStationHint",
+        "b": "StationGridEntityPanel",
+        "who": [
+          "Ben, 2026-10-15 (w1342), asked where the yellow \"Too far away to use this building\" hint goes when a window opens over its fixed spot: \"Hint needs to be on top\""
+        ]
+      },
+      {
+        "a": "FarStationHint",
+        "b": "MiniInventory",
+        "who": [
+          "Ben, 2026-10-15 (w1342), asked where the yellow \"Too far away to use this building\" hint goes when a window opens over its fixed spot: \"Hint needs to be on top\""
         ]
       }
     ]
