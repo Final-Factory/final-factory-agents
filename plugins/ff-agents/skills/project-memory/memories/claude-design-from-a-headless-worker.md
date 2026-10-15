@@ -49,6 +49,12 @@ that starts **Published** and **Org default**, so every new design the person st
 for a design system: open the project, click "Remove as org default" (and confirm), then untick "Published". Sharing
 stays private (the Share button is at the top right of the project view).
 
+**Deleting a project (w1362, 2026-10-15).** DesignSync has no project delete (`delete_files` removes files only). Only
+with the person's own words for that one project: on claude.ai/design open the Projects or Design systems list, the
+row's "…" menu, "Delete Project", then the dialog names the project ("This cannot be undone"); check the name, click
+Delete. `get_project` then answers 404. To learn a row's project id without opening it, use the same menu's "Copy link"
+and `pbpaste`. `list_projects` lists design systems only, so confirm kept regular projects with `get_project`.
+
 **Viewing:** the file opens from the "No file open" picker at the top of the project. The viewer is an iframe. `orca
 computer scroll` reports ok but doesn't move it. Click the margin, then `press-key PageDown`. Screenshots taken
 within about 2 s of a scroll show tearing (overlapping text), so wait 3 s. The zoom menu (100% next to the pointer
