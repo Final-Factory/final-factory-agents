@@ -32,8 +32,9 @@ beam, comet and hover-field VFX all do).
    into its far LOD because its pixel size was negative. `VfxBeam.shader`'s `WorldPerPixel` still has it
    latent: its `_MinPixels` floor never applies, because `max()` swallows the negative.
 8. **Tuning with `execute_code` in play mode also lives only in memory until something saves.** Point 2's
-   writes reach the `.mat` only on the next `AssetDatabase.SaveAssets`; an editor restart or a reimport in
-   between drops them silently. The comet look Ben approved existed only in memory after a restart-heavy
+   writes reach the `.mat` on the next `AssetDatabase.SaveAssets`, and any of ~24 editor tools or a graceful editor
+   stop does that (w1393: an unsaved play-mode `SetColor` was written on stop, with `m_ObjectHideFlags: 32`;
+   [[play-mode-material-edits-land-on-disk-with-hide-flag-32]]). A reimport or a crash in between drops them silently. The comet look Ben approved existed only in memory after a restart-heavy
    session. Once tuned, write the values explicitly, `SetDirty` + `SaveAssets`, and grep the `.mat` on disk
    before committing. That `SaveAssets` also flushes the probes' editor noise (`QualitySettings.vSyncCount`,
    `EditorSettings.asyncShaderCompilation`, `TimeManager`, the minimap render texture): revert those files.
