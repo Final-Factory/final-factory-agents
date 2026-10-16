@@ -234,6 +234,14 @@ C=$(git commit-tree $T -p origin/release/<v> -m "<v> notes: <what was added>")
 git push origin $C:refs/heads/release/<v>    # then check the PR's headRefOid is $C and wait for its CI again
 ```
 
+**After that push, merge only on the run at `$C`** (w1416, Build 108): the `ci:` wait resumed the worker
+with "all workflow runs passed" on the first run's green at the old head `bd83effba2`, while the run for
+the notes commit `7b456cddec` had started a minute before, and `gh pr checks` showed it pending. Before
+`gh pr merge`, `gh run list -R Final-Factory/FinalFactory -b release/<v> -L 3` and check that the newest
+`Test Runner` run's `headSha` (`gh run view <id> --json headSha,conclusion`) is the PR's `headRefOid` and
+its conclusion is `success`; if it is still running, call `blocked_on` again with `head: $C`. The
+`--match-head-commit` flag guards the head, not which run passed.
+
 ```sh
 scripts/trigger-ci-release.sh master --dry-run --notes Temp/release-notes-0.50.0.43.md   # shows it, changes nothing
 scripts/trigger-ci-release.sh master --notes Temp/release-notes-0.50.0.43.md             # bumps origin/master's tip through a PR
@@ -357,6 +365,14 @@ NOT-A-BUG tag), and the newest `#bug-reports` threads (`threads 1069745561672106
 `thread <id>`) name the version a player runs. Count those by version and platform, say they are a
 proxy for the intake and not its table, and read-only: never post in either channel. Developer-machine
 reports (`/Users/benryding/...`, player-slot paths) are not players'.
+
+**On a machine without the ffdiscord config (beast, w1416), ask for the listing in the report that says the
+build LANDED**, not an hour later: `python scripts/discord/ffdiscord.py` answers "no bot token" there, so
+there is no worker route at all. Name both windows in that report (the new build's first hour from its
+landing time, and the previous build's first hour from its landing time, both from `release-status.py`) and
+call `waiting_on_person` for the orchestrator at the check's due time; it answers from `ffbox_activity`
+(w1416: 0 reports for 0.50.0.108 and 0 for 0.50.0.107, measured by the orchestrator at 21:09 UTC
+2026-10-16). The Discord read for player feedback is not possible there either: say so in the report.
 
 ## When it goes wrong
 
