@@ -293,10 +293,10 @@ control, and a redesign goes out as 2 or 3 clearly different options built from 
     pixels (and 2x), the game's reference panels (`docs/ui-style/ref/ref-*.png`) and the person's quoted words, held back
     until the critic has judged the stills alone. Run a fresh `ff-agents:ui-critic` on it (Codex: a direct `reviewer`
     child given the pack's `prompt.md`); never brief it with what you changed or meant. Its `critic.md` goes in the review
-    folder with the stills. Fix every BROKEN or UGLY finding, file a standing one (wNNN) or answer it with the person's
-    words asking for exactly that, then pack the new stills for a new critic. After three rounds with one still open, the
+    folder with the stills. Fix every NEW broken or ugly finding or answer it with the person's words asking for exactly
+    that; file the STANDING ones (the before shows them too: wNNN); then pack the new stills for a new critic. After three rounds with one still open, the
     person gets the options and the critic's report. The PR carries `Critic: <critic.md> (pack <id>, run R): N stills, M
-    broken or ugly found, F fixed, 0 open, K minor`. The unity-ui skill's `critic.md` is the recipe.
+    broken or ugly found (S standing, filed as wNNN), F fixed, 0 open, K minor`. The unity-ui skill's `critic.md` is the recipe.
 31. **Colour, measured against the before (w1399).** `ui_look.py colour <after.png>::<census.json> --before
     <before.png>::<census.json>` (unity-ui) prints the `Colour:` line, judging the pixels a player sees:
     - LOUD FILL: a flat fill over 0.1 % of the screen at CIELAB L* 60 or more and C* 25 or more. w1334's "+ Add stop" was

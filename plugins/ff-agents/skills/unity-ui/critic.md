@@ -5,8 +5,15 @@
   w1386's #1813, w1334's #1817), and he rejected each at a glance. The rubric quotes him.
 - Models favour their own work and agree with the framing they are given: see the w1399 research,
   `/srv/fff/review/w1399-ui-harness/research.md`.
-- In w1399's own trial, a fresh agent briefed the way workers look today (the PR's text, whole stills, "anything broken or
-  poor?") missed both of Ben's complaints about #1817. The critic below caught them.
+- In w1399's blind trial (one run per case, scored by an agent that did not know which method wrote which report):
+  - This critic named Ben's defect on 4 of 4 rejected screens.
+  - The same critic with its rubric's examples of these cases removed named it on 2 of 3. It missed the dialog's density,
+    which it rated minor.
+  - A fresh agent looking the way workers do today (the PR's text, whole stills, "anything broken or poor?") named it on
+    1 of 3, missing both of Ben's complaints about #1817.
+  - On panels nobody had complained about, the critic also found real standing defects: overlapping windows, names
+    broken mid-word. That is why findings are split into NEW and STANDING (step 4).
+  - The proof: `/srv/fff/review/w1399-ui-harness/proof.md`.
 
 So before a UI still goes to a person, mocks included, a **fresh critic** grades it: an agent that never saw the code, the
 brief's reasoning or the worker's notes, given only what a person would see.
@@ -52,12 +59,15 @@ brief's reasoning or the worker's notes, given only what a person would see.
    - a side-by-side look at the reference panels and the before still, item by item;
    - the flaws, BROKEN and UGLY first, each with a fix direction.
 
-   It ends with one line: `Critic: N stills, M broken or ugly, K minor`.
-4. **Fix or answer every broken or ugly finding.** Fix it, file a standing one (wNNN), or answer it with the person's words
-   asking for exactly that. Then a new pack of the new stills, and a new critic. After three rounds with one still open,
+   Each broken or ugly flaw is marked NEW (this change made it) or STANDING (the before still shows it too). The
+   report ends with one line: `Critic: N stills, M broken or ugly (S standing), K minor`.
+4. **Fix or answer every NEW broken or ugly finding**, or answer it with the person's words asking for exactly that.
+   **File the STANDING ones** (wNNN, named in the report's first lines). The critic is strict: in w1399's trial it found
+   real standing defects in master panels nobody had complained about (a hover card's text colliding with a window, names
+   broken mid-word), which the change did not make and must not be blocked on. Then a new pack of the new stills, and a new critic. After three rounds with one still open,
    the person gets the options and the critic's report, not a fourth nudge.
-5. **The pull request** carries `Critic: <critic.md> (pack <id>, run R): N stills, M broken or ugly found, F fixed, 0 open,
-   K minor`. The report to the person gives the critic's verdict in a line, with its top finding and how it was answered.
+5. **The pull request** carries `Critic: <critic.md> (pack <id>, run R): N stills, M broken or ugly found (S standing,
+   filed as wNNN), F fixed, 0 open, K minor`. The report to the person gives the critic's verdict in a line, with its top finding and how it was answered.
    `pr_evidence.py` fails a UI change without the line, or with a broken or ugly finding open and neither filed nor
    answered.
 

@@ -27,3 +27,9 @@ compile), `return "\n" + ...` likewise, and a bash `... \<newline> -executeMetho
 
 **Again in w1398 (2026-10-16), three more times in one session:** a TypeScript route regex written as `'[\\w-]'` arrived as `'[\w-]'`, so the pattern matched `w` only (this very note's text, patched through a heredoc, lost its backslashes the same way and was fixed with Edit), an HTTP reply's escaped CRLF arrived as real line breaks inside a string literal, and a test's `"Material:
 "` did the same. Each time `npx tsc` or the test run caught it, not the edit. Write any patch script that holds a backslash with the Write tool (a `.py` file in `$TMPDIR`) and run that file; never a heredoc.
+
+**And in w1399 (2026-10-16), the line endings.** On Windows `Path.write_text(...)` (text mode) writes every `\n` as `\r\n`,
+so one scripted edit turned an LF file to CRLF, and the next script's multi-line `old` strings stopped matching (`count == 0`)
+while `git diff` showed only the intended lines. Edit with `read_bytes().decode()` / `write_bytes(...encode())` and keep the
+file's own ending. Normalising endings afterwards needs a filter on text extensions: a loop over `git diff --name-only`
+that rewrote `\r\n` bytes also "fixed" three PNG test fixtures and broke them.

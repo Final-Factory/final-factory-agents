@@ -243,6 +243,10 @@ numbers. What w1399 measured:
 - **Pick colours from the built pixel, not the mock.** Controls get opaque fills. A selected row shows its state on an
   edge or the number; the controls inside it keep their colours. A secondary action gets the game's quiet fill, not an
   accent.
-- **The proof** (w1399, `/srv/fff/review/w1399-ui-harness/proof.md`): the checks flag both w1334 complaints and the
-  stretched w1386 switch, and the critic flags each of the three rejected screens. Rerun its cases when the critic's role,
-  the rubric or the model changes.
+- **The proof** (w1399, `/srv/fff/review/w1399-ui-harness/proof.md`):
+  - The checks flag both w1334 complaints and the stretched w1386 switch, and fire on none of master's 15 panels for
+    bleed.
+  - In a blind trial, scored by an agent that did not know which method wrote which report, the critic named Ben's own
+    defect on 4 of 4 rejected screens. Workers' looking as it is today did so on 1 of 3.
+  - The critic is strict on old panels too: findings the before still also shows are STANDING and get filed, not fixed.
+  - Rerun its cases (`/srv/fff/review/w1399-ui-harness/`) when the critic's role, the rubric or the model changes.

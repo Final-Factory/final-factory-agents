@@ -595,6 +595,10 @@ def critic_problems(section: str) -> list[str]:
         problems.append(f"'Critic:' has {still_open.group(1)} broken or ugly finding(s) open: fix each, file a standing one "
                         f"(wNNN on the line), or answer it with the person's words asking for exactly that "
                         f"(answered (who): \"...\"); the answer goes to the person with the stills")
+    standing = re.search(r"(\d+)\s+standing", value, re.IGNORECASE)
+    if standing and int(standing.group(1)) and not re.search(r"\bw\d{3,}\b", value):
+        problems.append(f"'Critic:' lists {standing.group(1)} standing finding(s) (the before still shows them too): file "
+                        f"them and name the request on the line (filed as wNNN); they are not this change's to fix")
     return problems
 
 

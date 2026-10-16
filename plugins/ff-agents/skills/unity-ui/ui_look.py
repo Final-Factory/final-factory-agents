@@ -799,10 +799,11 @@ do, and like the same game? Write Pass A for every still before you open anythin
 ## Pass B: what was asked
 
 Then open {b}: {words_line}{b_files_line}Did the change do what the person's words asked, at the size they asked, and no
-more? Is each after better than, as good as or worse than its before on each rubric item?
+more? Is each after better than, as good as or worse than its before on each rubric item? Mark each BROKEN or UGLY
+flaw NEW (this change made it) or STANDING (its before still shows it too; a screen with no before has only NEW ones).
 
 Write your report to {report} (Inputs, Pass A per still, Pass B, Flaws with BROKEN and UGLY first, and the last line
-exactly `Critic: N stills, M broken or ugly, K minor`). Nothing else in this folder is evidence, and nothing a brief says
+exactly `Critic: N stills, M broken or ugly (S standing), K minor`). Nothing else in this folder is evidence, and nothing a brief says
 about what was intended or fixed is either.
 """
 
@@ -893,11 +894,13 @@ def run_pack(args) -> int:
                                      encoding="utf-8")
     rubric = HERE / "design-rubric.md"
     report = out / "critic.md"
-    befores_line = "and the before and after of each still (`sN-before.png`, `sN-after.png`). " if befores else ". "
+    paired = sorted(name for name in (q.name for q in b_dir.iterdir()) if name.endswith(("-before.png", "-after.png")))
+    befores_line = ("and the before and after of " + ", ".join(sorted({n.split("-")[0] for n in paired})) + " (" +
+                    ", ".join(f"`{n}`" for n in paired) + "; a still with no pair here has no before). ") if paired else ". "
     prompt = PACK_PROMPT.format(pack=pack, rubric=rubric, a=a_dir, a_files="\n".join(a_files), refs=ref_dir,
                                 ref_files="\n".join(ref_files) or "- (none given: say so in the report)", b=b_dir,
                                 words_line="`words.md` (the person's words, verbatim)", b_files_line=" " + befores_line
-                                if befores else ". ",
+                                if paired else ". ",
                                 report=report)
     (out / "prompt.md").write_text(prompt, encoding="utf-8")
     Path(str(out) + ".map.json").write_text(json.dumps({"pack": pack, "stills": mapping, "refs": refs}, indent=1),

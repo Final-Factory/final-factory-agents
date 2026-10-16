@@ -513,6 +513,11 @@ class ShapeAndEyeTest(unittest.TestCase):
         self.assertEqual(self.reasons(Critic=still_open + '; answered (Ben): "keep the orange edge, I like it"'), "")
         self.assertEqual(self.reasons(Critic=still_open + "; the menu card standing on master, filed as w1402"), "")
         self.assertIn("says how many stills", self.reasons(Critic="critic.md (pack 3f2a91ab): looked fine"))
+        # w1399: the critic found real standing defects in master panels nobody had complained about; they are filed,
+        # not fixed by the change that happened to show them.
+        standing = "critic.md (pack 3f2a91ab, run 1): 3 stills, 4 broken or ugly found (2 standing), 2 fixed, 0 open, 3 minor"
+        self.assertIn("2 standing finding(s)", self.reasons(Critic=standing))
+        self.assertEqual(self.reasons(Critic=standing.replace("(2 standing)", "(2 standing, filed as w1405)")), "")
 
     def test_an_eye_line_needs_its_counts(self):
         self.assertIn("'Eye:' says how many stills", self.reasons(Eye="looked at them all, fine"))
