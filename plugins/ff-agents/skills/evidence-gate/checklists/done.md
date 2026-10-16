@@ -38,6 +38,10 @@ holds, or the report says what is left instead of DONE.
    ([processes you started end before DONE](../lessons/clean-up-after-yourself.md#processes-you-started-end-before-done-w1196-w1197)).
 5. **Labels and ids.** Each number and recommendation is labelled measured, sourced or guess, and
    every id has its plain words beside it ([say what an id is](../lessons/say-what-an-id-is.md)).
+   **Quotes are copied, not recalled** (w1399): `python quote_check.py <report or PR body> <the files it quotes>...` lists
+   every quoted piece that is not word for word in its source (the brief, the person's words, the reports you cite). Copy
+   the source's words or drop the quote marks. w1399's draft proof had Ben asking for "making the add stop button look
+   nicer", which he never wrote (his words: "stand out just a little more"), and four critic quotes retyped from memory.
    **Review media inline** (w1384): every still and clip the person must look at is its own `![name](<absolute path>)`
    line. Scan the report for review paths (`/srv/fff/review/…`), folders, wildcards and `.mp4`/`.png`/`.jpg` names: one
    not inside `![..](<..>)` is a miss, and a folder is each of its files, newest first, never `.preview/`
