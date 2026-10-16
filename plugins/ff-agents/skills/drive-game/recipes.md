@@ -97,6 +97,15 @@ real-time budget (100 steps took ~12 s mid-load) until `FFSystems.Core.ConfigIni
 did nothing (it ran before the load began). The built players' saves and the editor share
 `SaveGamePath`, so a leg's checkpoint loads in the editor by name (074 T104/T105 probes).
 
+⚠️ **A load that hangs after "Calling mod OnGameStart hooks": check `isPaused` and `timeScale`** (w1411, 2026-10-16,
+lothdesktop). `EditorApplication.Step()` leaves the editor paused (`EditorApplication.isPaused == true`), and after the
+title Load panel was opened by hand (`SaveGamePanel.EnableInLoadMode`, then `SetActive(false)`) `Time.timeScale` read 0.
+`LoadGame` then sat for minutes with `SaveProcessState == Performing` although its background read had finished
+(`SaveGameManager._backgroundRead._done == true`), the loading bar up and nothing new in the log. Set
+`EditorApplication.isPaused = false` and `Time.timeScale = 1`, then let the editor run (no Step loop) and poll in short
+`execute_code` calls: a call that runs more than about 25 s times the bridge out ("Timeout receiving Unity response")
+even though the code goes on running. The 12 MB Strange fixture then loaded in about a minute.
+
 ⚠️ **If the headless load does not start, use the DevLoadSave menu instead** (w1048, 2026-10-11, lothdesktop): the
 headless `LoadGame` from `execute_code` followed by `EditorApplication.Step()` loops never loaded a save (0 `Placeable`s
 after ~4000 stepped frames, `GameMetaState` paused, no error and no "In game scene is prepared" log; the Step loop had
