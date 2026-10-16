@@ -519,7 +519,9 @@ slots").
   released (`blocked_on` CI, a long `wake_me`), FF Factory commits and pushes whatever is uncommitted (w656), so those files land in
   your pull request. w1370 (PR #1794, 2026-10-15): commit 302b276a24 carried the editor's stale localization table, which dropped
   rows master had added, and 7 `Tests.Localization.*TableRowsTest` cases failed the PR's CI. `git diff origin/master --stat` should
-  list only the files you meant to change.
+  list only the files you meant to change. The same two files are what `build_player.sh` means by "refused: tracked changes" (exit 66) when you start
+  a build right after stopping the editor (w1403, beast slot4, 2026-10-16, twice): check `git diff --stat`, and when it is only
+  their re-serialization (the localization table's long `m_Key` lines re-wrapped), `git checkout --` them and start again.
 - An editor you open by hand beside your own (the clone editor of a paired run, via
   `launch-editor.sh`) needs a held slot: `unity-slot acquire --count 1 --label "clone editor"
   --project <clone path>`, then `unity-slot release <id>` once it is closed (`--ttl`, default 120

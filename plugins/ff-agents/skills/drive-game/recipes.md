@@ -125,6 +125,19 @@ named saves (`GameDataPaths.Saves` = `UserData/saves/` since the game's UserData
 the game's folder and deletes nothing there. Settings file format: `{"version":1,"values":{"<key>":{"t":..,"v":..}}}`
 (`Documentation/User-Data-Folder.md`). Put the leg itself in a script file in `$TMPDIR` and run it: a script run never asks.
 
+⚠️ **`game_data.py run -- bash ...` on Windows starts WSL's bash, not Git Bash** (w1403, beast slot4, 2026-10-16): Python resolves a bare
+`bash` to `C:\Windows\System32ash.exe`, where `python` is not found, so the wrapped Deck/station tour never ran ("python: command
+not found" in its log) and every census came back empty with exit 0. Name Git Bash by its full path:
+`python scripts/game_data.py run --name <leg> -- "C:/Program Files/Git/usr/bin/bash.exe" specs/w1064-craft-queue-grouping/run_station_tour.sh ...`
+(`cygpath -m "$(which bash)"` prints it). `-- env VAR=x python ...` and `-- python ...` are not affected.
+
+⚠️ **A view toggle made in the editor's game is saved to the machine's shared settings** (w1403, 2026-10-16): Hide Flying Stations
+(`FleetStancePanel.ToggleHideFlyingStations`, `LocalViewSettings`) set from `execute_code` lands in `UserData/settings/settings.json`,
+which every built player and editor on the machine reads, so the next players started with flying stations hidden and their stills
+were wrong until it was found. Wrap an editor session that changes view or UI settings in `game_data.py snapshot`/`restore` as you
+would a built player. In a scenario, press the action through its binding, `ffauto:input.action|Toggle Hide Flying Stations`: the
+w1403 scenario's `ui.click|hud|HideFlyingStations` hit the Hide Cargo Barges toggle beside it instead.
+
 ⚠️ The `NewGame` save is a **modded** save and the editor disables mods, so it loads with missing
 items/tech — pick a non-modded save for clean loads.
 
