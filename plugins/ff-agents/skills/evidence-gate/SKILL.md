@@ -182,7 +182,7 @@ look first and relay only with the critic's report (FF Factory `read_rules ui`).
 
 - [Done](checklists/done.md): before `DONE: wNNN` or saying a request is finished: merged, every
   check the brief's Done names, the steps after the merge, the `Learned:` line, your disk leftovers removed (builds, Captures, worktrees, player slots),
-  labels and ids.
+  labels and ids, and every quote copied from its source (`quote_check.py`, w1399).
 - [Delete](checklists/delete.md) (w896): before any remove on a machine's disk, a clean-up above all: every path strictly inside
   the worker install folder (`$FF_WORKER_ROOT`); outside it you measure and report sizes and list what writes there, whatever
   the brief says.
