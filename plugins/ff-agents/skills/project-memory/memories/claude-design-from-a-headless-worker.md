@@ -93,6 +93,16 @@ rendered HTML (the review-folder zip is the cheap place). In a docs-only scratch
 author the branch already has (`481770+bryding@users.noreply.github.com`). Overwriting the same project path with
 `finalize_plan` + `write_files` replaces the file in place; the project link stays the same.
 
+**A published artifact is a snapshot (w1392, 2026-10-15, m5).** "Share → Publish as artifact" turns the file into a
+public `https://claude.ai/artifact/<id>` link ("Anyone with this link will be able to view this artifact, even without
+signing in"). Writing the project file with DesignSync does NOT change that artifact: it kept showing the old version.
+Re-running "Publish as artifact" (Share menu, then "Publish to web" in the preview dialog) on the same file **updated the
+same artifact link in place**, so everyone who already has the link sees the new version; mention that in the report.
+The artifact page is a JavaScript shell (`curl` returns only "Claude Artifact"), so check it in a browser window you
+opened: the accessibility tree holds "User-generated artifact content" with the doc's headings. If Safari is already
+running with no windows, `osascript -e 'tell application "Safari" to make new document with properties {URL:"…"}'`
+opens your own window; the publish toast's "Open" link did nothing when clicked.
+
 **Note:** in October 2026 Claude Design shows "Claude Design is moving to Artifacts in the Claude app. You can keep
 using this version until December 14."
 
