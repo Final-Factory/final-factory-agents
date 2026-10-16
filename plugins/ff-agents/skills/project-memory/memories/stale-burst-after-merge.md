@@ -108,6 +108,18 @@ Proof it's Burst-staleness, not logic:
 - Re-enabling `[BurstCompile]` + forcing a fresh recompile: still all green (verified with a
   SECOND targeted run so native Burst — not the async managed fallback — was exercised).
 
+### Also after a local revert A/B and back (w1407, 2026-10-16, BEAST slot3)
+
+A nightly merge review compares a digest at HEAD with the same test on a tree where the merges
+are reverted locally (`git revert -n -m 1 <merge>...`, compiled and run, then `git reset --hard
+HEAD`). Back at HEAD, every test that ran `InserterMovementSystem` threw an NRE "from a function
+compiled with Burst" at `InserterMovementSystem.OnUpdate`, untouched tests included
+(`UnitCircuitTest`, 23 failures in 125), while the same tests had passed at the same HEAD before
+the A/B. An editor restart alone did not clear it. With the editor stopped, moving
+`Library/BurstCache` aside (into `$TMPDIR`) and starting again did: 5/5 and 15/15 green. So
+before the second leg of any revert A/B (and after returning to HEAD), clear the Burst JIT cache
+with the editor stopped, or the HEAD leg's numbers come from the reverted tree's native code.
+
 ## Symptom B — BC1054 blaming files that never mention the type (2026-08-09)
 
 Merging `origin/master` into `develop` (new component `FFComponents.Heat.OverheatingState`,
