@@ -32,11 +32,13 @@
     ]
   },
   "backdrops": {
-    "why": "A full-screen view the HUD is drawn over is not an HUD block: what lies on it does not overlap it in any sense a player sees (w959: the Map Controls row always lies on the map view, and Map x MapControls failed every check that moved the controls, 110684 -> 43499 px2, exit 1 in all eight census pairs).",
+    "why": "A full-screen view the HUD is drawn over is not an HUD block: what lies on it does not overlap it in any sense a player sees (w959: the Map Controls row always lies on the map view, and Map x MapControls failed every check that moved the controls, 110684 -> 43499 px2, exit 1 in all eight census pairs). The Esc and title menu's own backdrop (MenuParent/Mask, MenuParent/LeftScrim) fills the screen behind every menu panel: w1413's Load-panel change read '2 kept between blocks the change moved' for the Load panel lying on it (1006574 px2 before and after), and for the Mask against the development build's Agent Control strip and the version string, though the menu's outer rect never moved.",
     "who": ["Ben, w959, 2026-10-10: \"just move the buttons to the top next to the player panel\" (the controls belong to the map view)"],
     "howToAdd": "Only a view that fills the screen behind the whole HUD, never a panel or an HUD element. Same path syntax as openedPanels.",
     "paths": [
-      "GamePanels/Map"
+      "GamePanels/Map",
+      "MenuParent/Mask",
+      "MenuParent/LeftScrim"
     ]
   },
   "windowOverlaps": {

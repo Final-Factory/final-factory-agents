@@ -99,6 +99,15 @@ census (`<shot>.json`: small, clipped, off-screen and overlapping text, covered 
   the saved place and measure the header's points against the topmost raycast target in that census (w1217: #1581
   let a top-left drop leave 57 of 57 header points of the Player Inventory under the top bar at 1280x800, so it could
   not be dragged out or closed by its X; the drop's own still looked fine).
+- **A tour player that quits writes quit saves into the shared saves folder (w1413).** `-ffDeckTourQuit` leaves through
+  the game's quit path, and `QuitAutosave` saves a game that has ticked unless the process carries `-ffAutomationRole`
+  (`AutomationSessionArgs.IsAutomationProcess`); `-ffSoloNewGame`, `-ffDeckTour` and `-ffAgentControl` do not set it. So
+  every leg writes `_autosave_sp_before_quit_<1-3>[_<source>]` (and its `.jpg`) into the saves folder every player on the
+  machine shares: with a save of yours loaded or saved its source is your name's first five characters (yours to remove),
+  with an unsaved new game (the station tour, `specs/w1064-craft-queue-grouping/run_station_tour.sh`) it has none and
+  overwrites whichever slot came next, another run's included (w1413: two such slots at 08:28 and 08:31). After the legs,
+  list `find <saves> -newermt <the run's start>` and remove only the files your legs made. That station script also passes
+  no `-logFile`, so its Player.log goes to the shared default; add one when you need to prove what a leg wrote.
 - **Development overlays are not the game.** The Debug Info counters, "Agent control ON" and Graphy
   draw in a development player and show up as overlaps and flicker; `ui_layout.py` ignores them,
   `ui_check.py` does not. Hold keys by `seconds`, not frames: a frame count is gone in a blink at

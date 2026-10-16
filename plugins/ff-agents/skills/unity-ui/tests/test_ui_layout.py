@@ -157,6 +157,44 @@ class BackdropTest(unittest.TestCase):
         self.assertIsNone(ul.opened_prefix(f"{GP}/MinimapParent/MapImage", patterns))
 
 
+class MenuBackdropTest(unittest.TestCase):
+    """w1413: the Esc and title menu's Mask and LeftScrim fill the screen behind its panels; a change inside the Load
+    panel's detail column read '2 kept between blocks the change moved' against them, though the menu never moved."""
+
+    MENU = "PersistentObjects/Canvas/MainMenuPanel(Clone)"
+
+    def census(self, name_y):
+        m = self.MENU
+        return {"screen": [1920, 1080], "elements": [
+            dict(path=f"{m}/MenuParent/Mask", kind="Image", rect=[0, 0, 1920, 1080], visible=[0, 0, 1920, 1080],
+                 color="#000000B0", alpha=0.7, sprite="", raycast=True, depth=0, canvasOrder=0),
+            dict(path=f"{m}/MenuParent/LeftScrim", kind="Image", rect=[0, 0, 700, 1080], visible=[0, 0, 700, 1080],
+                 color="#000000B0", alpha=0.7, sprite="", raycast=True, depth=1, canvasOrder=0),
+            dict(path=f"{m}/MenuParent/PanelsParent/SaveLoadPanel/Content/Right/Name/Value", kind="Text",
+                 rect=[1131, name_y, 1339, name_y + 86], visible=[1131, name_y, 1339, name_y + 86], color="#FFFFFFFF",
+                 alpha=1.0, sprite="", raycast=False, depth=6, canvasOrder=0),
+            dict(path=f"{m}/MenuParent/PanelsParent/SaveLoadPanel/Background", kind="Image", rect=[528, 272, 1378, 864],
+                 visible=[528, 272, 1378, 864], color="#16324AF0", alpha=0.94, sprite="background-main", raycast=True,
+                 depth=5, canvasOrder=0),
+            dict(path=f"{m}/VersionPanel/VersionString", kind="Text", rect=[1676, 1018, 1876, 1040],
+                 visible=[1676, 1018, 1876, 1040], color="#FFFFFFFF", alpha=1.0, sprite="", raycast=False, depth=2,
+                 canvasOrder=0),
+        ]}
+
+    def test_the_load_panel_and_the_version_lying_on_the_menu_backdrop_are_not_overlaps(self):
+        code, out = Cmd.run(self.census(487), self.census(455))
+        self.assertIn("0 new, 0 kept", the_line(out, "Overlaps"))
+
+    def test_the_shipped_spec_lists_the_menu_backdrop_and_not_its_panels(self):
+        patterns = ul.backdrop_patterns(json.loads(ul.DEFAULT_CLUSTERS.read_text(encoding="utf-8")))
+        self.assertTrue(ul.opened_prefix(f"{self.MENU}/MenuParent/Mask", patterns))
+        self.assertTrue(ul.opened_prefix(f"{self.MENU}/MenuParent/LeftScrim", patterns))
+        self.assertIsNone(ul.opened_prefix(f"{self.MENU}/MenuParent/PanelsParent/SaveLoadPanel/Background", patterns))
+
+    def test_without_the_classification_it_still_counts_them(self):
+        self.assertTrue(ul.overlaps(self.census(455), 2, opened=OPENED))
+
+
 class OpenedPanelTest(unittest.TestCase):
     """w742 (Ben): a panel the player opens on purpose and can close may draw over the HUD; it must sit on top, take
     its clicks, stay on screen and give the HUD back when closed. Always-on HUD overlaps still fail."""
