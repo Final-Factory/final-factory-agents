@@ -1,0 +1,254 @@
+{
+"screen": [
+1280.0,
+800.0
+],
+"source": "w1386 Deck tour census (worker d2224b21, build of #1813), after-docked/c1-lamp-main.layout.json, trimmed to StructuredDock, LightEntityPanel",
+"elements": [
+{
+"path": "InGameScene/UI Canvas/GamePanels/LightEntityPanel/MainPanel/Content/OnOffToggle/Text (TMP)",
+"kind": "TextMeshProUGUI",
+"rect": [
+771.5,
+103.4,
+1256.3,
+122.0
+],
+"visible": [
+771.5,
+103.4,
+1256.3,
+122.0
+],
+"color": "#FFFFFFFF",
+"alpha": 1.0,
+"sprite": "",
+"raycast": true,
+"selectable": true,
+"maskOnly": false,
+"canvasOrder": -10,
+"depth": 273,
+"text": "On/Off"
+},
+{
+"path": "InGameScene/UI Canvas/GamePanels/StructuredDock",
+"kind": "Image",
+"rect": [
+751.1,
+59.3,
+1269.8,
+194.2
+],
+"visible": [
+751.1,
+59.3,
+1269.8,
+194.2
+],
+"color": "#FFFFFFFF",
+"alpha": 1.0,
+"sprite": "background-main-opaque",
+"raycast": true,
+"selectable": false,
+"maskOnly": false,
+"canvasOrder": -10,
+"depth": 1
+},
+{
+"path": "InGameScene/UI Canvas/GamePanels/StructuredDock/StructuredTabs/Close/Label",
+"kind": "TextMeshProUGUI",
+"rect": [
+1176.3,
+64.4,
+1263.0,
+96.6
+],
+"visible": [
+1176.3,
+64.4,
+1263.0,
+96.6
+],
+"color": "#FFFFFFFF",
+"alpha": 1.0,
+"sprite": "",
+"raycast": false,
+"selectable": false,
+"maskOnly": false,
+"canvasOrder": -10,
+"depth": 9,
+"text": "Close"
+},
+{
+"path": "InGameScene/UI Canvas/GamePanels/StructuredDock/StructuredTabs/Tab",
+"kind": "Image",
+"rect": [
+757.9,
+64.4,
+919.4,
+96.6
+],
+"visible": [
+757.9,
+64.4,
+919.4,
+96.6
+],
+"color": "#FFFFFFFF",
+"alpha": 1.0,
+"sprite": "borderless-primary",
+"raycast": true,
+"selectable": true,
+"maskOnly": false,
+"canvasOrder": -10,
+"depth": 2
+},
+{
+"path": "InGameScene/UI Canvas/GamePanels/LightEntityPanel/MainPanel/Content/OnOffToggle/Switch",
+"kind": "Image",
+"rect": [
+771.5,
+122.0,
+1256.3,
+145.0
+],
+"visible": [
+771.5,
+122.0,
+1256.3,
+145.0
+],
+"color": "#FFFFFFFF",
+"alpha": 1.0,
+"sprite": "SwitchOn",
+"raycast": true,
+"selectable": true,
+"maskOnly": false,
+"canvasOrder": -10,
+"depth": 274
+},
+{
+"path": "InGameScene/UI Canvas/GamePanels/StructuredDock/StructuredTabs/Tab/Label",
+"kind": "TextMeshProUGUI",
+"rect": [
+757.9,
+64.4,
+919.4,
+96.6
+],
+"visible": [
+757.9,
+64.4,
+919.4,
+96.6
+],
+"color": "#FFFFFFFF",
+"alpha": 1.0,
+"sprite": "",
+"raycast": false,
+"selectable": false,
+"maskOnly": false,
+"canvasOrder": -10,
+"depth": 3,
+"text": "Light Structure"
+},
+{
+"path": "InGameScene/UI Canvas/GamePanels/LightEntityPanel/MainPanel/Content/LightColorRow/Swatch/Color",
+"kind": "Image",
+"rect": [
+875.7,
+156.0,
+918.1,
+173.0
+],
+"visible": [
+875.7,
+156.0,
+918.1,
+173.0
+],
+"color": "#FFDBBAFF",
+"alpha": 1.0,
+"sprite": "",
+"raycast": false,
+"selectable": false,
+"maskOnly": false,
+"canvasOrder": -10,
+"depth": 277
+},
+{
+"path": "InGameScene/UI Canvas/GamePanels/LightEntityPanel/MainPanel/Content/LightColorRow/ColorLabel",
+"kind": "TextMeshProUGUI",
+"rect": [
+774.9,
+152.6,
+868.1,
+176.4
+],
+"visible": [
+774.9,
+152.6,
+868.1,
+176.4
+],
+"color": "#FFFFFFFF",
+"alpha": 1.0,
+"sprite": "",
+"raycast": false,
+"selectable": false,
+"maskOnly": false,
+"canvasOrder": -10,
+"depth": 275,
+"text": "Light colour"
+},
+{
+"path": "InGameScene/UI Canvas/GamePanels/LightEntityPanel/MainPanel/Content/LightColorRow/Swatch",
+"kind": "Image",
+"rect": [
+873.2,
+153.5,
+920.6,
+175.5
+],
+"visible": [
+873.2,
+153.5,
+920.6,
+175.5
+],
+"color": "#2E86A1FF",
+"alpha": 1.0,
+"sprite": "borderless-primary",
+"raycast": true,
+"selectable": true,
+"maskOnly": false,
+"canvasOrder": -10,
+"depth": 276
+},
+{
+"path": "InGameScene/UI Canvas/GamePanels/StructuredDock/StructuredTabs/Tab/Label",
+"kind": "TextMeshProUGUI",
+"rect": [
+922.7,
+64.4,
+1026.8,
+96.6
+],
+"visible": [
+922.7,
+64.4,
+1026.8,
+96.6
+],
+"color": "#FFFFFFFF",
+"alpha": 1.0,
+"sprite": "",
+"raycast": false,
+"selectable": false,
+"maskOnly": false,
+"canvasOrder": -10,
+"depth": 6,
+"text": "Circuit"
+}
+]
+}

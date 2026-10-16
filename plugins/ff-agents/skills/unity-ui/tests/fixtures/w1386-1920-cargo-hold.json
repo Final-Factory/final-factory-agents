@@ -1,0 +1,349 @@
+{
+"screen": [
+1920.0,
+1080.0
+],
+"source": "w1386 Deck tour census (worker d2224b21, build of #1813), after-1920/c1b-pins-cargo-hold.layout.json, trimmed to CargoEntityPanel",
+"elements": [
+{
+"path": "InGameScene/UI Canvas/GamePanels/CargoEntityPanel/MainPanel/Content/CargoHoldPanel/Inventory/item-slot(Clone)/Background",
+"kind": "Image",
+"rect": [
+994.8,
+133.2,
+1022.5,
+160.9
+],
+"visible": [
+994.8,
+133.2,
+1022.5,
+160.9
+],
+"color": "#FFFFFFFF",
+"alpha": 1.0,
+"sprite": "item-slot",
+"raycast": true,
+"selectable": false,
+"maskOnly": false,
+"canvasOrder": -10,
+"depth": 52
+},
+{
+"path": "InGameScene/UI Canvas/GamePanels/CargoEntityPanel/MainPanel/Content/CargoHoldPanel/Inventory/item-slot(Clone)/Background",
+"kind": "Image",
+"rect": [
+1079.4,
+133.2,
+1107.1,
+160.9
+],
+"visible": [
+1079.4,
+133.2,
+1107.1,
+160.9
+],
+"color": "#FFFFFFFF",
+"alpha": 1.0,
+"sprite": "item-slot",
+"raycast": true,
+"selectable": false,
+"maskOnly": false,
+"canvasOrder": -10,
+"depth": 56
+},
+{
+"path": "InGameScene/UI Canvas/GamePanels/CargoEntityPanel/MainPanel/HeaderContent/Header/TitleAndIcon/Title",
+"kind": "TextMeshProUGUI",
+"rect": [
+988.9,
+85.9,
+1272.4,
+114.7
+],
+"visible": [
+988.9,
+85.9,
+1272.4,
+114.7
+],
+"color": "#FFFFFFFF",
+"alpha": 1.0,
+"sprite": "",
+"raycast": true,
+"selectable": false,
+"maskOnly": false,
+"canvasOrder": -10,
+"depth": 48,
+"text": "Cargo Hold"
+},
+{
+"path": "InGameScene/UI Canvas/GamePanels/CargoEntityPanel/MainPanel/Content/CargoHoldPanel/Inventory/item-slot(Clone)/Background",
+"kind": "Image",
+"rect": [
+1121.7,
+133.2,
+1149.4,
+160.9
+],
+"visible": [
+1121.7,
+133.2,
+1149.4,
+160.9
+],
+"color": "#FFFFFFFF",
+"alpha": 1.0,
+"sprite": "item-slot",
+"raycast": true,
+"selectable": false,
+"maskOnly": false,
+"canvasOrder": -10,
+"depth": 58
+},
+{
+"path": "InGameScene/UI Canvas/GamePanels/CargoEntityPanel/MainPanel",
+"kind": "Image",
+"rect": [
+974.5,
+76.9,
+1348.4,
+295.3
+],
+"visible": [
+974.5,
+76.9,
+1348.4,
+295.3
+],
+"color": "#FFFFFFFF",
+"alpha": 1.0,
+"sprite": "background-main",
+"raycast": true,
+"selectable": false,
+"maskOnly": false,
+"canvasOrder": -10,
+"depth": 45
+},
+{
+"path": "InGameScene/UI Canvas/GamePanels/CargoEntityPanel/MainPanel/HeaderContent",
+"kind": "HeaderHitArea",
+"rect": [
+981.7,
+76.9,
+1341.2,
+123.7
+],
+"visible": [
+981.7,
+76.9,
+1341.2,
+123.7
+],
+"color": "#FFFFFFFF",
+"alpha": 1.0,
+"sprite": "",
+"raycast": true,
+"selectable": false,
+"maskOnly": false,
+"canvasOrder": -10,
+"depth": 46
+},
+{
+"path": "InGameScene/UI Canvas/GamePanels/CargoEntityPanel/MainPanel/Content/CargoHoldPanel/SortButton/AutoSortCheckbox/Text (TMP)",
+"kind": "TextMeshProUGUI",
+"rect": [
+1019.5,
+238.6,
+1087.4,
+258.4
+],
+"visible": [
+1019.5,
+238.6,
+1087.4,
+258.4
+],
+"color": "#FFFFFFFF",
+"alpha": 1.0,
+"sprite": "",
+"raycast": true,
+"selectable": true,
+"maskOnly": false,
+"canvasOrder": -10,
+"depth": 66,
+"text": "Auto-Sort"
+},
+{
+"path": "InGameScene/UI Canvas/GamePanels/CargoEntityPanel/MainPanel/Content/CargoHoldPanel/SortButton/AutoSortCheckbox/Switch",
+"kind": "Image",
+"rect": [
+988.9,
+239.5,
+1015.9,
+257.5
+],
+"visible": [
+988.9,
+239.5,
+1015.9,
+257.5
+],
+"color": "#FFFFFFFF",
+"alpha": 1.0,
+"sprite": "SwitchOn",
+"raycast": true,
+"selectable": true,
+"maskOnly": false,
+"canvasOrder": -10,
+"depth": 65
+},
+{
+"path": "InGameScene/UI Canvas/GamePanels/CargoEntityPanel/MainPanel/Content/CargoHoldPanel/DisableSlots/Panel/Slider/Background",
+"kind": "Image",
+"rect": [
+988.9,
+201.1,
+1330.3,
+222.7
+],
+"visible": [
+988.9,
+201.1,
+1330.3,
+222.7
+],
+"color": "#FFFFFFFF",
+"alpha": 1.0,
+"sprite": "borderless-primary2",
+"raycast": true,
+"selectable": false,
+"maskOnly": false,
+"canvasOrder": -10,
+"depth": 62
+},
+{
+"path": "InGameScene/UI Canvas/GamePanels/CargoEntityPanel/MainPanel/Content/CargoHoldPanel/Inventory/item-slot(Clone)/Background",
+"kind": "Image",
+"rect": [
+1037.1,
+133.2,
+1064.8,
+160.9
+],
+"visible": [
+1037.1,
+133.2,
+1064.8,
+160.9
+],
+"color": "#FFFFFFFF",
+"alpha": 1.0,
+"sprite": "item-slot",
+"raycast": true,
+"selectable": false,
+"maskOnly": false,
+"canvasOrder": -10,
+"depth": 54
+},
+{
+"path": "InGameScene/UI Canvas/GamePanels/CargoEntityPanel/MainPanel/Content/CargoHoldPanel/DisableSlots/Panel/Slider/Handle Slide Area/Handle",
+"kind": "Image",
+"rect": [
+992.5,
+204.7,
+1007.3,
+219.1
+],
+"visible": [
+992.5,
+204.7,
+1007.3,
+219.1
+],
+"color": "#FFFFFFFF",
+"alpha": 1.0,
+"sprite": "borderless-dark",
+"raycast": true,
+"selectable": false,
+"maskOnly": false,
+"canvasOrder": -10,
+"depth": 64
+},
+{
+"path": "InGameScene/UI Canvas/GamePanels/CargoEntityPanel/MainPanel/Content/CargoHoldPanel/DisableSlots/Label",
+"kind": "TextMeshProUGUI",
+"rect": [
+988.9,
+181.3,
+1186.5,
+199.3
+],
+"visible": [
+988.9,
+181.3,
+1186.5,
+199.3
+],
+"color": "#FFFFFFFF",
+"alpha": 1.0,
+"sprite": "",
+"raycast": true,
+"selectable": false,
+"maskOnly": false,
+"canvasOrder": -10,
+"depth": 60,
+"text": "Disable Slots"
+},
+{
+"path": "InGameScene/UI Canvas/GamePanels/CargoEntityPanel/MainPanel/Content/CargoHoldPanel/Hints/Text (TMP)",
+"kind": "TextMeshProUGUI",
+"rect": [
+988.9,
+266.5,
+1341.2,
+284.5
+],
+"visible": [
+988.9,
+266.5,
+1341.2,
+284.5
+],
+"color": "#FFFFFFFF",
+"alpha": 1.0,
+"sprite": "",
+"raycast": true,
+"selectable": false,
+"maskOnly": false,
+"canvasOrder": -10,
+"depth": 67,
+"text": "+  a slot to take items"
+},
+{
+"path": "InGameScene/UI Canvas/GamePanels/CargoEntityPanel/MainPanel/HeaderContent/Header/exitbutton/ExitButton",
+"kind": "Image",
+"rect": [
+1310.6,
+88.6,
+1334.0,
+112.0
+],
+"visible": [
+1310.6,
+88.6,
+1334.0,
+112.0
+],
+"color": "#FFFFFFFF",
+"alpha": 1.0,
+"sprite": "x-button",
+"raycast": true,
+"selectable": true,
+"maskOnly": false,
+"canvasOrder": -10,
+"depth": 49
+}
+]
+}

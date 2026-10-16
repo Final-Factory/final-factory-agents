@@ -57,6 +57,17 @@ pull request carries (pr_evidence.py reads them) and exits 1 when any of the fir
 
     ui_layout.py covered-text <census.json>    the texts of opened screens drawn under an opaque element (w727); exits 1 on one
 
+    ui_layout.py shape <census.json> [...] [--repo <game repo>]
+                                               the `Shape:` line (w1396): one census judged on its own, the way a player
+                                               looks at it. STRETCHED: an Image drawn 2x or more off its sprite's own aspect
+                                               (Simple or Filled, not preserveAspect, no 9-slice border; the w1386 On/Off
+                                               switch, sprite 225x150, drawn 485x23 in the Deck dock). MOSTLY EMPTY: a window
+                                               or dialog under 40 % covered by its content with one empty rectangle of 35 % or
+                                               more of it (the w1386 Light Structure panel at 1920x1080: 30 % and 37 %).
+                                               WALL OF TEXT: a text of 8 or more lines in a box under 40 % of the screen wide
+                                               (w1296's "Content removed" dialog). --repo reads sprite sizes from the game's
+                                               PNGs for a census without `spriteSize`. Exits 1 on any finding.
+
     ui_layout.py overlaps <census.json>        the overlapping HUD block pairs of one census, then every window overlap
                                                (allowed ones with their quote, the rest NOT ALLOWED); exits 1 on one of those
     ui_layout.py clusters <census.json|tour.log> [--clusters ...]   cluster edges of one census or a
@@ -934,6 +945,248 @@ def style(before: dict | None, after: dict, ref_fragment: str, shot=None, ref_sh
 
 
 # ---------------------------------------------------------------------------------------------------------------
+# shape: what a player calls obviously broken (w1396)
+#
+# Ben, 2026-10-16, on stills two workers and an orchestrator had passed: "the light panel is really messed up obviously"
+# (w1386: the Light Structure's On/Off switch drawn as a 485x23 bar in the Deck dock, the 1920 panel mostly empty) and
+# "looks terrible. you can do better" (w1296: a narrow "Content removed" dialog holding a dense block of text). Every
+# other check compares two censuses; these judge one, the way a player looks at it.
+
+STRETCH_RATIO = 2.0     # drawn aspect over the sprite's own aspect (or its inverse) at which a Simple image reads as stretched
+# A window whose content covers under SPARSE_SHARE of it AND leaves one empty rectangle of HOLE_SHARE or more reads as mostly
+# empty, its content crammed into a corner. Coverage alone does not tell (w1396, the w1386 tour's 1920x1080 censuses: the Cargo
+# Hold, which looks fine, 24 % covered with a 25 % hole; the Light Structure 30 % with a 37 % hole; the broken stacked circuit
+# blocks 28 % with 49 %).
+SPARSE_SHARE = 0.40
+HOLE_SHARE = 0.35
+CONTENT_PAD = 4.0       # px of breathing room counted as filled around each piece of content (scaled to 1080 lines)
+WALL_LINES = 8          # a text of this many lines or more ...
+# What draws pixels: a hit area or other custom Graphic (`HeaderHitArea`) is a raycast target a player never sees.
+DRAWN = re.compile(r"^(Image|RawImage|TextMeshProUGUI|TextMeshPro|Text|TMP_SubMeshUI)$")
+WALL_WIDTH = 0.40       # ... in a box narrower than this share of the screen reads as a wall of text
+
+
+def sprite_sizes(repo: str | Path | None) -> dict:
+    """{sprite name: (w, h, has 9-slice border)} for every single-sprite PNG under <repo>/Assets, read from the PNG header and
+    its .meta (spriteMode 1). For censuses without the `spriteSize` field (Deck tours before w1396)."""
+    found: dict[str, tuple[int, int, bool]] = {}
+    ambiguous: set[str] = set()
+    if not repo:
+        return found
+    for png in Path(repo, "Assets").rglob("*.png"):
+        meta = png.with_name(png.name + ".meta")
+        try:
+            head = png.open("rb").read(24)
+            text = meta.read_text(encoding="utf-8", errors="replace") if meta.exists() else ""
+        except OSError:
+            continue
+        if head[:8] != b"\x89PNG\r\n\x1a\n" or not re.search(r"^\s*spriteMode: 1\s*$", text, re.MULTILINE):
+            continue
+        border = re.search(r"spriteBorder: \{x: ([\d.]+), y: ([\d.]+), z: ([\d.]+), w: ([\d.]+)\}", text)
+        sliced = bool(border) and any(float(v) > 0 for v in border.groups())
+        size = (int.from_bytes(head[16:20], "big"), int.from_bytes(head[20:24], "big"), sliced)
+        if found.get(png.stem, size) != size:
+            ambiguous.add(png.stem)  # two sprites of one name and different shapes (three arrow.png): which one is drawn is unknown
+        found.setdefault(png.stem, size)
+    return {k: v for k, v in found.items() if k not in ambiguous}
+
+
+def glyph_box(e: dict):
+    """Where a text's glyphs are drawn: the census `textRect`, else an estimate from its string and box (left-aligned, a
+    character about 0.35 of the box's height wide and the glyphs 0.75 of it tall: measured on the w1386 1920x1080 still,
+    "Light Structure", "On/Off" and "Light colour" drew 0.26-0.42 of their box height per character), flagged as estimated."""
+    if e.get("textRect"):
+        return e["textRect"], False
+    r = e.get("visible") or e["rect"]
+    text = (e.get("text") or "").strip()
+    if not text:
+        return None, True
+    lines = max(1, e.get("lines") or 1)
+    line_h = (r[3] - r[1]) / lines
+    w = min(r[2] - r[0], 0.35 * line_h * max(len(t) for t in text.split("\n")) / (1 if lines == 1 else 1))
+    top = r[1] + 0.125 * line_h
+    return [r[0], top, r[0] + w, top + 0.75 * line_h * lines], True
+
+
+def coverage(panel_rect, boxes, pad: float, cell: float = 2.0) -> tuple[float, float]:
+    """The share of the panel's area that the padded boxes cover, and the share its largest empty rectangle takes (a grid of
+    `cell` px; the rectangle by the histogram method)."""
+    x0, y0, x1, y1 = panel_rect
+    cols, rows = max(1, int((x1 - x0) / cell)), max(1, int((y1 - y0) / cell))
+    hit = [bytearray(cols) for _ in range(rows)]
+    for b in boxes:
+        c0 = max(0, int((b[0] - pad - x0) / cell))
+        c1 = min(cols, int(math.ceil((b[2] + pad - x0) / cell)))
+        r0 = max(0, int((b[1] - pad - y0) / cell))
+        r1 = min(rows, int(math.ceil((b[3] + pad - y0) / cell)))
+        for r in range(r0, r1):
+            hit[r][c0:c1] = b"\x01" * max(0, c1 - c0)
+    covered = sum(sum(row) for row in hit) / float(cols * rows)
+    best, heights = 0, [0] * cols
+    for row in hit:
+        heights = [0 if row[c] else heights[c] + 1 for c in range(cols)]
+        stack: list[int] = []
+        for c in range(cols + 1):
+            h = heights[c] if c < cols else 0
+            while stack and heights[stack[-1]] >= h:
+                top = heights[stack.pop()]
+                left = stack[-1] + 1 if stack else 0
+                best = max(best, top * (c - left))
+            stack.append(c)
+    return covered, best / float(cols * rows)
+
+
+DIALOG = re.compile(r"Dialog|Modal|Popup", re.IGNORECASE)
+
+
+def window_root(path: str, patterns: list[str]) -> bool:
+    """Whether an element is the background of a window or dialog the player reads as one: an `openedPanels` window
+    (a structure panel, the dock, the hub) or a dialog (a component named *Dialog*, *Modal*, *Popup*), the element itself or
+    one level under it (`CargoEntityPanel/MainPanel`). The HUD, hover cards, list rows and scroll viewports are not judged
+    for emptiness: their ragged rows read as empty to a coverage count and are not (w1396 calibration)."""
+    prefix = opened_prefix(path, patterns)
+    if prefix is None:
+        parts = path.split("/")
+        hits = [i for i, part in enumerate(parts) if DIALOG.search(part)]
+        if not hits:
+            return False
+        prefix = "/".join(parts[:hits[0] + 1])
+    rest = path[len(prefix):].strip("/")
+    return rest.count("/") == 0 and not re.search(r"viewport|scroll|content|row|item", rest, re.IGNORECASE)
+
+
+def is_panel(e: dict, screen_px: float) -> bool:
+    """A drawn background a player reads as a panel or dialog: an opaque-ish Image over 1.5 % and under 60 % of the screen."""
+    if e.get("kind") != "Image" or e.get("maskOnly") or e.get("alpha", 1.0) < 0.3 or any(i in e["path"] for i in IGNORE):
+        return False
+    a = area(e.get("visible") or e["rect"])
+    return 0.015 * screen_px <= a <= 0.6 * screen_px and not HOLLOW.search(e.get("sprite") or "")
+
+
+def shape(census: dict, sprites: dict | None = None, patterns: list[str] | None = None) -> dict:
+    """One census judged on its own: stretched sprites, mostly empty windows and dialogs, walls of text (w1396)."""
+    if patterns is None:
+        patterns = opened_patterns(json.loads(DEFAULT_CLUSTERS.read_text(encoding="utf-8")))
+    sw, sh = (census.get("screen") or [1920, 1080])[:2]
+    screen_px = float(sw) * float(sh)
+    sprites = sprites or {}
+    out = {"stretched": [], "sparse": [], "walls": [], "unknown_sprites": set(), "estimated": False}
+    elements = [e for e in census["elements"] if not any(i in e["path"] for i in IGNORE)]
+
+    for e in elements:
+        name = e.get("sprite") or ""
+        r = e.get("visible") or e["rect"]
+        w, h = r[2] - r[0], r[3] - r[1]
+        if not name or e.get("maskOnly") or e.get("alpha", 1.0) < 0.25 or min(w, h) < 6:
+            continue
+        if e.get("preserveAspect") or e.get("imageType") == "Tiled":
+            continue
+        if e.get("spriteSize"):
+            nat_w, nat_h = e["spriteSize"]
+            sliced = any(v > 0 for v in e.get("spriteBorder") or [])
+        elif name in sprites:
+            nat_w, nat_h, sliced = sprites[name]
+        else:
+            out["unknown_sprites"].add(name)
+            continue
+        if sliced and e.get("imageType", "Sliced") == "Sliced":
+            continue  # a 9-slice panel or pill is meant to stretch along its middle
+        if not nat_w or not nat_h:
+            continue
+        ratio = (w / h) / (nat_w / nat_h)
+        ratio = max(ratio, 1 / ratio)
+        if ratio >= STRETCH_RATIO:
+            out["stretched"].append({"path": e["path"], "rect": r, "sprite": name, "native": [nat_w, nat_h],
+                                     "ratio": ratio, "type": e.get("imageType", "type not in census")})
+
+    panels_found = [e for e in elements if is_panel(e, screen_px) and window_root(e["path"], patterns)]
+    pad = CONTENT_PAD * float(sh) / 1080.0
+    for p in panels_found:
+        pr = p.get("visible") or p["rect"]
+        p_area = area(pr)
+        boxes = []
+        for e in elements:
+            if e is p or not solid(e) or e.get("maskOnly") or not DRAWN.search(e.get("kind", "")):
+                continue
+            if above(e, p) is False:
+                continue
+            r = e.get("visible") or e["rect"]
+            if "Text" in e.get("kind", ""):
+                r, est = glyph_box(e)
+                if r is None:
+                    continue
+                out["estimated"] |= est
+            cx, cy = (r[0] + r[2]) / 2, (r[1] + r[3]) / 2
+            # A frame or inner background as big as the panel is the panel, not what it holds; a picture (a RawImage: the
+            # minimap, a preview) is content whatever its size.
+            if not (pr[0] <= cx <= pr[2] and pr[1] <= cy <= pr[3]) or (area(r) >= 0.5 * p_area and e.get("kind") != "RawImage"):
+                continue
+            boxes.append(inter(r, pr))
+        if not boxes:
+            continue  # a backdrop with nothing on it (a dimmer, a frame), not a panel holding content
+        share, hole = coverage(pr, boxes, pad)
+        if share < SPARSE_SHARE and hole >= HOLE_SHARE:
+            out["sparse"].append({"path": p["path"], "rect": pr, "share": share, "hole": hole, "pieces": len(boxes)})
+
+    for e in elements:
+        if "Text" not in e.get("kind", "") or not e.get("text"):
+            continue
+        lines = e.get("lines")
+        if lines is None:
+            continue
+        r = e.get("textRect") or e.get("visible") or e["rect"]
+        if lines >= WALL_LINES and (r[2] - r[0]) < WALL_WIDTH * float(sw):
+            out["walls"].append({"path": e["path"], "rect": r, "lines": lines, "font": e.get("fontSize"),
+                                 "width_share": (r[2] - r[0]) / float(sw)})
+    out["lines_measured"] = any("lines" in e for e in elements if "Text" in e.get("kind", ""))
+    return out
+
+
+def nested_sparse(found: list[dict]) -> list[dict]:
+    """A sparse panel inside another sparse panel says the same thing twice: keep the outermost."""
+    keep = []
+    for f in found:
+        if not any(g is not f and g["path"] != f["path"] and f["path"].startswith(g["path"] + "/") for g in found):
+            keep.append(f)
+    return keep
+
+
+def shape_lines(results: list[tuple[str, dict]]) -> tuple[list[str], int]:
+    stretched = sum(len(r["stretched"]) for _, r in results)
+    sparse = sum(len(nested_sparse(r["sparse"])) for _, r in results)
+    walls = sum(len(r["walls"]) for _, r in results)
+    unknown = sorted(set().union(*(r["unknown_sprites"] for _, r in results))) if results else []
+    estimated = any(r["estimated"] for _, r in results)
+    lines_measured = all(r["lines_measured"] for _, r in results)
+    head = (f"Shape: {stretched} stretched, {sparse} mostly empty, {walls} wall(s) of text over {len(results)} census(es) "
+            f"(ui_layout.py shape: a sprite drawn {STRETCH_RATIO:g}x off its own aspect, a window under "
+            f"{SPARSE_SHARE * 100:.0f} % covered with one empty rectangle of {HOLE_SHARE * 100:.0f} % or more, {WALL_LINES}+ lines under {WALL_WIDTH * 100:.0f} % of the screen wide)")
+    notes = []
+    if estimated:
+        notes.append("text glyphs estimated (no textRect in the census)")
+    if not lines_measured:
+        notes.append("walls of text not measured (no `lines` in the census)")
+    if unknown:
+        notes.append(f"{len(unknown)} sprite(s) of unknown size (give --repo or take the census with `spriteSize`)")
+    if notes:
+        head += "; " + "; ".join(notes)
+    out = [head]
+    for label, r in results:
+        for s in r["stretched"]:
+            out.append(f"  STRETCHED {label} {short(s['path'], 3)}: sprite {s['sprite']} {s['native'][0]}x{s['native'][1]} drawn "
+                       f"{s['rect'][2] - s['rect'][0]:.0f}x{s['rect'][3] - s['rect'][1]:.0f} at {rect_text(s['rect'])}, "
+                       f"{s['ratio']:.1f}x off its aspect ({s['type']})")
+        for s in nested_sparse(r["sparse"]):
+            out.append(f"  MOSTLY EMPTY {label} {short(s['path'], 3)}: {s['share'] * 100:.0f} % covered by {s['pieces']} "
+                       f"piece(s), its largest empty rectangle {s['hole'] * 100:.0f} % of it, at {rect_text(s['rect'])}")
+        for s in r["walls"]:
+            out.append(f"  WALL OF TEXT {label} {short(s['path'], 3)}: {s['lines']} lines"
+                       f"{' at ' + str(s['font']) + ' pt' if s['font'] else ''} in a box {s['width_share'] * 100:.0f} % of "
+                       f"the screen wide at {rect_text(s['rect'])}")
+    return out, stretched + sparse + walls
+
+
+# ---------------------------------------------------------------------------------------------------------------
 # commands
 
 
@@ -1069,6 +1322,14 @@ def run_covered_text(args) -> int:
     return 1 if found else 0
 
 
+def run_shape(args) -> int:
+    sprites = sprite_sizes(args.repo)
+    results = [(f"{Path(c).parent.name}/{Path(c).name.split('.')[0]}", shape(load(c), sprites)) for c in args.census]
+    lines, flagged = shape_lines(results)
+    print("\n".join(lines))
+    return 1 if flagged else 0
+
+
 def run_clusters(args) -> int:
     census = load(args.census)
     spec = json.loads(Path(args.clusters).read_text(encoding="utf-8"))
@@ -1110,6 +1371,9 @@ def main(argv=None) -> int:
     t = sub.add_parser("covered-text", help="texts of opened screens drawn under an opaque element (w727)")
     t.add_argument("census")
     t.add_argument("--clusters", default=str(DEFAULT_CLUSTERS))
+    s = sub.add_parser("shape", help="stretched sprites, mostly empty panels, walls of text: the 'Shape:' line (w1396)")
+    s.add_argument("census", nargs="+")
+    s.add_argument("--repo", help="the game repo: sprite sizes for a census without `spriteSize` (Deck tours before w1396)")
     k = sub.add_parser("clusters", help="cluster edges of one census or tour log")
     k.add_argument("census")
     k.add_argument("--clusters", default=str(DEFAULT_CLUSTERS))
@@ -1117,7 +1381,7 @@ def main(argv=None) -> int:
         p.add_argument("--block-depth", type=int, default=2)
     args = ap.parse_args(argv)
     try:
-        return {"check": run_check, "overlaps": run_overlaps, "clusters": run_clusters, "covered-text": run_covered_text, "moves": run_moves, "pins": run_pins}[args.cmd](args)
+        return {"check": run_check, "overlaps": run_overlaps, "clusters": run_clusters, "covered-text": run_covered_text, "moves": run_moves, "pins": run_pins, "shape": run_shape}[args.cmd](args)
     except (ValueError, OSError, KeyError) as error:
         print(f"ui_layout: {error}", file=sys.stderr)
         return 2
