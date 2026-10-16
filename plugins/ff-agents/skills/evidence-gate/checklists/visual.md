@@ -68,6 +68,11 @@ in the built player (drive-game, "The mouse cursor in a built player"; w980).
    crop, before and after, because on thin bright lines bloom and the tonemapper set the hue by intensity, not by the
    HDR ratio ([lesson](../lessons/visual-fixes-are-verified-by-looking.md#a-glows-colour-on-screen-is-measured-not-read-off-the-hdr-value-w1066);
    w1066: three rounds of "not red enough").
+   **Decide it at design time, before building** (w1332): write which in-world parts carry the effect (light, debris,
+   sparks, dust, heat, the object's own material) and that none is a ring, circle, halo or outline drawn around the
+   object; Ben, w1332: "again I don't like the unnatural circle effect that looks like UI. The vfx should be part of
+   the game world in its appearance". A PR changing effect art carries `Art language:` (the reference compared, and
+   no ring/circle/halo/UI-like overlay, or the person's words asking for one); `pr_evidence.py` fails it without.
 5d. **A glow is measured against a glowing reference in the same frame (w1323).** A new or changed glow (emissive
    lines, an HDR accent) is put beside a powered mass driver in one built-player frame at normal zoom and measured with
    the game repo's `scripts/feel/glow_compare.py` (hot glow-hue pixels as a share of each crop, their contrast, the

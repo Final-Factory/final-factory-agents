@@ -32,6 +32,7 @@ Built player: yes
 Clips: proofs/before.mp4, proofs/after.mp4 (the hand-over is at frames 118-190)
 Looked: yes, every frame of 118-190 at 2x crop
 Review: watch_video report in proofs/review/; no blind model review (no Gemini key here)
+Art language: compared with the Railgun's glow in the same still; no ring, circle, halo or UI-like overlay
 
 Tests: FFEditorTests 6494 run, 6479 passed, 0 failed
 Determinism audit: 2354 shared heartbeats, no divergence
@@ -43,6 +44,9 @@ Not verified: the Bats' slot lag (simulation, follow-up PR)
 - **One row per claim** the title and TL;DR make. The basis is MEASURED (how) or SOURCED (a link
   or path). A claim that rests on a guess is not a row: verify it, or move it to "Not verified"
   and take it out of the title.
+- **Effect art** (a changed shader, material or VFX file; icons, sprites, UI, holograms and fog excepted) also needs
+  `Art language:` naming the reference compared and saying it draws no ring, circle, halo or UI-like overlay, or
+  quoting the person asking for one (`n/a: <why>` for an indicator asked for; visual.md 5c; w1241, w1332).
 - **Kind `visual`** needs the five lines from "Intended look" to "Review"
   ([visual.md](visual.md)). "Built player: no" fails. So does a "Clips" line that does not say
   where the event is.

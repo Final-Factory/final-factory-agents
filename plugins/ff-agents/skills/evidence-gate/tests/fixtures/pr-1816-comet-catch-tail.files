@@ -1,0 +1,5 @@
+Assets/Art/Shaders/Vfx/VfxComet.shader
+Assets/Resources/Vfx/VfxComet.mat
+Assets/Scripts/FFSystems/Presentation/CometVfxPresentationSystem.cs
+Documentation/Combat-VFX.md
+scripts/feel/run_comet_catch_clip.py

@@ -113,6 +113,17 @@ Recording notes:
   each its real duration; clamping every duration up to 1/60 s instead stretched a 25 s landing into a 76 s clip. On
   that PC `ddagrab` refused outright ("Desktop duplication access denied", displays asleep) and `gdigrab` returned a
   frame from the night before; `record_clip` now stops there with this recipe.
+  **`frames.csv` rows arrive out of order** (w1332, lothdesktop, 2026-10-15): the frames are encoded and logged on
+  worker threads, so sort the rows by `t_ns` before you join them; unsorted, one frame got a negative duration and the
+  ffmpeg concat failed with "Invalid data". A locked desktop refuses Desktop Duplication the same way ("access
+  denied"); the game's own frames need no visible window. The game repo's `scripts/feel/run_comet_catch_clip.py`
+  does all of this for a comet dive into a Comet Catcher (whole tail in frame at the farthest zoom with `--dir 1
+  --zoom 1000`), and `--catchers 12 --no-frames` is its cost run.
+- **An effect fired by an event draws on the event's frame** (w1332, Ben: "more oomph and be more immediate upon
+  impact"). A presentation clock that starts at `Now` when it sees the event sits at 0 on that frame, and a shader that
+  branches on `progress > 0` draws the frame before: the comet still in flight while the landed core already showed.
+  Start such a clock one frame in (`Now - deltaTime`), and step the 60 fps frames around the event: the event frame
+  itself shows the effect. watch_video's rise frames (0 against 10 on master) measure it.
 - **Editor Game view crop** (macOS, docked Game view): `execute_code` → `var gv =
   Resources.FindObjectsOfTypeAll(typeof(Editor).Assembly.GetType("UnityEditor.GameView"))[0] as
   EditorWindow; var m = EditorGUIUtility.GetMainWindowPosition(); var k =
