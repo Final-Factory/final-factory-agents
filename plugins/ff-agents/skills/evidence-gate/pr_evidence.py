@@ -206,7 +206,9 @@ def ui_problems(section: str, brief: str | None = None) -> tuple[list[str], list
     covered, covered_notes = covered_text_problems(section)
     problems += covered
     moved, notes = moved_problems(section, brief)
-    notes = window_notes + covered_notes + notes
+    shape, shape_notes = shape_problems(section)
+    problems += shape + eye_problems(section)
+    notes = window_notes + covered_notes + shape_notes + notes
     problems += moved + pinned_problems(section)
     flick = field(section, "Flicker")
     if not re.search(r"flicker", (clips[1] if clips else "") + (flick[1] if flick else ""), re.IGNORECASE):
@@ -502,6 +504,65 @@ def covered_text_problems(section: str) -> tuple[list[str], list[str]]:
         return ([f"'Covered text:' has {found.group(1)} new text(s) drawn under an opaque element of an opened screen: "
                  f"fix the layout so the text clears it (the tool lists each as NEW with the element over it; w727)"], [])
     return [], []
+
+
+def shape_problems(section: str) -> tuple[list[str], list[str]]:
+    """What a player calls obviously broken, judged on each after census (w1396; Ben, 2026-10-16, on stills a worker and an
+    orchestrator had passed: "the light panel is really messed up obviously"). The `Shape:` line is `ui_layout.py shape`'s:
+    a stretched sprite fails unless the requester asked for it (`intended (who): "..."`); a mostly empty window or a wall of
+    text fails until the line says what was looked at and decided (`looked: ...`)."""
+    line = field(section, "Shape")
+    if not line:
+        return (["UI change with no 'Shape:' line: run ui_layout.py shape over the after censuses (every size and layout) "
+                 "and paste its line: stretched controls, mostly empty windows, walls of text (w1396: the Light Structure's "
+                 "On/Off switch drawn as a 485x23 bar in the dock reached Ben)"], [])
+    value = line[1]
+    counts = {}
+    for name, pattern in (("stretched", r"(\d+)\s+stretched"), ("mostly empty", r"(\d+)\s+mostly empty"),
+                          ("walls", r"(\d+)\s+wall")):
+        found = re.search(pattern, value, re.IGNORECASE)
+        if not found:
+            return ([f"'Shape:' does not say how many are {name}: paste ui_layout.py shape's line"], [])
+        counts[name] = int(found.group(1))
+    problems, notes = [], []
+    if counts["stretched"] and not INTENDED.search(value):
+        problems.append(f"'Shape:' has {counts['stretched']} stretched sprite(s): a control or icon drawn 2x or more off its "
+                        f"own shape (the tool lists each STRETCHED with its sprite and drawn size). Give it its own size in "
+                        f"the layout (a LayoutElement, preserveAspect, a fixed-size slot), as the game's other panels do")
+    looked = re.search(r"\blooked\s*:\s*(.+)", value, re.IGNORECASE)
+    soft = counts["mostly empty"] + counts["walls"]
+    if soft and not (looked and len(looked.group(1).strip()) >= 20) and not INTENDED.search(value):
+        problems.append(f"'Shape:' has {counts['mostly empty']} mostly empty window(s) and {counts['walls']} wall(s) of text: "
+                        f"look at each at full size and either fix it (reuse the layout of the game's best panel of that kind) "
+                        f"or say on the line what you saw and why it stands ('looked: ...')")
+    elif soft and looked:
+        notes.append(f"'Shape:' findings judged by eye: {looked.group(1).strip()[:160]}")
+    if re.search(r"not measured", value, re.IGNORECASE):
+        notes.append("'Shape:' measured only part of it (walls of text need `lines` in the census; the Deck tour's census has "
+                     "them since w1396): look at every dialog's still for a dense block of text")
+    return problems, notes
+
+
+def eye_problems(section: str) -> list[str]:
+    """The person's eye, before the person's (w1396). Every still is looked at full size and judged as a player would see it:
+    anything stretched or squashed, a large empty area, overlapping labels, a dense text dump, anything obviously broken or
+    poor. Ben, 2026-10-16: "looks terrible. you can do better" (w1296, round 3 of a dialog whose spacing alone had changed)
+    and "the light panel is really messed up obviously" (w1386, stills described only as "same both sides")."""
+    line = field(section, "Eye")
+    if not line:
+        return ["UI change with no 'Eye:' line: 'Eye: N stills looked at full size, M look broken or poor (<the per-still "
+                "lines>)'. Judge each still as a player would, apart from the census: stretched or squashed controls, large "
+                "empty areas, overlapping labels, text dumps (checklists/ui.md item 27; w1296, w1386)"]
+    value = line[1]
+    stills = re.search(r"(\d+)\s+stills?\b", value, re.IGNORECASE)
+    poor = re.search(r"(\d+)\s+looks?\s+broken", value, re.IGNORECASE)
+    if not stills or not poor:
+        return ["'Eye:' says how many stills were looked at and how many look broken or poor: 'Eye: 12 stills looked at "
+                "full size, 0 look broken or poor (proofs/shots.md)'"]
+    if int(poor.group(1)) and not re.search(r"\bw\d{3,}\b", value):
+        return [f"'Eye:' has {poor.group(1)} still(s) that look broken or poor: fix them before anyone sees them, or, when "
+                f"it is not this change's (standing on master), name the request it was filed as (wNNN) on the line"]
+    return []
 
 
 def layout_problems(section: str) -> list[str]:

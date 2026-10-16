@@ -831,6 +831,81 @@ class CoveredTextTest(unittest.TestCase):
             self.assertEqual(0, ul.main(["covered-text", str(path)]))
 
 
+class ShapeTest(unittest.TestCase):
+    """w1396: what a player calls obviously broken, judged on one census. The fixtures are the w1386 Deck tour's censuses of
+    the stills Ben answered with "the light panel is really messed up obviously" (2026-10-16), trimmed to the windows."""
+
+    SPRITES = {"SwitchOn": (225, 150, False), "SwitchOff": (225, 150, False), "item-slot": (64, 64, False),
+               "background-main": (64, 64, True), "borderless-primary": (64, 64, True), "x-button": (64, 64, False)}
+
+    @staticmethod
+    def fixture(name):
+        return ul.load(HERE / "fixtures" / f"{name}.json")
+
+    def test_the_docked_light_switch_drawn_as_a_bar_is_stretched(self):
+        found = ul.shape(self.fixture("w1386-docked-lamp"), self.SPRITES)["stretched"]
+        self.assertEqual([s["path"].split("/")[-1] for s in found], ["Switch"])
+        self.assertGreater(found[0]["ratio"], 10)  # 225x150 drawn 485x23: 14x off its own aspect
+
+    def test_the_same_switch_at_its_own_shape_is_not(self):
+        found = ul.shape(self.fixture("w1386-1920-lamp"), self.SPRITES)["stretched"]
+        self.assertEqual(found, [])  # 36x24 at 1920x1080
+
+    def test_a_switch_that_keeps_its_aspect_or_is_sliced_is_not_stretched(self):
+        census = self.fixture("w1386-docked-lamp")
+        switch = next(e for e in census["elements"] if e["path"].endswith("/Switch"))
+        switch["preserveAspect"] = True
+        self.assertEqual(ul.shape(census, self.SPRITES)["stretched"], [])
+        switch["preserveAspect"] = False
+        self.assertEqual(ul.shape(census, dict(self.SPRITES, SwitchOn=(225, 150, True)))["stretched"], [])
+
+    def test_the_census_sprite_size_wins_over_the_repo(self):
+        census = self.fixture("w1386-docked-lamp")
+        switch = next(e for e in census["elements"] if e["path"].endswith("/Switch"))
+        switch["spriteSize"], switch["spriteBorder"], switch["imageType"] = [485, 23], [0, 0, 0, 0], "Simple"
+        self.assertEqual(ul.shape(census, self.SPRITES)["stretched"], [])
+
+    def test_an_unknown_sprite_is_named_not_judged(self):
+        out = ul.shape(self.fixture("w1386-docked-lamp"), {})
+        self.assertEqual(out["stretched"], [])
+        self.assertIn("SwitchOn", out["unknown_sprites"])
+
+    def test_the_1920_light_panel_is_mostly_empty(self):
+        found = ul.shape(self.fixture("w1386-1920-lamp"), self.SPRITES)["sparse"]
+        self.assertEqual([s["path"].split("/")[-2:] for s in found], [["LightEntityPanel", "MainPanel"]])
+        self.assertGreaterEqual(found[0]["hole"], ul.HOLE_SHARE)
+
+    def test_the_cargo_hold_with_less_coverage_is_not(self):
+        out = ul.shape(self.fixture("w1386-1920-cargo-hold"), self.SPRITES)
+        self.assertEqual(out["sparse"], [])  # 24 % covered, but its largest hole is 25 %: rows across the whole panel
+
+    def test_a_narrow_dialog_of_many_lines_is_a_wall_of_text(self):
+        def dialog(lines):
+            return {"screen": [1920, 1080], "elements": [
+                el("ConfirmationModalParent", [710, 300, 1210, 780], sprite="background-main"),
+                el("ConfirmationModalParent/ConfirmationText", [730, 320, 1190, 700], kind="TextMeshProUGUI", sprite="",
+                   text="Content removed from this save", lines=lines, fontSize=16.0)]}
+        self.assertEqual(len(ul.shape(dialog(14), self.SPRITES)["walls"]), 1)
+        self.assertEqual(ul.shape(dialog(5), self.SPRITES)["walls"], [])
+
+    def test_a_census_without_line_counts_says_walls_are_not_measured(self):
+        lines, flagged = ul.shape_lines([("docked", ul.shape(self.fixture("w1386-docked-lamp"), self.SPRITES))])
+        self.assertEqual(flagged, 1)
+        self.assertIn("walls of text not measured", lines[0])
+        self.assertTrue(lines[0].startswith("Shape: 1 stretched, 0 mostly empty, 0 wall(s) of text over 1 census(es)"))
+
+    def test_the_command_exits_one_on_a_finding(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            repo = Path(tmp) / "Assets" / "UI"
+            repo.mkdir(parents=True)
+            png = b"\x89PNG\r\n\x1a\n" + b"\x00\x00\x00\x0dIHDR" + (225).to_bytes(4, "big") + (150).to_bytes(4, "big")
+            (repo / "SwitchOn.png").write_bytes(png)
+            (repo / "SwitchOn.png.meta").write_text("  spriteMode: 1\n  spriteBorder: {x: 0, y: 0, z: 0, w: 0}\n")
+            self.assertEqual(ul.sprite_sizes(tmp), {"SwitchOn": (225, 150, False)})
+            code = ul.main(["shape", "--repo", tmp, str(HERE / "fixtures" / "w1386-docked-lamp.json")])
+        self.assertEqual(code, 1)
+
+
 class CommandTest(unittest.TestCase):
     def test_check_prints_the_three_lines_and_fails(self):
         with tempfile.TemporaryDirectory() as tmp:

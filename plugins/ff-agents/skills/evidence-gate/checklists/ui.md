@@ -246,6 +246,35 @@ screen; on desktop three labels stopped fitting, the two windows left their defa
     Take the census with the tool's current snippet or the Deck tour's `setup:census:` step so `textRect` is in it; a
     census without it prints "not measured", which is not "clean". Look at every still of a hub tab at full size as well.
 
+**The line that would have caught w1386's light panel and w1296's dialog** (Ben, 2026-10-16: "the light panel is really
+messed up obviously"; "looks terrible. you can do better"): every still is looked at on its own, at full size, and judged
+the way a player would see it, one line each, before anyone else sees it; the census's `Shape:` line has no stretched
+control, and a redesign goes out as 2 or 3 clearly different options built from the game's best existing dialogs
+([lesson](../lessons/verify-ui-with-full-content-like-a-player.md#judge-every-still-by-eye-before-the-person-sees-it-w1386-w1296-2026-10-16)).
+
+27. **Eye check, per still, apart from every comparison (w1386, w1296).** Open each still at full size and write one
+    line: is anything stretched or squashed out of its shape, is a window mostly empty or crammed into one corner, do
+    labels run into each other or the title, is a dialog a dense block of text with no hierarchy, would a player call
+    any of it broken or ugly? "Same both sides" answers another question: w1386's docked On/Off switch was a 485x23 bar
+    on both sides and passed. A still that looks broken or poor is fixed before it goes to anyone; one standing on
+    master is filed (wNNN) and named in the report's first lines. The PR carries `Eye: N stills looked at full size, M
+    look broken or poor (<where the lines are>)`. An orchestrator relaying stills looks at them first, the same way.
+28. **Shape, measured (w1396).** `ui_layout.py shape <every after census> [--repo <game repo>]` (unity-ui) prints the
+    `Shape:` line: STRETCHED (a sprite drawn 2x or more off its own aspect: the w1386 switch, 225x150 drawn 485x23, is
+    14.1x), MOSTLY EMPTY (a window or dialog under 40 % covered with one empty rectangle of 35 % or more: the w1386
+    Light Structure panel at 1920x1080, 30 % and 37 %; the Cargo Hold, 24 % and 25 %, passes), WALL OF TEXT (8 or more
+    lines in a box under 40 % of the screen wide). Fix a stretched control with its own size in the layout (a
+    `LayoutElement`, `preserveAspect`, a fixed-size slot, as the game's other panels hold a switch); it passes only with
+    the requester's words (`intended (who): "..."`). A mostly empty window or a wall of text is fixed or explained on the
+    line (`looked: ...`). A census without `spriteSize` or `lines` (Deck tours before w1396) needs `--repo` for the
+    sprites and cannot count lines: the line says "not measured", and the eye check covers it.
+29. **A redesign is 2 or 3 options, built from the game's best dialogs (w1296).** When the work is a new dialog or panel,
+    or the person said the look is wrong, list the game's best existing screens of that kind first (for a dialog: the
+    mod-mismatch dialog, the research and unlock popups, the save and load panel) and build 2 or 3 clearly different
+    layouts from their components: title row, list rows, buttons, spacing, fonts. Show each as built-game stills at
+    1920x1080 and 1280x800 with the long content, and let the person pick. Ben (w1296): "reuse components when you can
+    damnit". A round that only nudges spacing after the person said it looks wrong is the w1296 miss.
+
 19. **The Deck tour is a stand-in (w770).** It forces its own window size and a scripted Deck, so it cannot show Steam's
     layout choice, the Proton first-frame resolution, the Steam client version or touch. A Deck UI change says "verified on
     a real Deck" or "not verified on a real Deck" ([deck.md](deck.md)). For a stored bad size use `-ffDeckTourSize none
@@ -265,6 +294,8 @@ Moved: 1 element move(s) over 4 px at 1920x1080 undocked, 1280x800 undocked, 128
 - 1280x800 undocked GamePanels/BlueprintPanelChild: x +0, y +40 px (was 392,68 458x376, now 392,108 458x376): asked (Ben): "move the blueprint window down so it clears the top bar on the deck"
 Pinned: 3 pin(s) in 3 census(es) (1920x1080 undocked, 1280x800 undocked, 1280x800 docked): 0 broken, 0 not shown (ui_layout.py pins, hud-pins.json: Station Info, building hover card, Player Inventory)
 Brief (Ben): "move the blueprint window down so it clears the top bar on the deck"
+Shape: 0 stretched, 0 mostly empty, 0 wall(s) of text over 3 census(es) (ui_layout.py shape: ...)
+Eye: 18 stills looked at full size, 0 look broken or poor (/srv/fff/review/wNNN/shots.md, the Eye column)
 Shots: /srv/fff/review/wNNN/shots.md (one line per still against Ben's words)
 Clips: after-1280.mp4, 60 fps; idle and hover per tab at 0-4 s, 4-8 s ...; ui_check flicker: 0 regions
 ```
@@ -272,8 +303,9 @@ Clips: after-1280.mp4, 60 fps; idle and hover per tab at 0-4 s, 4-8 s ...; ui_ch
 `pr_evidence.py` fails a UI change without these lines, with a clip of 1 to 9 fps, with a new
 overlap (between HUD blocks, or a new or kept `Window overlaps:`), an opened panel under the HUD, not clickable, cut off or leaving the HUD unrestored (the
 `Opened panels:` line, required when the `Overlaps:` line counts an opened-panel pair), a drift over 2 px, a `Style:` line without a measured delta E and alpha, or a delta E over
-10, a `Moved:` or `Pinned:` line missing a screen or the docked layout, a move not asked for in the brief's own words, or a
-broken pin (item 22). A difference the requester asked for passes with their words on its line:
+10, a `Moved:` or `Pinned:` line missing a screen or the docked layout, a move not asked for in the brief's own words, a
+broken pin (item 22), no `Shape:` line or a stretched sprite on it, a mostly empty window or wall of text not explained
+on it (item 28), or no `Eye:` line, or one with a still that looks broken or poor and no filed request (item 27). A difference the requester asked for passes with their words on its line:
 `intended (Ben): "..."`. A scene file (`Assets/Scenes/*.unity`) counts as UI.
 
 **A drag, drop or press-and-hold gesture** is shown with the real input module, not `ffauto:ui.drag` or `pointer.*` alone (those
@@ -283,4 +315,5 @@ focused. A gesture that "does nothing" in a background window is not a finding (
 
 Lessons behind this list:
 [verify UI with full content, like a player](../lessons/verify-ui-with-full-content-like-a-player.md),
-[a UI change leaves the rest of the screen as it was](../lessons/a-ui-change-leaves-the-rest-of-the-screen-as-it-was.md).
+[a UI change leaves the rest of the screen as it was](../lessons/a-ui-change-leaves-the-rest-of-the-screen-as-it-was.md),
+[judge every UI still by eye](../lessons/verify-ui-with-full-content-like-a-player.md#judge-every-still-by-eye-before-the-person-sees-it-w1386-w1296-2026-10-16).

@@ -83,6 +83,15 @@ person asking for that exact element to move. Census 1920x1080, 1280x800 and 128
 `pins`; `pr_evidence.py --brief` fails any move not asked for in the brief's own words and any broken pin
 ([UI checklist](checklists/ui.md), item 22).
 
+## Look at every UI still before anyone else does
+
+Before a UI still goes to a person (a worker sending it, or an orchestrator relaying it), open each one at full size
+and write one line: does anything look broken or poor, as a player would see it? Stretched or squashed controls, a
+mostly empty window, labels running together, a text-dump dialog. "Same both sides" and a clean census are not that
+answer. A redesign goes out as 2-3 clearly different options built from the game's best existing dialogs (Ben, w1296:
+"reuse components when you can damnit"). `Eye:` and `Shape:` lines in the PR ([UI checklist](checklists/ui.md), items
+27-29; [lesson](lessons/verify-ui-with-full-content-like-a-player.md#judge-every-still-by-eye-before-the-person-sees-it-w1386-w1296-2026-10-16)).
+
 ## Reports and briefs
 
 - Label each number and recommendation **measured**, **sourced** or **guess**. Say what you saw,
@@ -257,6 +266,12 @@ One file each under `lessons/`: the rule, why (the incident, dated), how to appl
   they draw, spinning and moving ones included, and a discriminating component is counted against
   every archetype that carries it (w586: w453 turned every `Placeable`'s box with its target, so
   comet fragments' boxes spun from 0.50.0.80).
+- [Judge every UI still by eye](lessons/verify-ui-with-full-content-like-a-player.md#judge-every-still-by-eye-before-the-person-sees-it-w1386-w1296-2026-10-16): before a still goes to a person, one line
+  per still on whether anything looks broken or poor (stretched controls, mostly empty windows, overlapping labels, text
+  dumps), apart from every before/after comparison; `ui_layout.py shape` measures the first two and walls of text; a
+  redesign goes out as 2-3 options built from the game's best dialogs (w1386: a 485x23 switch passed as "Same both
+  sides"; w1296: round 3 nudged spacing; Ben: "the light panel is really messed up obviously", "looks terrible. you can
+  do better", "reuse components when you can damnit"; checklist ui.md 27-29).
 - [Verify UI with full content, like a player](lessons/verify-ui-with-full-content-like-a-player.md):
   every screen and sub-view in a late-game save, whole, on the classic look, still in a real-rate
   clip, each still checked against the requester's words (w718: the w644 hub, #1251, passed a tour

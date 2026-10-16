@@ -1,6 +1,6 @@
 ---
 name: unity-ui
-description: "Build and verify Final Factory's Unity uGUI screens (panels, windows, tabs, HUD, popups, the structured layout and Steam Deck sizing) so they work the way a player sees them. Covers the project's UI map, uGUI layout rules and the pitfalls that broke the w644 Deck hub (layout groups, ContentSizeFitter, anchors, scroll views, grids, canvas scaling at 1280x800, layout fights that flicker, hard-coded colours), the editor rect audit, the Deck tour with full content, and the pixel checks (scripts/deck_audit/ui_check.py: flicker, fill, style, the per-still sheet), and the whole-screen layout census with ui_layout.py (new overlaps between HUD blocks, anchored clusters drifting over 2 px, every touched panel's colour and alpha against a classic panel, every HUD element the change moved at 1920x1080, 1280x800 and 1280x800 docked, each asked for in the brief's own words, and the places Ben fixed himself pinned in hud-pins.json: move only what the person asked to move), and how a window opens (lag and a jump after it appears: the probe tour, the open hold). Use before changing or reviewing any UI, and before calling a UI change verified."
+description: "Build and verify Final Factory's Unity uGUI screens (panels, windows, tabs, HUD, popups, the structured layout and Steam Deck sizing) so they work the way a player sees them. Covers the project's UI map, uGUI layout rules and the pitfalls that broke the w644 Deck hub (layout groups, ContentSizeFitter, anchors, scroll views, grids, canvas scaling at 1280x800, layout fights that flicker, hard-coded colours), the editor rect audit, the Deck tour with full content, and the pixel checks (scripts/deck_audit/ui_check.py: flicker, fill, style, the per-still sheet), and the whole-screen layout census with ui_layout.py (new overlaps between HUD blocks, anchored clusters drifting over 2 px, every touched panel's colour and alpha against a classic panel, every HUD element the change moved at 1920x1080, 1280x800 and 1280x800 docked, each asked for in the brief's own words, and the places Ben fixed himself pinned in hud-pins.json: move only what the person asked to move; and each census judged on its own with ui_layout.py shape: stretched controls, mostly empty windows, walls of text), and how a window opens (lag and a jump after it appears: the probe tour, the open hold). Use before changing or reviewing any UI, and before calling a UI change verified."
 ---
 
 # Unity UI: build it, then verify it like a player
@@ -256,6 +256,21 @@ that screen, or put the element back; there is no "justified". `pins` checks the
 Inventory off the left edge) in every census, whatever the parent looked like. Measured (editor): #1282 moved Station Info
 x -312, y -736 px at 1920x1080; on develop 9798f308c the docked layout breaks the Station Info and hover card pins, and
 the undocked layouts keep all three.
+
+**Then judge each after census on its own, and each still by eye** (w1396). Every check above compares two things; a
+defect on both sides, or a design that is poor from the start, passes all of them (w1386: the Light Structure's On/Off
+switch, a 225x150 sprite, drawn as a 485x23 bar in the dock on master and on the fix, described as "Same both sides";
+Ben: "the light panel is really messed up obviously"). Run
+
+```sh
+python "<this skill's base directory>/ui_layout.py" shape a-1920.json a-1280.json a-docked.json [--repo <game repo>]
+```
+
+for the `Shape:` line: STRETCHED (a sprite drawn 2x or more off its own aspect), MOSTLY EMPTY (a window or dialog under
+40 % covered with one empty rectangle of 35 % or more of it), WALL OF TEXT (8 or more lines in a box under 40 % of the
+screen wide). `--repo` reads sprite sizes from the game's PNGs for a census without `spriteSize`. Then look at every
+still at full size and write the `Eye:` line (evidence-gate `checklists/ui.md` items 27-29). A redesign goes out as 2-3
+options built from the game's best dialogs, not nudged spacing.
 
 ## 5c. A font-size change, and the desktop under a Deck change
 

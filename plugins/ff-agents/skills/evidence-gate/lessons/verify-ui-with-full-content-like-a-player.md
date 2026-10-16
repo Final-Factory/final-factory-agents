@@ -1,6 +1,6 @@
 ---
 name: verify-ui-with-full-content-like-a-player
-description: "A UI change is verified the way a player sees it: every screen and sub-view in a late-game save, in a built player at the target size, showing its whole content, on the classic panels' colours and art, still in a real-rate clip, each still checked against the requester's words. A tour that proves each tab opens and fits passes a broken screen. A Deck tour on a PC is a stand-in: a Deck-facing change is verified on a real Deck or reported 'not verified on a real Deck' (w770)."
+description: "A UI change is verified the way a player sees it: every screen and sub-view in a late-game save, in a built player at the target size, showing its whole content, on the classic panels' colours and art, still in a real-rate clip, each still checked against the requester's words. A tour that proves each tab opens and fits passes a broken screen. A Deck tour on a PC is a stand-in: a Deck-facing change is verified on a real Deck or reported 'not verified on a real Deck' (w770). Before any still goes to a person, every still is judged by eye on its own, one line each (stretched controls, mostly empty windows, overlapping labels, text dumps), apart from every before/after comparison and the census; a redesign goes out as 2-3 options built from the game's best dialogs (w1386, w1296)."
 date: 2026-10-08
 ---
 
@@ -132,3 +132,63 @@ a tour step reads `Screen.width/height` at frame 1 and again after `StartupReche
 when the window is not landscape or does not fill the display. The first-frame portrait read is
 reported only under Proton (`Documentation/Display-Startup.md`), so a PC tour would test the repair,
 not reproduce the Deck's first frame.
+
+## Judge every still by eye before the person sees it (w1386, w1296, 2026-10-16)
+
+**Rule.** Before a UI still goes to a person, look at each one at full size, as a player would on first sight, and
+write one line per still: does anything look broken or poor? A control stretched or squashed out of its shape, a
+window that is mostly empty space, labels running into each other or into a title, a dialog that is a dense block of
+text, anything a player would call obviously broken. Write it as its own line, apart from the comparison with the
+before still and apart from the census numbers: "same as before" is not "looks right", and a clean census is not a
+look. A still that looks broken or poor is fixed before anyone sees it. When the problem is standing on master and not
+yours to fix, say so in the first lines of the report and file it (or ask your orchestrator to). An orchestrator that
+relays stills looks at them first, the same way.
+
+Design work (a new dialog, a new panel, a redesign the person asked for) goes to the person as 2 or 3 clearly
+different layouts, each built from the game's best existing dialogs and components (their title row, list rows,
+buttons, spacing, fonts), as built-game stills. It does not go as the same layout with nudged spacing.
+
+### Why
+
+Two corrections from Ben on 2026-10-16, on stills that had passed their workers' checks:
+
+- **w1386 (Discord triage, game PR #1813, the Circuit view leftovers).** In the Deck dock the review stills showed the
+  Light Structure panel's On/Off switch drawn as a green bar across the whole panel (sprite 225x150, drawn 485x23). At
+  1920x1080 the panel was mostly empty, with a tiny switch and swatch in one corner. The worker's shots sheet said "the
+  lamp window on Main before any circuit press. Same both sides". That was true: the bar was on master too. The
+  orchestrator relayed the stills without noticing either. Ben: "the light panel is really messed up obviously."
+- **w1296 (mods per save, game PR #1744).** Round 2 of the "Content removed" dialog drew "ok looks better but the
+  content removed panel could be formatted nicer. like theres the description then a list but it all bleeds
+  together". Round 3 nudged the spacing and sent it again. It was still a tiny, narrow box in the middle of a 1920
+  screen, with a nested bullet list and a heavy footer paragraph. Ben: "looks terrible. you can do better". The
+  orchestrator's note to the worker passed on Ben's "reuse components when you can damnit".
+
+Every check the workers ran compared two things: before against after, or one panel's colour against another's. None
+asked whether the screen looked right on its own, so a defect present on both sides, or a design that was poor from
+the start, passed every line.
+
+### How to apply
+
+
+- **One line per still, judged on its own** ([UI checklist](../checklists/ui.md) item 27). For each still, answer:
+  is anything stretched or squashed? Is a window mostly empty space, or crammed into one corner? Do labels or texts
+  overlap each other or the title? Is a dialog a dense block of text with no hierarchy? Would a player call it broken
+  or ugly? Write the answer even when it is "nothing". The PR carries
+  `Eye: N stills looked at full size, M look broken or poor (<where the lines are>)`; `pr_evidence.py` fails a UI PR
+  without it, and fails M above 0 unless the line names the request a standing problem was filed as.
+- **The census measures shape too.** `ui_layout.py shape <after censuses> [--repo <game repo>]` (unity-ui) prints the
+  `Shape:` line. STRETCHED means a sprite drawn 2x or more off its own aspect. MOSTLY EMPTY means a window or dialog
+  under 40 % covered, with one empty rectangle of 35 % or more of it. WALL OF TEXT means 8 or more lines in a box
+  under 40 % of the screen wide. MEASURED on the w1386 tour's censuses, it flags the docked switch (14.1x) and the
+  Light Structure panel at 1920x1080 and 1280x800 (30 % and 27 % covered, 37 % hole), and passes the Cargo Hold
+  (24 % covered, 25 % hole), the hover cards and the HUD. `pr_evidence.py` fails a stretched sprite unless the
+  requester asked for it (`intended (who): "..."`), and fails a mostly-empty window or a wall of text until the line
+  says what you looked at and decided (`looked: ...`). The tool is a floor. A still it passes can still look poor:
+  the eye line is the check.
+- **A redesign is 2-3 options built from what the game already has.** Before drawing, list the game's best existing
+  dialogs and panels of the same kind (for a dialog: the mod-mismatch dialog, the research and unlock popups, the save
+  and load panel), and build each option from their components. Show each option as built-game stills at 1920x1080 and
+  1280x800 with realistic content (the long list, the long name). Let the person pick. When the person says the
+  same screen still looks wrong after a change, the next round is a redesign, not more spacing.
+- **An orchestrator looks before it relays.** Open each still and answer the same questions. A worker's "Same both
+  sides" or "PASS" is a claim about a comparison, not about how the screen looks.

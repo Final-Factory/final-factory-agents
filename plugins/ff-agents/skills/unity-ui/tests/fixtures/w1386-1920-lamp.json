@@ -1,0 +1,276 @@
+{
+"screen": [
+1920.0,
+1080.0
+],
+"source": "w1386 Deck tour census (worker d2224b21, build of #1813), after-1920/c1-lamp-main.layout.json, trimmed to LightEntityPanel",
+"elements": [
+{
+"path": "InGameScene/UI Canvas/GamePanels/LightEntityPanel/MainPanel/Content/LightColorRow/Swatch",
+"kind": "Image",
+"rect": [
+1098.3,
+187.2,
+1148.7,
+210.6
+],
+"visible": [
+1098.3,
+187.2,
+1148.7,
+210.6
+],
+"color": "#2E86A1FF",
+"alpha": 1.0,
+"sprite": "borderless-primary",
+"raycast": true,
+"selectable": true,
+"maskOnly": false,
+"canvasOrder": -10,
+"depth": 270
+},
+{
+"path": "InGameScene/UI Canvas/GamePanels/LightEntityPanel/MainPanel",
+"kind": "Image",
+"rect": [
+975.9,
+83.6,
+1347.6,
+223.2
+],
+"visible": [
+975.9,
+83.6,
+1347.6,
+223.2
+],
+"color": "#FFFFFFFF",
+"alpha": 1.0,
+"sprite": "background-main",
+"raycast": true,
+"selectable": false,
+"maskOnly": false,
+"canvasOrder": -10,
+"depth": 260
+},
+{
+"path": "InGameScene/UI Canvas/GamePanels/LightEntityPanel/MainPanel/HeaderContent/Header/exitbutton/ExitButton",
+"kind": "Image",
+"rect": [
+1309.8,
+95.3,
+1333.2,
+118.7
+],
+"visible": [
+1309.8,
+95.3,
+1333.2,
+118.7
+],
+"color": "#FFFFFFFF",
+"alpha": 1.0,
+"sprite": "x-button",
+"raycast": true,
+"selectable": true,
+"maskOnly": false,
+"canvasOrder": -10,
+"depth": 264
+},
+{
+"path": "InGameScene/UI Canvas/GamePanels/LightEntityPanel/MainPanel/Content/LightColorRow/ColorLabel",
+"kind": "TextMeshProUGUI",
+"rect": [
+993.9,
+186.3,
+1092.9,
+211.5
+],
+"visible": [
+993.9,
+186.3,
+1092.9,
+211.5
+],
+"color": "#FFFFFFFF",
+"alpha": 1.0,
+"sprite": "",
+"raycast": false,
+"selectable": false,
+"maskOnly": false,
+"canvasOrder": -10,
+"depth": 269,
+"text": "Light colour"
+},
+{
+"path": "InGameScene/UI Canvas/GamePanels/LightEntityPanel/MainPanel/Content/OnOffToggle/Switch",
+"kind": "Image",
+"rect": [
+990.3,
+153.8,
+1026.3,
+178.2
+],
+"visible": [
+990.3,
+153.8,
+1026.3,
+178.2
+],
+"color": "#FFFFFFFF",
+"alpha": 1.0,
+"sprite": "SwitchOn",
+"raycast": true,
+"selectable": true,
+"maskOnly": false,
+"canvasOrder": -10,
+"depth": 268
+},
+{
+"path": "InGameScene/UI Canvas/GamePanels/LightEntityPanel/MainPanel/HeaderContent/Header/TitleAndIcon/Title",
+"kind": "TextMeshProUGUI",
+"rect": [
+990.3,
+92.6,
+1273.8,
+121.4
+],
+"visible": [
+990.3,
+92.6,
+1273.8,
+121.4
+],
+"color": "#FFFFFFFF",
+"alpha": 1.0,
+"sprite": "",
+"raycast": true,
+"selectable": false,
+"maskOnly": false,
+"canvasOrder": -10,
+"depth": 263,
+"text": "Light Structure"
+},
+{
+"path": "InGameScene/UI Canvas/GamePanels/LightEntityPanel/MainPanel/HeaderContent",
+"kind": "HeaderHitArea",
+"rect": [
+983.1,
+83.6,
+1340.4,
+130.4
+],
+"visible": [
+983.1,
+83.6,
+1340.4,
+130.4
+],
+"color": "#FFFFFFFF",
+"alpha": 1.0,
+"sprite": "",
+"raycast": true,
+"selectable": false,
+"maskOnly": false,
+"canvasOrder": -10,
+"depth": 261
+},
+{
+"path": "InGameScene/UI Canvas/GamePanels/LightEntityPanel/MainPanel/Content/OnOffToggle/Text (TMP)",
+"kind": "TextMeshProUGUI",
+"rect": [
+990.3,
+134.0,
+1098.3,
+153.8
+],
+"visible": [
+990.3,
+134.0,
+1098.3,
+153.8
+],
+"color": "#FFFFFFFF",
+"alpha": 1.0,
+"sprite": "",
+"raycast": true,
+"selectable": true,
+"maskOnly": false,
+"canvasOrder": -10,
+"depth": 267,
+"text": "On/Off"
+},
+{
+"path": "InGameScene/UI Canvas/GamePanels/LightEntityPanel/MainPanel/HeaderContent/Header/CircuitButtonIcon/IconParent/Icon",
+"kind": "Image",
+"rect": [
+1276.0,
+98.9,
+1292.2,
+115.1
+],
+"visible": [
+1276.0,
+98.9,
+1292.2,
+115.1
+],
+"color": "#FFFFFFFF",
+"alpha": 1.0,
+"sprite": "CircuitIcon",
+"raycast": true,
+"selectable": false,
+"maskOnly": false,
+"canvasOrder": -10,
+"depth": 266
+},
+{
+"path": "InGameScene/UI Canvas/GamePanels/LightEntityPanel/MainPanel/Content/LightColorRow/Swatch/Color",
+"kind": "Image",
+"rect": [
+1101.0,
+189.9,
+1146.0,
+207.9
+],
+"visible": [
+1101.0,
+189.9,
+1146.0,
+207.9
+],
+"color": "#FFDBBAFF",
+"alpha": 1.0,
+"sprite": "",
+"raycast": false,
+"selectable": false,
+"maskOnly": false,
+"canvasOrder": -10,
+"depth": 271
+},
+{
+"path": "InGameScene/UI Canvas/GamePanels/LightEntityPanel/MainPanel/HeaderContent/Header/CircuitButtonIcon",
+"kind": "Image",
+"rect": [
+1271.1,
+94.4,
+1296.3,
+119.6
+],
+"visible": [
+1271.1,
+94.4,
+1296.3,
+119.6
+],
+"color": "#FFFFFFFF",
+"alpha": 1.0,
+"sprite": "borderless-primary",
+"raycast": true,
+"selectable": true,
+"maskOnly": false,
+"canvasOrder": -10,
+"depth": 265
+}
+]
+}

@@ -195,6 +195,8 @@ Window overlaps: 0 not allowed after, 0 before, 0 new, 0 kept between windows th
 Alignment: max drift 0 px over the clusters (bottom-right HUD, top-left HUD); tolerance 2 px
 Moved: 0 element move(s) over 4 px at 1920x1080 undocked, 1280x800 undocked, 1280x800 docked (ui_layout.py moves, the same save and screens before and after)
 Pinned: 3 pin(s) in 3 census(es) (1920x1080 undocked, 1280x800 undocked, 1280x800 docked): 0 broken, 0 not shown (ui_layout.py pins, hud-pins.json: Station Info, building hover card, Player Inventory)
+Shape: 0 stretched, 0 mostly empty, 0 wall(s) of text over 3 census(es) (ui_layout.py shape)
+Eye: 12 stills looked at full size, 0 look broken or poor (proofs/shots.md)
 """
 
     def body(self):
@@ -449,6 +451,53 @@ class WindowOverlapTest(unittest.TestCase):
         self.assertTrue(any("2 window overlap(s) stand" in n for n in notes), notes)
 
 
+class ShapeAndEyeTest(unittest.TestCase):
+    """w1396: Ben, 2026-10-16, on stills a worker and an orchestrator had both passed: "the light panel is really messed up
+    obviously" (w1386: the On/Off switch drawn as a 485x23 bar in the Deck dock; the shots sheet said "Same both sides")
+    and "looks terrible. you can do better" (w1296: round 3 of a dialog with only its spacing nudged)."""
+
+    # MEASURED (w1396): ui_layout.py shape on the w1386 tour's censuses of #1813's build, docked, 1920x1080 and 1280x800.
+    W1386_SHAPE = ("1 stretched, 2 mostly empty, 0 wall(s) of text over 3 census(es) (ui_layout.py shape); walls of text "
+                   "not measured (no `lines` in the census)")
+    W1386_EYE = "16 stills looked at full size, 0 look broken or poor (proofs/shots.md: \"Same both sides\")"
+
+    def reasons(self, **lines):
+        return "\n".join(pe.check(LayoutTest().ui_body(**lines))[0])
+
+    def test_w1386_as_measured_fails_on_the_stretched_switch_and_the_empty_panel(self):
+        reasons = self.reasons(Shape=self.W1386_SHAPE)
+        self.assertIn("'Shape:' has 1 stretched sprite(s)", reasons)
+        self.assertIn("1 stretched", self.W1386_SHAPE)
+        self.assertIn("2 mostly empty window(s)", reasons)
+
+    def test_a_mostly_empty_window_passes_once_looked_at_and_explained(self):
+        line = ("0 stretched, 1 mostly empty, 0 wall(s) of text over 3 census(es) (ui_layout.py shape); looked: the "
+                "Cargo Hold of a 4-slot hold, its rows run the whole width, as on master")
+        self.assertEqual(self.reasons(Shape=line), "")
+        self.assertIn("2 mostly empty", self.reasons(Shape=self.W1386_SHAPE.replace("1 stretched", "0 stretched") +
+                                                      "; looked: ok"))
+
+    def test_a_stretched_sprite_passes_only_with_the_requesters_words(self):
+        line = self.W1386_SHAPE.replace("2 mostly empty", "0 mostly empty")
+        self.assertIn("stretched sprite", self.reasons(Shape=line + "; looked: it is a slider now"))
+        self.assertEqual(self.reasons(Shape=line + '; intended (Ben): "make the switch a full-width bar"'), "")
+
+    def test_no_shape_or_eye_line_fails(self):
+        body = re.sub(r"^(Shape|Eye):.*\n", "", LayoutTest().ui_body(), flags=re.MULTILINE)
+        reasons = "\n".join(pe.check(body)[0])
+        self.assertIn("UI change with no 'Shape:' line", reasons)
+        self.assertIn("UI change with no 'Eye:' line", reasons)
+
+    def test_an_eye_line_needs_its_counts(self):
+        self.assertIn("'Eye:' says how many stills", self.reasons(Eye="looked at them all, fine"))
+
+    def test_a_still_that_looks_broken_fails_unless_filed_as_standing(self):
+        self.assertIn("1 still(s) that look broken or poor",
+                      self.reasons(Eye="16 stills looked at full size, 1 look broken or poor (docked lamp: switch is a bar)"))
+        self.assertEqual(self.reasons(Eye="16 stills looked at full size, 1 look broken or poor (docked lamp: the switch "
+                                          "drawn as a bar, standing on master, filed as w1397)"), "")
+
+
 class MovedTest(unittest.TestCase):
     """w826 and w894: a UI change lists every HUD element it moved, at 1920x1080 and at 1280x800 undocked and docked, and
     each one is asked for in the requester's own words. Four corrections from Ben: w722/w723 pushed the objectives card
@@ -491,7 +540,7 @@ class MovedTest(unittest.TestCase):
         self.assertIn("no 'Pinned:' line", reasons)
 
     def test_no_move_on_every_screen_passes_and_the_docked_layout_is_required(self):
-        self.assertEqual(self.reasons(UiTest.UI_LINES.splitlines()[-2]), "")
+        self.assertEqual(self.reasons(next(x for x in UiTest.UI_LINES.splitlines() if x.startswith("Moved:"))), "")
         reasons = self.reasons("Moved: 0 element move(s) over 4 px at 1920x1080, 1280x800 (ui_layout.py check, the same "
                                "save and screens before and after)")
         self.assertIn("'Moved:' does not cover 1280x800 undocked, 1280x800 docked", reasons)

@@ -99,6 +99,17 @@ foreach (var g in UnityEngine.Object.FindObjectsByType<UnityEngine.UI.Graphic>(U
   var textProp = g.GetType().GetProperty("text");
   var text = textProp != null && textProp.PropertyType == typeof(string) ? (string)textProp.GetValue(g) : null;
   if (text != null && text.Length > 40) { text = text.Substring(0, 40); }
+  // w1396: a sprite's own size and how it is drawn, for ui_layout.py shape (a Simple image drawn far off its sprite's aspect
+  // is stretched: the w1386 On/Off switch, 225x150 drawn 485x23).
+  var shapeInfo = "";
+  if (img != null && img.sprite != null)
+  {
+    var ci2 = System.Globalization.CultureInfo.InvariantCulture;
+    var sr = img.sprite.rect; var sb4 = img.sprite.border;
+    shapeInfo = ",\"spriteSize\":[" + sr.width.ToString("F0", ci2) + "," + sr.height.ToString("F0", ci2) + "],\"spriteBorder\":[" +
+      sb4.x.ToString("F0", ci2) + "," + sb4.y.ToString("F0", ci2) + "," + sb4.z.ToString("F0", ci2) + "," + sb4.w.ToString("F0", ci2) +
+      "],\"imageType\":\"" + img.type + "\",\"preserveAspect\":" + (img.preserveAspect ? "true" : "false");
+  }
   var sel = g.GetComponent<UnityEngine.UI.Selectable>();
   var mask = g.GetComponent<UnityEngine.UI.Mask>();
   var maskOnly = mask != null && mask.isActiveAndEnabled && !mask.showMaskGraphic;
@@ -130,7 +141,7 @@ foreach (var g in UnityEngine.Object.FindObjectsByType<UnityEngine.UI.Graphic>(U
     alpha.ToString("F3", System.Globalization.CultureInfo.InvariantCulture) + ",\"sprite\":\"" + esc(sprite) +
     "\",\"raycast\":" + (g.raycastTarget ? "true" : "false") + ",\"selectable\":" + (sel != null && sel.IsInteractable() ? "true" : "false") +
     ",\"maskOnly\":" + (maskOnly ? "true" : "false") + ",\"canvasOrder\":" + g.canvas.rootCanvas.sortingOrder + ",\"depth\":" + g.canvasRenderer.absoluteDepth +
-    (text != null ? ",\"text\":\"" + esc(text) + "\"" : "") + fit + "}");
+    (text != null ? ",\"text\":\"" + esc(text) + "\"" : "") + fit + shapeInfo + "}");
 }
 sb.Append("\n]}\n");
 System.IO.File.WriteAllText(OUT, sb.ToString());
@@ -143,6 +154,30 @@ project's `UnityEngine.UI.dll` (w733), with TextMesh Pro for the text-fit fields
 the drawn glyph bounds in screen pixels, for `ui_layout.py covered-text`; the snippet assumes a screen-space overlay canvas,
 which is what the game uses, and the Deck tour's `setup:census:` step writes the same field). Without `textRect` the
 covered-text check says "not measured".
+
+w1396 adds `spriteSize`, `spriteBorder`, `imageType` and `preserveAspect` on every Image with a sprite, for
+`ui_layout.py shape` (the Deck tour's censuses carry them, with `lines`, `fontSize` and `textRect`, from the game's w1396
+change). A census without them still works with `shape --repo <game repo>`, which reads each sprite's size from its PNG
+and `.meta`, skipping names that two differently shaped sprites share.
+
+## Judged on its own: shape (w1396)
+
+`ui_layout.py shape <census.json> [...] [--repo <game repo>]` judges each census alone, the way a player looks at it, and
+prints the `Shape:` line with one line per finding:
+
+- **STRETCHED**: an Image drawn 2x or more off its sprite's own aspect (Simple or Filled, not `preserveAspect`, no
+  9-slice border). The w1386 On/Off switch, 225x150 drawn 485x23 in the Deck dock: 14.1x.
+- **MOSTLY EMPTY**: a window or dialog (an `openedPanels` window or a `*Dialog*`/`*Modal*`/`*Popup*`, the element itself or
+  one level under it) whose content covers under 40 % of it AND leaves one empty rectangle of 35 % or more. Text counts
+  by its drawn glyphs (`textRect`, else an estimate), padded 4 px at 1080 lines. Coverage alone does not tell: on the
+  w1386 tour at 1920x1080 the Cargo Hold, which looks fine, was 24 % covered with a 25 % hole; the Light Structure 30 %
+  with 37 %. HUD blocks, hover cards, list rows and scroll viewports are not judged (their ragged rows read as empty).
+- **WALL OF TEXT**: a text of 8 or more lines in a box under 40 % of the screen wide (needs `lines`).
+
+Calibrated (MEASURED, w1396) on the 12 censuses in `tests/fixtures/` and the w1386 tour's 30: it flags the docked switch,
+the Light Structure panel at 1920x1080 and 1280x800, the stacked circuit blocks of the w1386 bug, and the w1004 Utility
+panel (not looked at); nothing else. The thresholds are a floor, not a verdict: a still the tool passes can still look
+poor, and the `Eye:` line (evidence-gate `checklists/ui.md` item 27) is the check.
 
 `execute_code` calls time out after about 30 s while the editor keeps running them. To take many censuses, register
 the snippet once as a delegate (`System.AppDomain.CurrentDomain.SetData("census", (System.Func<string, string>)(OUT => { ... }))`)
