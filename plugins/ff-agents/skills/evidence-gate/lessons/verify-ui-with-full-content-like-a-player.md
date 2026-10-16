@@ -1,6 +1,6 @@
 ---
 name: verify-ui-with-full-content-like-a-player
-description: "A UI change is verified the way a player sees it: every screen and sub-view in a late-game save, in a built player at the target size, showing its whole content, on the classic panels' colours and art, still in a real-rate clip, each still checked against the requester's words. A tour that proves each tab opens and fits passes a broken screen. A Deck tour on a PC is a stand-in: a Deck-facing change is verified on a real Deck or reported 'not verified on a real Deck' (w770). Before any still goes to a person, every still is judged by eye on its own, one line each (stretched controls, mostly empty windows, overlapping labels, text dumps), apart from every before/after comparison and the census; a redesign goes out as 2-3 options built from the game's best dialogs (w1386, w1296)."
+description: "A UI change is verified the way a player sees it: every screen and sub-view in a late-game save, in a built player at the target size, showing its whole content, on the classic panels' colours and art, still in a real-rate clip, each still checked against the requester's words. A tour that proves each tab opens and fits passes a broken screen. A Deck tour on a PC is a stand-in: a Deck-facing change is verified on a real Deck or reported 'not verified on a real Deck' (w770). Before any still goes to a person, every still is judged by eye on its own, one line each (stretched controls, mostly empty windows, overlapping labels, text dumps), apart from every before/after comparison and the census; a redesign goes out as 2-3 options built from the game's best dialogs (w1386, w1296). And no still reaches a person before a fresh critic that never saw the code or the worker's reasoning has graded it from a pack of crops, reference panels and the person's words, with the colour and shape checks clean against the before (w1399: three rejected screens all said Looked: yes)."
 date: 2026-10-08
 ---
 
@@ -192,3 +192,57 @@ the start, passed every line.
   same screen still looks wrong after a change, the next round is a redesign, not more spacing.
 - **An orchestrator looks before it relays.** Open each still and answer the same questions. A worker's "Same both
   sides" or "PASS" is a claim about a comparison, not about how the screen looks.
+
+## A fresh critic, not the author, judges the design (w1399, 2026-10-16)
+
+**Rule.** No UI still or mock reaches a person until it has passed the design gate (checklist `ui.md`, at its top):
+- It is built from the game's own components and colours (the game repo's `docs/UI-Style.md`).
+- The worker has graded every still with the unity-ui `design-rubric.md`.
+- `ui_look.py colour` and `ui_layout.py shape` show nothing new against the before.
+- A **fresh** `ff-agents:ui-critic`, given only the pack `ui_look.py pack` builds, has graded it, and every broken or ugly
+  finding is fixed, filed or answered with the person's own words.
+
+The orchestrator relaying the stills opens each one before it reads the worker's words about it, and relays only with the
+critic's report (FF Factory `read_rules ui`).
+
+### Why
+
+The same day as w1396, Ben rejected a third screen and said: "you make bad UI mistakes constantly". On w1334's round 2
+(#1817): "the active stop color is bleeding into a bunch of the panel's elements, it looks bad, like its washing
+everything out" and "the add stop bright blue is also painful on the eyes".
+
+All three rejected PRs said "Looked: yes" (#1744, #1813, #1817), and #1817 had even fixed two text faults by eye. The
+look happened. The judgement failed: each worker judged its own screen, against what it meant and against before/after
+numbers. What w1399 measured:
+
+- **Round 2 made the controls see-through** (the condition chip white at alpha 0.09; round 1's was opaque #CCCCCC) over
+  the same see-through orange row. In Ben's own still, the chip in the active row is drawn delta E 13.6 from the same chip
+  in a plain row; in round 1 the difference is 0.0. "+ Add stop" became a pale fill, #57B2D0 at L* 68, under a white
+  label at 2.06:1 (round 1's blue bar: 4.34:1).
+- **This game blends UI alpha in linear space.** A 25 % orange row draws #6A555C, where the HTML mock's sRGB mix shows
+  #454F56 (delta E 14.2). A see-through colour looks far stronger in the game than in the mock it was picked from.
+- **The comparison checks could not see it.** `Style:` passed #1813's broken panel at delta E 4.2 and took #1817's
+  delta E 24.2 as proof that a menu "reads apart". The new colour came from the mock (`#5FC3E4`: 0 uses on master),
+  though the code called it "the game's own".
+- **The orchestrator's brief had no rule to look,** and an orchestrator loads no plugin, so the "orchestrator looks too"
+  line in this lesson never reached it.
+- **Research:**
+  - Models favour their own work and the framing they are given.
+  - Tint and opacity bugs have the lowest VLM recall (14 % in one study), so the numbers go to the critic as text.
+  - Claude Code re-encodes an image over 500 KB as a lower-quality JPEG, so crops at the panel's own pixels show what a
+    whole still hides.
+  - All of it: `/srv/fff/review/w1399-ui-harness/research.md`.
+
+### How to apply
+
+- **Run the gate in order:** components, the rubric, the measurements, then the critic (checklist `ui.md` items 27, 28, 30
+  and 31). The PR carries the `Eye:`, `Shape:`, `Colour:` and `Critic:` lines; `pr_evidence.py` fails one that is missing,
+  or a `Critic:` line with a broken or ugly finding still open.
+- **Give the critic the pack, nothing else:** `ui_look.py pack` builds it from the stills, censuses, the reference panels
+  and the brief's quotes. Never brief it with what you changed, what you meant, or the PR. Use a new critic for each round.
+- **Pick colours from the built pixel, not the mock.** Controls get opaque fills. A selected row shows its state on an
+  edge or the number; the controls inside it keep their colours. A secondary action gets the game's quiet fill, not an
+  accent.
+- **The proof** (w1399, `/srv/fff/review/w1399-ui-harness/proof.md`): the checks flag both w1334 complaints and the
+  stretched w1386 switch, and the critic flags each of the three rejected screens. Rerun its cases when the critic's role,
+  the rubric or the model changes.

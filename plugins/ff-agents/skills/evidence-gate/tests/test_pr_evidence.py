@@ -195,6 +195,8 @@ Window overlaps: 0 not allowed after, 0 before, 0 new, 0 kept between windows th
 Alignment: max drift 0 px over the clusters (bottom-right HUD, top-left HUD); tolerance 2 px
 Moved: 0 element move(s) over 4 px at 1920x1080 undocked, 1280x800 undocked, 1280x800 docked (ui_layout.py moves, the same save and screens before and after)
 Pinned: 3 pin(s) in 3 census(es) (1920x1080 undocked, 1280x800 undocked, 1280x800 docked): 0 broken, 0 not shown (ui_layout.py pins, hud-pins.json: Station Info, building hover card, Player Inventory)
+Colour: 0 loud fill(s), 0 state tint(s) bleeding into controls, 0 low-contrast text(s) over 6 still(s) (ui_look.py colour)
+Critic: proofs/critic.md (pack 3f2a91ab, run 2): 6 stills, 2 broken or ugly found, 2 fixed, 0 open, 3 minor
 Shape: 0 stretched, 0 mostly empty, 0 wall(s) of text over 3 census(es) (ui_layout.py shape)
 Eye: 12 stills looked at full size, 0 look broken or poor (proofs/shots.md)
 """
@@ -488,6 +490,30 @@ class ShapeAndEyeTest(unittest.TestCase):
         self.assertIn("UI change with no 'Shape:' line", reasons)
         self.assertIn("UI change with no 'Eye:' line", reasons)
 
+    # MEASURED (w1399): ui_look.py colour on a Windows build of #1817's round 2 against master's round 1, 1920x1080.
+    W1334_COLOUR = ("1 loud fill(s), 1 state tint(s) bleeding into controls, 3 low-contrast text(s) over 1 still(s) "
+                    "(ui_look.py colour); standing (on the before still too, not counted): 0 loud, 0 bleeding, 2 low-contrast")
+
+    def test_w1334_round_two_as_measured_fails_on_its_colour_line(self):
+        reasons = self.reasons(Colour=self.W1334_COLOUR)
+        self.assertIn("'Colour:' has 1 loud fill(s), 1 state tint(s) bleeding into controls and 3 low-contrast", reasons)
+        self.assertEqual(self.reasons(Colour=self.W1334_COLOUR + '; intended (Ben): "make the add stop button bright cyan"'),
+                         "")
+
+    def test_no_colour_or_critic_line_fails(self):
+        body = re.sub(r"^(Colour|Critic):.*\n", "", LayoutTest().ui_body(), flags=re.MULTILINE)
+        reasons = "\n".join(pe.check(body)[0])
+        self.assertIn("UI change with no 'Colour:' line", reasons)
+        self.assertIn("UI change with no 'Critic:' line", reasons)
+
+    def test_a_critic_line_needs_its_pack_and_nothing_left_open(self):
+        self.assertIn("names no pack id", self.reasons(Critic="critic.md: 6 stills, 2 broken or ugly found, 2 fixed, 0 open"))
+        still_open = "critic.md (pack 3f2a91ab, run 1): 6 stills, 2 broken or ugly found, 1 fixed, 1 open, 0 minor"
+        self.assertIn("1 broken or ugly finding(s) open", self.reasons(Critic=still_open))
+        self.assertEqual(self.reasons(Critic=still_open + '; answered (Ben): "keep the orange edge, I like it"'), "")
+        self.assertEqual(self.reasons(Critic=still_open + "; the menu card standing on master, filed as w1402"), "")
+        self.assertIn("says how many stills", self.reasons(Critic="critic.md (pack 3f2a91ab): looked fine"))
+
     def test_an_eye_line_needs_its_counts(self):
         self.assertIn("'Eye:' says how many stills", self.reasons(Eye="looked at them all, fine"))
 
@@ -600,7 +626,7 @@ class MovedTest(unittest.TestCase):
         self.assertNotIn("is pinned", self.reasons("\n".join([head, named]), brief))
 
     def test_a_broken_or_unmeasured_pin_fails_with_no_way_out(self):
-        moved = UiTest.UI_LINES.splitlines()[-2]
+        moved = next(x for x in UiTest.UI_LINES.splitlines() if x.startswith("Moved:"))
         broken = ("Pinned: 3 pin(s) in 3 census(es) (1920x1080 undocked, 1280x800 undocked, 1280x800 docked): 2 broken, 0 "
                   'not shown (ui_layout.py pins); intended (Ben): "anything"')
         self.assertIn("2 broken pin(s)", self.reasons(moved, pinned=broken))

@@ -5,6 +5,18 @@ the structured layout, Steam Deck sizing). The [visual checklist](visual.md) app
 adds what a screen needs. The recipe (the Deck tour, the pixel checks, uGUI pitfalls) is the
 `unity-ui` skill.
 
+**The design gate: no UI still or mock reaches a person until it has passed** (w1399; Ben, 2026-10-16: "you make bad UI
+mistakes constantly", after three screens their workers and their orchestrator had passed). In order:
+1. Build from the game's own components and colours (the game repo's `docs/UI-Style.md`). A see-through colour draws much
+   stronger here than in a mock (linear blending, measured), so give controls opaque fills and show state on an edge or
+   a number.
+2. Grade every still yourself with the unity-ui `design-rubric.md`: the `Eye:` line (item 27).
+3. Measure every after still against its before: `ui_look.py colour` and `ui_layout.py shape` (items 28 and 31).
+4. A fresh `ff-agents:ui-critic` on the pack `ui_look.py pack` builds, never you; fix or answer each broken or ugly
+   finding, then a new critic (item 30).
+
+The orchestrator relaying the stills checks the same before Ben sees them (FF Factory `read_rules ui`).
+
 Not a screen: a world-space mark drawn as a mesh or line (w1181, the station route arrow's chevron speed, game PR
 #1604: no canvas, panel or HUD element) keeps the [visual checklist](visual.md) and skips this one with a
 `Not UI: <what draws it, and that no canvas, panel or HUD element changes>` line in `## Evidence`. `pr_evidence.py`
@@ -252,8 +264,8 @@ the way a player would see it, one line each, before anyone else sees it; the ce
 control, and a redesign goes out as 2 or 3 clearly different options built from the game's best existing dialogs
 ([lesson](../lessons/verify-ui-with-full-content-like-a-player.md#judge-every-still-by-eye-before-the-person-sees-it-w1386-w1296-2026-10-16)).
 
-27. **Eye check, per still, apart from every comparison (w1386, w1296).** Open each still at full size and write one
-    line: is anything stretched or squashed out of its shape, is a window mostly empty or crammed into one corner, do
+27. **Eye check, per still, apart from every comparison (w1386, w1296).** Open each still at full size, grade it with the
+    unity-ui `design-rubric.md` (eight questions, each PASS or FAIL with where) and write one line: is anything stretched or squashed out of its shape, is a window mostly empty or crammed into one corner, do
     labels run into each other or the title, is a dialog a dense block of text with no hierarchy, would a player call
     any of it broken or ugly? "Same both sides" answers another question: w1386's docked On/Off switch was a 485x23 bar
     on both sides and passed. A still that looks broken or poor is fixed before it goes to anyone; one standing on
@@ -274,6 +286,31 @@ control, and a redesign goes out as 2 or 3 clearly different options built from 
     layouts from their components: title row, list rows, buttons, spacing, fonts. Show each as built-game stills at
     1920x1080 and 1280x800 with the long content, and let the person pick. Ben (w1296): "reuse components when you can
     damnit". A round that only nudges spacing after the person said it looks wrong is the w1296 miss.
+30. **A fresh critic, not the author, before any person sees a still (w1399).** The worker sees what it meant: all three
+    screens Ben rejected on 2026-10-16 had "Looked: yes" in their PRs (#1744, #1813, #1817), and models favour their own
+    work and the framing they are given (w1399 research). `ui_look.py pack --after <still>::<census> ... --before <still>
+    --repo <game repo> --brief <brief file> --out <dir>` builds the critic's whole input: each still, each window at its own
+    pixels (and 2x), the game's reference panels (`docs/ui-style/ref/ref-*.png`) and the person's quoted words, held back
+    until the critic has judged the stills alone. Run a fresh `ff-agents:ui-critic` on it (Codex: a direct `reviewer`
+    child given the pack's `prompt.md`); never brief it with what you changed or meant. Its `critic.md` goes in the review
+    folder with the stills. Fix every BROKEN or UGLY finding, file a standing one (wNNN) or answer it with the person's
+    words asking for exactly that, then pack the new stills for a new critic. After three rounds with one still open, the
+    person gets the options and the critic's report. The PR carries `Critic: <critic.md> (pack <id>, run R): N stills, M
+    broken or ugly found, F fixed, 0 open, K minor`. The unity-ui skill's `critic.md` is the recipe.
+31. **Colour, measured against the before (w1399).** `ui_look.py colour <after.png>::<census.json> --before
+    <before.png>::<census.json>` (unity-ui) prints the `Colour:` line, judging the pixels a player sees:
+    - LOUD FILL: a flat fill over 0.1 % of the screen at CIELAB L* 60 or more and C* 25 or more. w1334's "+ Add stop" was
+      #57B2D0, L* 68 ("the add stop bright blue is also painful on the eyes"). Master's own buttons are L* 49 to 56, and a
+      progress or met-condition fill is exempt.
+    - BLEED: a see-through control in a selected row more than delta E 5 off the same control in a plain row. w1334
+      round 2's chips were at 13.6, round 1's opaque chips at 0.0 ("the active stop color is bleeding into a bunch of the
+      panel's elements").
+    - LOW CONTRAST: text under 3:1 against what is drawn behind it. w1334's "+ Add stop" label was 2.0:1.
+
+    What the before still also shows is STANDING, listed and not counted. A finding passes only with the requester's
+    words asking for it (`intended (who): "..."`). The fix is the game's quiet fill for a secondary action, opaque
+    controls with the state on an edge or the number, and text that stands clear. No census: `--rect` the panel and
+    `--same A:B` for each control in a selected row against its twin.
 
 19. **The Deck tour is a stand-in (w770).** It forces its own window size and a scripted Deck, so it cannot show Steam's
     layout choice, the Proton first-frame resolution, the Steam client version or touch. A Deck UI change says "verified on
@@ -296,6 +333,8 @@ Pinned: 3 pin(s) in 3 census(es) (1920x1080 undocked, 1280x800 undocked, 1280x80
 Brief (Ben): "move the blueprint window down so it clears the top bar on the deck"
 Shape: 0 stretched, 0 mostly empty, 0 wall(s) of text over 3 census(es) (ui_layout.py shape: ...)
 Eye: 18 stills looked at full size, 0 look broken or poor (/srv/fff/review/wNNN/shots.md, the Eye column)
+Colour: 0 loud fill(s), 0 state tint(s) bleeding into controls, 0 low-contrast text(s) over 6 still(s) (ui_look.py colour ...); standing (on the before still too, not counted): 0 loud, 0 bleeding, 2 low-contrast
+Critic: /srv/fff/review/wNNN/critic.md (pack 3f2a91ab, run 2): 6 stills, 2 broken or ugly found, 2 fixed, 0 open, 3 minor
 Shots: /srv/fff/review/wNNN/shots.md (one line per still against Ben's words)
 Clips: after-1280.mp4, 60 fps; idle and hover per tab at 0-4 s, 4-8 s ...; ui_check flicker: 0 regions
 ```
@@ -305,7 +344,9 @@ overlap (between HUD blocks, or a new or kept `Window overlaps:`), an opened pan
 `Opened panels:` line, required when the `Overlaps:` line counts an opened-panel pair), a drift over 2 px, a `Style:` line without a measured delta E and alpha, or a delta E over
 10, a `Moved:` or `Pinned:` line missing a screen or the docked layout, a move not asked for in the brief's own words, a
 broken pin (item 22), no `Shape:` line or a stretched sprite on it, a mostly empty window or wall of text not explained
-on it (item 28), or no `Eye:` line, or one with a still that looks broken or poor and no filed request (item 27). A difference the requester asked for passes with their words on its line:
+on it (item 28), no `Eye:` line, or one with a still that looks broken or poor and no filed request (item 27), no
+`Critic:` line, one with no pack id, or one with a broken or ugly finding open and neither filed nor answered with the
+person's words (item 30), or no `Colour:` line, or one with a new finding (item 31). A difference the requester asked for passes with their words on its line:
 `intended (Ben): "..."`. A scene file (`Assets/Scenes/*.unity`) counts as UI.
 
 **A drag, drop or press-and-hold gesture** is shown with the real input module, not `ffauto:ui.drag` or `pointer.*` alone (those
@@ -316,4 +357,5 @@ focused. A gesture that "does nothing" in a background window is not a finding (
 Lessons behind this list:
 [verify UI with full content, like a player](../lessons/verify-ui-with-full-content-like-a-player.md),
 [a UI change leaves the rest of the screen as it was](../lessons/a-ui-change-leaves-the-rest-of-the-screen-as-it-was.md),
-[judge every UI still by eye](../lessons/verify-ui-with-full-content-like-a-player.md#judge-every-still-by-eye-before-the-person-sees-it-w1386-w1296-2026-10-16).
+[judge every UI still by eye](../lessons/verify-ui-with-full-content-like-a-player.md#judge-every-still-by-eye-before-the-person-sees-it-w1386-w1296-2026-10-16),
+[a fresh critic judges the design, not its author](../lessons/verify-ui-with-full-content-like-a-player.md#a-fresh-critic-not-the-author-judges-the-design-w1399-2026-10-16).

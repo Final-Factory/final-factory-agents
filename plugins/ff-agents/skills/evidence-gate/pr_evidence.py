@@ -207,8 +207,10 @@ def ui_problems(section: str, brief: str | None = None) -> tuple[list[str], list
     problems += covered
     moved, notes = moved_problems(section, brief)
     shape, shape_notes = shape_problems(section)
-    problems += shape + eye_problems(section)
-    notes = window_notes + covered_notes + shape_notes + notes
+    problems += shape + eye_problems(section) + critic_problems(section)
+    colour, colour_notes = colour_problems(section)
+    problems += colour
+    notes = window_notes + covered_notes + shape_notes + colour_notes + notes
     problems += moved + pinned_problems(section)
     flick = field(section, "Flicker")
     if not re.search(r"flicker", (clips[1] if clips else "") + (flick[1] if flick else ""), re.IGNORECASE):
@@ -563,6 +565,70 @@ def eye_problems(section: str) -> list[str]:
         return [f"'Eye:' has {poor.group(1)} still(s) that look broken or poor: fix them before anyone sees them, or, when "
                 f"it is not this change's (standing on master), name the request it was filed as (wNNN) on the line"]
     return []
+
+
+def critic_problems(section: str) -> list[str]:
+    """An independent look before the person's (w1399). Ben rejected three screens on 2026-10-16 whose pull requests all said
+    "Looked: yes": the worker that built a screen sees what it meant. A fresh `ff-agents:ui-critic`, given only the pack
+    `unity-ui/ui_look.py pack` builds (the stills, crops at the panel's own pixels, the game's reference panels, the person's
+    words), grades every still; its broken or ugly findings are fixed, filed or answered with the person's words. The line:
+    `Critic: <critic.md> (pack <id>, run R): N stills, M broken or ugly found, F fixed, 0 open, K minor`."""
+    line = field(section, "Critic")
+    if not line:
+        return ["UI change with no 'Critic:' line: build the pack (unity-ui ui_look.py pack), run a fresh ff-agents:ui-critic "
+                "on it, fix or answer every broken or ugly finding, and paste 'Critic: <critic.md> (pack <id>, run R): N "
+                "stills, M broken or ugly found, F fixed, 0 open' (unity-ui critic.md; w1399: three screens passed their "
+                "workers' own look and Ben rejected each at a glance)"]
+    value = line[1]
+    problems = []
+    if not re.search(r"\bpack\s+[0-9a-f]{6,}", value, re.IGNORECASE):
+        problems.append("'Critic:' names no pack id: the critic's input comes from ui_look.py pack, which prints it, so "
+                        "the worker's own account of the change never reaches the critic")
+    stills = re.search(r"(\d+)\s+stills?\b", value, re.IGNORECASE)
+    found = re.search(r"(\d+)\s+broken or ugly", value, re.IGNORECASE)
+    still_open = re.search(r"(\d+)\s+open\b", value, re.IGNORECASE)
+    if not stills or not found or not still_open:
+        problems.append("'Critic:' says how many stills it graded, how many broken or ugly findings it made and how many are "
+                        "still open: 'Critic: proofs/critic.md (pack 3f2a91ab, run 2): 8 stills, 3 broken or ugly found, "
+                        "3 fixed, 0 open, 2 minor'")
+    elif int(still_open.group(1)) and not (re.search(r"\bw\d{3,}\b", value) or ANSWERED.search(value)):
+        problems.append(f"'Critic:' has {still_open.group(1)} broken or ugly finding(s) open: fix each, file a standing one "
+                        f"(wNNN on the line), or answer it with the person's words asking for exactly that "
+                        f"(answered (who): \"...\"); the answer goes to the person with the stills")
+    return problems
+
+
+ANSWERED = re.compile(r"\banswered\s*\(([^)]+)\)\s*:\s*[\"“].{8,}?[\"”]", re.IGNORECASE)
+
+
+def colour_problems(section: str) -> tuple[list[str], list[str]]:
+    """How the colours look, measured on the stills (w1399; unity-ui `ui_look.py colour`): a large fill bright and saturated
+    enough to outshout a dark panel (w1334's "+ Add stop": "the add stop bright blue is also painful on the eyes"), a
+    selected row whose colour the controls inside it take on (w1334: "the active stop color is bleeding into a bunch of the
+    panel's elements ... washing everything out"), text under 3:1 against what is behind it. A finding passes only with
+    the requester's words asking for it (`intended (who): "..."`)."""
+    line = field(section, "Colour") or field(section, "Color")
+    if not line:
+        return (["UI change with no 'Colour:' line: run unity-ui ui_look.py colour on every after still with its census and "
+                 "paste its line: loud fills, state tints bleeding into controls, low-contrast text (w1399)"], [])
+    value = line[1]
+    counts = {}
+    for name, pattern in (("loud", r"(\d+)\s+loud fill"), ("bleed", r"(\d+)\s+state tints?"),
+                          ("contrast", r"(\d+)\s+low-contrast")):
+        found = re.search(pattern, value, re.IGNORECASE)
+        if not found:
+            return ([f"'Colour:' does not say how many {name} findings it has: paste ui_look.py colour's line"], [])
+        counts[name] = int(found.group(1))
+    problems, notes = [], []
+    if any(counts.values()) and not INTENDED.search(value):
+        problems.append(f"'Colour:' has {counts['loud']} loud fill(s), {counts['bleed']} state tint(s) bleeding into "
+                        f"controls and {counts['contrast']} low-contrast text(s): fix them (the game's quieter fill for a "
+                        f"large area, a state shown by an accent edge or a lit number with the controls opaque, text that "
+                        f"stands clear), or quote the requester asking for exactly that: intended (who): \"...\"")
+    if re.search(r"not measured", value, re.IGNORECASE):
+        notes.append("'Colour:' measured only part of it (state tints need a census with the list rows or --same pairs, "
+                     "contrast a census): look at the selected rows and the small text at full size")
+    return problems, notes
 
 
 def layout_problems(section: str) -> list[str]:

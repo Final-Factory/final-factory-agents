@@ -83,14 +83,19 @@ person asking for that exact element to move. Census 1920x1080, 1280x800 and 128
 `pins`; `pr_evidence.py --brief` fails any move not asked for in the brief's own words and any broken pin
 ([UI checklist](checklists/ui.md), item 22).
 
-## Look at every UI still before anyone else does
+## No UI still reaches a person before the design gate
 
-Before a UI still goes to a person (a worker sending it, or an orchestrator relaying it), open each one at full size
-and write one line: does anything look broken or poor, as a player would see it? Stretched or squashed controls, a
-mostly empty window, labels running together, a text-dump dialog. "Same both sides" and a clean census are not that
-answer. A redesign goes out as 2-3 clearly different options built from the game's best existing dialogs (Ben, w1296:
-"reuse components when you can damnit"). `Eye:` and `Shape:` lines in the PR ([UI checklist](checklists/ui.md), items
-27-29; [lesson](lessons/verify-ui-with-full-content-like-a-player.md#judge-every-still-by-eye-before-the-person-sees-it-w1386-w1296-2026-10-16)).
+Ben, 2026-10-16: "you make bad UI mistakes constantly". The gate, at the top of the [UI checklist](checklists/ui.md):
+1. Build from the game's own components and colours (the game repo's `docs/UI-Style.md`).
+2. Grade every still yourself with the unity-ui `design-rubric.md` (`Eye:`).
+3. Measure it against the before with `ui_look.py colour` and `ui_layout.py shape` (`Colour:`, `Shape:`).
+4. Have a **fresh** `ff-agents:ui-critic` grade the pack `ui_look.py pack` builds (`Critic:`), and fix or answer each
+   broken or ugly finding.
+
+"Same both sides", a clean census and "Looked: yes" are not that answer. A redesign goes out as 2-3 clearly different
+options built from the game's best existing dialogs (Ben, w1296: "reuse components when you can damnit"). Orchestrators
+look first and relay only with the critic's report (FF Factory `read_rules ui`). Items 27-31;
+[lesson](lessons/verify-ui-with-full-content-like-a-player.md#a-fresh-critic-not-the-author-judges-the-design-w1399-2026-10-16).
 
 ## Reports and briefs
 
@@ -271,7 +276,10 @@ One file each under `lessons/`: the rule, why (the incident, dated), how to appl
   dumps), apart from every before/after comparison; `ui_layout.py shape` measures the first two and walls of text; a
   redesign goes out as 2-3 options built from the game's best dialogs (w1386: a 485x23 switch passed as "Same both
   sides"; w1296: round 3 nudged spacing; Ben: "the light panel is really messed up obviously", "looks terrible. you can
-  do better", "reuse components when you can damnit"; checklist ui.md 27-29).
+  do better", "reuse components when you can damnit"; checklist ui.md 27-29). And a fresh critic, never the author, grades
+  every still from a pack of crops, reference panels and the person's words before a person sees it, with `ui_look.py
+  colour` clean against the before (w1399: three rejected screens all said "Looked: yes"; round 2's see-through chips drawn
+  delta E 13.6 off their twins in a plain row; UI alpha blends in linear space here; checklist ui.md 30-31).
 - [Verify UI with full content, like a player](lessons/verify-ui-with-full-content-like-a-player.md):
   every screen and sub-view in a late-game save, whole, on the classic look, still in a real-rate
   clip, each still checked against the requester's words (w718: the w644 hub, #1251, passed a tour
