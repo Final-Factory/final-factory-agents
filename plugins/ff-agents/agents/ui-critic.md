@@ -46,9 +46,11 @@ Write `critic.md` where the brief says, in this order:
 - **Per still**: one paragraph of what you see; its verdict, BROKEN, UGLY or OK; the eight rubric answers (`1 PASS: ...`,
   `3 FAIL UGLY: ...`); the
   side-by-side verdicts.
-- **Flaws**, BROKEN and UGLY first: each marked NEW (this change made it) or STANDING (the before still shows it too),
-  with the still, the element, where, the rubric item, why a player would mind, and a fix
-  direction in a sentence (what to change, never code).
+- **Flaws**, BROKEN and UGLY first: each marked NEW or STANDING, with the still, the element, where, the rubric item,
+  why a player would mind, and a fix direction in a sentence (what to change, never code). NEW: this change made it, or
+  the person's words ask for its kind of fix (w1386's words were "fix the ones that are clearly bugs", and its stills
+  showed the panel it fixed with the On/Off switch stretched 14x, as on master). STANDING: the before still shows it too
+  and no words ask for it.
 - The last line exactly: `Critic: N stills, M broken or ugly (S standing), K minor`.
 
 BROKEN or UGLY means a player would call the screen broken, ugly or confusing at first sight; minor is polish. Do not

@@ -59,13 +59,17 @@ brief's reasoning or the worker's notes, given only what a person would see.
    - a side-by-side look at the reference panels and the before still, item by item;
    - the flaws, BROKEN and UGLY first, each with a fix direction.
 
-   Each broken or ugly flaw is marked NEW (this change made it) or STANDING (the before still shows it too). The
-   report ends with one line: `Critic: N stills, M broken or ugly (S standing), K minor`.
+   Each broken or ugly flaw is marked NEW (this change made it, or the person's words ask for its kind of fix) or
+   STANDING (the before still shows it too, and no words ask for it). w1386's words were "fix the ones that are clearly
+   bugs", and its stills showed the panel it fixed with the On/Off switch stretched 14x, as on master: NEW. The report
+   ends with one line:
+   `Critic: N stills, M broken or ugly (S standing), K minor`.
 4. **Fix or answer every NEW broken or ugly finding**, or answer it with the person's words asking for exactly that.
    **File the STANDING ones** (wNNN, named in the report's first lines). The critic is strict: in w1399's trial it found
    real standing defects in master panels nobody had complained about (a hover card's text colliding with a window, names
-   broken mid-word), which the change did not make and must not be blocked on. Then a new pack of the new stills, and a new critic. After three rounds with one still open,
-   the person gets the options and the critic's report, not a fourth nudge.
+   broken mid-word), which the change did not make and must not be blocked on. Then a new pack of the new stills, and
+   a new critic. After three rounds with one still open, the person gets the options and the critic's report, not a
+   fourth nudge.
 5. **The pull request** carries `Critic: <critic.md> (pack <id>, run R): N stills, M broken or ugly found (S standing,
    filed as wNNN), F fixed, 0 open, K minor`. The report to the person gives the critic's verdict in a line, with its top finding and how it was answered.
    `pr_evidence.py` fails a UI change without the line, or with a broken or ugly finding open and neither filed nor

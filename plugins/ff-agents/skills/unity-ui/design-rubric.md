@@ -55,7 +55,7 @@ w1334r2-panel-1920: UGLY. 1 PASS; 2 FAIL UGLY (the "+ Add stop" fill, pale cyan,
 ("+ Add stop" white on pale cyan, 2:1); 4-6 and 8 PASS; words: "a little more" not met
 ```
 
-(That is round 2 of w1334 as w1399 measured it on Ben's own still: the chips delta E 13.6 apart, the label 2.06:1.)
+(That is round 2 of w1334 as w1399 measured it on Ben's own still: the chips delta E 13.6 apart, the label 2.13:1.)
 
 A still with a BROKEN or UGLY answer goes to nobody until it is fixed, or the line quotes the person asking for exactly
 that.

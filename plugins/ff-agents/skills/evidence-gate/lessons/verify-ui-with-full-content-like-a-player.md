@@ -218,7 +218,7 @@ numbers. What w1399 measured:
 - **Round 2 made the controls see-through** (the condition chip white at alpha 0.09; round 1's was opaque #CCCCCC) over
   the same see-through orange row. In Ben's own still, the chip in the active row is drawn delta E 13.6 from the same chip
   in a plain row; in round 1 the difference is 0.0. "+ Add stop" became a pale fill, #57B2D0 at L* 68, under a white
-  label at 2.06:1 (round 1's blue bar: 4.34:1).
+  label at 2.13:1 (round 1's blue bar: 4.6:1).
 - **This game blends UI alpha in linear space.** A 25 % orange row draws #6A555C, where the HTML mock's sRGB mix shows
   #454F56 (delta E 14.2). A see-through colour looks far stronger in the game than in the mock it was picked from.
 - **The comparison checks could not see it.** `Style:` passed #1813's broken panel at delta E 4.2 and took #1817's
@@ -248,5 +248,7 @@ numbers. What w1399 measured:
     bleed.
   - In a blind trial, scored by an agent that did not know which method wrote which report, the critic named Ben's own
     defect on 4 of 4 rejected screens. Workers' looking as it is today did so on 1 of 3.
-  - The critic is strict on old panels too: findings the before still also shows are STANDING and get filed, not fixed.
+  - The critic is strict on old panels too: findings the before still also shows are STANDING and get filed, not fixed,
+    unless the person's words ask for that kind of fix. w1386's words were "fix the ones that are clearly bugs", and the
+    panel it fixed still showed its On/Off switch stretched 14x, as on master.
   - Rerun its cases (`/srv/fff/review/w1399-ui-harness/`) when the critic's role, the rubric or the model changes.

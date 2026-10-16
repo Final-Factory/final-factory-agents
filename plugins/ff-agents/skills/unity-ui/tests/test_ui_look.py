@@ -187,9 +187,9 @@ class RealCaseTest(unittest.TestCase):
                 el("HaulerEntityPanel/MainPanel/AddStop/Label", rect, kind="TextMeshProUGUI", color=colour, text="Add stop")]}
         fails, _ = uk.text_contrast(label((54, 268, 118, 290), "#DFF4FBFF"), uk.read_png(self.R2), [(0, 0, 450, 310)])
         self.assertEqual(len(fails), 1)
-        self.assertLess(fails[0]["ratio"], 2.5)                                   # MEASURED 2.06:1
+        self.assertLess(fails[0]["ratio"], 2.5)                                   # MEASURED 2.13:1
         fails, _ = uk.text_contrast(label((54, 268, 118, 290), "#FFFFFFFF"), uk.read_png(self.R1), [(0, 0, 450, 310)])
-        self.assertEqual(fails, [])                                              # 4.34:1 on #2178C6
+        self.assertEqual(fails, [])                                              # 4.60:1 on #2178C6
 
     def test_the_stretched_docked_switch_is_a_loud_green_bar(self):
         found = uk.loud_fills(uk.read_png(self.LAMP), [(0, 0, 540, 150)], 1280 * 800)

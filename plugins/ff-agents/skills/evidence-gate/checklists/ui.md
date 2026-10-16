@@ -294,8 +294,10 @@ control, and a redesign goes out as 2 or 3 clearly different options built from 
     until the critic has judged the stills alone. Run a fresh `ff-agents:ui-critic` on it (Codex: a direct `reviewer`
     child given the pack's `prompt.md`); never brief it with what you changed or meant. Its `critic.md` goes in the review
     folder with the stills. Fix every NEW broken or ugly finding or answer it with the person's words asking for exactly
-    that; file the STANDING ones (the before shows them too: wNNN); then pack the new stills for a new critic. After three rounds with one still open, the
-    person gets the options and the critic's report. The PR carries `Critic: <critic.md> (pack <id>, run R): N stills, M
+    that; file the STANDING ones (wNNN); then pack the new stills for a new critic. NEW: this change made it, or the
+    person's words ask for its kind of fix (w1386: "fix the ones that are clearly bugs", and the panel it fixed showed its
+    On/Off switch stretched 14x, as on master). STANDING: the before still shows it too and no words ask for it. After
+    three rounds with one still open, the person gets the options and the critic's report. The PR carries `Critic: <critic.md> (pack <id>, run R): N stills, M
     broken or ugly found (S standing, filed as wNNN), F fixed, 0 open, K minor`. The unity-ui skill's `critic.md` is the recipe.
 31. **Colour, measured against the before (w1399).** `ui_look.py colour <after.png>::<census.json> --before
     <before.png>::<census.json>` (unity-ui) prints the `Colour:` line, judging the pixels a player sees:

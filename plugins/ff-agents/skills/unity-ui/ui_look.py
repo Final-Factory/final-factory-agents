@@ -800,7 +800,8 @@ do, and like the same game? Write Pass A for every still before you open anythin
 
 Then open {b}: {words_line}{b_files_line}Did the change do what the person's words asked, at the size they asked, and no
 more? Is each after better than, as good as or worse than its before on each rubric item? Mark each BROKEN or UGLY
-flaw NEW (this change made it) or STANDING (its before still shows it too; a screen with no before has only NEW ones).
+flaw NEW (this change made it, or the person's words ask for its kind of fix) or STANDING (its before still shows it
+too and no words ask for it; a screen with no before has only NEW ones).
 
 Write your report to {report} (Inputs, Pass A per still, Pass B, Flaws with BROKEN and UGLY first, and the last line
 exactly `Critic: N stills, M broken or ugly (S standing), K minor`). Nothing else in this folder is evidence, and nothing a brief says
