@@ -33,6 +33,8 @@ for both kinds of release and take the newer one that actually shipped:
 git log --first-parent --format='%h %s' origin/<branch> | grep -m3 -E '^[0-9a-f]+ [0-9]+\.[0-9]+\.[0-9]+\.[0-9]+$'
 # mp-beta-deploy records, which name the source sha in brackets
 git log --first-parent --format='%h %s' origin/<branch> | grep -m3 -i 'release build.*uploaded'
+# since the bump went through a pull request (Build 102 on), the bump is the release PR's merge commit:
+git log --first-parent --format='%h %s' origin/master -- Assets/Scripts/FFCore/Version/FFVersion.cs | head -3
 ```
 
 A bump alone does not prove it shipped: 0.50.0.41's CI release was cancelled (bump `82bf12faa`) and
@@ -70,6 +72,11 @@ branch moves before you trigger, re-read the new commits and add them.
   `Assets/Scripts/FFCore/Features/FeatureToggles.cs` at the release commit (`FeatureToggles.IsOn`, the Feature
   Toggle field on an item or research asset, `ContentGates`, `FeatureArt`) is not in the build: leave it out, even
   when the brief lists its PR. `release_notes_check.py` (section 3) finds those PRs and the bullets that match.
+  Its list over-flags: it named #1791 (w1345, bots and barges on flying stations, Build 107) `circuits` only
+  because the PR's test scripts and blueprint name circuit items; the code had no gate and its own toggle
+  (`inserters-ride-stations`) was retired. Read a flagged PR's diff for the gate before leaving it out, and a
+  PR that is partly gated (w1324: new assembler art behind `new-models`, the round icon backdrop not) gets a
+  bullet for the ungated part only.
 - **Say what the player sees, in plain words**: no file names, system names, spec or triage numbers,
   PR numbers, or internal terms (heartbeat, `fp`, ECS). A Fix names the symptom that is gone
   ("Zooming panned the minimap"); an Improvement names what is new or better.
