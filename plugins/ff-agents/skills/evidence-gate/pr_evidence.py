@@ -32,6 +32,15 @@ KINDS = ("visual", "ui", "simulation", "other")
 BASES = ("MEASURED", "SOURCED", "DECIDED", "GUESS")
 PENDING = re.compile(r"\b(pending|not yet|tbd|todo|to be (done|verified|reviewed|recorded|checked)|"
                      r"will be (reviewed|verified|recorded|checked))\b", re.IGNORECASE)
+# Effect art (w1332): a shader, material or VFX file that draws something in the world. Icons, sprites, UI, holograms
+# and fog are indicators or screen art by design and are left to their own rules.
+EFFECT_ART = re.compile(r"/(VFX|Vfx|Effects?)/|Vfx[^/]*\.(shader|shadergraph|hlsl|mat)$|\.(vfx|shader|shadergraph|"
+                        r"shadersubgraph|mat)$|Particle", re.IGNORECASE)
+NOT_EFFECT_ART = re.compile(r"/UI/|Icon|Sprite|Hologram|Font|/Fog|Outline", re.IGNORECASE)
+NO_OVERLAY = re.compile(r"\b(no|without|none of|never)\b[^.;\n]{0,40}\b(rings?|circles?|halos?|indicators?|overlays?|ui[- ]like)\b",
+                        re.IGNORECASE)
+REFERENCE = re.compile(r"\b(compared|reference|beside|against|side by side|matches)\b", re.IGNORECASE)
+ART_ASKED = re.compile(r"\(\s*[A-Z][\w ]*\)\s*:\s*\"", re.IGNORECASE)
 VIDEO = re.compile(r"\.(mp4|webm|mov|mkv)\b", re.IGNORECASE)
 # Where in a clip the event is: "frames 118-190", "at 2.4 s", "0:12". A bare number range is not enough (dates, sizes).
 PLACE = re.compile(r"\bframes?\b[^\n]{0,20}\d|\b\d+(\.\d+)?\s*(s|sec|secs|seconds)\b|\b\d+:\d{2}(\.\d+)?\b", re.IGNORECASE)
@@ -546,6 +555,39 @@ def layout_problems(section: str) -> list[str]:
     return problems
 
 
+def art_language_problems(section: str, art_files: list[str]) -> list[str]:
+    """w1241, w1332: Ben turned down a highlight drawn as "a world space UI indicator" and then rings round a comet:
+    "again I don't like the unnatural circle effect that looks like UI. The vfx should be part of the game world in
+    its appearance." An effect names what it was compared with and says it draws no ring, circle, halo or other
+    UI-like overlay, or quotes the person asking for one (checklists/visual.md 5c)."""
+    line = field(section, "Art language")
+    where = ", ".join(art_files[:3])
+    if not line or not line[1]:
+        return [f"effect art changed ({where}) and no 'Art language:' line: name the reference it was compared with "
+                "(the Railgun, a powered building, an existing effect) and say it draws no ring, circle, halo or other "
+                "UI-like overlay, only in-world light, debris, sparks or the object's own material, or quote the "
+                "person asking for an indicator (checklists/visual.md 5c; Ben, w1332: \"I don't like the unnatural "
+                "circle effect that looks like UI\")"]
+    text = line[1]
+    if text.lower().startswith("n/a"):
+        return [] if len(text) >= 25 else ["'Art language: n/a' has to say why (an indicator the person asked for, "
+                                           "in their words)"]
+    found = []
+    if not REFERENCE.search(text):
+        found.append("'Art language' does not name what the effect was compared with (a reference asset in the same "
+                     "still)")
+    if not NO_OVERLAY.search(text) and not ART_ASKED.search(text):
+        found.append("'Art language' does not say the effect draws no ring, circle, halo or UI-like overlay, nor "
+                     "quote the person asking for one: an effect is in-world light, debris, sparks or the object's own "
+                     "material (w1241, w1332)")
+    return found
+
+
+def art_language_notes(section: str) -> list[str]:
+    line = field(section, "Art language")
+    return [f"art language: {line[1][:160]}"] if line and line[1] else []
+
+
 def check(body: str, files: list[str] | None = None, brief: str | None = None) -> tuple[list[str], list[str]]:
     """Every reason the evidence is not ready (empty = PASS), and notes that do not fail it."""
     used_by = used_by_problems(body, files)
@@ -620,6 +662,10 @@ def check(body: str, files: list[str] | None = None, brief: str | None = None) -
         if not looked or not looked[1].lower().startswith("yes"):
             problems.append("'Looked: yes, ...' is missing: someone steps through the event's frames against the "
                             "intended look. A measurement or a watch_video verdict is not a look")
+        art_files = [f for f in files or [] if EFFECT_ART.search(f) and not NOT_EFFECT_ART.search(f)]
+        if art_files and not ui:
+            problems += art_language_problems(section, art_files)
+            notes += art_language_notes(section)
 
     if ui:
         ui_found, ui_notes = ui_problems(section, brief if brief is not None else brief_in_body(body))

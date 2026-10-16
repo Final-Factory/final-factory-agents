@@ -612,6 +612,45 @@ class UsedByTest(unittest.TestCase):
         self.assertTrue(pe.VISUAL_PATH.search("Assets/Art/Shaders/AsteroWorldSprite.ShaderGraph"))
 
 
+class ArtLanguageTest(unittest.TestCase):
+    """w1241, w1332: Ben's second correction of one kind. A comet's catch effect shipped turning rings round the head
+    (v1) and was turned down: "again I don't like the unnatural circle effect that looks like UI. The vfx should be part
+    of the game world in its appearance." Effect art says what it was compared with and that it draws no ring."""
+
+    def body(self):
+        return (HERE / "fixtures" / "pr-1816-comet-catch-tail.md").read_text(encoding="utf-8")
+
+    def files(self):
+        return (HERE / "fixtures" / "pr-1816-comet-catch-tail.files").read_text(encoding="utf-8").split()
+
+    def with_line(self, line):
+        return edit(self.body(), "Built player: yes", line + "\nBuilt player: yes")
+
+    def test_1816_as_merged_fails_only_on_the_missing_art_language_line(self):
+        problems = pe.check(self.body(), self.files())[0]
+        self.assertEqual(len(problems), 1, problems)
+        self.assertIn("no 'Art language:' line", problems[0])
+
+    def test_a_line_naming_the_reference_and_no_ring_passes(self):
+        good = self.with_line("Art language: compared with the Railgun's glow and master's comet in the same stills; "
+                              "no ring, circle or UI-like overlay: in-world light, debris streaks and the catcher's own glow")
+        self.assertEqual(pe.check(good, self.files())[0], [])
+
+    def test_v1_rings_fail(self):
+        rings = self.with_line("Art language: compared with master's comet; two containment rings turn round the head")
+        self.assertIn("draws no ring", "\n".join(pe.check(rings, self.files())[0]))
+
+    def test_an_indicator_the_person_asked_for_passes(self):
+        asked = self.with_line('Art language: compared with the Alt-view icons; Ben asked for one (Ben): "give the target a '
+                               'ring so I can see it"')
+        self.assertEqual(pe.check(asked, self.files())[0], [])
+
+    def test_a_script_or_icon_change_needs_no_line(self):
+        problems = pe.check(self.body(), ["Assets/Scripts/FFSystems/Presentation/CometVfxPresentationSystem.cs",
+                                          "Assets/Art/Shaders/AltIconSprite.ShaderGraph"])[0]
+        self.assertFalse([p for p in problems if "Art language" in p], problems)
+
+
 class AuditTest(unittest.TestCase):
     def test_a_pass_counts_only_when_it_was_posted_before_the_merge(self):
         files = [{"path": "Assets/Scripts/FFSystems/Presentation/RiderSystem.cs"}]

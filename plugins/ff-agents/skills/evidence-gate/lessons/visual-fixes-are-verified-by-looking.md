@@ -73,7 +73,7 @@ to the check: nobody was looking for it.
 4. Put the list in the report under "Looked for, not asked for". The checklist line is
    [visual.md](../checklists/visual.md) item 5b (Artifact hunt).
 
-## New art matches Final Factory's art language (w1066, w1241)
+## New art matches Final Factory's art language (w1066, w1241, w1332)
 
 **Rule.** Before a preview of new art (a model, a material, a glow, a highlight) goes to Ben:
 
@@ -105,7 +105,21 @@ Both passed the worker's own check, because that check asked "is the requested l
 never "does it look like the rest of the game?". Neither worker held the new asset up against an
 existing one.
 
-**How to apply.** [The visual checklist](../checklists/visual.md) item 5c (Art language). For a glow, change the
+- **w1332, comet catch tail, PR #1816 (2026-10-15).** The first pass held the comet's head in two turning
+  "containment rings" and ended the landing with a ring running out. Rule 2 above was already written; the worker read
+  it only as a review step, after the effect was built and the clips sent. Ben: "again I don't like the unnatural
+  circle effect that looks like UI. The vfx should be part of the game world in its appearance. The actual vfx is cool
+  tho". The fix kept the tail and the fizzle and dropped both rings; the impact later got its punch from a flash of
+  light and debris streaks, not a ring. That was Ben's second correction of this kind, so it is now a tool check:
+  `pr_evidence.py` fails a visual PR that changes effect art (a shader, material or VFX file; icons, sprites, UI,
+  holograms and fog excepted) without an `Art language:` line naming the reference it was compared with and saying it
+  draws no ring, circle, halo or UI-like overlay, or quoting the person asking for one (fixture
+  `tests/fixtures/pr-1816-comet-catch-tail.md`).
+
+**How to apply.** Decide it when you design the effect, before you build it: write down which in-world parts carry it
+(light, debris, sparks, dust, heat, the object's own material) and check that none of them is a ring, circle, halo or
+outline drawn around the object. Then [the visual checklist](../checklists/visual.md) item 5c (Art language), and the
+PR's `Art language:` line. For a glow, change the
 emissive colour or intensity on the object's own material (a property block or a material
 instance), not a new child sprite or mesh that sits around it. Name the reference asset and
 attach the side-by-side still in the PR's `## Evidence` (the `Intended look` line or the
