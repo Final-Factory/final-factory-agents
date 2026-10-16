@@ -39,6 +39,16 @@ titles only costs a round trip per unclear thread. Call `fetch_discord_thread_fi
 back "FFBox could not hand it over (busy)", and so did a single one for some minutes after (retry later, or fetch one
 file by name with `file`).
 
+**The route to the players' words is LothDesktop's `ffdiscord`, read only** (w1395, 2026-10-16): it holds the config
+(`~/.config/ffbox`), so `ffdiscord threads bug_reports --json --archived --limit 100` lists the threads and
+`ffdiscord thread --json --limit 200 <id>` reads one whole; 100 threads took a few minutes, nothing posted. FFBox has
+the text too (ffwatch stores every message) but `ffbox_activity show conversation` prints turns only, so a thread FFBox
+never answered shows 0 turns, not "no text". In the JSON the player's typed text is in Bug Bot's **embed** (`title`,
+`description`, the reporter in the `Discord` field), never in `content`, which is empty. FFBox conversation ids are
+shared by every conversation it has (ask-claude, DMs, reports): one per thread (`conversation.thread_id` UNIQUE), but
+they map to threads by position only where a range holds exactly as many threads as ids, so a brief that names
+conversations also gives their thread ids or titles.
+
 Running a pass by hand was the fallback, for a machine with no ffbox (BEAST, Windows) or a box
 where ffwatch is stopped; for FFBox's channels it is retired. `/loop 15m /discord-triage` is the same thing on a timer, and a
 convenience rather than the design: it re-queries Discord on a fixed interval whether or not
