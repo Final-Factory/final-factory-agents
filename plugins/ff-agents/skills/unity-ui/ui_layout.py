@@ -1138,7 +1138,8 @@ def shape(census: dict, sprites: dict | None = None, patterns: list[str] | None 
         if lines >= WALL_LINES and (r[2] - r[0]) < WALL_WIDTH * float(sw):
             out["walls"].append({"path": e["path"], "rect": r, "lines": lines, "font": e.get("fontSize"),
                                  "width_share": (r[2] - r[0]) / float(sw)})
-    out["lines_measured"] = any("lines" in e for e in elements if "Text" in e.get("kind", ""))
+    texts = [e for e in elements if "Text" in e.get("kind", "")]
+    out["lines_measured"] = not texts or any("lines" in e for e in texts)
     return out
 
 
