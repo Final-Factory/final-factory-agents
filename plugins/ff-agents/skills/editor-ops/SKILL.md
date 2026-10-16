@@ -262,6 +262,10 @@ to its pull request. For #1137's change the selection ran in 75 s against 376 s 
   `LocalizationHelper.ApplyLocalizedFont` (the tests need the open scene's `LocalizationHelper`), even after
   `manage_scene load main` and a domain reload; only a `unity restart` cleared it. Probe layouts in a built player's
   Deck tour (`layout.json` per shot) instead, or restart the editor before the next run.
+- **A whole-assembly run executes `[Explicit]` tests** (measured 2026-10-16, w1409, lothdesktop slot2): `run_tests` with
+  `assembly_names` only ran `LandingTimingTest.CaptureOldLandingStates`, an `[Explicit]` fixture writer, and it rewrote its
+  fixture from the wrong code (4 of 8 states; the replay then failed and the bad file was committed). A test that writes files
+  guards itself on a runtime condition (the code it captures from, an environment variable) and `Assert.Ignore`s otherwise.
 - Pass `test_names`, never regex `group_names`. One class through a regex took the job 16.6 s
   against 4.0 s by exact name, and regex runs held the main thread for minutes (measured).
 - Give `run_tests` an `init_timeout` of 120000. A call that answers "Timeout receiving Unity
