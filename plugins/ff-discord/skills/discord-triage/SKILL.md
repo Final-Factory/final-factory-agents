@@ -30,6 +30,15 @@ do not run a pass on them at all. Any other agent may read their threads and dow
 `Discord: https://discord.com/channels/<guild id>/<thread id>` in the PR of a fix instead. Merging
 an `ffbox/*` branch is never followed by a "fixed" or "merged" post: FFBox announces it.
 
+**A worker triaging FFBox's channels cannot list them** (w1386, m5, 2026-10-15): `ffbox_activity` is the orchestrator's,
+the worker machine had no ffdiscord token (`threads` fails with "no bot token"), and `fetch_discord_thread_files` takes
+one thread id and answers `not_found` for the forum's own id. The thread's files carry no player words either: Bug Bot's
+zip is the save (no description), its runtime log has none, and a thread can have no files at all. So a triage brief
+lists every thread in the window with its id, its title AND its opening text (FFBox's conversation of it); a brief with
+titles only costs a round trip per unclear thread. Call `fetch_discord_thread_files` one at a time: parallel calls come
+back "FFBox could not hand it over (busy)", and so did a single one for some minutes after (retry later, or fetch one
+file by name with `file`).
+
 Running a pass by hand was the fallback, for a machine with no ffbox (BEAST, Windows) or a box
 where ffwatch is stopped; for FFBox's channels it is retired. `/loop 15m /discord-triage` is the same thing on a timer, and a
 convenience rather than the design: it re-queries Discord on a fixed interval whether or not
