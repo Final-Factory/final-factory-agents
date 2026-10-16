@@ -1,6 +1,6 @@
 ---
 name: unity-ui
-description: "Build and verify Final Factory's Unity uGUI screens (panels, windows, tabs, HUD, popups, the structured layout and Steam Deck sizing) so they work the way a player sees them. Covers the project's UI map, uGUI layout rules and the pitfalls that broke the w644 Deck hub (layout groups, ContentSizeFitter, anchors, scroll views, grids, canvas scaling at 1280x800, layout fights that flicker, hard-coded colours), the editor rect audit, the Deck tour with full content, and the pixel checks (scripts/deck_audit/ui_check.py: flicker, fill, style, the per-still sheet), and the whole-screen layout census with ui_layout.py (new overlaps between HUD blocks, anchored clusters drifting over 2 px, every touched panel's colour and alpha against a classic panel, every HUD element the change moved at 1920x1080, 1280x800 and 1280x800 docked, each asked for in the brief's own words, and the places Ben fixed himself pinned in hud-pins.json: move only what the person asked to move; and each census judged on its own with ui_layout.py shape: stretched controls, mostly empty windows, walls of text), and how a window opens (lag and a jump after it appears: the probe tour, the open hold). Use before changing or reviewing any UI, and before calling a UI change verified."
+description: "Build and verify Final Factory's Unity uGUI screens (panels, windows, tabs, HUD, popups, the structured layout and Steam Deck sizing) so they work the way a player sees them. Covers the project's UI map, uGUI layout rules and the pitfalls that broke the w644 Deck hub (layout groups, ContentSizeFitter, anchors, scroll views, grids, canvas scaling at 1280x800, layout fights that flicker, hard-coded colours), the editor rect audit, the Deck tour with full content, and the pixel checks (scripts/deck_audit/ui_check.py: flicker, fill, style, the per-still sheet), and the whole-screen layout census with ui_layout.py (new overlaps between HUD blocks, anchored clusters drifting over 2 px, every touched panel's colour and alpha against a classic panel, every HUD element the change moved at 1920x1080, 1280x800 and 1280x800 docked, each asked for in the brief's own words, and the places Ben fixed himself pinned in hud-pins.json: move only what the person asked to move; and each census judged on its own with ui_layout.py shape: stretched controls, mostly empty windows, walls of text; and the design gate before anyone sees a still: design-rubric.md, ui_look.py colour (loud fills, a selected row bleeding into its controls, contrast) and a fresh ui-critic on the pack ui_look.py pack builds), and how a window opens (lag and a jump after it appears: the probe tour, the open hold). Use before changing or reviewing any UI, and before calling a UI change verified."
 ---
 
 # Unity UI: build it, then verify it like a player
@@ -204,6 +204,46 @@ Then the evidence-gate's [UI checklist](../evidence-gate/checklists/ui.md) and, 
 `Content:`, `Full content:`, `Style:`, `Shots:` lines and a flicker result (`pr_evidence.py`
 fails a UI change without them). Publish the stills, clips and the sheet with `publish_review`, and
 put the stills of every screen in front of the person who asked for the look.
+
+## 5a. Judge the design before anyone sees it (w1399)
+
+Every check above compares one thing with another. None asks whether the screen looks good, so Ben's corrections of
+2026-10-16 ("you make bad UI mistakes constantly") went past three workers that had all written "Looked: yes". Before a
+still or a mock goes to anyone:
+
+1. **Build from what the game draws.** The game repo's `docs/UI-Style.md` lists the components with the colours they come
+   out as on screen, the states, the spacing and the reference panels.
+   **UI alpha blends in linear space here** (measured, w1399): a see-through colour draws much stronger than in an sRGB
+   mock, so give controls opaque fills, show a selected row's state on an edge or its number, and read colours off the
+   built pixels.
+2. **Grade every still yourself** with [design-rubric.md](design-rubric.md), eight PASS/FAIL questions with where. That is
+   the `Eye:` line.
+3. **Measure the colour against the before:**
+
+   ```sh
+   python "<this skill's base directory>/ui_look.py" colour after-1920.png::after-1920-layout.json \
+       --before before-1920.png::before-1920-layout.json
+   ```
+
+   It prints the `Colour:` line:
+   - LOUD FILL: a fill over 0.1 % of the screen at L* 60+ and C* 25+;
+   - BLEED: a see-through control in a selected row more than delta E 5 off its twin in a plain row;
+   - LOW CONTRAST: text under 3:1.
+
+   Findings the before still also has are STANDING. With no census, pass `--rect` for the panel and `--same A:B` for
+   pairs that must match. The pure-Python PNG reader needs no Pillow (Pillow is faster).
+4. **A fresh critic, never you.** [critic.md](critic.md) is the recipe:
+
+   ```sh
+   python "<this skill's base directory>/ui_look.py" pack --after a-1920.png::a-1920-layout.json --after a-docked.png::a-docked-layout.json \
+       --before b-1920.png --before b-docked.png --repo <game repo> --brief brief.txt --out <tmp>/pack-1
+   ```
+
+   Then run `Agent` with `subagent_type: "ff-agents:ui-critic"` and the line the pack prints. Fix or answer every broken or
+   ugly finding, then run a new critic on a new pack. Publish its `critic.md` with the stills and paste its `Critic:` line.
+
+The evidence-gate's design gate (checklist `ui.md`, at its top, items 27, 28, 30, 31) is the rule; `pr_evidence.py` checks
+the four lines.
 
 ## 5b. Check the rest of the screen, before and after
 
