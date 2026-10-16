@@ -47,3 +47,11 @@ Also seen: the game font (Khyay) has no `▸`/`▶`/`→` (they come from a fall
 
 Related: [[ui-screenshot-worst-case-before-done]], [[no-external-edits-to-open-unity-scenes]],
 [[textlocalization-duplicate-gotcha]].
+
+**w1386 hit the same churn (2026-10-16): one `EditorSceneManager.SaveScene` of main.unity after replacing one
+component rewrote 1,782 lines** (editor scripts add LayoutElements at load, floats reformatted). Discard it (open an
+empty scene first, then `git checkout -- Assets/Scenes/main.unity`) and edit the YAML by hand. To turn a
+VerticalLayoutGroup into a HorizontalLayoutGroup without losing the scene's overrides on it, change only its
+`m_Script` guid (59f8146938fff824cb5fd77236b75775 -> 30649d3a9faa99c48a7b1166b86bf2a0, same serialized fields): the
+component keeps its fileID, so an instance's `propertyPath` overrides that target it still apply. Reorder children in
+the parent RectTransform's `m_Children` list. The whole Light window fix was 18 lines of prefab and 16 of scene.

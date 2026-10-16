@@ -216,7 +216,23 @@ a pull request into master and prints the merge command. Wait for that PR's chec
 worker: `blocked_on` with `prs: ["ci:Final-Factory/FinalFactory#<n>"]`), then merge it with the printed
 `gh pr checks <n> && gh pr merge <n> --merge --match-head-commit <sha>`. **The merge commit on master is
 the release** (it changes `FFVersion.cs` against its first parent), so the build starts when the PR
-merges, not when the branch is pushed:
+merges, not when the branch is pushed.
+
+**Right before `gh pr merge`, read what master took since the bump** (w1388, Build 107: #1814, a player fix,
+and #1812, a toggled change, merged while the bump PR's CI ran). The merge commit ships them, so
+`git log --first-parent --format='%h %s' <bump base>..origin/master`, and a player-facing one goes into
+the notes by a commit on `release/<version>` (that push reruns the PR's CI, about 18 min). No checkout or
+clone is needed (a `--depth 3` clone of FinalFactory did not finish in 2 min); build the commit with a
+temporary index from any FinalFactory checkout:
+
+```sh
+git fetch origin release/<v>
+export GIT_INDEX_FILE="$TMPDIR/idx-<v>"; git read-tree origin/release/<v>
+B=$(git hash-object -w Temp/release-notes-<v>.md)
+git update-index --cacheinfo 100644,$B,cicd/release-notes/<v>.md; T=$(git write-tree); unset GIT_INDEX_FILE
+C=$(git commit-tree $T -p origin/release/<v> -m "<v> notes: <what was added>")
+git push origin $C:refs/heads/release/<v>    # then check the PR's headRefOid is $C and wait for its CI again
+```
 
 ```sh
 scripts/trigger-ci-release.sh master --dry-run --notes Temp/release-notes-0.50.0.43.md   # shows it, changes nothing

@@ -24,3 +24,6 @@ compile), `return "\n" + ...` likewise, and a bash `... \<newline> -executeMetho
   `workflow` scope ([[a-workflow-file-push-needs-the-workflow-scope]]); cut pull-request branches with a temporary index
   (`GIT_INDEX_FILE`, `git read-tree origin/master`, `git diff <commit>^ <commit> | git apply --cached --3way`,
   `git commit-tree`) so the worktree and its history stay untouched.
+
+**Again in w1398 (2026-10-16), three more times in one session:** a TypeScript route regex written as `'[\\w-]'` arrived as `'[\w-]'`, so the pattern matched `w` only (this very note's text, patched through a heredoc, lost its backslashes the same way and was fixed with Edit), an HTTP reply's escaped CRLF arrived as real line breaks inside a string literal, and a test's `"Material:
+"` did the same. Each time `npx tsc` or the test run caught it, not the edit. Write any patch script that holds a backslash with the Write tool (a `.py` file in `$TMPDIR`) and run that file; never a heredoc.
