@@ -83,6 +83,13 @@ person asking for that exact element to move. Census 1920x1080, 1280x800 and 128
 `pins`; `pr_evidence.py --brief` fails any move not asked for in the brief's own words and any broken pin
 ([UI checklist](checklists/ui.md), item 22).
 
+**Options and mocks too** (Ben, w1429, the fifth correction: "getting extremely worried you guys moved the fucking station
+controls panel when i told you not to twelve times"; [lesson](lessons/a-ui-change-leaves-the-rest-of-the-screen-as-it-was.md#options-and-mocks-move-only-what-the-person-named-w1429-2026-10-17)). An
+option or mock may move only the elements the person named. When the named change does not fit, report the conflict and
+offer only options that keep every unnamed element in place, or ask; never offer one that moves it. `ui_layout.py
+options` against master's census puts each option IN or OUT before the round goes out, and the critic fails an option
+with an unnamed move (item 32).
+
 ## No UI still reaches a person before the design gate
 
 Ben, 2026-10-16: "you make bad UI mistakes constantly". The gate, at the top of the [UI checklist](checklists/ui.md):
@@ -299,6 +306,10 @@ One file each under `lessons/`: the rule, why (the incident, dated), how to appl
   Ben: "i didnt tell you to move that"); w894: the hard rule, no "justified" moves, quotes checked against the
   brief, the docked layout censused, and the places Ben fixed pinned (`unity-ui/hud-pins.json`) because the dock had
   kept Station Info and the hover card top left since w772 and every parent-based diff called that normal.
+- [Options move only what the person named](lessons/a-ui-change-leaves-the-rest-of-the-screen-as-it-was.md#options-and-mocks-move-only-what-the-person-named-w1429-2026-10-17): the hard rule holds
+  for every option and mock offered, not only the pull request (w1429: on w1386 the round-3 options A, B and C each moved
+  the station controls panel after Ben said "keep the station controls where they were"); `ui_layout.py options` against
+  master's census drops every option with an unnamed move, and the ui-critic fails it (checklist item 32).
 - [Window overlaps are measured by the tool, not by eye](lessons/a-ui-change-leaves-the-rest-of-the-screen-as-it-was.md#window-overlaps-are-measured-by-the-tool-not-by-eye-w981-2026-10-11): `ui_layout.py
   overlaps` counted only always-on HUD blocks, so the Station strip standing 11 px over the Player Inventory (w961, #1444;
   22 to 45 px on develop with w978) read 0 and a worker measured rects by hand (w981); now every open window against the

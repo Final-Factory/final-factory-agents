@@ -1,6 +1,6 @@
 ---
 name: a-ui-change-leaves-the-rest-of-the-screen-as-it-was
-description: "A UI change proves it left the rest of the screen as it was: a whole-screen layout census before and after (whole HUD showing, every slide-out open) with no new overlap between always-on HUD blocks, no anchored cluster drifting more than 2 px, and every touched panel's measured colour and alpha within reach of a classic panel's. A panel the player opens on purpose and can close may cover the HUD, if it draws on top, is clickable, stays on screen and gives the HUD back (Ben, w732 and w742). Move only what the person asked to move: every moved element at 1920x1080, 1280x800 and 1280x800 docked is listed and asked for in the brief's own words, or put back, and the places Ben fixed himself (hud-pins.json) hold in every census (Ben, w826 and w894: \"stop moving panels around that I don't ask you to move around\"). Checked by the released pr_evidence.py, not an older copy. Open windows against each other and the HUD are measured by ui_layout.py (Window overlaps:), never by eye (w981)."
+description: "A UI change proves it left the rest of the screen as it was: a whole-screen layout census before and after (whole HUD showing, every slide-out open) with no new overlap between always-on HUD blocks, no anchored cluster drifting more than 2 px, and every touched panel's measured colour and alpha within reach of a classic panel's. A panel the player opens on purpose and can close may cover the HUD, if it draws on top, is clickable, stays on screen and gives the HUD back (Ben, w732 and w742). Move only what the person asked to move: every moved element at 1920x1080, 1280x800 and 1280x800 docked is listed and asked for in the brief's own words, or put back, and the places Ben fixed himself (hud-pins.json) hold in every census (Ben, w826 and w894: \"stop moving panels around that I don't ask you to move around\"). The same holds for every option and mock offered before the PR: an option moves only what the person named, checked by ui_layout.py options against master and the ui-critic (Ben, w1429: "getting extremely worried you guys moved the fucking station controls panel when i told you not to twelve times"). Checked by the released pr_evidence.py, not an older copy. Open windows against each other and the HUD are measured by ui_layout.py (Window overlaps:), never by eye (w981)."
 date: 2026-10-09
 ---
 
@@ -217,6 +217,50 @@ brief's own words; `pr_evidence.py --brief`. The places Ben fixed himself are in
 `unity-ui/tests/fixtures/w894-develop-*.json`): it breaks Station Info (bottom edge at 264 of 800 px, centre x 282) and the
 hover card (right edge at 358 of 1280 px) at 1280x800 docked, and passes 1920x1080 and 1280x800 undocked. The fix itself is
 w895's.
+
+These checks gate the pull request only. The options and mocks offered before it follow the same rule, checked by
+`ui_layout.py options` before the round goes out: [Options and mocks move only what the person named](#options-and-mocks-move-only-what-the-person-named-w1429-2026-10-17)
+(w1429, the fifth correction).
+
+## Options and mocks move only what the person named (w1429, 2026-10-17)
+
+**Rule.** An option, mock or "round" of choices may move only the elements the person's own words name. Everything else
+stays where master has it, in every option. When the named change does not fit without moving something else, say so
+to the person in plain words (what the named change needs, what is in its way) and offer only options that keep every
+unnamed element in place, or ask which element may move. Never offer an option that moves an unnamed element, not as
+one choice of three and not as "the one with a trade-off": a person picking between three options that all break their
+rule has no good choice, and reads it as the rule ignored again.
+
+**Why.** On w1386 (Discord bug triage, worker d2224b21) Ben asked only to move one button: "move the
+save new blueprint button up so that the warning buttons show underneath... and move it so slightly to the right", and
+earlier said "keep the station controls where they were". The worker's round-3 options A, B and C for 1280 each moved the
+station controls panel. Ben: "getting extremely worried you guys moved the fucking station controls panel when i told
+you not to twelve times".
+
+It is the fifth correction of the kind:
+- w813: "you did more with the overall layout than i wanted", and "why is station info at the top left? i didnt tell
+  you to move that" (w826 added the before/after census of every move, `ui_layout.py moves`).
+- w895: "stop moving panels around that I don't ask you to move around... Please update the harness to not fucking
+  move panels around unless I tell you to" (w894 made it a hard rule, with `pins` and `pr_evidence.py --brief`).
+
+Those checks all run on the pull request. The options came before any pull request, as stills for the person to pick
+from, so no check looked at them, and the critic graded each option's look, not what it moved.
+
+**The checklist line that would have caught it** ([UI checklist](../checklists/ui.md), item 32): "Every option and mock
+moves only what the person named. Checked before the person sees the round": `ui_layout.py options --option A
+m-1280.json a-1280.json --option B ... --option C ... --named <the Save New Blueprint button's census path>` would
+have printed `Options: 3 option(s), 0 keep every element the person did not name in place, 3 OUT (A, B, C)`, each with
+a line naming `GamePanels/SelectionColumnStrip` (the station controls strip; `StructuredStation` in the dock) and how far it moved. The test
+`OptionsTest` in `unity-ui/tests/test_ui_layout.py` is that case, drawn, plus #1282's measured Station Info move
+offered as an option.
+
+**How to apply.**
+1. Before drawing options, write the elements the person's words name, quoted. Only those are `--named`.
+2. Census every option still and master on the same screens; run `ui_layout.py options`. Drop every OUT option.
+3. If none is left, the report says the conflict and asks, or offers smaller steps that move only the named element.
+4. Pack the remaining stills for a fresh `ff-agents:ui-critic` with master's still as each one's `--before`; its
+   `Unnamed moves:` must read none.
+5. The report offering the round pastes the `Options:` line; an orchestrator relaying it checks that line first.
 
 ## Window overlaps are measured by the tool, not by eye (w981, 2026-10-11)
 

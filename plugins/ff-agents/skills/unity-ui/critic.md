@@ -30,7 +30,9 @@ brief's reasoning or the worker's notes, given only what a person would see.
 
    - `--after`: every still and mock that will go to the person, each with its census, or with `@x0,y0,x1,y1` around the
      panel when there is none.
-   - `--before`: the same screens before, in the same order.
+   - `--before`: the same screens before, in the same order. For a round of options or mocks, master's still of the
+     same screen is each option's before, so the critic can fail an option that moves an element the person did not
+     name (w1429; run `ui_layout.py options` first and pack only the options it keeps).
    - `--ref`, for the panel's own history: the mock or earlier round the person approved for this work, so the critic can
      check "as approved" and "nothing else moved". The default references are the game's best panels.
 

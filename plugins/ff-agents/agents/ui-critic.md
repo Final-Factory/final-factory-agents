@@ -34,7 +34,14 @@ your report: you judge what is on screen. Never read the game's code, the pull r
 4. Compare side by side, item by item: the after against the reference panels ("does it look like the same game: frame,
    navy, buttons, state marks, spacing?") and the after against the before ("better, the same or worse on each item?").
    Do not let the order you looked at them decide.
-5. Hunt for what should not be there: a fill brighter than everything else, a colour bleeding into the controls inside a
+5. **Only what the person named moves.** Put each after still beside its before and look for every panel, window, button
+   row or HUD element that sits in another place or at another size. Each one the person's words do not name is BROKEN
+   and NEW, however good it looks: an option or mock that moves an element the person did not name is never offered.
+   On w1386 Ben asked only to move the Save New Blueprint button and had said "keep the station controls where they
+   were"; all three options of the next round moved the station controls panel. Ben: "getting extremely worried you
+   guys moved the fucking station controls panel when i told you not to twelve times" (w1429). Fail that option; do
+   not rank it. Write `Unnamed moves: none` or one line per still and element.
+6. Hunt for what should not be there: a fill brighter than everything else, a colour bleeding into the controls inside a
    selected row, a stretched or squashed control, an empty half of a window, a dense block of text, text you have to
    squint at, edges that do not line up, a control unlike its siblings.
 

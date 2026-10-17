@@ -584,6 +584,97 @@ def screen(*elements):
 STRIP, INVENTORY, STATION_INFO = "SelectionColumnStrip", "MiniInventory/Background", "BuildInfoPanel/Parent"
 
 
+def blueprint_bar(save_x0, save_y0):
+    """The Blueprints window's action bar with its Save New Blueprint button at (save_x0, save_y0) and a sibling."""
+    return [el("BlueprintPanelChild/ActionBar/Background", [392, 400, 850, 444]),
+            el("BlueprintPanelChild/ActionBar/SaveNewBlueprint/Icon", [save_x0, save_y0, save_x0 + 120, save_y0 + 30]),
+            el("BlueprintPanelChild/ActionBar/SaveNewBlueprint/Label", [save_x0 + 30, save_y0 + 6, save_x0 + 110,
+                                                                         save_y0 + 24], kind="TextMeshProUGUI"),
+            el("BlueprintPanelChild/ActionBar/Delete/Icon", [700, 408, 760, 438])]
+
+
+def station_strip(y0):
+    """The classic layout's Station controls strip (GamePanels/SelectionColumnStrip) at y0."""
+    return [el("SelectionColumnStrip/Frame", [470, y0, 790, y0 + 60]),
+            el("SelectionColumnStrip/Frame/Buttons/Pause", [480, y0 + 10, 520, y0 + 50])]
+
+
+class OptionsTest(unittest.TestCase):
+    """w1429: on w1386 Ben asked only to move the Save New Blueprint button ("move the save new blueprint button up so
+    that the warning buttons show underneath... and move it so slightly to the right") and had said "keep the station
+    controls where they were"; the worker's round-3 options A, B and C for 1280 each moved the station controls panel.
+    Ben: "getting extremely worried you guys moved the fucking station controls panel when i told you not to twelve
+    times". w826 and w894 checked the pull request's moves; nothing checked the options offered before it."""
+
+    NAMED = ["BlueprintPanelChild/ActionBar/SaveNewBlueprint"]
+    PINS = json.loads(ul.DEFAULT_PINS.read_text(encoding="utf-8"))
+
+    def census(self, save=(400, 408), strip_y=470, info=(558, 515)):
+        base = hud()
+        base["elements"] += blueprint_bar(*save) + station_strip(strip_y) + station_info(*info)
+        return base
+
+    def test_an_option_that_moves_the_station_controls_is_out(self):
+        check = ul.option_check(self.census(), self.census(save=(410, 360), strip_y=420), self.NAMED, self.PINS)
+        self.assertEqual(check["unnamed"], ["GamePanels/SelectionColumnStrip: x +0, y -50 px"])
+        self.assertEqual(check["named"], ["GamePanels/BlueprintPanelChild/ActionBar/SaveNewBlueprint: x +10, y -48 px"])
+
+    def test_an_option_that_moves_only_the_named_button_keeps_everything_else(self):
+        check = ul.option_check(self.census(), self.census(save=(410, 360)), self.NAMED, self.PINS)
+        self.assertEqual(check["unnamed"], [])
+
+    def test_naming_a_child_does_not_name_its_whole_window(self):
+        before, after = self.census(), self.census()
+        for e in after["elements"]:
+            if "BlueprintPanelChild" in e["path"]:
+                e["rect"] = [e["rect"][0], e["rect"][1] - 40, e["rect"][2], e["rect"][3] - 40]
+        unnamed = ul.option_check(before, after, self.NAMED, self.PINS)["unnamed"]
+        self.assertEqual(unnamed, ["GamePanels/BlueprintPanelChild: x +0, y -40 px"])
+        self.assertFalse(ul.is_named(f"{GP}/BlueprintPanelChild", self.NAMED))
+        self.assertTrue(ul.is_named(f"{GP}/BlueprintPanelChild/ActionBar/SaveNewBlueprint/Label", self.NAMED))
+        self.assertFalse(ul.is_named(f"{GP}/BlueprintPanelChild/ActionBar/SaveNewBlueprintOld", self.NAMED))
+
+    def test_a_gone_panel_is_out(self):
+        after = self.census()
+        after["elements"] = [e for e in after["elements"] if "SelectionColumnStrip" not in e["path"]]
+        self.assertEqual(ul.option_check(self.census(), after, self.NAMED, self.PINS)["unnamed"],
+                         ["GamePanels/SelectionColumnStrip: gone from the screen"])
+
+    def test_the_command_puts_each_option_in_or_out_and_fails_while_one_is_out(self):
+        import contextlib
+        import io
+        with tempfile.TemporaryDirectory() as tmp:
+            paths = {}
+            for name, census in (("master", self.census()), ("a", self.census(save=(410, 360), strip_y=420)),
+                                 ("b", self.census(save=(410, 360)))):
+                paths[name] = Path(tmp) / f"{name}.json"
+                paths[name].write_text(json.dumps(census), encoding="utf-8")
+            out = io.StringIO()
+            with contextlib.redirect_stdout(out):
+                code = ul.main(["options", "--option", "A", str(paths["master"]), str(paths["a"]),
+                                "--option", "B", str(paths["master"]), str(paths["b"]), "--named", self.NAMED[0]])
+            self.assertEqual(code, 1)
+            text = out.getvalue()
+            self.assertIn("Options: 2 option(s), 1 keep every element the person did not name in place, 1 OUT (A)", text)
+            self.assertIn("- A 1280x800 undocked: OUT, moves what the person did not name: GamePanels/SelectionColumnStrip", text)
+            self.assertIn("- B 1280x800 undocked: keeps every unnamed element in place; named moved:", text)
+            out = io.StringIO()
+            with contextlib.redirect_stdout(out):
+                code = ul.main(["options", "--option", "B", str(paths["master"]), str(paths["b"]),
+                                "--named", self.NAMED[0]])
+            self.assertEqual(code, 0)
+
+    def test_the_recorded_1282_station_info_move_is_out_unless_named(self):
+        # MEASURED censuses (w826): offered as an option, #1282's layout moves Station Info and breaks its pin.
+        fixtures = HERE / "fixtures"
+        before, after = ul.load(fixtures / "w826-1282-before-1920.json"), ul.load(fixtures / "w826-1282-after-1920.json")
+        unnamed = ul.option_check(before, after, [], self.PINS)["unnamed"]
+        self.assertTrue(any(u.startswith("GamePanels/BuildInfoPanel") for u in unnamed), unnamed)
+        self.assertTrue(any(u.startswith("pin Station Info broken") for u in unnamed), unnamed)
+        named = ul.option_check(before, after, ["BuildInfoPanel"], self.PINS)["unnamed"]
+        self.assertFalse(any("BuildInfoPanel" in u or "Station Info" in u for u in named), named)
+
+
 class WindowOverlapTest(unittest.TestCase):
     """w981: `overlaps` counted only always-on HUD blocks, so the Station strip standing 11 px over the Player Inventory
     (Deck classic, 1280x800 UI 0.8, a Cargo Hold in reach; #1444, w961) was reported as 0 and the w978 worker measured the

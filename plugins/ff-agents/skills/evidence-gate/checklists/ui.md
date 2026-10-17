@@ -30,6 +30,12 @@ move. A layout change touches only what was asked; whatever else its code would 
 conflict you cannot solve without moving something goes back to the person as a question before the PR. Item 22 is how it
 is checked; the places Ben fixed himself are pinned in `unity-ui/hud-pins.json`.
 
+**The same rule holds for every option and mock you offer** (w1429, Ben's fifth correction, 2026-10-17: "getting extremely
+worried you guys moved the fucking station controls panel when i told you not to twelve times"). An option or mock may
+move only the elements the person named. When the named change does not fit without moving something else, report the
+conflict and offer only options that keep every unnamed element in place, or ask; never offer an option that moves one,
+not even as one choice of three. Item 32 is how it is checked, before the person sees the round.
+
 **The line that would have caught w644's hub** (#1251, Ben's Deck, Build 89):
 every screen and sub-view, in a late-game save, at the target size and UI scale in a built player,
 shows its whole content (grid, list, tree, preview) on the classic panels' colours and art, holds
@@ -285,7 +291,8 @@ control, and a redesign goes out as 2 or 3 clearly different options built from 
     mod-mismatch dialog, the research and unlock popups, the save and load panel) and build 2 or 3 clearly different
     layouts from their components: title row, list rows, buttons, spacing, fonts. Show each as built-game stills at
     1920x1080 and 1280x800 with the long content, and let the person pick. Ben (w1296): "reuse components when you can
-    damnit". A round that only nudges spacing after the person said it looks wrong is the w1296 miss.
+    damnit". A round that only nudges spacing after the person said it looks wrong is the w1296 miss. Every option is
+    different only in what the person named: each one keeps everything else where master has it (item 32).
 30. **A fresh critic, not the author, before any person sees a still (w1399).** The worker sees what it meant: all three
     screens Ben rejected on 2026-10-16 had "Looked: yes" in their PRs (#1744, #1813, #1817), and models favour their own
     work and the framing they are given (w1399 research). `ui_look.py pack --after <still>::<census> ... --before <still>
@@ -313,6 +320,28 @@ control, and a redesign goes out as 2 or 3 clearly different options built from 
     words asking for it (`intended (who): "..."`). The fix is the game's quiet fill for a secondary action, opaque
     controls with the state on an edge or the number, and text that stands clear. No census: `--rect` the panel and
     `--same A:B` for each control in a selected row against its twin.
+
+32. **Every option and mock moves only what the person named (w1429). Checked before the person sees the round.** On
+    w1386 Ben asked only to move the Save New Blueprint button ("move the save new blueprint button up so that the
+    warning buttons show underneath... and move it so slightly to the right") and had said "keep the station controls
+    where they were"; the round-3 options A, B and C for 1280 each moved the station controls panel, and Ben: "getting
+    extremely worried you guys moved the fucking station controls panel when i told you not to twelve times". Item 22
+    and the hard rule checked the pull request; the options came before it, so nothing looked. Before a round goes out:
+    - Take a census with every option still (a mock without a census: a still of master at the same size beside it),
+      and master's census on the same screens and layouts (1920x1080, 1280x800, 1280x800 docked where the round covers
+      them).
+    - `ui_layout.py options --option A m-1280.json a-1280.json --option B m-1280.json b-1280.json ... --named <path
+      fragment of each element the person's words name>` (unity-ui) prints the `Options:` line: each option IN, or OUT
+      with every object it moved, resized or hid that is not named, and every pin it breaks. Exit 1 while one is OUT.
+      `--named` takes only what the person's own quoted words name, by the census path of that object ("the save new
+      blueprint button" is the button's own object, read off the census, not its window and not the strip beside it).
+    - An OUT option is dropped, never offered and never "the one with a trade-off". When no option fits without moving
+      an unnamed element, tell the person that conflict in plain words (what the named change needs, what is in its
+      way) and offer only options that keep every unnamed element where it is (a smaller step, another place for the
+      named element itself), or ask which element may move.
+    - The fresh critic gets master's still as each option's `--before`; it fails every option with an unnamed move
+      (`Unnamed moves:` in its report, item 30).
+    - The report that offers the options pastes the `Options:` line. An orchestrator relaying the round checks it first.
 
 19. **The Deck tour is a stand-in (w770).** It forces its own window size and a scripted Deck, so it cannot show Steam's
     layout choice, the Proton first-frame resolution, the Steam client version or touch. A Deck UI change says "verified on
