@@ -55,6 +55,16 @@ pull request carries (pr_evidence.py reads them) and exits 1 when any of the fir
     ui_layout.py moves --pair before-1920.json after-1920.json --pair before-1280.json after-1280.json [--move-px 4]
                                                the `Moved:` line and its list over both standard sizes (w826)
 
+    ui_layout.py options --option A master-1280.json a-1280.json [--option A master-1920.json a-1920.json]
+                         --option B master-1280.json b-1280.json ... --named <path fragment> [--named ...]
+                                               the `Options:` line (w1429): every option or mock still of a round, each
+                                               against master's census on the same screen, BEFORE the person sees it. A
+                                               moved, resized or gone object that is not under a --named fragment (the
+                                               elements the person's words name), or a broken pin (hud-pins.json) whose
+                                               element is not named, puts that option OUT: drop it, never offer it. Exits 1
+                                               while one is OUT (w1386: options A/B/C each moved the station controls
+                                               after Ben said to keep them where they were).
+
     ui_layout.py covered-text <census.json>    the texts of opened screens drawn under an opaque element (w727); exits 1 on one
 
     ui_layout.py shape <census.json> [...] [--repo <game repo>]
@@ -756,6 +766,60 @@ def pinned_lines(censuses: list[tuple[str, dict]], spec: dict, how: str) -> tupl
 
 
 # ---------------------------------------------------------------------------------------------------------------
+# options (w1429)
+
+
+def is_named(path: str, named: list[str]) -> bool:
+    """The object is one the person named, or inside one: a --named fragment matches whole path segments
+    ("BlueprintActionBar/SaveNewBlueprint" matches ".../BlueprintActionBar/SaveNewBlueprint/Label", not
+    ".../BlueprintActionBar"). An ancestor of a named object is not named: when the whole block moved together, its
+    siblings moved too."""
+    padded = "/" + path.strip("/") + "/"
+    return any("/" + n.strip("/") + "/" in padded for n in named if n.strip("/"))
+
+
+def option_check(base: dict, after: dict, named: list[str], spec: dict | None = None, move_px: float = 4.0) -> dict:
+    """One option still's census against master's on the same screen and layout: what moved that the person did not
+    name. Returns {"screen", "unnamed": [line text], "named": [line text]}. Every moved part (moves(): the largest object
+    that moved as one) and every gone block outside the named fragments is unnamed; so is a pin of hud-pins.json the
+    option breaks while master keeps it, unless its element is named."""
+    result = moves(base, after, move_px)
+    unnamed, ok = [], []
+    for block in result["moved"]:
+        for part in block["parts"]:
+            text = f"{under_canvas(part['path'])}: {shift(part['delta'])}"
+            (ok if is_named(part["path"], named) else unnamed).append(text)
+    for path in result["gone"]:
+        (ok if is_named(path, named) else unnamed).append(f"{under_canvas(path)}: gone from the screen")
+    for pin in (spec or {}).get("pins", []):
+        if pin_check(after, pin)[0] == "broken" and pin_check(base, pin)[0] != "broken"                 and not any(n.strip("/").split("/")[-1] == pin["element"] or pin["element"] in n for n in named):
+            unnamed.append(f"pin {pin['name']} broken: it belongs {pin['where']}")
+    return {"screen": result["screen"], "unnamed": unnamed, "named": ok}
+
+
+def option_lines(options: dict[str, list[dict]], named: list[str], how: str) -> tuple[list[str], int]:
+    """The `Options:` line and one line per option and screen, and the number of options OUT."""
+    out = [name for name, checks in options.items() if any(c["unnamed"] for c in checks)]
+    lines = [f"Options: {len(options)} option(s), {len(options) - len(out)} keep every element the person did not name in "
+             f"place, {len(out)} OUT ({', '.join(out) or 'none'}) ({how}, each against master on the same screen; named: "
+             f"{', '.join(named) or 'nothing'})"]
+    for name, checks in options.items():
+        for c in checks:
+            if c["unnamed"]:
+                for text in c["unnamed"]:
+                    lines.append(f"- {name} {c['screen']}: OUT, moves what the person did not name: {text}")
+            else:
+                moved = f"; named moved: {'; '.join(c['named'])}" if c["named"] else ""
+                lines.append(f"- {name} {c['screen']}: keeps every unnamed element in place{moved}")
+    if out:
+        lines.append("  An option that moves an element the person did not name is never offered (w1429: Ben, \"getting "
+                     "extremely worried you guys moved the fucking station controls panel when i told you not to twelve "
+                     "times\"). Drop it; when the named change does not fit without moving something, report the conflict "
+                     "and offer only options that keep it in place, or ask.")
+    return lines, len(out)
+
+
+# ---------------------------------------------------------------------------------------------------------------
 # clusters
 
 
@@ -1298,6 +1362,17 @@ def run_moves(args) -> int:
     return 0
 
 
+def run_options(args) -> int:
+    spec = json.loads(Path(args.pins).read_text(encoding="utf-8"))
+    options: dict[str, list[dict]] = {}
+    for name, base, after in args.option:
+        options.setdefault(name, []).append(option_check(load(base), load(after), args.named, spec, args.move_px))
+    lines, out = option_lines(options, args.named, "ui_layout.py options")
+    for line in lines:
+        print(line)
+    return 1 if out else 0
+
+
 def run_overlaps(args) -> int:
     census = load(args.census)
     spec = json.loads(Path(args.clusters).read_text(encoding="utf-8"))
@@ -1366,6 +1441,13 @@ def main(argv=None) -> int:
     q.add_argument("census", nargs="+")
     q.add_argument("--pins", default=str(DEFAULT_PINS))
     c.add_argument("--pins", default=str(DEFAULT_PINS))
+    w = sub.add_parser("options", help="every option still of a round against master: moves only what the person named (w1429)")
+    w.add_argument("--option", nargs=3, action="append", required=True, metavar=("NAME", "MASTER", "OPTION"),
+                   help="an option's name, master's census and the option's census on the same screen (repeat per screen)")
+    w.add_argument("--named", action="append", default=[],
+                   help="a path fragment of an element the person's words name (repeat); everything else stays put")
+    w.add_argument("--pins", default=str(DEFAULT_PINS))
+    w.add_argument("--move-px", type=float, default=4.0)
     o = sub.add_parser("overlaps", help="the overlapping block pairs of one census")
     o.add_argument("census")
     o.add_argument("--clusters", default=str(DEFAULT_CLUSTERS))
@@ -1382,7 +1464,7 @@ def main(argv=None) -> int:
         p.add_argument("--block-depth", type=int, default=2)
     args = ap.parse_args(argv)
     try:
-        return {"check": run_check, "overlaps": run_overlaps, "clusters": run_clusters, "covered-text": run_covered_text, "moves": run_moves, "pins": run_pins, "shape": run_shape}[args.cmd](args)
+        return {"check": run_check, "overlaps": run_overlaps, "clusters": run_clusters, "covered-text": run_covered_text, "moves": run_moves, "options": run_options, "pins": run_pins, "shape": run_shape}[args.cmd](args)
     except (ValueError, OSError, KeyError) as error:
         print(f"ui_layout: {error}", file=sys.stderr)
         return 2
