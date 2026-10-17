@@ -164,6 +164,51 @@ class ToggledOff(Fixture):
         self.assertEqual([], problems)
 
 
+class OnInA1_0Build(unittest.TestCase):
+    """w1436: from 1.0.0.0 every 1.0 toggle is on by default (FeatureToggles.OnByDefault), so a change behind one is
+    in the build and in the notes; at 0.50 (pre-1.0) it is still off and still flagged."""
+
+    FORGE = PLAIN_RELEASE.replace("Plain", "Forge").replace("plain-thing", "mining-station-forge")
+    MARKER = "    public static object OnByDefault(object version) => null;\n"
+
+    @classmethod
+    def setUpClass(cls):
+        cls._folder = tempfile.TemporaryDirectory()
+        repo = cls.repo = Path(cls._folder.name)
+        run(repo, "init", "-q", "-b", "main")
+        write(repo, rnc.TOGGLES_PATH, TOGGLE_TEMPLATE % (cls.MARKER + cls.FORGE))
+        write(repo, rnc.VERSION_PATH, "public static FFVersion FinalFactoryVersion = new(0, 50, 0,109);\n")
+        commit(repo, "base")
+        cls.base = run(repo, "rev-parse", "HEAD")
+        merge_pr(repo, "w1067-forge", 1700, lambda: write(
+            repo, "Assets/Scripts/Station/Forge.cs", "if (FeatureToggles.IsOn(FeatureToggles.Forge)) Glow();\n"))
+        cls.at_0_50 = run(repo, "rev-parse", "HEAD")
+        write(repo, rnc.VERSION_PATH, "public static FFVersion FinalFactoryVersion = new(1, 0, 0,0);\n")
+        commit(repo, "1.0.0.0")
+        cls.at_1_0 = run(repo, "rev-parse", "HEAD")
+
+    @classmethod
+    def tearDownClass(cls):
+        cls._folder.cleanup()
+
+    def test_release_names_are_reached_by_major_minor_patch(self):
+        self.assertTrue(rnc.release_reached("Release1_0", (1, 0, 0, 0)))
+        self.assertTrue(rnc.release_reached("1.0", (1, 2, 0, 5)))
+        self.assertFalse(rnc.release_reached("Release1_0", (0, 50, 0, 109)))
+        self.assertFalse(rnc.release_reached(None, (1, 0, 0, 0)))
+
+    def test_a_1_0_toggle_is_off_in_a_0_50_build(self):
+        problems, gated, _ = rnc.check(self.repo, f"{self.base}..{self.at_0_50}", "* Mining stations glow (#1700)\n")
+        self.assertEqual([1700], [pr["number"] for pr in gated])
+        self.assertIn("toggled-off", [p[0] for p in problems])  # "#1700" is also a dev-workflow term
+
+    def test_a_1_0_toggle_is_on_in_a_1_0_build(self):
+        problems, gated, report = rnc.check(self.repo, f"{self.base}..{self.at_1_0}", "* Mining stations glow (#1700)\n")
+        self.assertEqual([], gated)
+        self.assertNotIn("toggled-off", [p[0] for p in problems])
+        self.assertIn("mining-station-forge", report[0])
+
+
 class DevWorkflow(Fixture):
     BUILD_101 = ("* Dev builds now come from master: every change lands there first, and the development branch "
                  "follows it\n")
