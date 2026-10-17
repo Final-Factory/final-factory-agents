@@ -972,10 +972,11 @@ def style(before: dict | None, after: dict, ref_fragment: str, shot=None, ref_sh
           max_alpha: float = 0.2) -> tuple[list[str], list[str]]:
     """(one summary per checked panel, failures). The reference panel comes from ref_census (a census with the
     classic panel open), else before, else after."""
-    ref = None
+    ref = ref_from = None
     for census in (ref_census, before, after):
         if census is not None and ref is None:
             ref = reference(census, ref_fragment)
+            ref_from = census
     touched = changed_panels(before, after, touched_fragments)
     summaries, failures = [], []
     if not touched:
@@ -983,7 +984,10 @@ def style(before: dict | None, after: dict, ref_fragment: str, shot=None, ref_sh
     if ref is None:
         return [], [f"no reference panel matching '{ref_fragment}' in the census: open the classic panel too, or pass --ref"]
     for e in touched:
-        if e["path"] == ref["path"]:
+        # The reference itself, in the same census: nothing to compare. The same panel taken from the before (or
+        # --ref-census) census is its own look on master, which is the reference a spacing or layout change wants
+        # (w1418: `--touched Tooltip(Clone) --ref Tooltip(Clone)` printed "Style: nothing checked").
+        if e["path"] == ref["path"] and ref_from is after:
             continue
         name = short(e["path"])
         da = e.get("alpha", 1) - ref.get("alpha", 1)

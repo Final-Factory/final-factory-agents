@@ -384,6 +384,18 @@ class StyleTest(unittest.TestCase):
         summaries, failures = ul.style(hud(), hud(), "InventoryPanel")
         self.assertEqual((summaries, failures), (["no panel changed colour, alpha or art"], []))
 
+    def test_a_touched_panel_is_compared_with_its_own_look_before(self):
+        # w1418: the alert tooltip as its own reference ("Style: nothing checked" until then).
+        summaries, failures = ul.style(hud(), hud(), "InventoryPanel", touched_fragments=["InventoryPanel"])
+        self.assertTrue(any("InvAndCraft/InventoryPanel (touched) vs" in s and "delta E 0.0" in s for s in summaries), summaries)
+        self.assertEqual(failures, [])
+        after = hud()
+        after["elements"] = [dict(e, color="#0D1724FF") if e["path"].endswith("InventoryPanel") else e for e in after["elements"]]
+        _, failures = ul.style(hud(), after, "InventoryPanel", touched_fragments=["InventoryPanel"])
+        self.assertTrue(any("delta E" in f for f in failures), failures)
+        summaries, _ = ul.style(None, hud(), "InventoryPanel", touched_fragments=["InventoryPanel"])
+        self.assertEqual(summaries, [])
+
     def test_tint_colour_and_alpha_on_the_same_art(self):
         after = hud()
         after["elements"].append(el("BlueprintPanelChild", [392, 68, 850, 444], color="#0D1724FF", alpha=0.98))

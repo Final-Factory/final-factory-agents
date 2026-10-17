@@ -85,3 +85,16 @@
    the world is ready; and `time.perf_counter_ns()` taken when a polled (10 ms) player log first shows `status
    starting-new-game` or `Game setup complete` lands on the same clock as `frames.csv` `t_ns`. Scripts:
    the w1136 worker's `w1136_intro_frames.py` and `assemble.py` (PR #1566's description).
+13. **Four traps of a hover clip through `ffnightly.py`** (w1418, 2026-10-17, beast, a red marker shown while a flying
+   station is hovered):
+   - `--peer-arg` takes ONE value. Repeat it per argument: `--peer-arg solo=-ffFeelFrames --peer-arg solo=<dir>`.
+     Several values after one flag fail with "unrecognized arguments".
+   - A scenario `screenshot` taken while `-ffFeelFrames` dumps frames comes out upside down; the dumped JPGs are
+     upright. Flip the still (`PIL.Image.transpose(FLIP_TOP_BOTTOM)`) or cut it from the frames.
+   - Park the synthetic pointer on empty space first (`ffauto:pointer.moveto|300|700|screen`). After the previous
+     run's `pointer.clear` the real OS mouse resumes, and it was resting on the station: the "before hover" frames of
+     the first final clip already showed the hover.
+   - A building's hover card puts its "Warning! Low power" box beside the pointer, and that box covered the marker
+     under it. `ui.hide` does not hide it. Point at another part of the station so the box falls elsewhere, then
+     check the marker's spot in a 3x crop: a red marker on a Comet Catcher's red glow was found only that way.
+
