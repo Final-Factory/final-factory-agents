@@ -512,7 +512,12 @@ slots").
 - **`build_player.sh` builds the checkout at its commit and reverts uncommitted tracked edits** (w1155: a probe change,
   a doc section and a report fix made while a build ran were gone after it). Commit before you start a build, and
   edit nothing in that tree until it ends; to build another commit (master for a before census), switch the sandbox
-  to a branch at it first (`mcp__machine__switch_branch`, create_from) and back after.
+  to a branch at it first (`mcp__machine__switch_branch`, create_from) and back after. **The same holds for any
+  `-batchmode` build of the tree** (`Editor.ShaderBenchBuild.BuildWindows` and the like): it compiles whatever is on disk
+  when its compile step runs, so an edit made mid-build lands half-done (w1431: a `KnnSystem.cs` edit that called a
+  package method not yet in the tree failed the build with CS1061 and cost an 8-minute bench build). Stage the next
+  change outside the tree (`$TMPDIR`) and copy it in after the build ends, or once its log shows the player assemblies
+  built (`PlayerScriptAssemblies/FFSpaghetti.dll`).
 - **After you stop your editor, `git status` before you wait or end the turn, and `git checkout -- <path>` every asset
   it rewrote on its own.** An editor that runs or quits rewrites tracked assets nobody asked it to (seen: `Assets/Localization/
   LocalizationMasterTable Shared Data.asset`, `Assets/UI/Fonts/NotoSansKR-VariableFont_wght SDF.asset`). When your sandbox is
