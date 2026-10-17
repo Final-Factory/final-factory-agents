@@ -161,7 +161,11 @@ census (`<shot>.json`: small, clipped, off-screen and overlapping text, covered 
   `click text:` fails off screen: scan the list with `scrollto` and a census at 41 places first (the game repo's
   `specs/w1124-hud-regress/make_load_scan.py`). (5) In a seed with enemies near a tour's "far" spot the ship dies there, which
   hides the station strip in one build's census and not the other's; compare in a seed where it lives (w961's).
-- **A tour's pointer, three traps (w957, w959).** (1) `{"at": "x,y"}` counts y from the BOTTOM of the screen (as `drag` does, `docs/UI-Architecture.md`): a marker seen at pixel (1094, 688) from the top is `0.57,0.363`; clicking `0.637` hit empty space and looked like a hit-test bug for four builds. Read a target's pixel from the census/`rect:` line (bottom-origin) and divide. (2) A `press` of fewer than about 3 frames never reaches the game (the Deck bridge polls the held state once a frame, and the clip recorder runs a dev player at 15 fps): click with `hold`, `wait 0.08`, `unhold`; two of those are a 0.3 s double-click at 15 fps. Run a double-click leg alone: three players on one PC run at 9 fps. (3) A scripted pointer cannot pan the map: `WorldMapControlAction.UpdateDragPan` and `UiHelper.IsPointerOverInteractiveUi()` read `Input.mousePosition` (the real mouse), so a `drag` step moves nothing; say "drag-pan not shown" rather than showing a still where nothing moved. A new player-facing pointer reader should use `AutomationPointer.MousePosition`, so a tour can drive it.
+- **A tour's pointer, three traps (w957, w959).** (1) `{"at": "x,y"}` counts y from the BOTTOM of the screen (as `drag` does, `docs/UI-Architecture.md`): a marker seen at pixel (1094, 688) from the top is `0.57,0.363`; clicking `0.637` hit empty space and looked like a hit-test bug for four builds. Read a target's pixel from the census/`rect:` line (bottom-origin) and divide. (2) A `press` of fewer than about 3 frames never reaches the game (the Deck bridge polls the held state once a frame, and the clip recorder runs a dev player at 15 fps): click with `hold`, `wait 0.08`, `unhold`; two of those are a 0.3 s double-click at 15 fps. Run a double-click leg alone: three players on one PC run at 9 fps. (3) A scripted pointer cannot pan the map: `WorldMapControlAction.UpdateDragPan` and `UiHelper.IsPointerOverInteractiveUi()` read `Input.mousePosition` (the real mouse), so a `drag` step moves nothing; say "drag-pan not shown" rather than showing a still where nothing moved. A new player-facing pointer reader should use `AutomationPointer.MousePosition`, so a tour can drive it. (4) The pointer
+stays where it clicked (w1334): every later still and clip shows the clicked button in the game's hover tint
+(`FinalFactoryButton` highlighted 0.53), a dark navy that the orchestrator read as "close to the panel's own fill" and
+nearly sent back as a design fault. After each click put the pointer on empty space before the next shot (`{"at":
+"0.1,0.15"}`, below a left-docked panel), as the game repo's `specs/w1334-stops-panel/make_tour.py` does.
 - **A tour's keys, its coordinates and a timing's content, three traps (w1371).** (1) Before the game repo's w1371 fix
   (`DeckTour.PressRealKey`, 2026-10-15), a `{"key": ...}` step only queued an Input System keyboard state, which the legacy
   readers never see: `UiController` reads Escape through `InputHelper.GetKeyDown` (legacy `Input`, the injection seam,
@@ -242,6 +246,10 @@ still or a mock goes to anyone:
 
    Findings the before still also has are STANDING. With no census, pass `--rect` for the panel and `--same A:B` for
    pairs that must match. The pure-Python PNG reader needs no Pillow (Pillow is faster).
+   **A popup open over the panel** (a menu, a picker): the tool reads the census texts the popup covers against the
+   popup's card (w1334: eleven stop-row texts under the Add stop menu at 1.1:1, none of them drawn), and `pr_evidence.py`
+   then fails the `Colour:` line. Check that still outside the popup's own rect, four `--rect` bands around it taken from
+   the census (above, below, left, right), check the popup's own labels in the whole-still run, and say both in the line.
 4. **A fresh critic, never you.** [critic.md](critic.md) is the recipe:
 
    ```sh
