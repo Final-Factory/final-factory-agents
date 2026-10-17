@@ -165,6 +165,10 @@ manual pages for these components are the source for the rules: "Auto Layout", "
   `StationInfoLayout.cs:72` in #1282, `TechProgressPanel.cs:169`), or the row jitters as the value changes.
 - **Ellipsis with a taller fallback font blanks the text** (Chinese): give the box about 5 units
   above the line (02593e3c3).
+- **Make a new text; never `Instantiate` a localized label to get one** (w1334). A "+" copied from a button's label kept
+  its `TextLocalization` until the deferred `Destroy` landed, and in the docked layout the copy was localized again: the
+  button read "Add stop Add stop" (built player, 1280x800 docked; undocked looked right). A plain `TextMeshProUGUI` with
+  the label's font, material, size and colour has nothing to re-localize.
 - **Text size is known after a mesh update.** `ForceMeshUpdate()` before reading `textInfo`,
   `preferredHeight` or line counts on a text changed this frame.
 
