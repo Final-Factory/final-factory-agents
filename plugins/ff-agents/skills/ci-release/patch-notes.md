@@ -68,7 +68,10 @@ branch moves before you trigger, re-read the new commits and add them.
   developer diagnostics (desync-report detail and the like) into one short bullet at most.
 - **Only what a release player can get** (Ben, 2026-10-13, w1242, about Build 104's draft line "Mobile stations
   take their bots and barges with them" (w243, PR #1666): "Isnt this behind a feature toggle?"). A release
-  player has every feature toggle off. A change whose code or content is behind a toggle that is still declared in
+  player of a 0.50 build (pre-1.0 hotfixes) has every feature toggle off; one of a 1.0 build (master from 1.0.0.0,
+  w1436) has every 1.0 toggle on by default (`FeatureToggles.OnByDefault`), so that content IS in the build and in
+  the notes, and only a toggle in no release is off. A change whose code or content is behind a toggle that is
+  still declared, and off in that build, in
   `Assets/Scripts/FFCore/Features/FeatureToggles.cs` at the release commit (`FeatureToggles.IsOn`, the Feature
   Toggle field on an item or research asset, `ContentGates`, `FeatureArt`) is not in the build: leave it out, even
   when the brief lists its PR. `release_notes_check.py` (section 3) finds those PRs and the bullets that match.
@@ -139,7 +142,8 @@ Restart Steam to pick up the update on the development branch.
 ```
 
 The title and restart line name the branch the build landed on: `development` for a master bump (the
-branch ffbox sets). If Ben or Lothsahn later move it to `pre-release` or the default branch, a post on
+branch ffbox sets), the default branch for a pre-1.0 hotfix once Ben or Lothsahn have set it there (ffbox sets
+nothing for it; `pre-1.0-hotfix.md`). The 1.0 line's titles say **1.0 Build R**, a hotfix's **Build R**. If Ben or Lothsahn later move it to `pre-release` or the default branch, a post on
 that move names that branch. Omit a section that would be empty.
 
 Before triggering, check the post's length, dashes, version names and internal terms:

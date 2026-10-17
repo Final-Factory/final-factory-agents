@@ -19,8 +19,10 @@ What it does:
 * Dev workflow: runs the game repo's `scripts/release_notes_lint.py` as it is at the release commit (the one
   list of terms; a small built-in copy only when that file is missing there).
 * Toggled-off changes: reads the toggles live at the release commit from
-  `Assets/Scripts/FFCore/Features/FeatureToggles.cs` (a release player starts with EVERY toggle off, so a toggle
-  that is still declared there hides what it gates, whatever its developer default), then for every pull request
+  `Assets/Scripts/FFCore/Features/FeatureToggles.cs` (a release player starts with every toggle off, so a toggle
+  that is still declared there hides what it gates, whatever its developer default; except, once that file has
+  `OnByDefault` (w1436), a toggle whose release the build's FFVersion has reached, the 1.0 toggles from 1.0.0.0,
+  which is on and in the notes), then for every pull request
   merged in the range reads the diff and finds the ones that
     - declare a toggle (an added `FeatureToggle` field), or
     - use one: `FeatureToggles.<Field>`, `IsOn(<Field>)`, the toggle's id in an item or research asset, a
@@ -48,6 +50,8 @@ import tempfile
 from pathlib import Path
 
 TOGGLES_PATH = "Assets/Scripts/FFCore/Features/FeatureToggles.cs"
+VERSION_PATH = "Assets/Scripts/FFCore/Version/FFVersion.cs"
+_VERSION_RX = re.compile(r"FinalFactoryVersion\s*=\s*new(?:\s+FFVersion)?\s*\(\s*(\d+)\s*,\s*(\d+)\s*,\s*(\d+)\s*,\s*(\d+)")
 LINT_PATH = "scripts/release_notes_lint.py"
 
 # Paths whose changes say nothing about what a player sees.
@@ -120,6 +124,37 @@ def parse_toggles(text):
 
 def toggles_at(repo, ref):
     return parse_toggles(git(repo, "show", f"{ref}:{TOGGLES_PATH}", check=False))
+
+
+def version_at(repo, ref):
+    """(major, minor, patch, rc) of FFVersion.FinalFactoryVersion at ref, or None."""
+    m = _VERSION_RX.search(git(repo, "show", f"{ref}:{VERSION_PATH}", check=False))
+    return tuple(int(x) for x in m.groups()) if m else None
+
+
+def release_reached(release, version):
+    """The game's FeatureToggles.IsReleaseReached: "1.0" (or Release1_0, the constant's name) is reached by any
+    version whose major.minor.patch is at least 1.0.0."""
+    if not release or not version:
+        return False
+    name = release.strip()
+    if name.startswith("Release"):
+        name = name[len("Release"):].replace("_", ".")
+    parts = name.split(".")
+    if len(parts) > 3 or not all(p.isdigit() for p in parts):
+        return False
+    wanted = tuple(int(p) for p in parts) + (0,) * (3 - len(parts))
+    return tuple(version[:3]) >= wanted
+
+
+def on_by_default(repo, ref, toggles):
+    """Ids of the toggles a release player of the build at ref has ON with no launch argument (w1436): every toggle
+    whose release that build's version has reached, once FeatureToggles.cs has OnByDefault (the 1.0 line, master
+    from 1.0.0.0). Empty for a 0.50 build (pre-1.0) and for any build before OnByDefault existed."""
+    if "OnByDefault(" not in git(repo, "show", f"{ref}:{TOGGLES_PATH}", check=False):
+        return set()
+    version = version_at(repo, ref)
+    return {tid for tid, toggle in toggles.items() if release_reached(toggle["release"], version)}
 
 
 # --- pull requests in the range ------------------------------------------------------------------------------------
@@ -319,6 +354,10 @@ def check(repo, rng, notes_text, accept=(), lint_path=None):
         raise RuntimeError(f"no toggles read from {TOGGLES_PATH} at {release_ref} (wrong clone or ref?)")
     previous = toggles_at(repo, base_ref)
     shipped_ids = set(previous) - set(live)  # removed in the range: the content ships
+    # ON IN THIS BUILD IS IN THE NOTES (w1436): from 1.0.0.0 every 1.0 toggle is on for a release player, so only the
+    # toggles still off at this version hide a change. The rest is Ben's w1242 rule unchanged.
+    on = on_by_default(repo, release_ref, live)
+    everything, live = live, {tid: t for tid, t in live.items() if tid not in on}
 
     prs = merged_prs(repo, rng)
     for pr in prs:
@@ -347,7 +386,8 @@ def check(repo, rng, notes_text, accept=(), lint_path=None):
     for number, label, line in lint_hits:
         problems.append(("dev workflow", number, line, f"internal term '{label}'"))
 
-    report = [f"toggles live at {release_ref}: {', '.join(sorted(live)) or 'none'}",
+    report = [f"toggles live at {release_ref}: {', '.join(sorted(everything)) or 'none'}; on by default in this "
+              f"build (in the notes): {', '.join(sorted(on)) or 'none'}",
               f"dev-workflow terms checked with {lint_source}",
               f"pull requests in {rng}: {len(prs)}, behind a live toggle: {len(gated)}"]
     for pr in gated:

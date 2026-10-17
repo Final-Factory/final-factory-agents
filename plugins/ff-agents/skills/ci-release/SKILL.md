@@ -28,6 +28,12 @@ description: Cut a release through CI on the ffbox build server — write the re
 >   moves or plans a Steam branch, and never proposes it while `release-status.py` says BUILDING or
 >   WAITING.
 > - **Never:** the demo app is set live nowhere; ffbox never sets `pre-release` or the default branch.
+> - **pre-1.0 is the production hotfix line until 1.0 ships** (w1436, Ben 2026-10-17: "any bug fixes that are
+>   essential will be cherry picked to the pre 1.0 branch in the mean time for hot fixes"). A bump merged into
+>   `pre-1.0` (0.50.0.R) builds and uploads both apps and sets NOTHING live (`UPLOAD_ONLY_BRANCHES`); master is
+>   the 1.0 line (1.0.0.R, every 1.0 toggle on by default), its first bump after the cut 1.0.0.0. Fixes land on
+>   master first, then a cherry-pick PR into pre-1.0. The whole route, numbers and notes: `pre-1.0-hotfix.md`
+>   beside this file.
 > - **Timing, measured** (CI run start to the branch moving, 0.50.0.57 to .67, nine uploads): 22 to
 >   78 min, median 36; after the Release jobs ended, -7 to +43 min (main uploads before the demo is
 >   built). `release-status.py` calls it LATE only past 60 min after the Release jobs end.
@@ -182,9 +188,11 @@ python scripts/release_notes_lint.py Temp/release-notes-<version>.md   # game re
 If your checkout predates it: `git show origin/master:scripts/release_notes_lint.py > "$TMPDIR/release_notes_lint.py"`.
 
 **Notes list only what a release player can get** (Ben, 2026-10-13, w1242, about Build 104's draft line "Mobile
-stations take their bots and barges with them": "Isnt this behind a feature toggle?"). Every feature toggle is off
-for a release player, so a change that sits behind a toggle still declared in `FeatureToggles.cs` at the release
-commit is not a note. The lint cannot see that (the line has no forbidden word), so run the second check, which
+stations take their bots and barges with them": "Isnt this behind a feature toggle?"). A change that sits behind a
+toggle still declared in `FeatureToggles.cs` at the release commit, and OFF for a release player of that build, is
+not a note. Off means every toggle in a 0.50 build (pre-1.0); in a 1.0 build (master from 1.0.0.0) the 1.0 toggles
+are on by default (`FeatureToggles.OnByDefault`, w1436), so their content is a note like any other, and only the
+toggles in no release stay out. The check below reads the build's version and knows which. The lint cannot see that (the line has no forbidden word), so run the second check, which
 also runs the lint (`patch-notes.md` section 3; lesson `evidence-gate`,
 `lessons/a-release-is-done-when-its-notes-are-posted.md#patch-notes-list-only-what-players-can-use-build-104-w1242`):
 
