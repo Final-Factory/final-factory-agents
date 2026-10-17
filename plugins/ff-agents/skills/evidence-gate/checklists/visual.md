@@ -42,6 +42,13 @@ in the built player (drive-game, "The mouse cursor in a built player"; w980).
    impossible, say so: the change is then "changed, not yet seen in the built game", not "fixed".
 3. **Before and after clips at 60 fps** that cover the effect's whole life (`record_clip`). Stills
    played one a second are not a clip: they cannot show a pop, a flicker or a jump.
+   **The game in the clip runs smooth too, measured and stated** (w1325, Ben: "also the video previews are of a game
+   that really low fps which makes it harder to evaluate"). A 60 fps file of a game drawing 3-5 frames a second (a huge
+   save on a machine other sandboxes load) is a slideshow. Read the capture's own frame times (the feel probe,
+   `frames.json` of the game repo's feel scripts) and write the mean fps beside each clip; under 30, re-take on a quiet
+   machine or a lighter save that still shows the effect at work (w1325 moved from JustPlay at 3-5 fps to Wittlebase2 at
+   45-55 fps), never send it. Each frame is held for its own capture time (`scripts/feel/clip_timing.py`): a cap or a
+   rounding to 60ths plays the clip at the wrong speed, and a pulse or a fold then measures wrong.
 4. **The clip contains the event.** Name the frames or seconds where it happens. A clip without
    the event proves nothing, and a review of it is void.
 5. **Look yourself.** Step through the event's frames (`frames.jpg`) against each line of the
