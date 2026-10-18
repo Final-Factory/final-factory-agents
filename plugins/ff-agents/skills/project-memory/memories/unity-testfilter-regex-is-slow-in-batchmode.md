@@ -19,9 +19,20 @@ lot, and it grows with the class count. Measured in CI job logs, from `Running t
 
 Every filtered test also runs several times slower than unfiltered (about 0.7 s a test against 0.065 s).
 
+**The fix, measured (w1180, 2026-10-18, m3, batchmode, back to back):** the game repo's
+`Assets/Editor/MergeGateTestRunner.cs` (`-executeMethod MergeGateTestRunner.Run -ffTestNames <file> -ffTestResults
+<xml>`) builds a `Filter` with `testNames`. The same 200 classes, 1,905 tests: 504 s wall through `-testFilter`, 55 s
+through the runner, editor start included. The merge gate uses it since PR #1888, and the 80-class cap is gone.
+
+**Never name a `[SetUpFixture]`.** It is the parent node of every test in its namespace, so naming it selects them all,
+in `testNames` and in the regex alike. `scripts/test_select.py` named `Tests.SourceScanCacheRunScope` (the `Tests`
+namespace's) for any change near source scans: a 725-class selection ran all 14,124 tests, 6,567 once it was dropped
+(`test_select.SETUP_FIXTURE`, PR #1888). A selection that runs "the whole suite" though it names a fraction of the
+classes has one in it.
+
 **How to apply:**
-- A CI or batchmode run of a selection: cap the class count (the gate's `MAX_CLASSES = 80`, PR #1614), or run the
-  whole suite unfiltered when the selection is large; never assume a filtered run is cheaper.
+- A CI or batchmode run of a selection: use `MergeGateTestRunner` (exact names), never `-runTests -testFilter` with
+  more than a few classes; never assume a regex-filtered run is cheaper than the whole suite.
 - The MCP bridge's `run_tests` with `test_names` (exact names, the fast path) does not have this cost: 4.0 s against
   16.6 s for one class by regex `group_names` (w546). An `-executeMethod` runner that builds a `Filter` with `testNames`
   is the way to get that on the command line.
