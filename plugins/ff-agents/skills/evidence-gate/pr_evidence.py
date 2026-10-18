@@ -8,7 +8,8 @@ change names its tests, its determinism audit and its save compatibility, a UI c
 full-content and style checks, its per-still notes, a real-rate clip and every HUD element it moved at 1920x1080 and
 1280x800, each asked for in the requester's words or justified (checklists/ui.md), and a change to a shader
 or material lists everything that uses it ("## Used by", from the game repo's scripts/asset_usage.py)
-with a basis for each, and a Deck-facing change says 'Real Deck: verified ...' or 'not verified on a real Deck' (checklists/deck.md). It cannot tell whether anyone looked carefully. Standard library only; `gh` for everything that reads GitHub.
+with a basis for each, an enemy, combat or spawn change shows the game repo's balance stages before and after
+("## Balance", checklists/balance.md, w1440), and a Deck-facing change says 'Real Deck: verified ...' or 'not verified on a real Deck' (checklists/deck.md). It cannot tell whether anyone looked carefully. Standard library only; `gh` for everything that reads GitHub.
 
     pr_evidence.py --repo OWNER/NAME --pr N               check one pull request (exit 1 on FAIL)
     pr_evidence.py --repo OWNER/NAME --pr N --comment     the same, and post the verdict on it
@@ -71,6 +72,15 @@ SIMULATION_PATH = re.compile(r"^Assets/Scripts/(FFSystems|FFComponents|FFCore|FF
 # player. Such a change says 'Built player: yes ...' (a still of the card there is enough; no clip unless it moves).
 OBJECTIVE_PATH = re.compile(r"^Assets/Resources/Objectives/.+\.asset$")
 NOT_GAME_CODE = re.compile(r"^Assets/(Tests|TestsSlow|Editor)/|^Assets/Scripts/PlayModeTests/|\.(meta|md)$")
+# Enemy, combat and spawn numbers (w1440, checklists/balance.md): they move the difficulty curve, so the PR shows the game
+# repo's balance stages before and after (scripts/nightly/balance_lane.py compare). Ben, 2026-10-17: "you need to figure
+# out how you can autonomously and intelligently figure out game balance for a smooth difficulty curve throughout the game".
+BALANCE_PATH = re.compile(r"^Assets/Resources/GlobalConfig\.asset$|^Assets/Resources/WeaponConfig/|"
+                          r"^Assets/Scripts/FFSystems/(EnemyAttacking|EnemyCamps)/|"
+                          r"^Assets/Scripts/FFCore/GlobalConfig/CombatSettings\.cs$|"
+                          r"^Assets/Resources/ItemConfig/[^/]*(Spawner|Cutter|Stinger|Trident|Razor|Urso|Turret|Railgun|Guardian)"
+                          r"[^/]*\.asset$")
+COMPARE_TABLE = re.compile(r"^\|\s*metric\s*\|\s*before\b", re.IGNORECASE | re.MULTILINE)
 
 
 def evidence_section(body: str, heading: str = "Evidence") -> str | None:
@@ -719,9 +729,40 @@ def art_language_notes(section: str) -> list[str]:
     return [f"art language: {line[1][:160]}"] if line and line[1] else []
 
 
+def balance_problems(body: str, files: list[str] | None) -> list[str]:
+    """Enemy, combat or spawn numbers changed: a '## Balance' section with the stages run, the before/after table, the
+    lane's flags and what became of the baselines, or 'No curve change: <why>' (w1440, checklists/balance.md)."""
+    changed = [f for f in files or [] if BALANCE_PATH.search(f)]
+    if not changed:
+        return []
+    section = evidence_section(body or "", "Balance")
+    if section is None:
+        return [f"this PR changes {', '.join(changed[:3])}{' and more' if len(changed) > 3 else ''} (enemy, combat or "
+                f"spawn numbers) with no '## Balance' section: run the balance stages on a player of the base and of "
+                f"this branch and paste `python scripts/nightly/balance_lane.py compare <before> <after>`, or write "
+                f"'No curve change: <why>' (checklists/balance.md)"]
+    unchanged = field(section, "No curve change")
+    if unchanged and len(unchanged[1]) >= 20:
+        return []
+    problems = []
+    stages = field(section, "Stages")
+    if not stages or "BAL-" not in stages[1]:
+        problems.append("'## Balance' has no 'Stages:' line naming the BAL- stages run on both builds")
+    if not COMPARE_TABLE.search(section):
+        problems.append("'## Balance' has no before/after table: paste `balance_lane.py compare <before> <after>`")
+    flags = field(section, "Flags")
+    if not flags or not flags[1]:
+        problems.append("'## Balance' has no 'Flags:' line: the lane's flags on the after build, or 'none'")
+    baseline = field(section, "Baseline")
+    if not baseline or not baseline[1]:
+        problems.append("'## Balance' has no 'Baseline:' line: which baselines in balance-curve.json moved and why, "
+                        "or 'unchanged'")
+    return problems
+
+
 def check(body: str, files: list[str] | None = None, brief: str | None = None) -> tuple[list[str], list[str]]:
     """Every reason the evidence is not ready (empty = PASS), and notes that do not fail it."""
-    used_by = used_by_problems(body, files)
+    used_by = used_by_problems(body, files) + balance_problems(body, files)
     section = evidence_section(body or "")
     if section is None:
         return (["no '## Evidence' section: say what each claim of this pull request rests on "
