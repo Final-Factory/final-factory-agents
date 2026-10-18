@@ -117,6 +117,22 @@ So:
    (`--headless=new --screenshot`) wrote no file for claude.ai here. A shot in your signed-in window proves nothing.
 6. Never give the project link to someone outside the owning account.
 
+**Republishing from a worker, step by step (w1295, 2026-10-17, second update).**
+1. `osascript -e 'tell application "Safari" to make new document with properties {URL:"<project link>"}'` (run in the
+   background) opens your own window. Safari must already be running.
+2. The page draws blank until you reload it with orca and `--restore-window`.
+3. The Share popover and its "Publish as artifact" row are not in the accessibility tree. Click them by window
+   coordinates (screenshot pixel ÷ `screenshot.scale`), each with `--restore-window`, right after opening it. A click
+   without it closed the popover.
+4. A "Preview artifact before publishing" dialog follows. Its "Publish to web" button shows once the preview has loaded
+   (about 15 s).
+5. The toast reads "Published to the web — anyone with the link can view", and the same `claude.ai/artifact/<id>` link
+   now shows the new text.
+
+To check the text signed out, open the link in a fresh Chrome profile with `--remote-debugging-port`. Then read
+`document.body.innerText` of the **iframe** target (`*.frame.claudeusercontent.com`): the page target holds only the
+82-character header with "Sign in". Script: `vchk2.py` in the w1295 review folder.
+
 **The authorization lapses between requests too (w1295 reopen, 2026-10-17, m5).** The first DesignSync call of the
 resumed request failed with "needs design-system authorization". The pty route above fixed it in one pass, but this time
 the authorize page showed an **Authorize** button (disabled for a moment after load, then clickable) before the
