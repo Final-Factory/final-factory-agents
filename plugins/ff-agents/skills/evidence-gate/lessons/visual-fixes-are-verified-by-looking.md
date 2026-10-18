@@ -124,6 +124,8 @@ emissive colour or intensity on the object's own material (a property block or a
 instance), not a new child sprite or mesh that sits around it. Name the reference asset and
 attach the side-by-side still in the PR's `## Evidence` (the `Intended look` line or the
 `Shots:` line). If you think the brief really wants an indicator, quote where it says so.
+New hero art (a model, an end-game or siege weapon's VFX) also has to be creative, detailed and different from the
+existing weapons' effects: [hero art is creative and detailed](hero-art-is-creative-and-detailed.md) (w1470, w1466).
 
 ### A glow's colour on screen is measured, not read off the HDR value (w1066)
 
