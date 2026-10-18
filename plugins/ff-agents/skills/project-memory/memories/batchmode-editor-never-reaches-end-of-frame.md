@@ -18,3 +18,13 @@ WaitForEndOfFrame();` (`SaveGameManager.cs`, "A -batchmode EDITOR", PR #1888). T
   change the headless players, which work.
 - Make a long wait in a test say what it waited on: the smoke test's timeout names the loading screen's text
   (`LoadProgressController.Instance.ProgressText`), which is how this one was found in one run.
+
+**Two more CI facts from the same gate (w1180, 2026-10-18, measured from job logs):**
+- A second batchmode editor in one CI job costs about 3 minutes to stop, start and re-index (PR #1892's job: EditMode done
+  10:58:37, the second editor indexing until 11:01:00). Run a PlayMode step in the editor that already ran EditMode: the
+  game repo's `MergeGateTestRunner -ffSmokeTest` does (PR #1898; small-PR gate job 19.0 -> 15.5 min). Exit only after the
+  test framework deletes its `Assets/InitTestScene*.unity` (`DeleteBootstrapSceneTask` runs after `RunFinished`).
+- A test that fails on any logged error also catches the asset importer's errors, and a failed import is not cached, so
+  every job retries it at a different moment: the waterfall pack's stray JSON `XRSettings.asset` failed PR #1891's smoke
+  test and passed #1888's three runs. Remove the broken asset (#1892); do not filter the message. A re-run of a pull
+  request's job reuses its old merge commit, so the pull request needs `origin/master` merged in to see the fix.
