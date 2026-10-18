@@ -93,15 +93,19 @@ rendered HTML (the review-folder zip is the cheap place). In a docs-only scratch
 author the branch already has (`481770+bryding@users.noreply.github.com`). Overwriting the same project path with
 `finalize_plan` + `write_files` replaces the file in place; the project link stays the same.
 
-**A published artifact is a snapshot (w1392, 2026-10-15, m5).** "Share → Publish as artifact" turns the file into a
-public `https://claude.ai/artifact/<id>` link ("Anyone with this link will be able to view this artifact, even without
-signing in"). Writing the project file with DesignSync does NOT change that artifact: it kept showing the old version.
-Re-running "Publish as artifact" (Share menu, then "Publish to web" in the preview dialog) on the same file **updated the
-same artifact link in place**, so everyone who already has the link sees the new version; mention that in the report.
-The artifact page is a JavaScript shell (`curl` returns only "Claude Artifact"), so check it in a browser window you
-opened: the accessibility tree holds "User-generated artifact content" with the doc's headings. If Safari is already
-running with no windows, `osascript -e 'tell application "Safari" to make new document with properties {URL:"…"}'`
-opens your own window; the publish toast's "Open" link did nothing when clicked.
+**Share the project link; never republish an artifact (Ben, 2026-10-17, w1295: "Drop the Safari step and only use the
+project link").** The deliverable is `https://claude.ai/design/p/<projectId>`, and the doc changes only through
+DesignSync (`finalize_plan` + `write_files` on the same path, which replaces it in place behind the same link). Do not
+open Share, "Publish as artifact" or "Publish to web", and do not drive a browser to publish. Background: a published
+`https://claude.ai/artifact/<id>` is a snapshot that DesignSync writes do not change (w1392); an earlier worker
+republished it through Safari to keep that link current, and Ben stopped it. If an old artifact link is out there, leave
+it as it is and say in the report that it shows the older version; only the project link is current.
+
+**The authorization lapses between requests too (w1295 reopen, 2026-10-17, m5).** The first DesignSync call of the
+resumed request failed with "needs design-system authorization". The pty route above fixed it in one pass, but this time
+the authorize page showed an **Authorize** button (disabled for a moment after load, then clickable) before the
+`code#state` page. If the page renders blank in a background window, reload it in your own window. The code is single
+use; never echo it into a report.
 
 **Note:** in October 2026 Claude Design shows "Claude Design is moving to Artifacts in the Claude app. You can keep
 using this version until December 14."
