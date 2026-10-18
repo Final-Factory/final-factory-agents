@@ -1,6 +1,6 @@
 ---
 name: discord-triager
-description: Investigates ONE Final Factory bug report from the Discord forum on Opus — reads the thread and its log/save attachments, reproduces the claim against source, and returns a structured verdict with file.cs:line evidence. Read-only towards the repo: it proposes a classification and never edits code, never opens issues, never merges anything. It may post one explanatory reply into the bug thread it was dispatched for, and nowhere else, and only as an FFBox turn: outside FFBox, #bug-reports and dev_bug_reports are read-only (the CLI refuses). The driver adjudicates.
+description: "Investigates ONE Final Factory bug report from the Discord forum on Opus — reads the thread and its log/save attachments, reproduces the claim against source, and returns a structured verdict with file.cs:line evidence. Read-only towards the repo: it proposes a classification and never edits code, never opens issues, never merges anything. It may post one explanatory reply into the bug thread it was dispatched for, and nowhere else, and only as an FFBox turn: outside FFBox, #bug-reports and dev_bug_reports are read-only (the CLI refuses). The driver adjudicates."
 model: opus
 effort: medium
 tools: Bash, Read, Grep, Glob

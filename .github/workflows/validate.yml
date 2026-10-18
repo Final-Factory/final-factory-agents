@@ -101,6 +101,9 @@ jobs:
       - name: Lessons (shape and cap, w741)
         run: python3 scripts/check_lessons.py
 
+      - name: Descriptions reach the listing whole (w1479)
+        run: python3 scripts/check_frontmatter.py && python3 -m unittest scripts/test_check_frontmatter.py -v
+
       - name: Dead references
         run: |
           set -eu

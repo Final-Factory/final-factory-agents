@@ -1,6 +1,6 @@
 ---
 name: project-memory
-description: Accumulated Final Factory project memory — standing user feedback plus hard-won Unity, Burst/ECS, baking, modding, and play-mode lessons. Consult at the start and end of every Final Factory repository development task so fixture-selection and the required @lothsahn Discord completion notification are not missed; also consult BEFORE debugging the MCP bridge, running tests, entering play mode, editing open scenes, diagnosing Burst NREs after a merge, or working on mod loading.
+description: Accumulated Final Factory project memory — standing user feedback plus hard-won Unity, Burst/ECS, baking, modding, and play-mode lessons. Consult at the start and end of every Final Factory repository development task so fixture-selection (and, in an ffbox run only, the @lothsahn completion note) is not missed; also consult BEFORE debugging the MCP bridge, running tests, entering play mode, editing open scenes, diagnosing Burst NREs after a merge, or working on mod loading.
 ---
 
 # Final Factory project memory
