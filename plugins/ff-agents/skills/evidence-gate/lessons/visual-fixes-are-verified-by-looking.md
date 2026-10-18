@@ -125,7 +125,7 @@ instance), not a new child sprite or mesh that sits around it. Name the referenc
 attach the side-by-side still in the PR's `## Evidence` (the `Intended look` line or the
 `Shots:` line). If you think the brief really wants an indicator, quote where it says so.
 New hero art (a model, an end-game or siege weapon's VFX) also has to be creative, detailed and different from the
-existing weapons' effects: [hero art is creative and detailed](hero-art-is-creative-and-detailed.md) (w1470, w1466).
+existing weapons' effects: [hero art is creative and detailed](visual-fixes-are-verified-by-looking.md#hero-art-is-creative-detailed-and-different-w1470-w1466) (w1470, w1466).
 
 ### A glow's colour on screen is measured, not read off the HDR value (w1066)
 
@@ -170,6 +170,63 @@ reference's share, and look for a haze over the body (w1323: 6 hazed the 3x3 bod
 red glow washes a green body to grey (red and green cancel); measure the body colour under the glow too. Take the
 stills in a run without `-ffFeelFrames` capture: with it on, the player's screenshot came back with a flipped copy of
 the frame drawn into it.
+
+## Hero art is creative, detailed and different (w1470, w1466)
+
+**Rule.** Before a new **model** or a **hero VFX** (an end-game or siege weapon's projectile and impact, a boss, a
+signature ship or building) goes to Ben:
+
+1. **2 or 3 clearly different concepts come first, not one.** Different silhouettes or ideas, not three colourings of
+   one. Say in a line what each is; Ben picks or redirects.
+2. **A literal real-world object is reinterpreted for space and sci-fi.** If the idea is a bow, a disc, a lance, a
+   cannon or a shield, build what it would be as a space weapon (an energy-loaded frame, a field, a tether, a rail of
+   light): keep the idea, not the object's shape. Test: would a player who did not read the name see "a bow" or "a
+   disc" at once? Then it is too literal.
+3. **The model's detail is compared with the game's best models of the same class, side by side in one still.** Same
+   camera, lighting and bloom, the new ship or building next to the best existing ones of its class (the most
+   detailed battleships or siege ships; the Railgun and other detailed powered buildings), named in the evidence.
+   Judge panel lines, greebles, mass, silhouette breaks and emissive accents. A model that reads as a flat primitive
+   set beside them is not shown.
+4. **A new weapon's projectile and impact are compared with the existing weapons' and read clearly different.** Put
+   them next to the Railgun's, the Plasma Bolt's and the others' at the same zoom and say what differs in shape,
+   colour, motion and duration. **Any reuse of another weapon's effect (its orb, flash, shockwave, spark burst) is
+   named as reuse** and justified or replaced; unnamed reuse is a miss.
+5. **The gate's verdict says what makes the piece distinctive**, in a sentence a player could repeat ("the Lance is a
+   tether of purple light that pulls the target in; the impact folds the hull inward"), not only "passes the
+   art-language check". If you cannot write it, the piece is generic: go back to step 1.
+
+This stacks on the art-language rule above: that asks "does it belong to the game"; this asks "is it good enough for
+its role".
+
+**Why.** Ben corrected the same kind of miss twice on 2026-10-18, on art the worker had passed and the orchestrator had
+let through.
+
+- **w1470, Singularity Lance (PR #1921).** A flat black disc over a purple disc, with the Plasma Bolt orb reused as the
+  projectile. Ben: "I don't like that it's just like a black disc sitting on top of the purple accretion disc ... this
+  is the end game weapon that needs to look really cool ... be creative with this."
+- **w1466, Urso Ballista siege ship (PR #1929).** A ship built as a bow and arrow, with an impact that looked like the
+  others. Ben: "i dont like that its so explicitly like a bow and arrow. we are in space, so you can use this concept
+  but be more creative and futuristic, and the model itself is not detailed enough. we need high quality models" and
+  "can we get more creative on the impact effect? it looks samey with all the other effects, especially the railgun
+  effeect".
+
+Both passed because the checks asked "is the requested thing there, in the game's colours?" and never "is it the best
+idea for it, as detailed as our best, and different from what we already have?". One take was built and polished;
+nothing forced a second concept, a reinterpretation, a detail comparison, or a comparison of the impact with the other
+weapons'. Two corrections of one kind in a day, so it is now [checklist item 5e](../checklists/visual.md).
+
+**How to apply.** At design time, before building: write the 2 or 3 concepts (one line each: the literal object it
+starts from and what it becomes in space) and, for a weapon, list the existing weapons' effects you must differ from.
+Show Ben the concepts (a still of each, or a quick block-out) and build the one he picks, or the strongest if he said to
+decide. Before the preview: the one detail still against the named reference models, the projectile and impact next to
+the Railgun and Plasma Bolt, the reuse list and the distinct-because sentence. The PR's `## Evidence` carries a `Hero
+art:` line naming the concepts offered, the detail reference models, the weapons compared and the distinct-because
+sentence; a hero asset without them is not shown and not merged.
+
+**Not automated yet.** `pr_evidence.py` cannot tell a hero asset from other new art (it sees changed shader, material
+and VFX files, not a new model's role), so this rests on the checklist and on the orchestrator reading the report. On a
+third correction of this kind, add a `Hero art:` field check to `pr_evidence.py` with the w1470 and w1466 PR bodies as
+fixtures.
 
 ## Review media goes inline, never as a bare path (w1384)
 

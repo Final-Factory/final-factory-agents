@@ -96,7 +96,7 @@ in the built player (drive-game, "The mouse cursor in a built player"; w980).
    clearly different; any reuse of another weapon's effect is called out. (5) The verdict says what makes the piece
    distinctive, not only that it passes. The PR's evidence carries a `Hero art:` line naming the concepts, the detail
    reference models, the weapons compared and the distinct-because sentence
-   ([lesson](../lessons/hero-art-is-creative-and-detailed.md); Ben, w1470, Singularity Lance: "I don't like that it's
+   ([lesson](../lessons/visual-fixes-are-verified-by-looking.md#hero-art-is-creative-detailed-and-different-w1470-w1466); Ben, w1470, Singularity Lance: "I don't like that it's
    just like a black disc sitting on top of the purple accretion disc ... this is the end game weapon that needs to
    look really cool ... be creative with this"; w1466, Urso Ballista: "i dont like that its so explicitly like a bow
    and arrow ... the model itself is not detailed enough. we need high quality models" and "it looks samey with all
@@ -118,5 +118,5 @@ In a pull request these go into `## Evidence` (the format is in [merge.md](merge
 
 Lessons behind this list:
 [a visual fix is verified by looking](../lessons/visual-fixes-are-verified-by-looking.md),
-[hero art is creative and detailed](../lessons/hero-art-is-creative-and-detailed.md),
+[hero art is creative and detailed](../lessons/visual-fixes-are-verified-by-looking.md#hero-art-is-creative-detailed-and-different-w1470-w1466),
 [no merge before the review](../lessons/no-merge-before-the-review.md).
