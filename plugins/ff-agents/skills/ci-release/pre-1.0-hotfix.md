@@ -33,12 +33,24 @@ beta for development branch we will want to bump the version to 1.0.0.0 too". Th
 7. **Post the notes as Max once default carries it** (`release-status.py` shows default at that BuildID): the title
    says **Build R**, the restart line names the default branch.
 
+## Protecting a new release branch is not a sandbox step
+
+The FF Factory sandbox harness refuses every GitHub API call that changes a branch, its protection or a ruleset
+("Rewriting branches or refs through the GitHub API is blocked in sandboxes": `gh api git/refs`,
+`gh api -X PUT .../branches/<b>/protection`, `gh api -X PUT .../rulesets/<id>`, even a GET under `branches/`). Create
+the branch with a plain `git push origin <sha>:refs/heads/<branch>` from a small bare clone in `$TMPDIR`
+(`git fetch --depth 1 --filter=blob:none origin <sha>` first), then hand the protection to the orchestrator's ops
+worker with the payload: master's is PRs with 0 approvals, the required check `Test in editmode` (app 15368),
+`enforce_admins` false, plus the ruleset "Protect master and develop from rewrites" (deletion, non_fast_forward, no
+bypass). w1436 cut `pre-1.0` this way on 2026-10-18 and its protection waited for the ops worker.
+
 ## Numbers
 
 - Master's next bump after the cut is **1.0.0.0** without `--version`: `trigger-ci-release.sh` makes it so once origin
   has `pre-1.0`, refuses a 0.50 version on master, and refuses 1.0.0.0 while master's `FeatureToggles.cs` has no
   `OnByDefault`. Notes for that line say **"1.0 Build R"** ("1.0 Build 0" for the open beta).
-- Hotfixes keep **"Build R"**: Build 110, 111, after the cut's Build 109.
+- Hotfixes keep **"Build R"**: Build 111, 112, after the cut's Build 110. **`pre-1.0` was cut at `df58aa3149`, the
+  0.50.0.110 bump** (2026-10-18; LANDED on development as BuildID 26018871); master's next bump, #1875, was 1.0.0.0.
 - The two lines never share a version, which FFBox's ledger (`<branch>/<version>`), its regenerated-files branch and
   its "coming in" notices need.
 
