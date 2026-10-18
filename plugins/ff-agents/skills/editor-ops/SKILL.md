@@ -81,8 +81,10 @@ explanation of WHAT the failures mean; the script is how you check.
 For ANY task that needs the live editor (compile/test confirmation, play mode, screenshots,
 scene/state queries), the *very first* action is: read `mcpforunity://instances`, find the
 instance whose `path` is under THIS project's working directory, and `set_active_instance` to
-pin it. If the resource is empty, stale, or has no matching path, enter the recovery workflow
-below. A stray running `Unity.exe` is NOT proof this project's editor is live (Unity Hub,
+pin it. In an FF Factory sandbox the brief names the instance (`slotN@<hash>`, the hash being the
+first 8 hex of sha1 of `<worktree>/Assets`): pin it in one call and skip the read, which cost 339
+calls in 81 beast worker sessions (w1478); read the resource only when that pin is refused. If the
+resource is empty, stale, or has no matching path, enter the recovery workflow below. A stray running `Unity.exe` is NOT proof this project's editor is live (Unity Hub,
 another copy, a batchmode build, or a stale process all show up too); only the pinned MCP
 instance's `path` counts.
 
@@ -248,7 +250,8 @@ Open it when the editor or bridge misbehaves:
 ## Running tests
 
 Run tests through the MCP bridge with the instance pinned: start a run with `run_tests` and
-poll `get_test_job` for results. **After a change, run the tests it touches, not the whole fast
+read the result with `get_test_job` with `wait_timeout` 60 (it returns as soon as the run ends, so
+one call usually covers a selected run). **After a change, run the tests it touches, not the whole fast
 suite** (lothsahn, 2026-10-06, w546): `python scripts/test_select.py` in the game repo reads the
 branch's diff against `origin/master` (plus uncommitted files) and prints the `run_tests`
 arguments: `assembly_names ["FFEditorTests"]` and `test_names`, the exact test class names.
@@ -417,9 +420,11 @@ alone. **Verify through the MCP bridge, not by watching files**:
    e.g. a determinism-audit run). Recompile triggered during play is silently ignored. Check
    the `mcpforunity://editor/state` resource: `play_mode.is_playing` false, `activity.phase`
    idle.
-2. **Trigger and await the compile**: call `refresh_unity`, then poll `editor/state` until
-   `compilation.is_compiling` is false and `last_domain_reload_after_unix_ms` is NEWER than
-   your edit. (A "Connection closed" error from `refresh_unity` usually IS the domain reload —
+2. **Trigger and await the compile**: call `refresh_unity` with `compile: "request"` (its
+   `wait_for_ready`, on by default, returns once the editor is ready for tools), then read
+   `editor/state` once: `compilation.is_compiling` false and `last_domain_reload_after_unix_ms`
+   NEWER than your edit. Poll it again only if not; a poll loop of short calls is what costs
+   (w1478: 7.7% of worker calls were waits back in under 30 s). (A "Connection closed" error from `refresh_unity` usually IS the domain reload —
    poll state, don't retry blindly.)
 3. **Check for compile errors**: `read_console` filtered for `error CS`. Zero entries after a
    fresh domain reload = compiled. On failure the console entry contains the exact file/line.
