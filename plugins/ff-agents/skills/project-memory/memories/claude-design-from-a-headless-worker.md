@@ -93,13 +93,29 @@ rendered HTML (the review-folder zip is the cheap place). In a docs-only scratch
 author the branch already has (`481770+bryding@users.noreply.github.com`). Overwriting the same project path with
 `finalize_plan` + `write_files` replaces the file in place; the project link stays the same.
 
-**Share the project link; never republish an artifact (Ben, 2026-10-17, w1295: "Drop the Safari step and only use the
-project link").** The deliverable is `https://claude.ai/design/p/<projectId>`, and the doc changes only through
-DesignSync (`finalize_plan` + `write_files` on the same path, which replaces it in place behind the same link). Do not
-open Share, "Publish as artifact" or "Publish to web", and do not drive a browser to publish. Background: a published
-`https://claude.ai/artifact/<id>` is a snapshot that DesignSync writes do not change (w1392); an earlier worker
-republished it through Safari to keep that link current, and Ben stopped it. If an old artifact link is out there, leave
-it as it is and say in the report that it shows the older version; only the project link is current.
+**Give the link the person can open: check whose account opens it (w1295, 2026-10-17, m5).** A project link
+(`https://claude.ai/design/p/<projectId>`) opens only for the claude.ai account that owns it. Ben first said "Drop the
+Safari step and only use the project link"; on his own Mac that link answered "Project not found. This project may have
+been deleted, or you might not have access to it." Measured on the m5:
+- The project's Share menu offers only "Only you" and "Your workspace". It has no link sharing and no invites.
+- Signed out, the project link redirects to "Sign in - Claude".
+- Any other account gets "Project not found".
+- DesignSync can't change sharing and can't publish (`get_project`, `list_files`, `finalize_plan`, `write_files`; no share or publish method).
+
+So:
+1. Ask, or read from the brief, which account the person will open it with. The m5's Safari and DesignSync login is
+   ryding.ben@gmail.com's workspace.
+2. If it is that same account, the project link is fine; update it through DesignSync writes only.
+3. For anyone else (another account, a phone that isn't signed in, Lothsahn), the deliverable is the published
+   artifact, `https://claude.ai/artifact/<id>`. It opens signed out.
+4. To create or refresh it, use your own browser window on the project: Share → "Publish as artifact" → "Publish to
+   web". Republishing updates the same `claude.ai/artifact/<id>` link in place. DesignSync writes alone don't update it
+   (w1392).
+5. Verify the exact link in a brand-new profile before you report:
+   `open -na "Google Chrome" --args --user-data-dir="$TMPDIR/vchk-<time>" --no-first-run --new-window "<link>"`, then
+   capture that Chrome process's window. You should see the "Sign in" button and the new revision date. Headless Chrome
+   (`--headless=new --screenshot`) wrote no file for claude.ai here. A shot in your signed-in window proves nothing.
+6. Never give the project link to someone outside the owning account.
 
 **The authorization lapses between requests too (w1295 reopen, 2026-10-17, m5).** The first DesignSync call of the
 resumed request failed with "needs design-system authorization". The pty route above fixed it in one pass, but this time
