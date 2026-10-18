@@ -206,6 +206,10 @@ look first and relay only with the critic's report (FF Factory `read_rules ui`).
   tour cannot show, the cheap stand-ins, the real-Deck request to write for your orchestrator (first step: the Deck's
   Steam client and SteamOS are up to date), and the `Real Deck:` line in the PR.
 - [Merges](checklists/merge.md), with `pr_evidence.py` for the pull request's `## Evidence` section
+- [Balance changes](checklists/balance.md) (w1440): enemy, combat, spawn, economy or research numbers: the game repo's
+  `BAL-*` stages on players of the base and the branch, `balance_lane.py compare` in a `## Balance` section (`Stages:`,
+  the table, `Flags:`, `Baseline:`), or `No curve change: <why>`; `pr_evidence.py` fails an enemy, combat or spawn change
+  without it (Build 108's late-game raids, w1439).
 - [Releases](checklists/release.md)
 - [FFBox desync PRs](checklists/ffbox-desync-pr.md) (Lothsahn's standing policy, 2026-10-04): classify
   1 report generation only, 2 a game desync fix, 3 capture during play; tests, a 2-peer red/green

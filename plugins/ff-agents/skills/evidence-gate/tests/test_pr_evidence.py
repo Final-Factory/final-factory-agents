@@ -692,6 +692,50 @@ class UsedByTest(unittest.TestCase):
         self.assertTrue(pe.VISUAL_PATH.search("Assets/Art/Shaders/AsteroWorldSprite.ShaderGraph"))
 
 
+class BalanceTest(unittest.TestCase):
+    """w1440: enemy, combat or spawn numbers move the difficulty curve; the PR shows the balance stages before and
+    after. Build 108 (0.50.0.108) shipped camp expansion's numbers with no such run, and a late-game base met about
+    three raids a second (w1439)."""
+
+    FILES = ["Assets/Resources/GlobalConfig.asset", "Assets/Scripts/FFSystems/EnemyCamps/EnemyCampExpansionSystem.cs"]
+    BALANCE = """
+## Balance
+
+Stages: BAL-mid-lifeastwo, BAL-end-justplay, BAL-end-meltcpu on players of 1a2b3c4 (before) and 5d6e7f8 (after)
+
+| metric | before (BAL-end-justplay-frontier) | after (BAL-end-justplay-frontier) | after / before |
+|---|---:|---:|---:|
+| raids / h | 10,800 | 240 | 0.02 |
+
+Flags: none on the after build
+Baseline: BAL-end-justplay-frontier's raidsPerHour and threatHpPerHour moved to the after run, the fix's own numbers
+"""
+
+    def test_a_balance_change_without_the_section_fails(self):
+        problems = pe.check(GOOD, self.FILES)[0]
+        self.assertTrue(any("no '## Balance' section" in p for p in problems), problems)
+
+    def test_the_section_with_its_table_passes(self):
+        self.assertEqual(pe.check(GOOD + self.BALANCE, self.FILES)[0], [])
+
+    def test_a_missing_table_or_flags_line_fails(self):
+        problems = pe.check(GOOD + self.BALANCE.replace("| metric | before", "| m | b"), self.FILES)[0]
+        self.assertTrue(any("before/after table" in p for p in problems), problems)
+        problems = pe.check(GOOD + self.BALANCE.replace("Flags: none on the after build\n", ""), self.FILES)[0]
+        self.assertTrue(any("'Flags:' line" in p for p in problems), problems)
+
+    def test_no_curve_change_needs_a_reason(self):
+        reasoned = "\n## Balance\n\nNo curve change: telemetry log lines only, read by nothing in the simulation\n"
+        self.assertEqual(pe.check(GOOD + reasoned, self.FILES)[0], [])
+        problems = pe.check(GOOD + "\n## Balance\n\nNo curve change: none\n", self.FILES)[0]
+        self.assertTrue(problems)
+
+    def test_other_files_need_no_section(self):
+        self.assertEqual(pe.check(GOOD, ["Assets/Scripts/FFSystems/Crafting/CrafterSystem.cs"])[0], [])
+        self.assertTrue(pe.BALANCE_PATH.search("Assets/Resources/ItemConfig/RazorSpawnerConfig.asset"))
+        self.assertFalse(pe.BALANCE_PATH.search("Assets/Resources/ItemConfig/IronOreConfig.asset"))
+
+
 class ArtLanguageTest(unittest.TestCase):
     """w1241, w1332: Ben's second correction of one kind. A comet's catch effect shipped turning rings round the head
     (v1) and was turned down: "again I don't like the unnatural circle effect that looks like UI. The vfx should be part
