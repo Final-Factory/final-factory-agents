@@ -202,6 +202,13 @@ not post somewhere else or through another account. Give the file's path in the 
 ffdiscord config only, `tail -n +3 Temp/release-notes-<version>.md | ffdiscord post 1072387196927094845 --silent --text -`
 then `ffdiscord read 1072387196927094845 --limit 1` for the message id.
 
+**Notes a person deleted from Discord and wants back** (w1456, Ben, 2026-10-18: "I deleted the Max patch notes
+for it can you put them back"): FFBox's key remembers the post, not whether it still exists, so the release's own key
+answers "Already posted" with the deleted message's link and sends nothing. Call it once anyway: that answer's
+character count against the committed file (body after its two lines, trailing newline stripped) proves which text
+went out, with no need for the first worker's transcript. Then post the same file with a fresh key,
+`<version>-repost`, and report the new link.
+
 **A release that went out without notes** (bumped from the Build menu, or before 2026-09-28): write
 the file from the commits the same way after it is live, post the body, and push the file to the
 branch as `cicd/release-notes/<version>.md` for the record. Its Steam description stays the version.
