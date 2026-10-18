@@ -13,6 +13,10 @@ metadata:
    wins every time against a 15 s poll: mine held it 18:00-18:20 while the other worker never got in. Sleep 30-45 s after
    each release. Set an EXIT trap that removes the lock only after your `mkdir` succeeded, never before (a trap that
    always `rmdir`s can drop the other worker's lock).
+   **BEAST's shared lock is now `F:/ffw/tmp/bench.lock`** (same `mkdir` + `owner` form), **and one older than an hour is
+   taken as stale.** w1457 (2026-10-18) took it at 11:53Z for two builds, clips and then editor tests. w1459 replaced it at
+   12:55Z while those tests still ran, so both ran at once. Release it between phases (builds, clips, editor), wait 30-45 s,
+   and take it again. Never hold one lock across a long session.
 2. **Your own editor counts as load.** Starting the sandbox editor, a force recompile or an editor test run while one of
    your (or anyone's) timed runs is in flight contaminated three of my runs (+3 ms each, measured: 84.0 against 87.0 ms
    on the same build). Hold the lock for editor compiles and tests too, or keep the editor stopped while legs run. A batch

@@ -137,6 +137,12 @@ which every built player and editor on the machine reads, so the next players st
 were wrong until it was found. Wrap an editor session that changes view or UI settings in `game_data.py snapshot`/`restore` as you
 would a built player. In a scenario, press the action through its binding, `ffauto:input.action|Toggle Hide Flying Stations`: the
 w1403 scenario's `ui.click|hud|HideFlyingStations` hit the Hide Cargo Barges toggle beside it instead.
+**A built player ended right after its last toggle leaves the toggle on too** (w1457, beast, 2026-10-18): an F7 bench pressed
+`Toggle Hide Flying Stations` off and ended the player a moment later. `settings.json` kept `HideFlyingStations = 1` for the whole
+machine for about 40 minutes: other workers' players started with flying stations hidden, and the next editor session's radiators
+stalled. Read the `Hide*` keys of `UserData/settings/settings.json` before and after every leg that presses a toggle (`game_data.py
+snapshot`/`restore` around it, or `get HideFlyingStations --name <leg> --after`). Wait about 2 s after the last toggle before you end
+the player, and if a key differs afterwards, put it back.
 
 ⚠️ The `NewGame` save is a **modded** save and the editor disables mods, so it loads with missing
 items/tech — pick a non-modded save for clean loads.
