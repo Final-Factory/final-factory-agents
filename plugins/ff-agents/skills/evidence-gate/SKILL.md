@@ -152,6 +152,12 @@ look first and relay only with the critic's report (FF Factory `read_rules ui`).
   labelled measured. No comparable run: scope only.
 - **On ff-factory, `npm run prepush` before every push** ([lesson](lessons/merge-your-own-pr.md#before-the-push-the-repos-own-pre-push-check-ff-factory-w924-2026-10-10)).
   Push only when it passes; report any `SKIPPED` step (a tool missing on the machine) instead of ignoring it.
+- **Ask for the go-live moment before big content reaches a Steam branch** ([lesson](lessons/ask-before-content-goes-live.md)).
+  Before a build, a bump PR, or a brief or plan that makes major new content live on any Steam branch (1.0, a
+  feature toggle on by default, an open beta), name the person's go for that moment in their own words; an
+  agreed plan says where, not when, so without it stop and ask. Routine hotfix builds don't need it (w1453:
+  1.0.0.0 went live on `development` on w1436's plan; Ben: "You should have asked me I need to do a steam event
+  and stuff"; release checklist item 1b).
 - **Name a decider only from the sender line** ([lesson](lessons/name-a-decider-only-from-the-sender-line.md)).
   Before you write that a person approved, held, lifted, overrode or decided something (a PR
   description, release notes, a ledger note, a report), copy the name from that message's
@@ -236,6 +242,10 @@ One file each under `lessons/`: the rule, why (the incident, dated), how to appl
   hold only for exceptional risk or a timing reason, and say which and when. mechanics: check `git branch --show-current` after a wait, gate `gh pr merge` on a passing check (`gh pr checks N && gh pr merge N --match-head-commit <sha>`: exit 8 is pending; w864), post the verdict only from the newest ff-agents (w807); a red check that is not your change, and `not our ref` at checkout ([section](lessons/merge-your-own-pr.md#a-red-check-that-is-not-your-change-read-the-failing-test-then-the-cause-w1337-2026-10-15), w1337).
 - [A release lands where SETLIVE says](lessons/a-release-lands-where-setlive-says.md): a master bump
   on `development`, nothing sets `pre-release` or the default; run `release-status.py`, never recall it.
+- [Ask before content goes live](lessons/ask-before-content-goes-live.md): a build that makes major new
+  content live on any Steam branch (1.0, a toggle on by default, an open beta) waits for the person's go for
+  that moment, even on an agreed plan; a brief or PR that changes what a branch serves by default names that
+  go (w1453: 1.0.0.0 reached `development` before Ben's Steam event; release checklist 1b).
 - [A release is done when its notes are posted](lessons/a-release-is-done-when-its-notes-are-posted.md):
   live on its branch AND the patch notes posted as Max in #dev-patch-notes (`post_as_max`, any
   machine); a failed post stays an open step in the report, with FFBox's reason. The notes are for
@@ -245,7 +255,7 @@ One file each under `lessons/`: the rule, why (the incident, dated), how to appl
   off for a release player: Build 104's "Mobile stations take their bots and barges with them", w1242):
   `release_notes_check.py <notes> --repo <game clone> --range <prev>..<release>` flags both kinds and runs
   before the bump and before `post_as_max` ([section](lessons/a-release-is-done-when-its-notes-are-posted.md#patch-notes-list-only-what-players-can-use-build-104-w1242)).
-- [Keep rm out of long commands](lessons/keep-rm-out-of-long-commands.md): a deletion chained
+- [Keep rm out of long commands](lessons/clean-up-after-yourself.md#keep-rm-out-of-long-commands-w63-w194-w1097): a deletion chained
   into a long command waits on a permission prompt nobody sees; in bypass mode only an `rm` of
   `$VAR/*` or `$VAR/{a,b}` (or a critical path) asks (measured, w1097). A new folder per run,
   multi-step logic in a script file in `$TMPDIR`, the game's settings and saves through

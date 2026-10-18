@@ -49,6 +49,10 @@ bypass). w1436 cut `pre-1.0` this way on 2026-10-18 and its protection waited fo
 - Master's next bump after the cut is **1.0.0.0** without `--version`: `trigger-ci-release.sh` makes it so once origin
   has `pre-1.0`, refuses a 0.50 version on master, and refuses 1.0.0.0 while master's `FeatureToggles.cs` has no
   `OnByDefault`. Notes for that line say **"1.0 Build R"** ("1.0 Build 0" for the open beta).
+- **A master bump that turns 1.0 content on waits for the person's go-live moment** (w1453): #1875's 1.0.0.0 went
+  live on development (BuildID 26019698) on this plan alone, and Ben: "You should have asked me I need to do a steam
+  event and stuff". Ask when it may go live before any master bump that makes new 1.0 content live (`SKILL.md`,
+  evidence-gate `lessons/ask-before-content-goes-live.md`); `pre-1.0` hotfixes don't need it.
 - Hotfixes keep **"Build R"**: Build 111, 112, after the cut's Build 110. **`pre-1.0` was cut at `df58aa3149`, the
   0.50.0.110 bump** (2026-10-18; LANDED on development as BuildID 26018871); master's next bump, #1875, was 1.0.0.0.
 - The two lines never share a version, which FFBox's ledger (`<branch>/<version>`), its regenerated-files branch and
