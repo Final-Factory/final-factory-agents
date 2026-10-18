@@ -382,6 +382,20 @@ call `waiting_on_person` for the orchestrator at the check's due time; it answer
 (w1416: 0 reports for 0.50.0.108 and 0 for 0.50.0.107, measured by the orchestrator at 21:09 UTC
 2026-10-16). The Discord read for player feedback is not possible there either: say so in the report.
 
+**A build that changes what is on by default (the first 1.0 build) gets a no-args toggle check, and a worker on
+beast does it itself** (w1436, 2026-10-18: the earlier worker asked Ben for a Player.log; Ben: "Have a worker with
+Steam on BEAST or the m5 do it"). Read the installed branch and build in
+`C:\Program Files (x86)\Steam\steamapps\appmanifest_1383150.acf` (`buildid`, `UserConfig` `BetaKey`); a local beta
+opt-in is fine, a Steam branch's settings never. **A Steam launch there is not a no-args run**: Ben's client
+(`userdata/32947804/config/localconfig.vdf`) carries `LaunchOptions "-ffFeatures=release:1.0"` for app 1383150. Start
+the Steam-installed `steamapps\common\FinalFactory\finalfactory.exe` directly with no arguments instead:
+`SteamworksManager` calls `SteamClient.Init(appId)` itself (no restart through Steam), so the log still says
+"Connected to Steam as user ...". Hold `F:/ffsb/gpu-bench.lock` (noclobber) from launch to quit, reach the title,
+quit with WM_CLOSE (`CloseMainWindow`), then read `%USERPROFILE%\AppData\LocalLow\Never Games\finalfactory\Player.log`.
+The `[FeatureToggles] release build <version>; on by default: ...; requested: ...` line ends in `(-ffFeatures=...)`
+whenever an argument was used, so its absence proves the run had none (1.0.0.0, BuildID 26019698: all nine on,
+measured). The first start from that path raises a Windows Firewall prompt; leave it for a person.
+
 ## When it goes wrong
 
 The host's reason for a declined or failed job is in the job log ("ask the host whether this push is a
