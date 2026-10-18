@@ -87,6 +87,20 @@ in the built player (drive-game, "The mouse cursor in a built player"; w980).
    reference's, and the numbers and the 1:1 crops go in the report and the PR. Thin glow faces at HDR about 2 read as
    paint ([lesson](../lessons/visual-fixes-are-verified-by-looking.md#a-glow-is-measured-against-a-glowing-reference-in-the-same-frame-w1323);
    w1323, Ben after two rounds that an impression from stills passed: "you just didn't add any red glow lines").
+5e. **Hero art: creative, detailed and different, not literal or generic (w1470, w1466).** A new model or hero VFX
+   (an end-game or siege weapon's projectile and impact, a signature ship) does not go to Ben as one take. (1) The
+   first look is 2 or 3 clearly different concepts. (2) A concept that is a literal real-world object (a bow, a disc)
+   is reinterpreted for space and sci-fi. (3) The model's detail is compared, side by side in one still (same camera,
+   light, bloom), with the game's best existing models of the same class, and the comparison is named. (4) A new
+   weapon's projectile and impact are compared with the Railgun's, the Plasma Bolt's and the other weapons' and read
+   clearly different; any reuse of another weapon's effect is called out. (5) The verdict says what makes the piece
+   distinctive, not only that it passes. The PR's evidence carries a `Hero art:` line naming the concepts, the detail
+   reference models, the weapons compared and the distinct-because sentence
+   ([lesson](../lessons/visual-fixes-are-verified-by-looking.md#hero-art-is-creative-detailed-and-different-w1470-w1466); Ben, w1470, Singularity Lance: "I don't like that it's
+   just like a black disc sitting on top of the purple accretion disc ... this is the end game weapon that needs to
+   look really cool ... be creative with this"; w1466, Urso Ballista: "i dont like that its so explicitly like a bow
+   and arrow ... the model itself is not detailed enough. we need high quality models" and "it looks samey with all
+   the other effects, especially the railgun effeect").
 6. **`watch_video` and the blind model review are a second opinion.** They have passed clips
    that did not contain the event, and agreed with a mistake the brief described as intended.
    Quote them, and say where the frames contradict them.
@@ -104,4 +118,5 @@ In a pull request these go into `## Evidence` (the format is in [merge.md](merge
 
 Lessons behind this list:
 [a visual fix is verified by looking](../lessons/visual-fixes-are-verified-by-looking.md),
+[hero art is creative and detailed](../lessons/visual-fixes-are-verified-by-looking.md#hero-art-is-creative-detailed-and-different-w1470-w1466),
 [no merge before the review](../lessons/no-merge-before-the-review.md).
