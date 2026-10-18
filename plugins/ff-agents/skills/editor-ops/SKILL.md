@@ -496,6 +496,11 @@ slots").
   the machine is full, over 85% RAM, or while launches wait ahead of it; the refusal names who
   holds the slots. `wake_me` and try again, or stop an editor you no longer need. Never kill
   another process's Unity to make room.
+- **A PlayMode load of a big save grows an editor to 10 to 13 GB** (w1448, biscuit, 26 GB of RAM, 2026-10-18).
+  `SaveCompatibilityLiveLoadTest` with a second editor up: the kernel ended 8 editors for memory between 04:16 and 05:11
+  local, both sandboxes' (`journalctl -k`, the "Out of memory" lines, anon-rss 6.6 to 12.9 GB). On a small machine, run
+  such a leg as a `-batchmode -runTests -testPlatform playmode` launch under `unity-slot run`, with your own editor
+  stopped, and clear what an ended run left first (references/recovery.md, the Linux hang).
 - **Every other launch waits for its slot.** Use `unity-slot run [--count N] [--label "<what>"] --
   <command>` (on the PATH of every agent an FF Factory daemon runs) or the game repo's `python
   scripts/unity_slot.py run [--count N] -- <command>`. Each waits in the machine's queue, runs the

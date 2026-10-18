@@ -75,6 +75,15 @@ yet `Temp/__Backupscenes/0.backup` survived, and the next two starts (one a `res
 dialog. Before stopping a sandbox editor you used in play mode, exit play mode and let the scene settle; when a start
 then shows the triad above, look in `Temp/` before restarting again.
 
+**On Linux the hang looks different, and an out-of-memory kill arms it too** (w1448, biscuit, 2026-10-18). The kernel
+ended a sandbox editor for memory in the middle of a PlayMode run (`journalctl -k`, the "Out of memory" lines). The next
+two starts hung, one of them a `restart` with `force`. Each log stopped at about 44 lines, ending `Successfully changed
+project path to: <project>` with no `[UnityMemory] Configuration Parameters` line after it. The process was asleep in
+`poll_schedule_timeout` (`cat /proc/<pid>/wchan`), and no `~/.unity-mcp` status file came for it.
+`mcp__machine__unity stop` removes the stale `Temp/UnityLockfile` but not `Temp/__Backupscenes`. Stop the editor, move
+`Temp/__Backupscenes` and the `Assets/InitTestScene*.unity` (+ `.meta`) files the ended PlayMode run left into
+`$TMPDIR`, then start it: the editor was ready in 28 s.
+
 **After a crash the bridge's port may belong to another editor (w719).** The crashed editor's
 `~/.unity-mcp/unity-mcp-status-<hash>.json` keeps its old port (e.g. 6401). If another sandbox's editor
 has bound that port since, `scripts/unity-bridge.py status --project-path <yours>` connects to it and
