@@ -72,6 +72,11 @@ or forgotten, so the person has to ask.
   instead: every `gh run list --branch <head branch> --json headSha,status,conclusion` entry whose `headSha` is the head
   must be `completed`/`success`, then `gh pr merge N --merge --match-head-commit "$head"`. Use `gh`'s own `--jq`: the
   sandboxes have no `jq` binary, and a loop that pipes to `jq` never ends.
+- **In an FF Factory worker, `ff-pr` runs these gates in one call each** (w1478: a PR cost about 10 model calls, 164 PRs
+  in 82 beast worker sessions, 2026-10-15..18). `ff-pr push` merges the base in (it stops on a conflict), pushes, opens
+  the PR and checks the push landed (w907); `ff-pr merge` reads the head's workflow runs (each workflow's newest run),
+  merges only when all finished green, pinned with `--match-head-commit`, exits 3 while any still runs and 1 naming a red
+  one. Wait between them with `blocked_on` (`ci:`), never a poll loop.
 - **A merge of main into your branch is committed only without conflict markers.** w905 chained a resolver script, a
   `git add` and a `git commit`; the script was missing, the chain went on with `;` and committed `<<<<<<<` lines into
   CHANGELOG.md (caught before the push). Run `git diff --cached --check` before `git commit` (it exits non-zero on
