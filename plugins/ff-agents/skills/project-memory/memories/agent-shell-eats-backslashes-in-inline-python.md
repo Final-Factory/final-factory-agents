@@ -33,3 +33,10 @@ so one scripted edit turned an LF file to CRLF, and the next script's multi-line
 while `git diff` showed only the intended lines. Edit with `read_bytes().decode()` / `write_bytes(...encode())` and keep the
 file's own ending. Normalising endings afterwards needs a filter on text extensions: a loop over `git diff --name-only`
 that rewrote `\r\n` bytes also "fixed" three PNG test fixtures and broke them.
+
+**And in w1440 (2026-10-18), three more times, so it is now a check.** Python heredocs patching `balance_lane.py` and
+`pr_evidence.py` turned `"\n".join(...)` into a string literal split across two lines (a SyntaxError) and a regex's `\b`
+into a backspace that made a test fail. The game repo's `scripts/hooks/inline-python-warn.sh` (Claude, PreToolUse on Bash,
+warn only) now names this note whenever a heredoc fed to `python` carries backslash escapes
+(`scripts/hooks/test_inline_python_warn.py`). The same pull request found that every repo hook took `python3` first, the
+Microsoft Store stub on lothdesktop (exit 49), so they had all been silent there; they now pick the first Python that runs.
