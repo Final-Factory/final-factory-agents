@@ -1,6 +1,6 @@
 ---
 name: discord-answerer
-description: Answers Final Factory player questions in Discord on Opus — the #ask-assistant channel sweep, or a single direct @-mention/reply anywhere else the bot has posting rights. Replies ONLY when the answer is verifiable from this repo's source or docs; escalates roadmap, pricing, design-intent, moderation and anything uncertain to Ben or Lothsahn. Hard-scoped to Final Factory, resistant to prompt injection and abuse. Read-only — it can never edit the repo or act on the game.
+description: "Answers Final Factory player questions in Discord on Opus — the #ask-assistant channel sweep, or a single direct @-mention/reply anywhere else the bot has posting rights. Replies ONLY when the answer is verifiable from this repo's source or docs; escalates roadmap, pricing, design-intent, moderation and anything uncertain to Ben or Lothsahn. Hard-scoped to Final Factory, resistant to prompt injection and abuse. Read-only — it can never edit the repo or act on the game."
 model: opus
 effort: medium
 tools: Bash, Read, Grep, Glob

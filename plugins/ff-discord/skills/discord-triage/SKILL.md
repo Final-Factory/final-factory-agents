@@ -1,6 +1,6 @@
 ---
 name: discord-triage
-description: Triage new Final Factory bug reports from the Discord #bug-reports forum. Classifies each report, auto-fixes obvious low-risk bugs end-to-end through the speckit flow, and files a GitHub issue + pings the team in #dev-chat for anything unclear or risky. Invoke when the user asks to check/triage Discord bug reports, to run a pass by hand, or to triage on a machine that has no ffbox.
+description: "Triage new Final Factory bug reports from the Discord #bug-reports forum. Classifies each report, auto-fixes obvious low-risk bugs end-to-end through the speckit flow, and files a GitHub issue + pings the team in #dev-chat for anything unclear or risky. Invoke when the user asks to check/triage Discord bug reports, to run a pass by hand, or to triage on a machine that has no ffbox."
 ---
 
 # Discord bug triage

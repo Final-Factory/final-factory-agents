@@ -1,6 +1,6 @@
 ---
 name: ask-claude
-description: Answer Final Factory player questions in the Discord #ask-assistant channel. Answers only what can be verified from the game's source and docs; anything uncertain, forward-looking, or judgement-based gets escalated to Ben or Lothsahn instead of guessed at. Invoke when the user asks to check/answer #ask-assistant, to run a pass by hand, or to stand watch on a machine that has no ffbox.
+description: "Answer Final Factory player questions in the Discord #ask-assistant channel. Answers only what can be verified from the game's source and docs; anything uncertain, forward-looking, or judgement-based gets escalated to Ben or Lothsahn instead of guessed at. Invoke when the user asks to check/answer #ask-assistant, to run a pass by hand, or to stand watch on a machine that has no ffbox."
 ---
 
 # #ask-assistant — answering player questions
