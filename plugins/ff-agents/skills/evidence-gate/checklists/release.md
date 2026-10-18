@@ -7,6 +7,15 @@ adds what a release rests on and the first check after it.
 ## Before the bump
 
 1. **What is in it.** `git log <previous release>..origin/master`, as for the notes.
+1b. **Major new content has its go-live moment from the person** (Ben, 2026-10-18, w1453: "You should have
+   asked me I need to do a steam event and stuff", after 1.0.0.0 went live on `development` on a plan he had
+   agreed). If the build makes major new content live on any Steam branch (1.0, a feature toggle on by default
+   through `FeatureToggles.OnByDefault` or shipped in the range, an open beta), name the person's confirmation
+   of the moment, in their words from the sender line, for this build. None: stop and ask
+   (`waiting_on_person`); an agreed plan is not it. A brief or PR that changes what a Steam branch serves by
+   default (a branch cut, a `SETLIVE` change, a version line, a toggle default) carries the same line, or
+   "go-live moment not confirmed: ask before the first build". Routine hotfix builds skip this (lesson:
+   [ask before content goes live](../lessons/ask-before-content-goes-live.md)).
 2. **Every "fixed" in the notes rests on something.** For each player-visible fix, find its pull
    request's `## Evidence`. Looked at in a built player: write "Fixed". Otherwise say what changed
    ("Changed how riders are drawn on a moving station") or leave it out, and tell whoever asked
@@ -62,5 +71,5 @@ adds what a release rests on and the first check after it.
    message link; a failed post is reported as an open step with FFBox's reason (lesson:
    [a release is done when its notes are posted](../lessons/a-release-is-done-when-its-notes-are-posted.md)).
 
-A release that is asked for is pre-approved. Don't send the requester these steps as questions:
-do them, and report what you found with each number labelled measured or sourced.
+A release that is asked for is pre-approved, except the go-live moment of major new content (item
+1b). Don't send the requester the other steps as questions: do them, and report what you found with each number labelled measured or sourced.

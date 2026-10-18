@@ -70,6 +70,15 @@ description: Cut a release through CI on the ffbox build server — write the re
 **Only when Ben or Lothsahn asks** (plain English is enough). A release uploads builds other people
 download, so never start one yourself; if you think one is due, say so and wait.
 
+**Major new content waits for the person's go-live moment** (Ben, 2026-10-18, w1453: "Wait I don't want 1.0 on
+development yet" / "You should have asked me I need to do a steam event and stuff"). Before a build that makes
+major new content live on any Steam branch (1.0, a feature toggle on by default through
+`FeatureToggles.OnByDefault` or shipped in the range, an open beta), stop and ask the person for the moment it
+goes live (`waiting_on_person`), and bump only on their go for this build. That holds even when an agreed plan
+says the content goes there: 1.0.0.0 went live on `development` (BuildID 26019698) because w1436's plan said
+master = 1.0 on development, and nobody asked when. Routine hotfix builds don't need it. Lesson:
+evidence-gate `lessons/ask-before-content-goes-live.md`; checklist `release.md` item 1b.
+
 ## How it works (so you can tell what went wrong)
 
 **The version bump IS the release.** A commit on master whose `FFVersion.cs` version differs
