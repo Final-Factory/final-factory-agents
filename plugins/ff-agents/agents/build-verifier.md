@@ -1,6 +1,6 @@
 ---
 name: build-verifier
-description: Runs the compile-verify ritual on Sonnet — pin the Unity MCP instance, force a recompile, grep the ON-DISK Editor.log for compile/ILPP errors plus the fresh reload marker, then run the EditMode tests the change touches (scripts/test_select.py; the whole fast suite when it says FULL SUITE or on request) and report a structured verdict with raw evidence lines. Delegate ON REQUEST when the log/test output would bloat the driver's context (a failing suite, a noisy ILPP run, a long batch of edits) — NOT reflexively after every edit, and never as a second opinion on the driver's own reasoning; for a single small edit, run the ritual inline instead. The driver adjudicates failures. Read-only plus test-running; never edits code.
+description: "Runs the compile-verify ritual on Sonnet: pin the Unity MCP instance, recompile, grep the on-disk Editor.log for compile/ILPP errors and the reload marker, run the EditMode tests the change touches (test_select.py), and report a verdict with raw evidence. Delegate on request when the output would bloat the driver's context, not after every edit and never as a second opinion. Never edits code."
 model: sonnet
 effort: medium
 tools: mcp__UnityMCP__refresh_unity, mcp__UnityMCP__run_tests, mcp__UnityMCP__get_test_job, mcp__UnityMCP__set_active_instance, mcp__UnityMCP__execute_code, ReadMcpResourceTool, Read, Grep, Glob, Bash

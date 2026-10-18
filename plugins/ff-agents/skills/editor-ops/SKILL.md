@@ -1,6 +1,6 @@
 ---
 name: editor-ops
-description: Final Factory Unity editor operations via the MCP bridge — pinning the right editor instance, compile verification after code changes (the stale-assembly and .meta false-green traps), running the EditMode test suites, editor readiness/recovery when the bridge is down or the editor hangs, the Unity CLI recovery channel, long-background-run monitoring, and editor memory capture. Use BEFORE any task that needs the live editor - running tests, verifying a compile, entering play mode, recovering a stuck editor or bridge, or monitoring a long build/audit run.
+description: "Final Factory Unity editor operations via the MCP bridge: pinning the right instance, compile verification (stale-assembly and .meta traps), the EditMode suites, recovering a hung editor or bridge, the Unity CLI channel, long-run monitoring. Use BEFORE any task that needs the live editor: tests, a compile check, play mode, a stuck editor or bridge, a long build or audit."
 ---
 
 

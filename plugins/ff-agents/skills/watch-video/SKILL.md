@@ -1,6 +1,6 @@
 ---
 name: watch-video
-description: Watch a video WITH its sound and judge it like a viewer, and record + review 60 fps clips of visual effects. For a trailer cut or capture take, watch_video measures cuts, shot length, lingering and dead air, jump cuts, reused footage, tight framing, stacked action, the beat grid, exact music edits and loudness. For an effect (record_clip + watch_video --mode vfx) it measures the effect's lifetime, pops, one-frame snaps, flicker and judder, steps through every frame, and compares against the approved or before clip side by side. Gemini reviews the whole clip blind. Use before any trailer or video goes to Ben, and to verify ANY change to VFX, shaders, particles, animations, camera feel or other visual presentation (screenshots alone never count).
+description: "Watch a video with its sound and judge it like a viewer (cuts, pacing, dead air, music edits, loudness), and record and review 60 fps clips of visual effects (record_clip, watch_video --mode vfx: lifetime, pops, flicker, judder, frame by frame, against the approved clip). Use before any trailer or video goes to Ben, and to verify ANY change to VFX, shaders, particles, animations or camera feel (screenshots alone never count)."
 ---
 
 # watch-video: review a video the way a viewer would

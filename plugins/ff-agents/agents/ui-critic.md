@@ -1,6 +1,6 @@
 ---
 name: ui-critic
-description: "A fresh design critic for Final Factory UI stills, on Opus 5.5 at high effort: given ONLY the stills a person will see (whole screen and crops at the panel's own pixels), the before stills, the game's reference panels, the person's quoted words and the unity-ui design rubric, it grades every still item by item, compares it side by side with the references and the before, and lists the flaws a player or Ben would see at a glance (BROKEN and UGLY first), in a critic.md report. Run a NEW one on the pack unity-ui ui_look.py pack builds, before any UI still or mock goes to a person and again after each fix (unity-ui critic.md). It never reads code, never hears the worker's reasoning, and never edits anything but its report."
+description: "A fresh design critic for Final Factory UI stills (Opus 5.5, high): given only the stills, the before, the reference panels, the person's words and the unity-ui rubric, it grades each still and lists what a player or Ben would see at a glance (BROKEN and UGLY first) in critic.md. Run a NEW one on the ui_look.py pack before any UI still reaches a person and after each fix. Never reads code; edits only its report."
 model: opus
 effort: high
 tools: Read, Glob, Bash, Write
