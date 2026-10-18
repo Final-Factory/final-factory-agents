@@ -40,3 +40,11 @@ did not catch it because they are read after the fact.
 - A fix that does not depend on reading this: FF Factory tells each worker its machine's `gh` scopes in its
   brief, or the dispatcher places requests that name `.github/workflows` on a machine that has the scope. This
   is proposed to Ben's orchestrator from w1191, and not built yet.
+
+**A fourth time in w1459, 2026-10-18 (beast, the game repo's `main.yml`):** the brief never named
+`.github/workflows`; it said "add the test to CI if it is cheap". The worker decided mid-request to add the test to the
+merge gate's `SMOKE` filter, and learned the scope was missing at the refused push. It took the workflow commit back
+out with a later commit (the branch was unpushed, so the push carried only the test) and handed the diff on as
+att_w55p7y5uqk3z. **"Add it to CI" means `.github/workflows`**: run `gh auth status` the moment a brief or your own
+plan says CI, not only when it names the folder. The fix that does not rely on reading this, FF Factory putting the
+machine's `gh` scopes in every brief, is still not built; w1459's report asks for it again.
