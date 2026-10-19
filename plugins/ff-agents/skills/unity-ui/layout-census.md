@@ -167,6 +167,9 @@ prints the `Shape:` line with one line per finding:
 
 - **STRETCHED**: an Image drawn 2x or more off its sprite's own aspect (Simple or Filled, not `preserveAspect`, no
   9-slice border). The w1386 On/Off switch, 225x150 drawn 485x23 in the Deck dock: 14.1x.
+  The aspect is the element's own `rect`, not the part a mask lets show (`visible`): a list row cut in half by its
+  scroll view is drawn at its shape (w1486: the Oracle shop's last row, 43x43 with 43x21 showing, read 6 STRETCHED on
+  master and the branch alike before 1.29.43). A sliver under 6 px showing is not judged.
 - **MOSTLY EMPTY**: a window or dialog (an `openedPanels` window or a `*Dialog*`/`*Modal*`/`*Popup*`, the element itself or
   one level under it) whose content covers under 40 % of it AND leaves one empty rectangle of 35 % or more. Text counts
   by its drawn glyphs (`textRect`, else an estimate), padded 4 px at 1080 lines. Coverage alone does not tell: on the
