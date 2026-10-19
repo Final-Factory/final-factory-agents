@@ -123,6 +123,10 @@ look first and relay only with the critic's report (FF Factory `read_rules ui`).
   `ffbox_activity show config` / `show signatures`) and quote the key and value, or say unknown.
   For what FF Factory itself did (a deploy, a clean-up, an update, a restart), read the portal's own logs with
   `mcp__machine__portal_logs` (w920) and name the source and window; never infer it from the code.
+- **Compile-check before you start the editor after a revert or a delete** ([lesson](../project-memory/memories/compile-check-before-you-start-the-editor.md)).
+  Change code with the editor running and `refresh_unity`. With it stopped, `git grep` every name you removed (tests
+  too) and run editor-ops' offline compile check before `unity start`/`restart`: a compile error on disk at boot puts
+  the editor on the "Enter Safe Mode?" prompt with no bridge (w1470, w1495).
 - **Research the route before you say "can't" or "you do it"** ([lesson](lessons/research-the-route-before-you-say-cant.md)).
   Before you send a person "I can't", "no agent can", "you can ... yourself" or "<Name> needs to", research the route
   (the tool's own docs, the skills, the machines and the sessions already signed in on them, the tools you and the

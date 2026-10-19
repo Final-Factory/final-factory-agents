@@ -108,13 +108,24 @@ unsaved scene work, so discarding the backups is always correct on this path.
 of value there. Note `osascript`/System Events cannot enumerate the dialog (no assistive
 access), so `sample` is the tool that works headlessly.
 
-### A compile error present at BOOT lands in native Safe Mode — no automation channel can click it
+### A compile error present at BOOT stops the editor on the "Enter Safe Mode?" prompt
 
-A compile error already on disk when the editor launches trips Unity's native **Safe Mode**
-dialog. Nothing can dismiss it programmatically: the MCP bridge (and so `scripts/unity-bridge.py`)
-starts only after the project finishes loading, and `scripts/launch-editor.sh`
-clears the scene-backup modal (above) but not this one. **Prevention: never relaunch the editor
-with a known compile error on disk — fix it first.**
+A compile error already on disk when the editor launches trips Unity's native **"Enter Safe Mode?"**
+dialog (Ignore / Quit / Enter Safe Mode). The MCP bridge (and so `scripts/unity-bridge.py`) starts
+only after the project finishes loading, so from your side the editor looks hung.
+`scripts/launch-editor.sh` clears the scene-backup modal (above) but not this one.
+
+What answers it on a sandbox editor (w1495, measured on 6000.3.19f1, Windows): FF Factory's daemon
+dialog watch presses **Ignore** on its next look, every 30 s (`unity status` then shows
+`auto-answered … "Enter Safe Mode?" -> Ignore`). The editor opens with the errors, and `read_console`
+shows them once the bridge is up. A Mac's watch pauses while the screen is locked or the display
+asleep, and Linux has none. There, a daemon with ff-factory #436 closes an editor that has sat on the
+prompt for 90 s and sends you its `error CS` lines (a `[unity]` message, and `unity status`). Fix them,
+then start the editor again. No launch argument avoids the prompt: `-ignoreCompilerErrors` is
+batch-mode only (measured: the prompt still came), and the "Show Enter Safe Mode Dialog" preference
+only enters Safe Mode, where no package code, the bridge included, runs. **Prevention: never start or
+restart the editor with a compile error on disk.** Change code with the editor running, or check
+first (below; project-memory `compile-check-before-you-start-the-editor`).
 
 Recovery once a human has clicked **Enter Safe Mode**:
 
