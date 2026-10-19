@@ -8,7 +8,7 @@ metadata:
 A helper struct held as a FIELD of a `public` job struct — or returned by a public method on
 one — must itself be `public`, or the assembly fails to compile with `CS0052`/`CS0050`
 "inconsistent accessibility". If that error is still on disk when the editor next boots, it
-boots straight into the unclickable native Safe Mode dialog (see the editor-ops skill's BOOT
+boots straight into the native "Enter Safe Mode?" prompt (see the editor-ops skill's BOOT
 Safe Mode recovery section).
 
 Both R37g helpers hit this: `EntityWorldPose` (a field of `LinearMotionJob`, a public struct)
