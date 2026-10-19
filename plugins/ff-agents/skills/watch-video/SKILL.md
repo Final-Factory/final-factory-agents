@@ -130,6 +130,19 @@ Recording notes:
   denied"); the game's own frames need no visible window. The game repo's `scripts/feel/run_comet_catch_clip.py`
   does all of this for a comet dive into a Comet Catcher (whole tail in frame at the farthest zoom with `--dir 1
   --zoom 1000`), and `--catchers 12 --no-frames` is its cost run.
+- **A Deck tour's `record` step** (`{"record": name, "seconds": n}`, the game repo's `DeckTour.cs`; w1488, m3, 2026-10-19)
+  writes `clip-<name>/NNNNN.jpg`, `times.txt` and `frames.txt`, upside down on Mac and Windows (vflip). Build a constant
+  60 fps MP4 from `times.txt` (each 1/60 s slot holds the newest frame captured by then: an image2 symlink sequence at
+  `-framerate 60`), or concat `frames.txt` only when it starts `ffconcat version 1.0` with `option framerate 1000` per
+  frame (DeckTour writes that since w1488's 093c6dac88). A plain list puts every frame on ffmpeg's 25 fps grid: round 6's
+  601 captured frames came out as 301 distinct, the trap w1491 fixed in 17 scripts. Count distinct frames (mpdecimate)
+  before quoting a clip's fps. **The game's own render rate is the ceiling**: over a late-game factory at 1920x1080 on
+  m3 (M3 Pro, Mac dev player) the game alone runs 49.0 fps flying with the minimap and 60.1 fps on the map
+  (`"capture": "none"` times frames without recording them). The recorder records 50.0 and 53.8 fps since it pools its
+  buffers (a new 8 MB array per frame gave 41.5 and 45.1). A smaller copy (`"scale": 0.667`) gains nothing (48.0 and
+  56.9). For 60 at 1920x1080, record on a faster machine. **Never frame-step a real-rate clip with
+  `Time.captureDeltaTime`**: the heartbeat runs on the wall clock (`HeartbeatSystem.cs:291`, `Stopwatch.GetTimestamp()`),
+  so ships and the factory keep real speed while the camera and map move at clip speed.
 - **An effect fired by an event draws on the event's frame** (w1332, Ben: "more oomph and be more immediate upon
   impact"). A presentation clock that starts at `Now` when it sees the event sits at 0 on that frame, and a shader that
   branches on `progress > 0` draws the frame before: the comet still in flight while the landed core already showed.
