@@ -11,6 +11,11 @@ HERE = Path(__file__).resolve().parent
 sys.path.insert(0, str(HERE.parent))
 import pr_evidence as pe  # noqa: E402
 
+
+def without_closeups(problems):
+    """The w1567 close-up rule, left out where a test is about another rule (CloseUpTest covers it)."""
+    return [p for p in problems if "Close-ups" not in p]
+
 GOOD = """**TL;DR:** riders are drawn on their seats.
 
 ## Evidence
@@ -667,10 +672,12 @@ class UsedByTest(unittest.TestCase):
 
     def test_1068_as_written_fails_only_on_the_missing_used_by(self):
         problems = pe.check(self.body("pr-1068-alt-icon-backing.md"), self.FILES_1068)[0]
+        self.assertTrue([p for p in problems if "without flicker" in p and "Close-ups" in p], problems)
+        problems = without_closeups(problems)
         self.assertEqual(len(problems), 1, problems)
         self.assertIn("AsteroWorldSprite.ShaderGraph with no '## Used by' section", problems[0])
-        self.assertEqual(pe.check(self.body("pr-1068-alt-icon-backing.md"), [f for f in self.FILES_1068
-                                                                             if "Art/Shaders" not in f])[0], [])
+        self.assertEqual(without_closeups(pe.check(self.body("pr-1068-alt-icon-backing.md"),
+                                                   [f for f in self.FILES_1068 if "Art/Shaders" not in f])[0]), [])
 
     def test_1076_with_its_users_listed_passes(self):
         self.assertEqual(pe.check(self.body("pr-1076-shaped-hover-darkness.md"), self.FILES_1076)[0], [])
@@ -751,14 +758,14 @@ class ArtLanguageTest(unittest.TestCase):
         return edit(self.body(), "Built player: yes", line + "\nBuilt player: yes")
 
     def test_1816_as_merged_fails_only_on_the_missing_art_language_line(self):
-        problems = pe.check(self.body(), self.files())[0]
+        problems = without_closeups(pe.check(self.body(), self.files())[0])
         self.assertEqual(len(problems), 1, problems)
         self.assertIn("no 'Art language:' line", problems[0])
 
     def test_a_line_naming_the_reference_and_no_ring_passes(self):
         good = self.with_line("Art language: compared with the Railgun's glow and master's comet in the same stills; "
                               "no ring, circle or UI-like overlay: in-world light, debris streaks and the catcher's own glow")
-        self.assertEqual(pe.check(good, self.files())[0], [])
+        self.assertEqual(without_closeups(pe.check(good, self.files())[0]), [])
 
     def test_v1_rings_fail(self):
         rings = self.with_line("Art language: compared with master's comet; two containment rings turn round the head")
@@ -767,7 +774,7 @@ class ArtLanguageTest(unittest.TestCase):
     def test_an_indicator_the_person_asked_for_passes(self):
         asked = self.with_line('Art language: compared with the Alt-view icons; Ben asked for one (Ben): "give the target a '
                                'ring so I can see it"')
-        self.assertEqual(pe.check(asked, self.files())[0], [])
+        self.assertEqual(without_closeups(pe.check(asked, self.files())[0]), [])
 
     def test_a_script_or_icon_change_needs_no_line(self):
         problems = pe.check(self.body(), ["Assets/Scripts/FFSystems/Presentation/CometVfxPresentationSystem.cs",
@@ -980,3 +987,79 @@ class RealDeckTest(unittest.TestCase):
     def test_a_full_verified_line_passes(self):
         body, files = self.fixture("pr-1301-deck-resolution")
         self.assertEqual(pe.check(edit(body, "Kind: visual\n", f"Kind: visual\n\n{self.VERIFIED}\n"), files)[0], [])
+
+
+class CloseUpTest(unittest.TestCase):
+    """w1567: a claim that a visual defect is gone or that an effect happens names its close-up (checklists/visual.md
+    5g). The failing case is w1470's PR #1921: "No z-fight with the Antimatter Nexus" and "the Guardian spaghettified",
+    after which Ben saw both wrong."""
+
+    CLOSEUPS = ("Close-ups: z-fight over terrain: edge-terrain-1x.png; z-fight over the Nexus ring: edge-nexus-1x.png; "
+                "spaghettify: pull-0.25x.mp4 2.0-3.1 s; stretch: hull-stretch-1x.png; lensing: lens-1x.png; "
+                "pulled in: pull-0.25x.mp4 1.0-2.0 s\nSurfaces: terrain, the Nexus ring\n")
+
+    def lance(self):
+        body = (HERE / "fixtures" / "pr-1921-singularity-lance.md").read_text(encoding="utf-8")
+        files, changes = pe.parse_files_file((HERE / "fixtures" / "pr-1921-singularity-lance.files").read_text(encoding="utf-8"))
+        return body, files, changes
+
+    def closeup(self, problems):
+        return [p for p in problems if "close-up" in p.lower() or "Close-ups" in p or "Surfaces" in p]
+
+    def test_the_lance_pr_claims_a_fixed_z_fight_and_a_spaghettify(self):
+        claimed = pe.visual_claims(self.lance()[0])
+        self.assertIn("z-fight", claimed)
+        self.assertIn("spaghettify", claimed)
+
+    def test_the_lance_pr_fails_for_its_missing_close_ups(self):
+        body, files, changes = self.lance()
+        found = self.closeup(pe.check(body, files, changes=changes)[0])
+        self.assertEqual(len(found), 1, found)
+        self.assertIn("no 'Close-ups:' line", found[0])
+
+    def test_close_ups_for_every_claim_and_surface_pass(self):
+        body, files, changes = self.lance()
+        body = edit(body, "Looked: yes", self.CLOSEUPS + "Looked: yes")
+        self.assertEqual(self.closeup(pe.check(body, files, changes=changes)[0]), [])
+
+    def test_a_z_fight_checked_against_one_surface_only_fails(self):
+        text = "No z-fight at the hole's edge.\nClose-ups: z-fight over the Nexus ring: edge-nexus-1x.png\n" \
+               "Surfaces: terrain, the Nexus ring\n"
+        problems, _ = pe.closeup_problems(text)
+        self.assertEqual(len(problems), 1, problems)
+        self.assertIn("terrain", problems[0])
+
+    def test_a_z_fight_claim_needs_its_surfaces(self):
+        problems, _ = pe.closeup_problems("The z-fight is gone.\nClose-ups: z-fight: edge-nexus-1x.png\n")
+        self.assertTrue(any("no 'Surfaces:' line" in p for p in problems), problems)
+
+    def test_a_clip_counts_only_slowed_and_placed(self):
+        claim = "Ships spaghettify into the core.\n"
+        self.assertTrue(pe.closeup_problems(claim + "Close-ups: spaghettify: camp.mp4\n")[0])
+        self.assertTrue(pe.closeup_problems(claim + "Close-ups: spaghettify: camp-0.25x.mp4\n")[0])
+        self.assertEqual(pe.closeup_problems(claim + "Close-ups: spaghettify: camp-0.25x.mp4 2.0-3.1 s\n")[0], [])
+        self.assertEqual(pe.closeup_problems(claim + "Close-ups: spaghettify: hull-1x.png\n")[0], [])
+
+    def test_the_persons_words_and_pull_requests_are_not_claims(self):
+        text = ('Intended look (Ben): "make them spaghettify ... no z fighting"\n'
+                'Looked: yes, frames 10-40. "ships get pulled in" was his wish.\n'
+                "This pull request into master ships the Lance.\n"
+                "Looked for ghosts, leftovers, z-order and flicker: none\n")
+        self.assertEqual(pe.visual_claims(text), {})
+
+    def test_the_good_example_has_no_claim(self):
+        self.assertEqual(self.closeup(pe.check(GOOD)[0]), [])
+
+    def test_a_note_checks_its_files_and_writes_the_questions(self):
+        import tempfile
+        with tempfile.TemporaryDirectory() as tmp:
+            folder = Path(tmp)
+            (folder / "edge-terrain-1x.png").write_bytes(b"x")
+            note = folder / "note.md"
+            note.write_text("The hole no longer z-fights.\nClose-ups: z-fight over terrain: edge-terrain-1x.png; "
+                            "z-fight over the Nexus: edge-nexus-1x.png\nSurfaces: terrain, the Nexus\n", encoding="utf-8")
+            questions = folder / "q.md"
+            self.assertEqual(pe.main(["--note", str(note), "--questions", str(questions)]), 1)
+            self.assertIn("is this true: The hole no longer z-fights.", questions.read_text(encoding="utf-8"))
+            (folder / "edge-nexus-1x.png").write_bytes(b"x")
+            self.assertEqual(pe.main(["--note", str(note)]), 0)

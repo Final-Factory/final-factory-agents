@@ -11,13 +11,17 @@ or material lists everything that uses it ("## Used by", from the game repo's sc
 with a basis for each, an enemy, combat or spawn change shows the game repo's balance stages before and after
 ("## Balance", checklists/balance.md, w1440), a new model or effect shows its 'Hero art:' line (concept stills and the pick,
 the detail comparison with our best, how it differs from the existing weapons' and effects', what makes it distinctive,
-the measured frame cost; checklists/visual.md 5e, w1497), and a Deck-facing change says 'Real Deck: verified ...' or 'not verified on a real Deck' (checklists/deck.md). It cannot tell whether anyone looked carefully. Standard library only; `gh` for everything that reads GitHub.
+the measured frame cost; checklists/visual.md 5e, w1497), a claim that a visual defect is gone or an effect happens names
+its 1:1 crop or slowed segment on 'Close-ups:' and, for occlusion, every surface on 'Surfaces:' (checklists/visual.md 5g,
+w1567), and a Deck-facing change says 'Real Deck: verified ...' or 'not verified on a real Deck' (checklists/deck.md). It cannot tell whether anyone looked carefully. Standard library only; `gh` for everything that reads GitHub.
 
     pr_evidence.py --repo OWNER/NAME --pr N               check one pull request (exit 1 on FAIL)
     pr_evidence.py --repo OWNER/NAME --pr N --comment     the same, and post the verdict on it
     pr_evidence.py --body-file F [--files-file G]         the same, offline (a description and a file list; a line may be
                                                           `A<TAB>path` or `M<TAB>path<TAB>lines`, as git diff --name-status)
     ... [--brief B]                                       also: every 'Moved:' quote is in the request's brief (w826)
+    pr_evidence.py --note N [--note-dir D] [--questions Q] a review note before publish_review: its close-ups (w1567),
+                                                          each file beside it, the claims as questions for the critic
     pr_evidence.py --repo OWNER/NAME --audit --since 2026-10-01 [--base master]
                                                           merged pull requests: the verdict now, and
                                                           whether a PASS was posted before the merge
@@ -84,6 +88,41 @@ BALANCE_PATH = re.compile(r"^Assets/Resources/GlobalConfig\.asset$|^Assets/Resou
                           r"^Assets/Resources/ItemConfig/[^/]*(Spawner|Cutter|Stinger|Trident|Razor|Urso|Turret|Railgun|Guardian)"
                           r"[^/]*\.asset$")
 COMPARE_TABLE = re.compile(r"^\|\s*metric\s*\|\s*before\b", re.IGNORECASE | re.MULTILINE)
+# A claim that a visual defect is gone or that an effect happens (w1567): each needs a 1:1 close-up still or a slowed
+# clip segment of that moment on its 'Close-ups:' line, and an occlusion claim one per surface on 'Surfaces:'. w1470
+# wrote "No z-fight with the Antimatter Nexus" and "ships spaghettify into the core"; Ben, twice: "still weird z fighting
+# where the blakc hole isnt overtop of the terrain", "the units dont really spagettify". The words are guesses, checked
+# on the w1470 body and the game PRs merged since 2026-10-01 (lessons/visual-fixes-are-verified-by-looking.md).
+DEFECTS = (
+    ("z-fight", r"\bz[- ]?fight\w*"),
+    ("flicker", r"\bflicker\w*|\bshimmer\w*"),
+    ("draws through", r"\b(clip(s|ped|ping)?|draws?|drew|drawn|poke[sd]?|poking|shows?|showing|bleed(s|ing)?)\s+through\b"),
+    ("ghost", r"\bghost(s|ing|ed)?\b"),
+    ("seam", r"\bseams?\b"),
+    ("occlusion", r"\boccl(ude[sd]?|uding|usion)\b|\bz[- ]order\b|\bdepth[- ]sort\w*|\bdrawn\s+(over|under|behind|in front)"),
+    ("pop", r"\bpop(s|ping)?\b"),
+)
+OCCLUSION_KEYS = ("z-fight", "draws through", "occlusion")
+FIXED = re.compile(r"\b(no|not|never|without|gone|fixe[sd]|removed?|removes|no longer|free of|stable|clean|cured|"
+                   r"eliminated|eliminates)\b", re.IGNORECASE)
+EFFECTS = (
+    ("spaghettify", r"\bspaghettif\w*|\bspag+et+if\w*"),
+    ("stretch", r"\bstretch(es|ed|ing)?\s+(\w+\s+){0,2}?(into|toward|towards|along|out)\b|\bthin(s|ned|ning)?\s+out\b"),
+    ("pulled in", r"\bpull(s|ed|ing)?\s+(\w+\s+){0,3}?(in|into|to|toward|towards)\b|\bsuck(s|ed|ing)?\b|\bdragged\b|"
+                  r"\bfall(s|ing)?\s+(in|into)\b|\bfell\s+into\b"),
+    ("lensing", r"\blens(es|ed|ing)\b|\bbent\s+(sky|light|stars)\b|\bbends?\s+(the\s+)?(sky|light|stars)\b"),
+    ("wraps over", r"\bwrap(s|ped|ping)?\s+(over|around|in front)\b"),
+    ("shatters", r"\bshatter\w*|\bcrumpl\w*|\bfold(s|ed|ing)?\s+(in|inward|inwards)\b"),
+)
+STILL = re.compile(r"\.(png|jpe?g|webp)\b", re.IGNORECASE)
+SLOWED = re.compile(r"\bslow\w*|\b0?\.\d+\s*x\b|\b1/\d+\s*x?\b|\bquarter[- ]speed|\bhalf[- ]speed|\bframe[- ]by[- ]frame\b",
+                    re.IGNORECASE)
+MEDIA_NAME = re.compile(r"[\w./\\-]+\.(?:png|jpe?g|webp|gif|mp4|webm|mov|mkv)\b", re.IGNORECASE)
+# Lines that are not the worker's claims: the person's words, the gap list, the close-ups themselves, the artifact-hunt
+# list (checklist 5b: "looked for ghosts ...: none" is a search, not a fixed defect).
+NOT_A_CLAIM = re.compile(r"^\s*[-*]?\s*(Intended look|Not verified|Close-?ups|Surfaces|Looked for|Things I looked for|"
+                         r"Not asked for|Shape|Flicker|Overlaps|Window overlaps|Alignment|Moved|Pinned|Colour|Eye|Critic|"
+                         r"Covered text|Style|Content|Full content|Shots)\b", re.IGNORECASE)
 
 
 def evidence_section(body: str, heading: str = "Evidence") -> str | None:
@@ -732,6 +771,100 @@ def art_language_notes(section: str) -> list[str]:
     return [f"art language: {line[1][:160]}"] if line and line[1] else []
 
 
+def field_block(text: str, name: str) -> list[str]:
+    """`Name: value` plus the indented or bulleted lines under it, one string per line (empty when missing)."""
+    lines = text.replace("\r\n", "\n").split("\n")
+    head = re.compile(rf"^\s*[-*]?\s*{re.escape(name)}\s*(?:\([^)]*\))?\s*:\s*(.*)$", re.IGNORECASE)
+    for i, line in enumerate(lines):
+        found = head.match(line)
+        if not found:
+            continue
+        block = [found.group(1).strip()]
+        for later in lines[i + 1:]:
+            if later.strip() and (later.startswith((" ", "\t")) or re.match(r"^\s*[-*]\s", later)) \
+                    and not re.match(r"^\s*[-*]?\s*[A-Z][\w -]{1,30}\s*(\([^)]*\))?\s*:", later):
+                block.append(later.strip().lstrip("-* ").strip())
+            else:
+                break
+        return [b for b in block if b]
+    return []
+
+
+def visual_claims(text: str) -> dict[str, list[str]]:
+    """w1567: the sentences that say a visual defect is gone ("no z-fight") or that an effect happens ("ships
+    spaghettify"), by kind of claim. The person's quoted words, comments and the gap and close-up lines are not claims."""
+    text = re.sub(r"<!--.*?-->", "", text or "", flags=re.DOTALL)
+    text = re.sub(r"\"[^\"]*\"|“[^”]*”", "\"\"", text)
+    text = re.sub(r"\bpull\s+requests?\b", "PR", text, flags=re.IGNORECASE)
+    found: dict[str, list[str]] = {}
+    for line in text.split("\n"):
+        if NOT_A_CLAIM.match(line) or not line.strip():
+            continue
+        for sentence in re.split(r"(?<=[.!?;])\s+", line):
+            for key, pattern in DEFECTS:
+                # ui_check.py flicker finds the regions that change (checklists/ui.md); a whole-frame mean does not
+                # (w1470's "median of 2.1/255" passed a z-fight at the hole's edge).
+                if key == "flicker" and "ui_check.py flicker" in sentence:
+                    continue
+                if re.search(pattern, sentence, re.IGNORECASE) and FIXED.search(sentence):
+                    found.setdefault(key, []).append(sentence.strip(" |-*"))
+            for key, pattern in EFFECTS:
+                if re.search(pattern, sentence, re.IGNORECASE):
+                    found.setdefault(key, []).append(sentence.strip(" |-*"))
+    return found
+
+
+def closeup_problems(text: str, folder: Path | None = None, claims_text: str | None = None) -> tuple[list[str], list[str]]:
+    """w1567, Ben on w1470 twice, after the notes said the defect was gone and the effect was there: "its z fighting in
+    the screenshot with the antimatter nexus or something, and its not pulling in the boss", then "the units dont
+    really spagettify when they get pulled in and also theres still weird z fighting where the blakc hole isnt overtop
+    of the terrain". Each such claim names, on the 'Close-ups:' line, a 1:1 crop or a slowed clip segment of that
+    moment; an occlusion claim one per surface on the 'Surfaces:' line (terrain, structures, other effects).
+    With a folder (a review note's), every file named there must be in it. Returns (problems, the critic's questions)."""
+    claimed = visual_claims(text if claims_text is None else claims_text)
+    if not claimed:
+        return [], []
+    keys = dict(DEFECTS + EFFECTS)
+    entries = [e.strip() for line in field_block(text, "Close-ups") for e in line.split(";") if e.strip()]
+    surfaces = [s.strip() for line in field_block(text, "Surfaces") for s in re.split(r",|;|\band\b", line) if s.strip()]
+    questions = [f"From the close-ups, is this true: {s}? Say what you see at that moment, frame or crop by name."
+                 for sentences in claimed.values() for s in sentences[:2]]
+    problems = []
+    said = ", ".join(f"'{claimed[k][0][:70]}'" for k in list(claimed)[:3])
+    if not entries:
+        return [f"the evidence claims a defect is gone or an effect happens ({said}) and has no 'Close-ups:' line: "
+                f"for each claim, a 1:1 crop (png) of that exact moment or a slowed clip segment (0.25x, its seconds), "
+                f"e.g. 'Close-ups: z-fight: edge-over-terrain.png, edge-over-nexus.png; spaghettify: "
+                f"pull-0.25x.mp4 2.0-3.1 s' (checklists/visual.md 5g; Ben, w1470: \"the units dont really spagettify "
+                f"when they get pulled in\")"], questions
+    for key in claimed:
+        family = OCCLUSION_KEYS if key in OCCLUSION_KEYS else (key,)
+        mine = [e for e in entries if any(re.search(keys[k], e, re.IGNORECASE) or k.split()[0][:4].lower() in e.lower()
+                                          for k in family)]
+        shown = [e for e in mine if STILL.search(e) or (VIDEO.search(e) and SLOWED.search(e) and PLACE.search(e))]
+        if not shown:
+            problems.append(f"'{claimed[key][0][:90]}' ({key}) has no close-up on the 'Close-ups:' line: an entry naming "
+                            f"'{key}' with a 1:1 crop (png, jpg) or a slowed clip segment (0.25x and its seconds)")
+            continue
+        if key in OCCLUSION_KEYS:
+            if not surfaces:
+                problems.append(f"'{key}' is claimed fixed and there is no 'Surfaces:' line: list every surface the "
+                                f"effect overlaps (terrain, structures, hulls, other effects) and give each its close-up "
+                                f"(Ben, w1470: \"theres still weird z fighting where the blakc hole isnt overtop of the "
+                                f"terrain\", after a check against the Nexus ring alone)")
+            for surface in surfaces:
+                words = [w for w in re.findall(r"[a-z]{4,}", surface.lower()) if w not in ("other", "over", "with")]
+                if words and not any(any(w in e.lower() for w in words) and MEDIA_NAME.search(e) for e in shown):
+                    problems.append(f"'{key}' over '{surface}' has no close-up: name the surface in its entry "
+                                    f"('{key} over {surface}: <crop>.png')")
+    if folder is not None:
+        for e in entries:
+            for name in MEDIA_NAME.findall(e):
+                if not (folder / name).exists() and not (folder / Path(name).name).exists():
+                    problems.append(f"'Close-ups:' names {name}, which is not in {folder}")
+    return problems, questions
+
+
 # ---------------------------------------------------------------------------------------------
 # Hero art (w1497): new models and VFX are creative, detailed and different, and the PR shows it.
 #
@@ -987,6 +1120,8 @@ def check(body: str, files: list[str] | None = None, brief: str | None = None,
         if art_files and not ui:
             problems += art_language_problems(section, art_files)
             notes += art_language_notes(section)
+        told = re.sub(r"^#{1,6}\s*Used by\b.*?(?=^#{1,6}\s|\Z)", "", body, flags=re.DOTALL | re.MULTILINE | re.IGNORECASE)
+        problems += closeup_problems(section, claims_text=told)[0]
 
     hero_files = hero_art_files(files, changes)
     if hero_files:
@@ -1156,7 +1291,22 @@ def main(argv=None) -> int:
     ap.add_argument("--since", help="--audit: merged on or after this date (YYYY-MM-DD)")
     ap.add_argument("--base", default="master", help="--audit: the base branch (default master)")
     ap.add_argument("--limit", type=int, default=100, help="--audit: at most this many pull requests")
+    ap.add_argument("--note", help="check a review note (the markdown you hand publish_review) instead: every claim that a "
+                                   "defect is gone or an effect happens names its close-up, and each file is beside it")
+    ap.add_argument("--note-dir", help="--note: the folder its files are in (default: the note's own folder)")
+    ap.add_argument("--questions", help="--note: write the claims as questions for the fresh critic to this file")
     args = ap.parse_args(argv)
+
+    if args.note:
+        note = Path(args.note)
+        problems, questions = closeup_problems(note.read_text(encoding="utf-8"), Path(args.note_dir) if args.note_dir
+                                               else note.resolve().parent)
+        if args.questions:
+            Path(args.questions).write_text("".join(f"- {q}\n" for q in questions), encoding="utf-8")
+        print(verdict_text(problems, [f"{len(questions)} claim(s) for the critic, as questions"
+                                      + (f" in {args.questions}" if args.questions else " (--questions FILE writes them)")]
+                           if questions else []))
+        return 1 if problems else 0
 
     if args.audit:
         if not (args.repo and args.since):

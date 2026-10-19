@@ -113,6 +113,23 @@ in the built player (drive-game, "The mouse cursor in a built player"; w980).
    another weapon's effect? (3) **Detail level**: at the same zoom as the named best models, does it hold its own
    (panel lines, silhouette breaks, emissive accents)? (4) The concept stills were published before the build, and the
    pick is the person's. Any "no" goes back before the clip.
+5g. **Every "it's gone" and "it happens" is shown close up, against every surface, and asked as a question (w1567).**
+   Each sentence in a review note, report or PR that says a visual defect is gone ("no z-fight", "the flicker is
+   fixed", "no longer draws through") or that an effect happens ("ships spaghettify", "pulls in the boss", "the disc
+   wraps over the core") names its own close-up: a full-resolution (1:1) crop of that exact moment, or a slowed clip
+   segment of it (0.25x, with its seconds). A contact sheet, a whole-frame clip or a frame-wide number is not one.
+   (1) A z-fight, draw-through or occlusion claim has a crop of the effect's edge over **every surface it overlaps**:
+   terrain, structures and hulls, other effects. List them on a `Surfaces:` line; one occluder checked is not "gone".
+   (2) An effect on a victim (stretch, pull, fall in) is cropped on the victim, at a size where its shape shows.
+   (3) The fresh critic (a new subagent, or watch_video's blind review via `--brief`) gets each claim **as a question**
+   with the crops ("At 2.4 s, does the hole draw over the terrain at its left edge?"), never as a statement it can
+   agree with. Write `Close-ups: <claim>: <file>; ...` in the note and the PR's Evidence; `pr_evidence.py` fails a PR,
+   and `pr_evidence.py --note <note.md> --questions q.md` a review note before `publish_review`, that claims either
+   kind without one, writes the questions for the critic, and checks each named file is beside the note
+   ([lesson](../lessons/visual-fixes-are-verified-by-looking.md#every-its-gone-is-shown-close-up-against-every-surface-w1567);
+   Ben, w1470: "its z fighting in the screenshot with the antimatter nexus or something, and its not pulling in the
+   boss", then, after a note said the z-fight was gone: "the units dont really spagettify when they get pulled in and
+   also theres still weird z fighting where the blakc hole isnt overtop of the terrain").
 6. **`watch_video` and the blind model review are a second opinion.** They have passed clips
    that did not contain the event, and agreed with a mistake the brief described as intended.
    Quote them, and say where the frames contradict them.
