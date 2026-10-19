@@ -269,6 +269,10 @@ to its pull request. For #1137's change the selection ran in 75 s against 376 s 
   `assembly_names` only ran `LandingTimingTest.CaptureOldLandingStates`, an `[Explicit]` fixture writer, and it rewrote its
   fixture from the wrong code (4 of 8 states; the replay then failed and the bad file was committed). A test that writes files
   guards itself on a runtime condition (the code it captures from, an environment variable) and `Assert.Ignore`s otherwise.
+- **`test_names` takes the namespace-qualified class name, and a run of 0 tests is not a pass** (measured 2026-10-19,
+  w1499, BEAST slot4): `test_names ["CombatMoverFingerprintTest"]` ran `total 0` and answered `resultState Passed`;
+  `Tests.Multiplayer.CombatMoverFingerprintTest` ran 22. Copy the names `test_select.py` prints, and read `summary.total`:
+  0, or fewer than the class holds, means the filter matched nothing.
 - Pass `test_names`, never regex `group_names`. One class through a regex took the job 16.6 s
   against 4.0 s by exact name, and regex runs held the main thread for minutes (measured).
 - Give `run_tests` an `init_timeout` of 120000. A call that answers "Timeout receiving Unity
