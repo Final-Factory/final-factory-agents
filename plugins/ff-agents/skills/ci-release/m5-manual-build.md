@@ -215,8 +215,8 @@ BuildID before and after, and compare each depot's `development` `gid` in the sa
 `[skip ci]` build: it takes the dispatched test run as the release run and says "A Release job
 failed" because that run's `Release` job is skipped (Build 97). Quote its Steam lines and the test
 result; say the verdict does not apply to a manual build. The patch notes (section 3), the UI stills of the built players (launch only
-through `scripts/nightly/player_slots.py`) and the first-hour check (section 4) are unchanged, except that **the m5 cannot read the
-crash/desync intake**: it has no ffdiscord token (`ffdiscord.py read` says "no bot token"), the
-portal's logs carry no report intake, and `fetch_ffbox_report` needs an id. Ask the orchestrator
-for `ffbox_activity` reports/signatures for the version at the hour mark, fetch any report it names
-by id, and confirm the BuildID on `development` yourself (Build 97).
+through `scripts/nightly/player_slots.py`) and the first-hour check (section 4) are unchanged, and the m5 reads the
+crash/desync intake the same way: `list_ffbox_files` with `what: "reports"` by version and since the
+landing (SKILL.md section 4; w1557). Only if that tool is missing, ask the orchestrator for `ffbox_activity`
+reports/signatures for the version at the hour mark (the m5 has no ffdiscord token). Fetch any report by id
+with `fetch_ffbox_report`, and confirm the BuildID on `development` yourself (Build 97).
