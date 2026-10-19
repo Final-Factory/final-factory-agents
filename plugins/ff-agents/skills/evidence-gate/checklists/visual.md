@@ -95,7 +95,9 @@ in the built player (drive-game, "The mouse cursor in a built player"; w980).
    weapon's projectile and impact are compared with the Railgun's, the Plasma Bolt's and the other weapons' and read
    clearly different; any reuse of another weapon's effect is called out. (5) The verdict says what makes the piece
    distinctive, not only that it passes. **The concept stills are published to the person before any build-quality clip
-   is made** (w1497). The PR's evidence carries a `Hero art:` line (`concepts:`, `detail:`, `differs:`, `distinct:`,
+   is made** (w1497), and the picked concept is offered a Live view session in its real scene, where you change
+   whatever the person describes and they watch it (w1498;
+   [how](../../project-memory/memories/live-view-asset-iteration.md)). The PR's evidence carries a `Hero art:` line (`concepts:`, `detail:`, `differs:`, `distinct:`,
    `cost:` measured in a built player), which `pr_evidence.py` fails the PR without when it adds a model or effect art
    ([merge.md](merge.md) has the format; `Hero art: n/a (<why>)` shows in the verdict); a reviewer reads it with 5f
    ([lesson](../lessons/visual-fixes-are-verified-by-looking.md#hero-art-is-creative-detailed-and-different-w1470-w1466); Ben, w1470, Singularity Lance: "I don't like that it's

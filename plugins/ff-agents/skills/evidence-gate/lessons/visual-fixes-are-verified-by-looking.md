@@ -231,6 +231,16 @@ sentence; a hero asset without them is not shown and not merged.
 (`publish_review`, stills of each concept or a quick block-out) and the build starts after the pick. A polished
 built-player clip of one unreviewed take is the miss: the person then reacts to the clip, not to the idea.
 
+**After the pick, offer a Live view session (w1498).** Ben, w1498: "why dont we test out the live editor for some of this
+new art and vfx?" and "keep in mind the knobs arent as important as me just being able to iterate conversatoinally with
+the agent to improve the art model or vfx". Once he has picked a concept, offer him a Live view session on it in its real
+scene with the game's lighting, and in the session make whatever change he describes (shader code, material, VFX Graph,
+mesh or model, a new layer), saying roughly how long each takes (a shader edit shows in seconds, a C# change takes
+minutes), with preset knobs as optional extras. What updates without a reload is in the game repo's
+`Documentation/Live-View-Knobs.md`; the how-to and the measured round trips are in the project-memory page
+[live-view-asset-iteration](../../project-memory/memories/live-view-asset-iteration.md). The final values then go through
+the normal PR flow with the `Hero art:` line and a smooth built-game clip, and the Live view and the editor are stopped.
+
 **The tool check (w1497).** `pr_evidence.py` fails a game-repo PR that adds a model or effect art without a filled
 `Hero art:` line ([merge checklist](../checklists/merge.md) has the format). What counts is decided from the PR's
 changed files with their status (`gh pr view --json files`: `changeType`, additions, deletions): a model file
