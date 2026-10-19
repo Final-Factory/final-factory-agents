@@ -293,7 +293,10 @@ control, and a redesign goes out as 2 or 3 clearly different options built from 
     `LayoutElement`, `preserveAspect`, a fixed-size slot, as the game's other panels hold a switch); it passes only with
     the requester's words (`intended (who): "..."`). A mostly empty window or a wall of text is fixed or explained on the
     line (`looked: ...`). A census without `spriteSize` or `lines` (Deck tours before w1396) needs `--repo` for the
-    sprites and cannot count lines: the line says "not measured", and the eye check covers it.
+    sprites and cannot count lines: the line says "not measured", and the eye check covers it. Give `--repo` always: a
+    sprite whose every pixel is transparent (the game's `transparent-block`, the hit area behind its tab and menu buttons)
+    draws nothing, and only with the repo can the tool look at its pixels and leave it out (w1468: 45 STRETCHED without it,
+    0 with it, and a `not judged:` line naming the sprite).
 29. **A redesign is 2 or 3 options, built from the game's best dialogs (w1296).** When the work is a new dialog or panel,
     or the person said the look is wrong, list the game's best existing screens of that kind first (for a dialog: the
     mod-mismatch dialog, the research and unlock popups, the save and load panel) and build 2 or 3 clearly different

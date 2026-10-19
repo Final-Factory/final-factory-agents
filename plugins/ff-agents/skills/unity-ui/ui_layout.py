@@ -1090,6 +1090,34 @@ def sprite_sizes(repo: str | Path | None) -> dict:
     return {k: v for k, v in found.items() if k not in ambiguous}
 
 
+SPRITE_FILES = (".png", ".psd", ".tga")
+
+
+def invisible_sprites(repo: str | Path | None, names) -> set[str]:
+    """The sprite names among `names` whose image under <repo>/Assets has every pixel fully transparent (alpha 0): a hit
+    area that draws nothing (w1468: `Assets/Art/UI/UI2/transparent-block.psd`, 512x512, the tile behind the game's
+    TabSettingsButton and MainMenuButton). A name with several files counts only when all of them are transparent. Needs
+    Pillow; without it, or without a repo, nothing is skipped."""
+    wanted = {n for n in names if n}
+    if not repo or not wanted:
+        return set()
+    try:
+        from PIL import Image  # noqa: PLC0415
+    except ImportError:
+        return set()
+    verdict: dict[str, bool] = {}
+    for path in Path(repo, "Assets").rglob("*"):
+        if path.suffix.lower() not in SPRITE_FILES or path.stem not in wanted:
+            continue
+        try:
+            with Image.open(path) as im:
+                clear = im.convert("RGBA").getchannel("A").getextrema()[1] == 0
+        except (OSError, ValueError):
+            clear = False
+        verdict[path.stem] = verdict.get(path.stem, True) and clear
+    return {n for n, clear in verdict.items() if clear}
+
+
 def glyph_box(e: dict):
     """Where a text's glyphs are drawn: the census `textRect`, else an estimate from its string and box (left-aligned, a
     character about 0.35 of the box's height wide and the glyphs 0.75 of it tall: measured on the w1386 1920x1080 still,
@@ -1162,8 +1190,12 @@ def is_panel(e: dict, screen_px: float) -> bool:
     return 0.015 * screen_px <= a <= 0.6 * screen_px and not HOLLOW.search(e.get("sprite") or "")
 
 
-def shape(census: dict, sprites: dict | None = None, patterns: list[str] | None = None) -> dict:
-    """One census judged on its own: stretched sprites, mostly empty windows and dialogs, walls of text (w1396)."""
+def shape(census: dict, sprites: dict | None = None, patterns: list[str] | None = None,
+          invisible: set[str] | None = None) -> dict:
+    """One census judged on its own: stretched sprites, mostly empty windows and dialogs, walls of text (w1396).
+    `invisible`: sprite names whose every pixel is transparent (`invisible_sprites`); they draw nothing, so they are never
+    stretched (w1468: the game's `transparent-block`, the hit area of its tab and menu buttons, read 45 STRETCHED)."""
+    invisible = invisible or set()
     if patterns is None:
         patterns = opened_patterns(json.loads(DEFAULT_CLUSTERS.read_text(encoding="utf-8")))
     sw, sh = (census.get("screen") or [1920, 1080])[:2]
@@ -1176,7 +1208,7 @@ def shape(census: dict, sprites: dict | None = None, patterns: list[str] | None 
         name = e.get("sprite") or ""
         r = e.get("visible") or e["rect"]
         w, h = r[2] - r[0], r[3] - r[1]
-        if not name or e.get("maskOnly") or e.get("alpha", 1.0) < 0.25 or min(w, h) < 6:
+        if not name or e.get("maskOnly") or e.get("alpha", 1.0) < 0.25 or min(w, h) < 6 or name in invisible:
             continue
         if e.get("preserveAspect") or e.get("imageType") == "Tiled":
             continue
@@ -1435,8 +1467,15 @@ def run_covered_text(args) -> int:
 
 def run_shape(args) -> int:
     sprites = sprite_sizes(args.repo)
-    results = [(f"{Path(c).parent.name}/{Path(c).name.split('.')[0]}", shape(load(c), sprites)) for c in args.census]
+    censuses = [(f"{Path(c).parent.name}/{Path(c).name.split('.')[0]}", load(c)) for c in args.census]
+    results = [(label, shape(census, sprites)) for label, census in censuses]
+    # w1468: a stretched sprite whose every pixel is transparent draws nothing; with --repo, look and drop it.
+    invisible = invisible_sprites(args.repo, {s["sprite"] for _, r in results for s in r["stretched"]})
+    if invisible:
+        results = [(label, shape(census, sprites, invisible=invisible)) for label, census in censuses]
     lines, flagged = shape_lines(results)
+    if invisible:
+        lines.append(f"  not judged: {', '.join(sorted(invisible))}: every pixel transparent (a hit area that draws nothing)")
     print("\n".join(lines))
     return 1 if flagged else 0
 

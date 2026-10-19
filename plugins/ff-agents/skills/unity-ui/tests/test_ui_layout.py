@@ -1030,6 +1030,60 @@ class ShapeTest(unittest.TestCase):
         self.assertEqual(out["stretched"], [])
         self.assertIn("SwitchOn", out["unknown_sprites"])
 
+    # w1468 (PR #1937): the projector panel's side, turn and reset buttons, like the game's TabSettingsButton and
+    # MainMenuButton, put `transparent-block` (512x512, every pixel alpha 0) behind them as their hit area, drawn 91x32
+    # at colour alpha 1. It draws nothing, and the shape line read 45 STRETCHED.
+    QUIET = {"path": f"{GP}/BlueprintProjectorEntityPanel/MainPanel/Content/Sides/Side1", "kind": "Image",
+             "rect": [453, 468, 544, 501], "visible": [453, 468, 544, 501], "color": "#FFFFFFFF", "alpha": 1.0,
+             "sprite": "transparent-block", "spriteSize": [512, 512], "spriteBorder": [0, 0, 0, 0], "imageType": "Sliced",
+             "preserveAspect": False}
+
+    @staticmethod
+    def write_png(path, alpha):
+        from PIL import Image  # noqa: PLC0415
+        path.parent.mkdir(parents=True, exist_ok=True)
+        Image.new("RGBA", (64, 64), (255, 255, 255, alpha)).save(path)
+
+    def test_a_transparent_hit_area_is_flagged_without_the_repo(self):
+        census = {"screen": [1920, 1080], "elements": [dict(self.QUIET)]}
+        self.assertEqual(len(ul.shape(census)["stretched"]), 1)  # nothing says it draws nothing
+
+    def test_a_sprite_whose_every_pixel_is_transparent_is_not_stretched(self):
+        census = {"screen": [1920, 1080], "elements": [dict(self.QUIET)]}
+        self.assertEqual(ul.shape(census, invisible={"transparent-block"})["stretched"], [])
+
+    def test_invisible_sprites_reads_the_pixels(self):
+        try:
+            import PIL  # noqa: F401, PLC0415
+        except ImportError:
+            self.skipTest("Pillow")
+        with tempfile.TemporaryDirectory() as tmp:
+            assets = Path(tmp, "Assets")
+            self.write_png(assets / "UI" / "transparent-block.png", 0)
+            self.write_png(assets / "UI" / "selected-tab.png", 255)
+            self.write_png(assets / "A" / "twice.png", 0)
+            self.write_png(assets / "B" / "twice.png", 128)  # two files of one name, one drawn: not skipped
+            self.assertEqual(ul.invisible_sprites(tmp, {"transparent-block", "selected-tab", "twice", "missing"}),
+                             {"transparent-block"})
+            self.assertEqual(ul.invisible_sprites(None, {"transparent-block"}), set())
+
+    def test_the_shape_command_drops_a_transparent_hit_area_with_the_repo(self):
+        try:
+            import PIL  # noqa: F401, PLC0415
+        except ImportError:
+            self.skipTest("Pillow")
+        import contextlib  # noqa: PLC0415
+        import io  # noqa: PLC0415
+        with tempfile.TemporaryDirectory() as tmp:
+            self.write_png(Path(tmp, "Assets", "Art", "UI", "UI2", "transparent-block.png"), 0)
+            census = Path(tmp, "a-1920-projector-off-layout.json")
+            census.write_text(json.dumps({"screen": [1920, 1080], "elements": [dict(self.QUIET)]}), encoding="utf-8")
+            out = io.StringIO()
+            with contextlib.redirect_stdout(out):
+                self.assertEqual(0, ul.main(["shape", str(census), "--repo", tmp]))
+            self.assertIn("Shape: 0 stretched", out.getvalue())
+            self.assertIn("not judged: transparent-block: every pixel transparent", out.getvalue())
+
     def test_the_1920_light_panel_is_mostly_empty(self):
         found = ul.shape(self.fixture("w1386-1920-lamp"), self.SPRITES)["sparse"]
         self.assertEqual([s["path"].split("/")[-2:] for s in found], [["LightEntityPanel", "MainPanel"]])
