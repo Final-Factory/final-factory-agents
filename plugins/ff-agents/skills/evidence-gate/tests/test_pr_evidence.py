@@ -775,6 +775,131 @@ class ArtLanguageTest(unittest.TestCase):
         self.assertFalse([p for p in problems if "Art language" in p], problems)
 
 
+HERO_LINE = ("Hero art: concepts: shots/concept-a-tether.png, shots/concept-b-fold.png, shots/concept-c-lattice.png shown to "
+             "Ben, he picked B; detail: compared with the Railgun and the Advanced Assembler in one still "
+             "(shots/detail-side-by-side.png); differs: from the Railgun's slug and the Plasma Bolt's orb in "
+             "shots/impact-vs-weapons.png, no reuse of their effects; distinct: a tether of purple light that pulls the "
+             "target in and folds the hull inward; cost: measured 0.4 ms GPU, 62 fps in the built player with 12 firing")
+
+
+class HeroArtTest(unittest.TestCase):
+    """w1497: Ben turned down generic new art three times on 2026-10-18 (w1470 Singularity Lance, w1466 Urso Ballista,
+    w1475 Shield Generator effect). A pull request that adds a model or effect art carries a filled 'Hero art:' line."""
+
+    def fixture(self, name):
+        return pe.parse_files_file((HERE / "fixtures" / f"{name}.files").read_text(encoding="utf-8"))
+
+    def run_check(self, line, name="pr-1929-urso-ballista"):
+        files, changes = self.fixture(name)
+        body = GOOD if line is None else edit(GOOD, "Looked: yes", line + "\nLooked: yes")
+        found = pe.check(body, files, changes=changes)
+        return [p for p in found[0] if "Hero art" in p or "hero art" in p.lower() or "new model or effect" in p], found[1]
+
+    def test_the_real_prs_of_the_three_corrections_are_hero_art(self):
+        for name in ("pr-1921-singularity-lance", "pr-1929-urso-ballista", "pr-1924-shield-generator"):
+            files, changes = self.fixture(name)
+            self.assertTrue(pe.hero_art_files(files, changes), name)
+
+    def test_a_missing_line_fails_and_names_the_files(self):
+        problems, _ = self.run_check(None)
+        self.assertEqual(len(problems), 1, problems)
+        self.assertIn("no 'Hero art:' line", problems[0])
+        self.assertIn("urso-ballista", problems[0])
+
+    def test_a_filled_line_passes(self):
+        for name in ("pr-1921-singularity-lance", "pr-1929-urso-ballista", "pr-1924-shield-generator"):
+            problems, notes = self.run_check(HERO_LINE, name)
+            self.assertEqual(problems, [], (name, problems))
+            self.assertTrue([n for n in notes if n.startswith("hero art:")])
+
+    def test_a_line_on_several_lines_passes(self):
+        text = HERO_LINE.replace("; detail:", "\n  - detail:").replace("; differs:", "\n  - differs:") \
+                        .replace("; distinct:", "\n  - distinct:").replace("; cost:", "\n  - cost:")
+        self.assertEqual(self.run_check(text)[0], [])
+
+    def test_placeholder_lines_fail(self):
+        for line in ("Hero art: TBD", "Hero art: done", "Hero art: yes, see the PR",
+                     "Hero art: concepts: <stills>; detail: <compared with>; differs: <how>; distinct: <why>; cost: <ms>",
+                     HERO_LINE.replace("cost: measured 0.4 ms GPU, 62 fps in the built player with 12 firing", "cost: TBD"),
+                     HERO_LINE.replace("distinct: a tether of purple light that pulls the target in and folds the hull inward",
+                                       "distinct: todo, write this later in the evidence")):
+            self.assertTrue(self.run_check(line)[0], line)
+
+    def test_each_part_is_needed(self):
+        for part in ("concepts", "detail", "differs", "distinct", "cost"):
+            cut = re.sub(rf"; {part}:[^;]*", "", HERO_LINE) if part != "concepts" else re.sub(
+                r"concepts:[^;]*; ", "", HERO_LINE)
+            problems = self.run_check(cut)[0]
+            self.assertTrue(any(f"no '{part[:7] if part != 'concepts' else 'concept'}" in p or part[:6] in p for p in problems),
+                            (part, problems))
+
+    def test_one_concept_or_no_pick_fails(self):
+        one = HERO_LINE.replace("shots/concept-b-fold.png, shots/concept-c-lattice.png ", "")
+        self.assertIn("at least two concept", "\n".join(self.run_check(one)[0]))
+        unpicked = HERO_LINE.replace("he picked B", "all three look fine")
+        self.assertIn("which concept was picked", "\n".join(self.run_check(unpicked)[0]))
+
+    def test_a_detail_comparison_without_a_named_reference_or_still_fails(self):
+        vague = HERO_LINE.replace("compared with the Railgun and the Advanced Assembler in one still "
+                                  "(shots/detail-side-by-side.png)", "looks detailed enough, compared by eye")
+        self.assertIn("'Hero art' detail", "\n".join(self.run_check(vague)[0]))
+
+    def test_reuse_of_another_weapons_effect_must_be_said(self):
+        silent = HERO_LINE.replace(", no reuse of their effects", ", the colours are different")
+        self.assertIn("'Hero art' differs", "\n".join(self.run_check(silent)[0]))
+        called_out = HERO_LINE.replace("no reuse of their effects", "reuses the Plasma Bolt's trail, recoloured")
+        self.assertEqual(self.run_check(called_out)[0], [])
+
+    def test_the_frame_cost_is_measured_with_a_unit(self):
+        words = HERO_LINE.replace("measured 0.4 ms GPU, 62 fps in the built player with 12 firing", "cheap, runs fine")
+        self.assertIn("measured frame cost", "\n".join(self.run_check(words)[0]))
+        guess = HERO_LINE.replace("measured 0.4 ms GPU, 62 fps in the built player with 12 firing", "expected about 0.5 ms")
+        self.assertIn("not estimated", "\n".join(self.run_check(guess)[0]))
+
+    def test_n_a_with_a_reason_a_reviewer_can_see_passes_with_a_note(self):
+        files = ["Assets/Resources/Vfx/StationShieldMaterial.mat"]
+        changes = {files[0]: ("M", 120)}
+        body = edit(GOOD, "Looked: yes", "Hero art: n/a (a bug fix: the material lost its tint after a shader rename)\nLooked: yes")
+        problems, notes = pe.check(body, files, changes=changes)
+        self.assertEqual([p for p in problems if "Hero art" in p], [], problems)
+        self.assertTrue([n for n in notes if n.startswith("HERO ART SKIPPED")], notes)
+
+    def test_n_a_without_a_reason_or_for_new_art_fails(self):
+        for line in ("Hero art: n/a", "Hero art: n/a (not needed)", "Hero art: n/a (trust me, it looks great already)"):
+            self.assertTrue(self.run_check(line)[0], line)
+        added = self.run_check("Hero art: n/a (a bug fix, nothing new is drawn by the added model)")[0]
+        self.assertIn("added files", "\n".join(added))
+        self.assertEqual(self.run_check("Hero art: n/a (a re-export of the same model after a rename)")[0], [])
+
+    def test_what_is_not_hero_art_needs_no_line(self):
+        small_tweak = {"Assets/Resources/Vfx/StationShieldMaterial.mat": ("M", 12)}
+        edited_model = {"Assets/Art/Content/Railgun/railgun-lowpoly.fbx": ("M", 0)}
+        icon = {"Assets/Resources/Icons/ShieldGenerator.png": ("A", 3), "Assets/UI/ShieldIcon.mat": ("A", 20)}
+        pack = {"Assets/SineVFX/TopDownEffects/Shaders/Foo.shader": ("A", 300),
+                "Assets/ExternalAssets/Ship/ship.fbx": ("A", 0)}
+        code = {"Assets/Scripts/FFSystems/Presentation/ProjectileParticlePresentationSystem.cs": ("M", 86)}
+        for changes in (small_tweak, edited_model, icon, pack, code):
+            self.assertEqual(pe.hero_art_files(list(changes), changes), [], changes)
+        big_rework = {"Assets/Art/Shaders/Vfx/VfxComet.shader": ("M", 369)}
+        self.assertTrue(pe.hero_art_files(list(big_rework), big_rework))
+
+    def test_a_plain_file_list_counts_a_model_but_not_an_edited_shader(self):
+        self.assertTrue(pe.hero_art_files(["Assets/Art/Content/X/x.fbx"]))
+        self.assertFalse(pe.hero_art_files(["Assets/Art/Shaders/Vfx/VfxComet.shader"]))
+
+    def test_the_old_1816_fixture_is_unchanged_by_the_new_check(self):
+        body = (HERE / "fixtures" / "pr-1816-comet-catch-tail.md").read_text(encoding="utf-8")
+        files = (HERE / "fixtures" / "pr-1816-comet-catch-tail.files").read_text(encoding="utf-8").split()
+        problems = pe.check(body, files)[0]
+        self.assertFalse([p for p in problems if "Hero art" in p], problems)
+
+    def test_name_status_file_lists_parse(self):
+        files, changes = pe.parse_files_file("A\tAssets/a b/x.fbx\nM\tAssets/y.mat\t57\nR100\told.mat\tAssets/new.mat\nplain.txt\n")
+        self.assertEqual(files, ["Assets/a b/x.fbx", "Assets/y.mat", "Assets/new.mat", "plain.txt"])
+        self.assertEqual(changes["Assets/y.mat"], ("M", 57))
+        self.assertEqual(changes["Assets/a b/x.fbx"][0], "A")
+
+
 class AuditTest(unittest.TestCase):
     def test_a_pass_counts_only_when_it_was_posted_before_the_merge(self):
         files = [{"path": "Assets/Scripts/FFSystems/Presentation/RiderSystem.cs"}]

@@ -94,13 +94,25 @@ in the built player (drive-game, "The mouse cursor in a built player"; w980).
    light, bloom), with the game's best existing models of the same class, and the comparison is named. (4) A new
    weapon's projectile and impact are compared with the Railgun's, the Plasma Bolt's and the other weapons' and read
    clearly different; any reuse of another weapon's effect is called out. (5) The verdict says what makes the piece
-   distinctive, not only that it passes. The PR's evidence carries a `Hero art:` line naming the concepts, the detail
-   reference models, the weapons compared and the distinct-because sentence
+   distinctive, not only that it passes. **The concept stills are published to the person before any build-quality clip
+   is made** (w1497), and the picked concept is offered a Live view session in its real scene, where you change
+   whatever the person describes and they watch it (w1498;
+   [how](../../project-memory/memories/live-view-asset-iteration.md)). The PR's evidence carries a `Hero art:` line (`concepts:`, `detail:`, `differs:`, `distinct:`,
+   `cost:` measured in a built player), which `pr_evidence.py` fails the PR without when it adds a model or effect art
+   ([merge.md](merge.md) has the format; `Hero art: n/a (<why>)` shows in the verdict); a reviewer reads it with 5f
    ([lesson](../lessons/visual-fixes-are-verified-by-looking.md#hero-art-is-creative-detailed-and-different-w1470-w1466); Ben, w1470, Singularity Lance: "I don't like that it's
    just like a black disc sitting on top of the purple accretion disc ... this is the end game weapon that needs to
    look really cool ... be creative with this"; w1466, Urso Ballista: "i dont like that its so explicitly like a bow
    and arrow ... the model itself is not detailed enough. we need high quality models" and "it looks samey with all
    the other effects, especially the railgun effeect").
+5f. **Reviewer: read the hero art against its role (w1497).** `pr_evidence.py` checks that the `Hero art:` line is
+   filled; you check that it is true, from the stills: (1) **Subtle or heavy**: is the effect as light as it should be
+   for what it is (a shield hugging the ship, translucent, not a thick dome; Ben, w1475: "more subtle and tighter to the
+   ship itself, with more translucence, ethereal, sci fi, liquidy")? (2) **Generic or creative**: could the concepts be
+   told apart at a glance, and would a player who did not read the name see "a bow", "a disc" or a recoloured copy of
+   another weapon's effect? (3) **Detail level**: at the same zoom as the named best models, does it hold its own
+   (panel lines, silhouette breaks, emissive accents)? (4) The concept stills were published before the build, and the
+   pick is the person's. Any "no" goes back before the clip.
 6. **`watch_video` and the blind model review are a second opinion.** They have passed clips
    that did not contain the event, and agreed with a mistake the brief described as intended.
    Quote them, and say where the frames contradict them.

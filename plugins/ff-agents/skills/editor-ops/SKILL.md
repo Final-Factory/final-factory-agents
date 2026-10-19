@@ -545,6 +545,19 @@ slots").
 - With no slot arbiter on the machine (a daemon from before w469, a machine without FF Factory)
   both commands run at once and say so.
 
+## Art and VFX work: a Live view session (w1498)
+
+New art or VFX for a person is iterated in a Live view session, not by build-and-clip rounds: after the 2 or 3 concept
+stills, offer a session on the picked concept in its real scene, then make whatever change the person describes
+(shader, material, VFX Graph, mesh, a new layer) with the editor you already hold. A shader or material edit is a
+file save plus `refresh_unity` and shows in seconds with the stream up; a C# change in play mode is held by Unity until
+play stops, so it costs leaving play, a compile and reload, re-entering play and reloading the save (minutes): say
+which lane a change is in before you start it. Measured numbers, what updates without a reload and the final-values
+hand-off (normal PR flow, a smooth built-game clip, then stop the view with `live_view stop` and the editor with
+`mcp__machine__unity` stop): project-memory
+[live-view-asset-iteration](../project-memory/memories/live-view-asset-iteration.md) and the game repo's
+`Documentation/Live-View-Knobs.md`. The editor holds its Unity slot while the view is up, so stop both when done.
+
 ## Long background runs (player builds, paired audits, multi-minute test jobs)
 
 Keep ownership until every run reaches a terminal state; the user must never have to ask for the
