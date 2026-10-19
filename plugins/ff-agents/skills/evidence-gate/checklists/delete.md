@@ -33,6 +33,7 @@ For any `rm`, `Remove-Item`, `del`, `rd`, `git clean`, `shutil.rmtree` or clean-
 4. **Outside the root, list what writes there.** For each large item outside (Unity Hub, `%LOCALAPPDATA%\Unity`, the
    game's `LocalLow` folder, `~/.claude`, the npm / NuGet / pip / uv / Playwright caches, dotnet, the system temp): the
    setting, script or tool that makes FF Factory write it, and a variable or setting that could move it inside the root.
+   On Windows, measure with robocopy `/L`, never Git Bash `du` ([section](../lessons/clean-up-after-yourself.md#measure-windows-folders-with-robocopy-l-not-git-bash-du-w1561); w1561: `du` took 19 min on 69 GB).
 5. **Inside the root, FF Factory's own and finished.** A player slot with no live lease, a worktree with nothing
    uncommitted or unpushed, a finished agent's `ffa-<session>` folder: the daemon removes these by itself (w913), so an
    ordinary worker leaves them; a clean-up request removes them and reports the GB. Something you cannot

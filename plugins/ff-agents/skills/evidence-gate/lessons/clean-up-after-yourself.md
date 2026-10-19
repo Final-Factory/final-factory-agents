@@ -109,6 +109,21 @@ the worker".
 - A machine without a root install (the portal's own host, an old install) has no folder to name: say so and measure
   only, and an owner can name the folder for it.
 
+## Measure Windows folders with robocopy /L, not Git Bash du (w1561)
+
+**Rule.** On Windows, size a folder with `robocopy <dir> <a path that does not exist> /L /S /E /BYTES /NFL /NDL /NJH /NC
+/NP /R:0 /W:0 /XJ /MT:16` and read its `Bytes :` line, one call per child folder. `/L` only lists and copies nothing, and
+`/XJ` skips junctions so nothing is counted twice. Never run Git Bash `du` on a large tree. When free space looks
+unchanged after a delete, re-read it exactly with `Get-PSDrive V,C`.
+
+**Why.** 2026-10-19, lothdesktop (w1561, disk clean-up): Git Bash `du -m --max-depth=1` took 19 minutes on
+`AppData\Local` (69 GB) and was still in `AppData\LocalLow` when it was stopped. The robocopy script measured `.cache`
+and `AppData\Local\Unity` in 0.6 s and the whole home folder (180 GB, 17 roots) in a few minutes. Git Bash `df -h`
+still showed 78G free on V: after a 10 GB delete, while `Get-PSDrive` showed 81.40 GB.
+
+**How to apply.** Write the loop as a `.ps1` in `$TMPDIR` that takes a list of roots and prints the biggest children
+in GB, then run it once for every root you need.
+
 ## A clean-up never takes the folders of a request that has not closed (w1379)
 
 **Rule.** Before you delete a folder that is not yours (another worker's `tmp/ffa-<session>`, a `scratch/` or review folder named for a
@@ -234,6 +249,11 @@ properly cleaned up so we arent wasting system resources on our machines after w
 - A player paused in its Esc menu or back at the title cannot be closed through the agent channel
   ([project-memory `visual-check-players-must-quit-themselves`](../../project-memory/memories/visual-check-players-must-quit-themselves.md)):
   the quit timer or `ff-leftovers end` does it.
+- **A stopped background shell leaves its children running, and `ff-leftovers list` may not show them** (w1561,
+  2026-10-19, lothdesktop). After `TaskStop` on a background Bash job running `du`, `du.exe` (pid 19908) kept running,
+  and `ff-leftovers list` printed "Nothing your session (…) started is still running". Before DONE, also look for your
+  own tool processes (`tasklist /FI "IMAGENAME eq du.exe"`) and read each command line (`Get-CimInstance
+  Win32_Process -Filter "ProcessId=<pid>"`). End one by pid only when its command line shows it is yours.
 
 ## A runaway task output, and `python -` through `eval` (w876, w899)
 
