@@ -146,6 +146,24 @@ Fix: wipe `Library/BurstCache/JIT` with the editor closed, restart, let the back
 drain (see above). Result here: 0 Burst/CS entries across all 77 console entries, and 2460
 tests green with synchronous Burst on.
 
+## Symptom C — a removed component field: wrong values, no error (w1502, 2026-10-18)
+
+Removing one field from an `IComponentData` that Burst-compiled `ISystem`s read
+(`GameMetaState.HideFleet`, a `bool` just before `StopConstructionBots`) and recompiling made
+the editor run stale Burst code that read the fields after it at their OLD offsets. There was no
+NRE and nothing in the console, only wrong values: `ConstructionBotTransitIntegrationTest` and
+`ConstructionTaskAssignerPreferenceTest` failed because `StopConstructionBots` read `false`.
+The code that failed was untouched, so it looked like an unrelated regression. Putting the field back
+(unused, with a comment saying why) made both pass on the next compile.
+
+**How to apply:** in a fix, do not remove or reorder fields of a widely read component
+(`GameMetaState` and the other singletons). Leave the dead field with a comment. A removed field
+also moves every later field for mods built against the shipped FFCore (`Documentation/Mod-ABI-Surface.md`).
+If a removal is the point of the change, wipe `Library/BurstCache/JIT` with the editor closed (and
+toggle `EnableBurstCompilation` off and on, as for the job-layout symptom in
+[[bursted-job-layout-not-domain-reload-invalidated]]) before you trust a test result. A test that
+fails right after a layout change, in code the diff never touched, is this until proven otherwise.
+
 ## A standalone Burst crash stack with only a method name: reproduce with Burst OFF
 
 A crash reported from a Burst-compiled job frequently gives a stack trace with just a native
