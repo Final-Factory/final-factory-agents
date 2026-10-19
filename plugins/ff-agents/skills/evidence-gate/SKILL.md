@@ -242,7 +242,11 @@ One file each under `lessons/`: the rule, why (the incident, dated), how to appl
   be creative with this", "we need high quality models") first comes as 2 or 3 different concepts, a literal object
   (bow, disc) is reinterpreted for space, the detail is compared in one still with our best models of the class, a new
   weapon's projectile and impact are compared with the Railgun's and Plasma Bolt's (reuse called out), and the verdict
-  says what makes it distinctive (checklist 5e).
+  says what makes it distinctive (checklist 5e). A third correction (w1475 shield effect: "more subtle and tighter to the
+  ship itself ... be creative and be more high quality (but performant)") made it a tool check: `pr_evidence.py` fails a
+  PR that adds a model or effect art without a filled `Hero art:` line (concepts and pick, detail comparison, how it
+  differs, distinct, measured cost; merge checklist), and checklist 5f is the reviewer's read; publish the concepts
+  before any build-quality clip (w1497).
 - [No merge before the review](lessons/no-merge-before-the-review.md): "pending" is not done.
 - [Merge your own pull request](lessons/merge-your-own-pr.md): verified and green means merge;
   hold only for exceptional risk or a timing reason, and say which and when. mechanics: check `git branch --show-current` after a wait, gate `gh pr merge` on a passing check (`gh pr checks N && gh pr merge N --match-head-commit <sha>`: exit 8 is pending; w864; in a worker `ff-pr merge`, one call, w1478), post the verdict only from the newest ff-agents (w807); a red check that is not your change, and `not our ref` at checkout ([section](lessons/merge-your-own-pr.md#a-red-check-that-is-not-your-change-read-the-failing-test-then-the-cause-w1337-2026-10-15), w1337).

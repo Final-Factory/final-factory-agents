@@ -47,6 +47,13 @@ Not verified: the Bats' slot lag (simulation, follow-up PR)
 - **Effect art** (a changed shader, material or VFX file; icons, sprites, UI, holograms and fog excepted) also needs
   `Art language:` naming the reference compared and saying it draws no ring, circle, halo or UI-like overlay, or
   quoting the person asking for one (`n/a: <why>` for an indicator asked for; visual.md 5c; w1241, w1332).
+- **Hero art** (a model file added, or effect art added or rewritten by 40+ changed lines; third-party packs, icons,
+  sprites, UI and scripts excepted; `pr_evidence.py` decides from the file list) needs one `Hero art:` line: `concepts:`
+  (the 2-3 concept stills shown, who picked which), `detail:` (compared with the game's best models or effects in one
+  still), `differs:` (from the Railgun, Plasma Bolt and the other weapons' and effects', "no reuse" or what it reuses),
+  `distinct:` (what makes it distinctive), `cost:` (measured ms or fps in a built player). `Hero art: n/a (<why: a bug
+  fix, a re-tint, an icon, a re-export, a third-party import>)` shows in the verdict for the reviewer
+  (visual.md 5e; w1470, w1466, w1475, w1497).
 - **Kind `visual`** needs the five lines from "Intended look" to "Review"
   ([visual.md](visual.md)). "Built player: no" fails. So does a "Clips" line that does not say
   where the event is.

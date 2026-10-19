@@ -209,8 +209,12 @@ let through.
   but be more creative and futuristic, and the model itself is not detailed enough. we need high quality models" and
   "can we get more creative on the impact effect? it looks samey with all the other effects, especially the railgun
   effeect".
+- **w1475, Station Shield Generator effect (PR #1924), after the rule above was merged (PR #247).** Too heavy and too far
+  from the ship. Ben: "i dont like the shield effect so far: make it more subtle and tighter to the ship itself, with
+  more translucence, ethereal, sci fi, liquidy, effect. be creative and be more high quality (but performant)". The
+  third correction of one kind in a day, so the rule became a tool check (below).
 
-Both passed because the checks asked "is the requested thing there, in the game's colours?" and never "is it the best
+All three passed because the checks asked "is the requested thing there, in the game's colours?" and never "is it the best
 idea for it, as detailed as our best, and different from what we already have?". One take was built and polished;
 nothing forced a second concept, a reinterpretation, a detail comparison, or a comparison of the impact with the other
 weapons'. Two corrections of one kind in a day, so it is now [checklist item 5e](../checklists/visual.md).
@@ -223,10 +227,27 @@ the Railgun and Plasma Bolt, the reuse list and the distinct-because sentence. T
 art:` line naming the concepts offered, the detail reference models, the weapons compared and the distinct-because
 sentence; a hero asset without them is not shown and not merged.
 
-**Not automated yet.** `pr_evidence.py` cannot tell a hero asset from other new art (it sees changed shader, material
-and VFX files, not a new model's role), so this rests on the checklist and on the orchestrator reading the report. On a
-third correction of this kind, add a `Hero art:` field check to `pr_evidence.py` with the w1470 and w1466 PR bodies as
-fixtures.
+**Publish the concepts before any build-quality clip (w1497).** The 2 or 3 concept stills go to the person first
+(`publish_review`, stills of each concept or a quick block-out) and the build starts after the pick. A polished
+built-player clip of one unreviewed take is the miss: the person then reacts to the clip, not to the idea.
+
+**The tool check (w1497).** `pr_evidence.py` fails a game-repo PR that adds a model or effect art without a filled
+`Hero art:` line ([merge checklist](../checklists/merge.md) has the format). What counts is decided from the PR's
+changed files with their status (`gh pr view --json files`: `changeType`, additions, deletions): a model file
+(fbx, obj, blend, glb, gltf, dae) that is added; effect art (the `EFFECT_ART` paths: VFX or Effects folders, `.vfx`,
+`.shader`, `.shadergraph`, `.mat`, Particle) that is added or rewritten by 40 or more changed lines. Not counted:
+third-party packs (`ExternalAssets`, `GabrielAguiarProductions`, `SineVFX`, `Vefects` and the other asset-pack
+folders), scripts, tests, editor code, UI, icons, sprites, textures, holograms, fog and outlines, an edited model (a
+re-export) and a small material tweak. The 40-line threshold and the exclusions are guesses, calibrated on the 300 game
+PRs merged since 2026-10-01: 8 trigger (the comet tail, the circuit wire, the map arrow, the Urso Cannon, the
+Assemblers and similar), and the three corrected PRs (#1921, #1929, #1924) all do. The line must have five parts, each
+filled and not a placeholder: `concepts:` (two or more still files and who picked which), `detail:` (what it was
+compared with, one still), `differs:` (from the existing weapons' and effects', with "no reuse" or what it reuses),
+`distinct:` and `cost:` (a measured number with a unit, not "expected"). `Hero art: n/a (<reason>)` is allowed with a
+reason naming a bug fix, tweak, re-tint, icon, re-export or third-party import, and it shows in the verdict as "HERO ART
+SKIPPED"; for an added model or effect file only a rename, move, re-export or third-party import is accepted.
+A script cannot tell whether the concepts were different or the detail is enough: the reviewer reads the stills against
+[checklist 5f](../checklists/visual.md).
 
 ## Review media goes inline, never as a bare path (w1384)
 
