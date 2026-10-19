@@ -468,6 +468,25 @@ class MovedTest(unittest.TestCase):
         self.assertTrue(lines[0].startswith("Moved: 1 element move(s) over 4 px at 1280x800"))
         self.assertIn("GamePanels/BuildInfoPanel: gone from the screen: mark: ?", lines[1])
 
+    def test_a_block_moved_under_another_parent_in_the_same_place_is_not_gone(self):
+        # w1487: the map's arrow went from the canvas root to under GamePanels, so the windows draw over it.
+        root = "InGameScene/UI Canvas"
+        arrow = [dict(path=f"{root}/PointingArrow(Clone)/MapArrowGlyph", kind="Image", rect=[880, 267, 1105, 413],
+                      color="#FFFFFFFF", alpha=1.0, sprite="arrow", raycast=False, visible=[880, 267, 1105, 413]),
+                 dict(path=f"{root}/PointingArrow(Clone)/MapArrowGlyph/MapArrowDistance/Text", kind="TextMeshProUGUI",
+                      rect=[948, 383, 1020, 401], color="#FFFFFFFF", alpha=1.0, sprite="", raycast=False,
+                      visible=[948, 383, 1020, 401])]
+        moved_under = [dict(e, path=e["path"].replace(f"{root}/", f"{GP}/")) for e in arrow]
+        result = ul.moves(self.census(arrow), self.census(moved_under))
+        self.assertEqual((result["gone"], result["new"]), ([], []))
+        self.assertEqual(len(result["reparented"]), 1)
+        lines = ul.moved_lines([result], 4, "test")
+        self.assertTrue(lines[0].startswith("Moved: 0 element move(s)"), lines[0])
+        self.assertIn("reparented", lines[1])
+        # Under another parent and somewhere else: gone, as before.
+        elsewhere = [dict(e, rect=[r + 300 for r in e["rect"]]) for e in moved_under]
+        self.assertEqual(len(ul.moves(self.census(arrow), self.census(elsewhere))["gone"]), 1)
+
     def test_unnamed_siblings_are_paired_in_reading_order(self):
         # The two Row/Label texts share a path; a census lists them in any order.
         before, after = self.census(station_info(558, 515)), self.census(station_info(558, 515))

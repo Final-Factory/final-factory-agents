@@ -635,14 +635,42 @@ def moves(before: dict, after: dict, move_px: float = 4.0) -> dict:
         block["parts"].sort(key=lambda u: -max(abs(d) for d in u["delta"]))
     blocks_old = {block_of(k[0], 2) for k in old}
     blocks_new = {block_of(k[0], 2) for k in now}
+    gone, new = sorted(blocks_old - blocks_new), sorted(blocks_new - blocks_old)
+    reparented = []
+    for block in list(gone):
+        target = reparent_target(block, old, now, same)
+        if target in new:
+            reparented.append((block, target))
+            gone.remove(block)
+            new.remove(target)
     w, h = after.get("screen") or before.get("screen") or [0, 0]
     biggest = lambda b: -max(max(abs(d) for d in b["delta"]), max(abs(d) for d in b["parts"][0]["delta"]))
     layout = layout_of(after)
     if layout_of(before) != layout:
         raise ValueError(f"the before census is {layout_of(before)} and the after one {layout}: compare the same layout")
-    return {"moved": sorted(blocks.values(), key=biggest),
-            "gone": sorted(blocks_old - blocks_new), "new": sorted(blocks_new - blocks_old),
+    return {"moved": sorted(blocks.values(), key=biggest), "gone": gone, "new": new, "reparented": reparented,
             "screen": f"{int(w)}x{int(h)} {layout}"}
+
+
+def reparent_target(block: str, old: dict, now: dict, same) -> str | None:
+    """The block of the after census that `block` (gone from it) stands in under another parent, in the same place: every
+    element of it has one in the after census whose path from the canvas ends in its own (or the reverse) and whose
+    rect is the same within the tolerance, all in one block. w1487 put the map's arrow back to the player under
+    GamePanels so the windows a player opens draw over it: the same arrow in the same place read as gone from the
+    screen, and the PR gate has no mark for that but asked (who)."""
+    elements = [(k, r) for k, r in old.items() if k[0] == block or k[0].startswith(block + "/")]
+    target = None
+    for (path, index), rect in elements:
+        tail = under_canvas(path)
+        hit = next((k for k in now if k not in old and k[1] == index and same(now[k], rect)
+                    and (under_canvas(k[0]).endswith("/" + tail) or tail.endswith("/" + under_canvas(k[0])))), None)
+        if hit is None:
+            return None
+        found = block_of(hit[0], 2)
+        if target not in (None, found):
+            return None
+        target = found
+    return target
 
 
 def layout_of(census: dict) -> str:
@@ -693,6 +721,9 @@ def moved_lines(results: list[dict], move_px: float, how: str) -> list[str]:
             lines.append(f"- {r['screen']} {under_canvas(unit['path'])}: {describe_move(unit)}: {MARK}")
         for path in r["gone"]:
             lines.append(f"- {r['screen']} {under_canvas(path)}: gone from the screen: {MARK}")
+        for old_path, new_path in r.get("reparented", []):
+            lines.append(f"  (reparented at {r['screen']}, the same place, not counted: {under_canvas(old_path)} -> "
+                         f"{under_canvas(new_path)})")
         if r["new"]:
             lines.append(f"  (new at {r['screen']}, not counted: {', '.join(under_canvas(p) for p in r['new'][:8])})")
     return lines
