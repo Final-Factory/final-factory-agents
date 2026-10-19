@@ -259,6 +259,14 @@ the notes commit `7b456cddec` had started a minute before, and `gh pr checks` sh
 its conclusion is `success`; if it is still running, call `blocked_on` again with `head: $C`. The
 `--match-head-commit` flag guards the head, not which run passed.
 
+**A notes commit costs the bump a whole CI run; when a person is waiting, don't add one** (w1541, 1.0.0.1):
+the bump PR #1957 was green at `02fdb1aff2`, a notes commit `5b8d7b7014` for two late merges restarted the
+required `Test in editmode`, and Lothsahn's "Can we merge 1.0.0.1 and get this release started?" arrived a
+minute later and waited 33 min for the rerun. When the bump is green, merge it on that run, and put the
+late player-facing merges into the notes afterwards by a notes-only PR into master (`Part of: wNNN`;
+#1964, merged before the post), then post from that committed copy. Its CI runs while the players build
+(15 min against 37 to LANDED), so the post is not delayed.
+
 ```sh
 scripts/trigger-ci-release.sh master --dry-run --notes Temp/release-notes-0.50.0.43.md   # shows it, changes nothing
 scripts/trigger-ci-release.sh master --notes Temp/release-notes-0.50.0.43.md             # bumps origin/master's tip through a PR
