@@ -9,11 +9,14 @@ full-content and style checks, its per-still notes, a real-rate clip and every H
 1280x800, each asked for in the requester's words or justified (checklists/ui.md), and a change to a shader
 or material lists everything that uses it ("## Used by", from the game repo's scripts/asset_usage.py)
 with a basis for each, an enemy, combat or spawn change shows the game repo's balance stages before and after
-("## Balance", checklists/balance.md, w1440), and a Deck-facing change says 'Real Deck: verified ...' or 'not verified on a real Deck' (checklists/deck.md). It cannot tell whether anyone looked carefully. Standard library only; `gh` for everything that reads GitHub.
+("## Balance", checklists/balance.md, w1440), a new model or effect shows its 'Hero art:' line (concept stills and the pick,
+the detail comparison with our best, how it differs from the existing weapons' and effects', what makes it distinctive,
+the measured frame cost; checklists/visual.md 5e, w1497), and a Deck-facing change says 'Real Deck: verified ...' or 'not verified on a real Deck' (checklists/deck.md). It cannot tell whether anyone looked carefully. Standard library only; `gh` for everything that reads GitHub.
 
     pr_evidence.py --repo OWNER/NAME --pr N               check one pull request (exit 1 on FAIL)
     pr_evidence.py --repo OWNER/NAME --pr N --comment     the same, and post the verdict on it
-    pr_evidence.py --body-file F [--files-file G]         the same, offline (a description and a file list)
+    pr_evidence.py --body-file F [--files-file G]         the same, offline (a description and a file list; a line may be
+                                                          `A<TAB>path` or `M<TAB>path<TAB>lines`, as git diff --name-status)
     ... [--brief B]                                       also: every 'Moved:' quote is in the request's brief (w826)
     pr_evidence.py --repo OWNER/NAME --audit --since 2026-10-01 [--base master]
                                                           merged pull requests: the verdict now, and
@@ -729,6 +732,151 @@ def art_language_notes(section: str) -> list[str]:
     return [f"art language: {line[1][:160]}"] if line and line[1] else []
 
 
+# ---------------------------------------------------------------------------------------------
+# Hero art (w1497): new models and VFX are creative, detailed and different, and the PR shows it.
+#
+# Ben corrected generic, low-quality new art three times on 2026-10-18: the Singularity Lance VFX (w1470, "just like a
+# black disc sitting on top of the purple accretion disc ... be creative with this"), the Urso Ballista (w1466, "so
+# explicitly like a bow and arrow ... the model itself is not detailed enough ... it looks samey with all the other
+# effects, especially the railgun effeect") and the Station Shield Battery effect (w1475, "make it more subtle and tighter
+# to the ship itself ... be creative and be more high quality (but performant)"). The rule is in
+# lessons/visual-fixes-are-verified-by-looking.md and checklists/visual.md 5e; this is the part a script can check.
+#
+# What counts (guesses, calibrated on the game repo's merged pull requests of 2026-10-01..18, see HeroArtTest):
+#  - a model file (fbx, obj, blend, glb, gltf, dae) that is added, or whose status is unknown (a plain file list);
+#    an edited model is a re-export or a fix and is not counted;
+#  - effect art (EFFECT_ART: VFX or Effects folders, .vfx, .shader, .shadergraph, .mat, Particle) that is added, or
+#    edited by HERO_EDIT_LINES changed lines or more (a small material tweak or a bug fix stays under it);
+#  - not counted: third-party asset packs, tests and editor code, UI, icons, sprites, holograms, fog, outlines, textures.
+HERO_MODEL = re.compile(r"\.(fbx|obj|blend|glb|gltf|dae)$", re.IGNORECASE)
+THIRD_PARTY = re.compile(r"^Assets/(ExternalAssets|GabrielAguiarProductions|SineVFX|Vefects|Plugins|Tayx|EasyIconMaker|"
+                         r"Graph And Chart|UiRoundedCorners|TextMesh Pro|Samples)\b")
+HERO_EDIT_LINES = 40
+HERO_ART_LABELS = re.compile(r"\b(concepts?(?:\s+stills?)?|detail(?:\s+comparison)?|differs?(?:\s+from)?|"
+                             r"distinct(?:\s+because)?|(?:frame\s+)?cost)\s*:", re.IGNORECASE)
+HERO_PLACEHOLDER = re.compile(r"<[^>]*>|\b(tbd|todo|pending|n/?a|xxx|lorem|placeholder|fill in|to come)\b", re.IGNORECASE)
+HERO_MEDIA = re.compile(r"[^\s,;()]+\.(?:png|jpe?g|gif|webp|mp4|webm)\b|https?://[^\s,;()]+|!\[|publish_review", re.IGNORECASE)
+HERO_PICK = re.compile(r"\b(picked|chose|chosen|selected|approved|decided|went with|go(?:ing)? with)\b", re.IGNORECASE)
+HERO_WHO = re.compile(r"\((?:[A-Z]\w*)[^)]*\)|\b(Ben|Lothsahn|orchestrator|requester|the person)\b")
+HERO_COMPARE = re.compile(r"\b(compar\w+|beside|next to|against|side by side)\b", re.IGNORECASE)
+HERO_NAMED = re.compile(r"\b(with|against|beside|next to|vs\.?|from|than|and)\s+(the\s+)?[A-Z0-9]|[,:]\s*(the\s+)?[A-Z0-9]")
+HERO_REUSE = re.compile(r"\bre-?us(e|es|ed|ing)\b", re.IGNORECASE)
+HERO_COST = re.compile(r"\d+(?:\.\d+)?\s*(?:ms|µs|us|fps|%|k?\s*tris|triangles|draw calls?|batches|particles|MB)\b", re.IGNORECASE)
+HERO_ESTIMATED = re.compile(r"\b(estimate[sd]?|expected|should be|guess|approx\w*)\b", re.IGNORECASE)
+HERO_NA_REASON = re.compile(r"\b(bug ?fix\w*|fix(es|ed)?|tweak\w*|retun\w*|re-?tint\w*|re-?colou?r\w*|icons?|re-?export\w*|"
+                            r"renam\w+|moved?|import\w*|third[- ]party|asset pack|refactor\w*|optimi[sz]\w*|performance|"
+                            r"no new (model|effect|look|art|visual))\b", re.IGNORECASE)
+HERO_NA_NEW_OK = re.compile(r"\b(re-?export\w*|renam\w+|moved?|third[- ]party|asset pack|import\w*)\b", re.IGNORECASE)
+HERO_FORMAT = ("`Hero art: concepts: <2-3 still files> shown to <who>, <which one> picked; detail: compared with <the "
+               "game's best models or effects of the class> in one still <file>; differs: from <Railgun, Plasma Bolt, ...>, "
+               "no reuse of their effects (or: reuses <what>); distinct: <what makes it distinctive>; cost: <measured ms or "
+               "fps in a built player>`")
+
+
+def hero_art_files(files: list[str] | None, changes: dict | None = None) -> list[str]:
+    """The changed files that make this a hero-art change (see the block comment above)."""
+    found = []
+    for f in files or []:
+        if not f.startswith("Assets/") or NOT_GAME_CODE.search(f) or THIRD_PARTY.search(f) or f.endswith(".cs"):
+            continue
+        status, lines = (changes or {}).get(f, ("?", 0))
+        if HERO_MODEL.search(f) and not NOT_EFFECT_ART.search(f):
+            if status in ("A", "?"):
+                found.append(f)
+        elif EFFECT_ART.search(f) and not NOT_EFFECT_ART.search(f):
+            if status == "A" or (status == "M" and lines >= HERO_EDIT_LINES):
+                found.append(f)
+    return found
+
+
+def hero_text(section: str) -> tuple[str, str] | None:
+    """The `Hero art:` line plus the indented or bulleted lines under it -> (who, text)."""
+    found = field(section, "Hero art")
+    if not found:
+        return None
+    lines = section.split("\n")
+    start = next(i for i, l in enumerate(lines) if re.match(r"^\s*Hero art\s*(?:\([^)]*\))?\s*:", l, re.IGNORECASE))
+    text = [found[1]]
+    for later in lines[start + 1:]:
+        if later.strip() and (later.startswith((" ", "\t")) or re.match(r"^\s*[-*]\s", later)):
+            text.append(later.strip().lstrip("-* ").strip())
+        else:
+            break
+    return found[0], " ".join(t for t in text if t)
+
+
+def hero_parts(text: str) -> dict[str, str]:
+    marks = list(HERO_ART_LABELS.finditer(text))
+    parts = {}
+    for i, m in enumerate(marks):
+        end = marks[i + 1].start() if i + 1 < len(marks) else len(text)
+        label = re.split(r"\s", m.group(1).lower())[0].rstrip("s")
+        label = "differ" if label.startswith("differ") else "cost" if label in ("frame", "cost") else label
+        parts.setdefault(label, text[m.end():end].strip(" ;,.\n"))
+    return parts
+
+
+def hero_art_problems(section: str, hero_files: list[str], changes: dict | None = None) -> tuple[list[str], list[str]]:
+    """w1497: new models and effect art carry a filled `Hero art:` line, or `Hero art: n/a (<reason>)` that a reviewer sees
+    in the verdict. The line names the concept stills and the pick, the detail comparison with our best, how it differs
+    from the existing weapons' and effects', what makes it distinctive, and the measured frame cost."""
+    where = ", ".join(hero_files[:3])
+    found = hero_text(section)
+    if not found or not found[1]:
+        return ([f"new model or effect art ({where}) and no 'Hero art:' line (checklists/visual.md 5e; Ben, w1470: \"this is "
+                 f"the end game weapon that needs to look really cool ... be creative with this\"; w1466: \"the model itself "
+                 f"is not detailed enough\"). Add {HERO_FORMAT}, or 'Hero art: n/a (<why: a bug fix, a re-tint, an icon, "
+                 f"a re-export, a third-party import>)' when nothing new is drawn"], [])
+    text = found[1]
+    na = re.match(r"^n/?a\b\s*[(:\-–—]?\s*(.*?)\)?\s*$", text, re.IGNORECASE)
+    if na:
+        reason = na.group(1)
+        added = [f for f in hero_files if (changes or {}).get(f, ("?", 0))[0] == "A"]
+        if len(reason) < 25 or not HERO_NA_REASON.search(reason):
+            return (["'Hero art: n/a' has to say why in a sentence: a bug fix, a tweak, a re-tint, an icon, a re-export or "
+                     "a third-party import (the reviewer reads it in the verdict)"], [])
+        if added and not HERO_NA_NEW_OK.search(reason):
+            return ([f"'Hero art: n/a' for added files ({', '.join(added[:3])}): a new model or effect file is new art; n/a "
+                     f"holds only for a rename, move, re-export or third-party import"], [])
+        return ([], [f"HERO ART SKIPPED for {where}: {reason[:200]}"])
+
+    problems = []
+    parts = hero_parts(text)
+    for label, need in (("concept", "concepts: the 2-3 concept stills shown and which one was picked"),
+                        ("detail", "detail: compared with the game's best models or effects of the class, in one still"),
+                        ("differ", "differs: from the existing weapons' and effects' (Railgun, Plasma Bolt ...), with 'no "
+                                   "reuse' or what it reuses"),
+                        ("distinct", "distinct: what makes it distinctive"),
+                        ("cost", "cost: the measured frame cost")):
+        if label not in parts:
+            problems.append(f"'Hero art' has no '{need.split(':')[0]}:' part ({need})")
+        elif len(parts[label]) < (8 if label == "cost" else 25) or HERO_PLACEHOLDER.search(parts[label]):
+            problems.append(f"'Hero art' part '{label}' is empty or a placeholder: {need}")
+    if problems:
+        return problems, []
+    concepts = parts["concept"]
+    if len(set(m.group(0).lower() for m in HERO_MEDIA.finditer(concepts))) < 2:
+        problems.append("'Hero art' concepts: name at least two concept still files or links (2-3 clearly different "
+                        "concepts, published before the build)")
+    if not (HERO_PICK.search(concepts) and HERO_WHO.search(concepts)):
+        problems.append("'Hero art' concepts: say which concept was picked and by whom (Ben picked B)")
+    detail = parts["detail"]
+    if not (HERO_COMPARE.search(detail) and HERO_NAMED.search(detail)
+            and re.search(r"\bstill\b|" + HERO_MEDIA.pattern, detail, re.IGNORECASE)):
+        problems.append("'Hero art' detail: say what it was compared with (name the game's best existing models or effects "
+                        "of the class) and the one side-by-side still")
+    differ = parts["differ"]
+    if not (HERO_REUSE.search(differ) and HERO_NAMED.search(differ)):
+        problems.append("'Hero art' differs: name the existing weapons or effects it was compared with and say 'no reuse' "
+                        "or what it reuses (w1470 reused the Plasma Bolt orb)")
+    cost = parts["cost"]
+    if not HERO_COST.search(cost):
+        problems.append("'Hero art' cost: give the measured frame cost with its unit (ms, fps, %, tris, draw calls)")
+    elif HERO_ESTIMATED.search(cost) and not re.search(r"\bmeasured\b", cost, re.IGNORECASE):
+        problems.append("'Hero art' cost is measured in a built player, not estimated")
+    return problems, ([] if problems else [f"hero art: {text[:200]}"])
+
+
 def balance_problems(body: str, files: list[str] | None) -> list[str]:
     """Enemy, combat or spawn numbers changed: a '## Balance' section with the stages run, the before/after table, the
     lane's flags and what became of the baselines, or 'No curve change: <why>' (w1440, checklists/balance.md)."""
@@ -760,7 +908,8 @@ def balance_problems(body: str, files: list[str] | None) -> list[str]:
     return problems
 
 
-def check(body: str, files: list[str] | None = None, brief: str | None = None) -> tuple[list[str], list[str]]:
+def check(body: str, files: list[str] | None = None, brief: str | None = None,
+          changes: dict | None = None) -> tuple[list[str], list[str]]:
     """Every reason the evidence is not ready (empty = PASS), and notes that do not fail it."""
     used_by = used_by_problems(body, files) + balance_problems(body, files)
     section = evidence_section(body or "")
@@ -838,6 +987,12 @@ def check(body: str, files: list[str] | None = None, brief: str | None = None) -
         if art_files and not ui:
             problems += art_language_problems(section, art_files)
             notes += art_language_notes(section)
+
+    hero_files = hero_art_files(files, changes)
+    if hero_files:
+        hero_found, hero_notes = hero_art_problems(section, hero_files, changes)
+        problems += hero_found
+        notes += hero_notes
 
     if ui:
         ui_found, ui_notes = ui_problems(section, brief if brief is not None else brief_in_body(body))
@@ -959,10 +1114,32 @@ def audit_rows(prs: list[dict]) -> list[dict]:
         if not applies(files):
             rows.append({"number": pr["number"], "title": pr["title"], "verdict": "n/a", "before_merge": "", "why": ""})
             continue
-        problems, _ = check(pr.get("body") or "", files)
+        problems, _ = check(pr.get("body") or "", files, changes=changes_of(pr.get("files") or []))
         rows.append({"number": pr["number"], "title": pr["title"], "verdict": "FAIL" if problems else "PASS",
                      "before_merge": "yes" if passed_before_merge(pr) else "no", "why": problems[0] if problems else ""})
     return rows
+
+
+def changes_of(gh_files: list[dict]) -> dict:
+    """`gh pr view --json files` -> {path: (status letter, lines changed)}; changeType is ADDED, MODIFIED, RENAMED, DELETED."""
+    letters = {"ADDED": "A", "MODIFIED": "M", "RENAMED": "R", "DELETED": "D", "COPIED": "A"}
+    return {f["path"]: (letters.get(f.get("changeType", ""), "?"), int(f.get("additions") or 0) + int(f.get("deletions") or 0))
+            for f in gh_files}
+
+
+def parse_files_file(text: str) -> tuple[list[str], dict]:
+    """One path per line; optionally git's name-status form `A<TAB>path` or `M<TAB>path<TAB>lines changed`."""
+    files, changes = [], {}
+    for line in text.splitlines():
+        cells = line.split("\t")
+        if len(cells) >= 2 and re.fullmatch(r"[AMDRC]\d*", cells[0].strip()):
+            path = cells[-1] if cells[0].startswith(("R", "C")) else cells[1]
+            lines = int(cells[2]) if len(cells) > 2 and cells[2].strip().isdigit() and not cells[0].startswith(("R", "C")) else 0
+            changes[path] = ("A" if cells[0][0] == "C" else cells[0][0], lines)
+            files.append(path)
+        elif line.strip():
+            files.append(line.strip())
+    return files, changes
 
 
 def main(argv=None) -> int:
@@ -999,10 +1176,12 @@ def main(argv=None) -> int:
 
     if args.body_file:
         body = Path(args.body_file).read_text(encoding="utf-8")
-        files = Path(args.files_file).read_text(encoding="utf-8").splitlines() if args.files_file else None
+        files, changes = (parse_files_file(Path(args.files_file).read_text(encoding="utf-8"))
+                          if args.files_file else (None, None))
     elif args.repo and args.pr:
         pr = json.loads(gh("pr", "view", str(args.pr), "--repo", args.repo, "--json", "body,files"))
         body, files = pr.get("body") or "", [f["path"] for f in pr.get("files") or []]
+        changes = changes_of(pr.get("files") or [])
         if not applies(files):
             print("PASS: no game code or assets changed, so no Evidence section is needed")
             return 0
@@ -1010,7 +1189,7 @@ def main(argv=None) -> int:
         ap.error("give --repo and --pr, or --body-file, or --audit")
 
     brief = Path(args.brief).read_text(encoding="utf-8") if args.brief else None
-    problems, notes = check(body, files, brief)
+    problems, notes = check(body, files, brief, changes)
     if not args.offline:
         released = released_version()
         stale = stale_problem(own_version(), released)
