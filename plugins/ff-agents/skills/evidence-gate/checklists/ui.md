@@ -133,6 +133,10 @@ The census recipe and `ui_layout.py` are in the `unity-ui` skill, `layout-census
     skipped ("Style: nothing checked"). Compare it with itself in the before player, same screen and rect:
     `scripts/deck_audit/ui_check.py style after.png --rect R --ref before.png --ref-rect R` (w1314: delta E 0.0), beside
     `ui_layout.py check`'s "no panel changed colour, alpha or art"; paste both and the other-panel numbers with their cause.
+    **A see-through dialog that gains a control** reads its new content as colour: w1386's map marker edit dialog, the same
+    panel and art, read delta E 6.1 against itself on master at 1280x800 because the new switch's white label sits inside its
+    rect. Mask the new control's strip and measure the rest (w1386: 0.0 to 0.2 with the strip masked, 0.9 to 1.1 whole, a
+    plain mean Lab over the rect from the census `rect`), and paste both numbers with the cause.
 14. **The released checks.** A session loads its plugins when it starts. Before you merge, run the
     released `pr_evidence.py`; its verdict names its version and fails when GitHub has a newer
     one. Re-register and restart when it does. Post its verdict on the PR (`--comment`) before
@@ -232,6 +236,10 @@ screen; on desktop three labels stopped fitting, the two windows left their defa
     "NOT RESTORED" or a move of siblings that share a name (three objective tips are all `TipParent/TipText`) by their
     rects: since w1329 `ui_layout.py` matches them by place, not by census order. For a change that touches only a title-menu screen, the in-game census (`pins`, `moves`) is still
     required by `pr_evidence.py`: take it with the w1145 station tour (`specs/w1145-blueprint-folder-share/`) on both builds.
+    **A timed element is not a move (w1386):** the opening voice-over puts `Subtitles/Text (TMP)` on screen at a moment that
+    differs run to run, and `moves` read it as "gone from the screen" on a map still the change never touched (it showed in
+    the before run of one layout and the after run of the other). Check it in the census files of both runs; if it is the
+    subtitle (or another timed line), leave that still out of the pairs and say so in `Moved:`, never mark it asked.
 23. **A tour that switches layouts is not a classic still (w813).** In the built player the structured dock stays open
     when the tour switches back to classic with a building selected, so a "classic" still shot after a docked pass was the
     dock (the census names it: `StructuredDock`, `StructuredStation`). Run one layout per player launch, and read the census
