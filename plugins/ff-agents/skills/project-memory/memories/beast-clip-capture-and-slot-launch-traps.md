@@ -65,7 +65,7 @@
    -ffFeelVsync 0 -ffFeelFps 60` on a 1920x1080 window. Before the game's commit 331ed49cc the JPG encode ran on the
    main thread and held the player to about 36 fps (26 ms a frame); since then it encodes on worker threads and ran
    at 60 fps (median 16.7 ms, p95 20.5 ms over 1259 frames, measured). Rows of `frames.csv` can now come out of
-   order: sort by `frame`. **Assemble the JPGs as a plain 60 fps sequence** (`ffmpeg -r 60 -f concat -i list.txt -r 60
+   order: sort by `frame`. **Assemble the JPGs as a plain 60 fps sequence** (or a concat list on a 1 ms time base, item 15) (`ffmpeg -r 60 -f concat -i list.txt -r 60
    ...`, one `file` line per frame). A concat list with per-frame `duration` lines plus an `fps=60` filter repeated
    58% of the frames and `watch_video` flagged STUTTER on clips whose every source frame differed. Hide the
    development build's Debug Info panel with `ffauto:console.run|toggleDebugPanel` then `ffauto:console.close`;
@@ -98,3 +98,13 @@
      under it. `ui.hide` does not hide it. Point at another part of the station so the box falls elsewhere, then
      check the marker's spot in a 3x crop: a red marker on a Comet Catcher's red glow was found only that way.
 
+15. **The cause behind items 12 and 13: a concat list of images sits on a 25 fps grid** (w1491, 2026-10-18, BEAST,
+   game PR #1947). ffmpeg's concat demuxer opens each image with the image demuxer at its default 25 fps, so with
+   per-frame `duration` lines a 60 fps capture reaches the clip as about 25 distinct frames a second, each repeated 2
+   or 3 times (27 of 60 synthetic frames survived, measured). Every "60 fps" review clip built that way judged
+   motion at 25: a fine ray wiggle Ben saw in the Live view could not be judged in them. Fix: start the list with
+   `ffconcat version 1.0` and give each entry `option framerate 1000` (60 of 60 frames survive; real-speed length
+   holds at 60, 47 and 3 fps captures). In the game repo write lists with `scripts/feel/clip_timing.py`
+   `concat_header()` and `concat_entry(path, seconds)`; `scripts/tests/test_feel_clip_timing.py` fails any script
+   under `scripts/` that writes a plain list. Count distinct frames in a finished clip (consecutive-frame diff), not
+   `nb_read_frames`: repeats count as frames.
