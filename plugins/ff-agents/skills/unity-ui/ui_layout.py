@@ -1206,9 +1206,13 @@ def shape(census: dict, sprites: dict | None = None, patterns: list[str] | None 
 
     for e in elements:
         name = e.get("sprite") or ""
-        r = e.get("visible") or e["rect"]
+        # The aspect is the element's own rect: a mask clips what shows, not the shape the sprite is drawn at (w1486: the
+        # Oracle shop's last row, cut in half by its scroll view, rect 43x43, visible 43x21, read STRETCHED on master too).
+        # What shows still has to be big enough to judge.
+        r, v = e["rect"], e.get("visible") or e["rect"]
         w, h = r[2] - r[0], r[3] - r[1]
-        if not name or e.get("maskOnly") or e.get("alpha", 1.0) < 0.25 or min(w, h) < 6 or name in invisible:
+        if (not name or e.get("maskOnly") or e.get("alpha", 1.0) < 0.25 or min(w, h) < 6 or name in invisible
+                or min(v[2] - v[0], v[3] - v[1]) < 6):
             continue
         if e.get("preserveAspect") or e.get("imageType") == "Tiled":
             continue
