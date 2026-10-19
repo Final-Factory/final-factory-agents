@@ -1,7 +1,8 @@
 ---
 name: compile-check-before-you-start-the-editor
 description: "A worker that reverts, deletes or renames code with its Unity editor stopped, then starts the editor, lands on Unity's native \"Enter Safe Mode?\" prompt when anything still references what went (w1470, worker d582a5da on m5/slot1, 2026-10-18: a reverted file a test still used; Ben: \"keeps happening you should be able to get past this\"). Change code with the editor running and refresh, or, with it stopped, search for every name you removed and compile-check offline before you start or restart it. The claim \"no automation channel can click it\" was wrong: the daemon's dialog watch presses Ignore when it can see the dialog, and from w1495 it closes an editor nobody answers and reports the errors."
-date: 2026-10-18
+metadata:
+  type: feedback
 ---
 
 # Compile-check before you start the editor after a revert or a delete
@@ -31,7 +32,7 @@ measured on Windows it pressed Ignore 7 s after the dialog appeared. It failed o
 while the screen is locked or the display asleep. w1495 measured that no launch argument skips the prompt into a
 normal editor: `-ignoreCompilerErrors` is batch-mode only, and the "Show Enter Safe Mode Dialog" preference only
 enters Safe Mode, where the bridge does not load. So the daemon now closes an editor nobody answers and reports the
-errors ([research the route before you say "can't"](research-the-route-before-you-say-cant.md)).
+errors ([research the route before you say "can't"](../../evidence-gate/lessons/research-the-route-before-you-say-cant.md)).
 
 **How to apply.** Before any `mcp__machine__unity start` or `restart`, and before a batch build, after a revert,
 delete or rename made with the editor stopped: grep for every removed name, then compile-check offline. A `[unity]`

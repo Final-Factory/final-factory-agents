@@ -123,7 +123,7 @@ look first and relay only with the critic's report (FF Factory `read_rules ui`).
   `ffbox_activity show config` / `show signatures`) and quote the key and value, or say unknown.
   For what FF Factory itself did (a deploy, a clean-up, an update, a restart), read the portal's own logs with
   `mcp__machine__portal_logs` (w920) and name the source and window; never infer it from the code.
-- **Compile-check before you start the editor after a revert or a delete** ([lesson](lessons/compile-check-before-you-start-the-editor.md)).
+- **Compile-check before you start the editor after a revert or a delete** ([lesson](../project-memory/memories/compile-check-before-you-start-the-editor.md)).
   Change code with the editor running and `refresh_unity`. With it stopped, `git grep` every name you removed (tests
   too) and run editor-ops' offline compile check before `unity start`/`restart`: a compile error on disk at boot puts
   the editor on the "Enter Safe Mode?" prompt with no bridge (w1470, w1495).
@@ -232,8 +232,6 @@ look first and relay only with the critic's report (FF Factory `read_rules ui`).
 
 One file each under `lessons/`: the rule, why (the incident, dated), how to apply.
 
-- [Compile-check before you start the editor](lessons/compile-check-before-you-start-the-editor.md): a revert with the
-  editor stopped left a test referencing a removed file, and the editor sat on "Enter Safe Mode?" (w1470, w1495).
 - [Research the decision, not the topic](lessons/research-the-decision-not-the-topic.md): the
   Reddit caps came from a topic survey; nobody asked what bid wins US auctions. Label every basis.
 - [Settle your own guesses](lessons/settle-your-own-guesses.md): Ben wants agents mostly

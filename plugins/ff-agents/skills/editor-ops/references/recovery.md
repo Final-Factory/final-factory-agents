@@ -125,7 +125,7 @@ then start the editor again. No launch argument avoids the prompt: `-ignoreCompi
 batch-mode only (measured: the prompt still came), and the "Show Enter Safe Mode Dialog" preference
 only enters Safe Mode, where no package code, the bridge included, runs. **Prevention: never start or
 restart the editor with a compile error on disk.** Change code with the editor running, or check
-first (below; evidence-gate lesson `compile-check-before-you-start-the-editor`).
+first (below; project-memory `compile-check-before-you-start-the-editor`).
 
 Recovery once a human has clicked **Enter Safe Mode**:
 
