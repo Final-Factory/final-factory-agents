@@ -27,6 +27,17 @@ person's own words, and nothing merges while the review is pending. `watch_video
 review have passed clips that did not contain the event, and agreed with a mistake the brief described as
 intended.
 
+**New art or VFX: iterate in a Live view session first, record the clip last (w1498).** The clips below verify a look
+that is already settled. While it is being made, offer the person a Live view session (FF Factory's `live_view` tool;
+Ben, w1498: "keep in mind the knobs arent as important as me just being able to iterate conversatoinally with the agent
+to improve the art model or vfx") on the asset in its real scene with the game's lighting, after the 2 or 3 concept
+stills (evidence-gate `checklists/visual.md` 5e). Make whatever change they describe (shader, material, VFX Graph, mesh,
+a new layer); knobs are optional. How it works, what updates without a reload and the measured round trips (a shader
+edit shows in seconds, a C# change takes minutes): project-memory
+[live-view-asset-iteration](../project-memory/memories/live-view-asset-iteration.md); the game repo's
+`Documentation/Live-View-Knobs.md` lists the knobs that show nothing. Then the final values go in the normal PR flow
+with a smooth built-game clip (recorded as below), and you stop the Live view and the editor.
+
 1. **Write the intended look** in a few lines (`look.md`), starting from what the person said, quoted. Then:
    shape, size next to the ship, colours, how it starts, how long it lasts, how it ends, what it must not
    do. A look you wrote alone can describe the bug as the goal.
