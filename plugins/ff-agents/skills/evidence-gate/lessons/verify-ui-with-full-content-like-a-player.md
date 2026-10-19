@@ -252,3 +252,25 @@ numbers. What w1399 measured:
     unless the person's words ask for that kind of fix. w1386's words were "fix the ones that are clearly bugs", and the
     panel it fixed still showed its On/Off switch stretched 14x, as on master.
   - Rerun its cases (`/srv/fff/review/w1399-ui-harness/`) when the critic's role, the rubric or the model changes.
+
+## A standing finding is filed with its wNNN or fixed, and the critic's coverage gap is shot (w1546, 2026-10-19)
+
+w1546 was a bubble in the FF Factory portal for messages between people. Round 2 of its critic left one UGLY finding,
+marked STANDING: on the phone, the header's model chip overlapped the title. The report said "handed to the orchestrator
+to file". The orchestrator, for lothsahn, sent it back: "The critic's one UGLY finding still has no answer. ... 'Handed on
+to be filed' doesn't count. Either fix it here (it's a small layout change on a screen you're already shooting), or file
+it and give me the wNNN." The critic had also noted that no still showed many messages. That was exactly lothsahn's case:
+"we're missing chat messages to each other when there's a lot of stuff from you and we haven't checked our messages in a
+while". So the stills came back for a third round. The fix was 20 lines of CSS. Round 3 had 0 broken or ugly (#455).
+
+### How to apply
+
+- **Every BROKEN or UGLY finding, STANDING included, ends in one of two ways before you report:**
+  - fixed in this change;
+  - filed as a request, with its wNNN in the report and on the PR's `Critic:` line.
+  - "Handed on", "to be filed" or "pre-existing" alone is an open finding. It does not count as filed.
+- **Fix it here** when the fix is small and the screen is one your stills already shoot. Filing it costs the person a
+  round as well.
+- **When the critic names a coverage gap that is the person's own case, shoot that state before anyone sees the
+  stills.** For example: many items, long text, the busy day the request is about. Then have a new critic judge it. A
+  missing still of the requester's scenario is a gap in the proof, not a minor finding.

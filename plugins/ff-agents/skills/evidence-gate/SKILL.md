@@ -97,7 +97,9 @@ Ben, 2026-10-16: "you make bad UI mistakes constantly". The gate, at the top of 
 2. Grade every still yourself with the unity-ui `design-rubric.md` (`Eye:`).
 3. Measure it against the before with `ui_look.py colour` and `ui_layout.py shape` (`Colour:`, `Shape:`).
 4. Have a **fresh** `ff-agents:ui-critic` grade the pack `ui_look.py pack` builds (`Critic:`), and fix or answer each
-   broken or ugly finding.
+   broken or ugly finding. A STANDING one is fixed or filed with its wNNN, never "handed on", and a coverage gap the
+   critic names that is the person's own case gets its stills
+   ([lesson](lessons/verify-ui-with-full-content-like-a-player.md#a-standing-finding-is-filed-with-its-wnnn-or-fixed-and-the-critics-coverage-gap-is-shot-w1546-2026-10-19)).
 
 "Same both sides", a clean census and "Looked: yes" are not that answer. A redesign goes out as 2-3 clearly different
 options built from the game's best existing dialogs (Ben, w1296: "reuse components when you can damnit"). Orchestrators
