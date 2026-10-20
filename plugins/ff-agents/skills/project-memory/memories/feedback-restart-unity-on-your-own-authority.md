@@ -39,7 +39,15 @@ report the gap, then restart the exact editor yourself).
     first, then Ignore/exit Safe Mode; a relaunch with a known compile error still on disk just
     re-triggers it.
   - Scene-backup recovery dialog ("recover backed-up scene?") with a clean git working tree →
-    **No** / discard the backup.
+    **No** / discard the backup. It follows any crash in play mode, and an automatic restart sits
+    on it for ever (w1617, m5, 2026-10-20): 0 % CPU, the editor log stops after licensing and
+    "Launching external process: …UnityPackageManager", `~/.unity-mcp/unity-mcp-status-<hash>.json`
+    keeps its pre-crash `last_heartbeat`, `mcpforunity://instances` lists nothing, yet the FF Factory
+    `unity status` still says "MCP bridge up". Confirm with `sample <pid> 1` (main thread in
+    `Application::HandleDanglingSceneBackups` → `ShowAlertDialog`). No click needed: stop the
+    editor (force), move `<project>/Temp/__Backupscenes` into `$TMPDIR` (keep it, do not delete),
+    start it again. Move the crash's `mono_crash.mem.*.blob` dumps out of the project root too,
+    or the worktree is no longer clean.
   - "Open scene(s) have been modified externally — Reload/Ignore" (after a branch switch or
     pull changed an open scene) → **Reload**, unless the editor holds deliberate unsaved scene
     work.

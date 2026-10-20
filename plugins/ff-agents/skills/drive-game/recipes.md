@@ -106,6 +106,19 @@ title Load panel was opened by hand (`SaveGamePanel.EnableInLoadMode`, then `Set
 `execute_code` calls: a call that runs more than about 25 s times the bridge out ("Timeout receiving Unity response")
 even though the code goes on running. The 12 MB Strange fixture then loaded in about a minute.
 
+⚠️ **The Strange fixture can get the editor killed on a Mac; for a late save use LifeAsTwoMegaWave** (w1617,
+2026-10-20, m5). `Strange-0.19.0.25` (33,387 placeables) reached `MePlayer` but never `GameStarted`, and Unity's own
+watchdog ended it ("Mono process hang detected, sending kill signal" in the editor log, then a SIGSEGV report in
+`~/Library/Logs/DiagnosticReports/`). `LifeAsTwoMegaWave-0.50.0.54` (2,897 placeables, 405 charted chunks, 33 stations,
+37 Exploration Centers) loaded in about 35 s through the `FinalFactory.Dev.PendingLoadSave:<dataPath>` EditorPref, set
+once the title screen's singletons (`ItemConfig`, `CombatUpgradeContainer`) exist. After a crash, see
+[[feedback-restart-unity-on-your-own-authority]] (the scene-backup dialog).
+
+**Counting a save's built structures: `AsteroItem` is on every `Placeable`, structures included** (w1617: all 2,897 in
+LifeAsTwoMegaWave), so a query that excludes `AsteroItem` finds none. Tell them apart by `Placeable.PlaceableType`:
+`Asteroid`, `CosmicTerrain`, `MinableTerrain`, `Artifact` and `DestroyedPlayer` are not built. `MapGenerationData.ChunksExplored`
+is a `FastLookupList` with no enumerator: loop on `Count` and `[i]`.
+
 ⚠️ **If the headless load does not start, use the DevLoadSave menu instead** (w1048, 2026-10-11, lothdesktop): the
 headless `LoadGame` from `execute_code` followed by `EditorApplication.Step()` loops never loaded a save (0 `Placeable`s
 after ~4000 stepped frames, `GameMetaState` paused, no error and no "In game scene is prepared" log; the Step loop had
