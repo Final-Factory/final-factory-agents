@@ -6,7 +6,14 @@ Mechanics: the game repo's `Documentation/Bench-Lock.md`.
 - [ ] **Shortest run that answers the question.** The question and the smallest difference that would change the
       decision are written down. The legs, sample and settle are the shortest that can show it (a few percent: two
       rounds of 30 to 60 s on a quiet machine), and the round count is a cap.
-- [ ] **Early stop on.** The probe scripts' `ab_stop.py` stop is left on, or the report says why `EARLY_STOP=0`.
+- [ ] **A short plan.** The fewest rounds that can answer the question (lothsahn: "Get them all to shorten their plans a
+      lot"); the round count is a cap, never the plan.
+- [ ] **Early stop on, and a decision on enough signal.** The probe scripts' `ab_stop.py` stop is left on, or the
+      report says why `EARLY_STOP=0`. Once the data shows the answer beyond the noise, stop and decide (lothsahn: "if
+      they have sufficient signal, just make a decision"), with the measured numbers and their spread in the report.
+- [ ] **At most one hour per exclusive hold.** The run is split so each hold ends within 60 minutes and the lock is
+      given back between them (lothsahn: "subdivide their work to not hold the exclusive lock longer than 1 hour at a
+      time"); `bench_unlock` warns past the hour and `report` flags it.
 - [ ] **The right ticket.** `bench_lock` (exclusive) only for a run whose numbers are times. Untimed heavy work
       (determinism pairs, repros, censuses, launch checks) takes `bench_lock --shared`. A build takes no `bench_lock`,
       because its own `ff_unity_slot` ticket queues it.
