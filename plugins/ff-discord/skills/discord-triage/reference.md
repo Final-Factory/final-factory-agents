@@ -115,7 +115,8 @@ opens the PR against whichever branch you based the work on, and the branch, bas
 recorded come from git and the GitHub API response rather than from anything you write. Nothing merges automatically, ever.
 
 **Outside an FFBox turn, the thread post below is not yours either.** #bug-reports and
-dev_bug_reports belong to FFBox (Lothsahn, 2026-09-30): the CLI refuses an agent's post there.
+dev_bug_reports belong to FFBox (Lothsahn, 2026-09-30): the CLI refuses an agent's post there; a
+word the reporter needs goes through FFBox when the work calls for it (lothsahn, 2026-10-20, w1640: "you or workers should be able to post direct to discord by asking ffbox to do it on your behalf through the tunnel, and it will post what you say"): `mcp__machine__post_as_max` with channel `conversation` and the thread (a worker or an orchestrator), or an orchestrator's `reply_to_ffbox`.
 Put `Discord: https://discord.com/channels/<guild id>/<thread id>` in the PR description instead
 (one line per thread); FFBox tells the thread when the PR merges. After an `ffbox/*` branch lands,
 nobody posts "fixed" or "merged": FFBox does.
