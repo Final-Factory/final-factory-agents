@@ -27,6 +27,12 @@ metadata:
    w1628 every leg idled `SETTLE + 2 x SAMPLE + 15` s under the lock) and stop at an even round once `ab_stop.py` calls
    the result clear past the noise. `bench_queue.py report` shows who held the lock and who waited. The evidence-gate's
    [bench checklist](../../evidence-gate/checklists/bench.md) is the pre-flight.
+   **Short plans, a decision on enough signal, one hour per hold** (w1628, lothsahn: "Get them all to shorten their
+   plans a lot", "if they have sufficient signal, just make a decision", "subdivide their work to not hold the exclusive
+   lock longer than 1 hour at a time"): plan the fewest rounds, stop and decide once the answer is past the noise (the
+   numbers and spread in the report), and give the lock back within the hour; past it `bench_unlock` warns and
+   `report` flags it. **The queue's order** (w1628): the worker's request priority first, then one timed leg and one
+   shared group in turn; a build joins the waiting group of builds or goes right after the next timed leg.
 2. **Your own editor counts as load.** Starting the sandbox editor, a force recompile or an editor test run while one of
    your (or anyone's) timed runs is in flight contaminated three of my runs (+3 ms each, measured: 84.0 against 87.0 ms
    on the same build). Hold the lock for editor compiles and tests too, or keep the editor stopped while legs run. A batch

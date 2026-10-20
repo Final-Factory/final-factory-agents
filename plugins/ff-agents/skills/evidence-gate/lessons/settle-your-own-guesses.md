@@ -1,6 +1,6 @@
 ---
 name: settle-your-own-guesses
-description: "The evidence gate is self-enforced. An agent settles a guess by research or measurement and then proceeds; the person is asked only for money values, for what the rules reserve for them, and for a fork research could not settle. A CI job that died at its timeout or with every test green is read before it is re-run. A bulk read of GitHub history takes the cheap path and stays well inside the account's shared API budget. A crash with only GPU-driver frames is not \"nothing to fix\" until the driver is dated, the CPU read from the dump, the game step that fed it measured and a guard looked for. A timed bench run holds a shared machine's lock only as long as its question needs: the shortest run, early stop, the exclusive ticket only for timed numbers (w1628)."
+description: "The evidence gate is self-enforced. An agent settles a guess by research or measurement and then proceeds; the person is asked only for money values, for what the rules reserve for them, and for a fork research could not settle. A CI job that died at its timeout or with every test green is read before it is re-run. A bulk read of GitHub history takes the cheap path and stays well inside the account's shared API budget. A crash with only GPU-driver frames is not \"nothing to fix\" until the driver is dated, the CPU read from the dump, the game step that fed it measured and a guard looked for. A timed bench run holds a shared machine's lock only as long as its question needs: the fewest rounds that can answer it, a decision as soon as the signal is clear, the exclusive ticket only for timed numbers, at most one hour per hold (w1628)."
 date: 2026-10-02
 ---
 
@@ -101,6 +101,12 @@ that can show the difference you are after, an early stop once the result is cle
 do not need. Only a run whose numbers are times takes the exclusive lock. Untimed heavy work takes a shared ticket
 (`bench_lock --shared`), and a build takes nothing extra.
 
+lothsahn, later the same day: "Get them all to shorten their plans a lot" and "And if they have sufficient signal, just
+make a decision". So plan the fewest rounds that can answer the question, and stop and decide as soon as the data shows
+the answer beyond the noise, with the measured numbers and their spread in the report. And: "We should request workers
+subdivide their work to not hold the exclusive lock longer than 1 hour at a time too." One exclusive hold lasts at most
+an hour: give the lock back between legs or rounds and queue again.
+
 **Why.** On 2026-10-20 (00:00 to 15:58 UTC, measured from each machine's transcripts and run logs; the game repo's
 `Documentation/Bench-Lock.md`):
 
@@ -133,6 +139,12 @@ Where the time went:
 5. Give the lock back between legs, and do builds and digests outside it.
 6. After the run, `python scripts/bench/bench_queue.py report` shows your holds and whom they kept waiting. Put the
    lock time beside the result in your report.
+7. Plan each exclusive hold to end within an hour: split a long run into holds of an hour or less, each given back
+   (`bench_unlock`, then `bench_lock` again, which requeues you). Past an hour `bench_unlock` warns you, `bench_status`
+   shows the hold over the rule, and `report` flags it with your request; nothing kills your leg for it.
+8. Decide on enough signal. Once every arm's gap is clear of the run-to-run spread (or all are inside the noise), stop
+   and write the decision with the numbers and the spread; more rounds are for a question the data has not answered
+   yet, not for confidence in one it has.
 
 ## An equivalence test of a pruned search puts a tie on each bound, and fails on the flip (w1069, 2026-10-13)
 
