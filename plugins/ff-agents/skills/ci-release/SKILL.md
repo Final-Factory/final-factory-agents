@@ -1,9 +1,23 @@
 ---
 name: ci-release
-description: "Cut a release through CI on the ffbox build server — write the release notes, bump the version (FFVersion.cs + bundleVersion) and push, follow CI through the Windows/Mac main+demo builds, tests and Steam uploads, then post the patch notes as Max in #dev-patch-notes. A requested release is done only when it is live on its Steam branch AND its notes are posted; `scripts/release-status.py` says where a release is. Use when Ben or Lothsahn asks for a build in any words (\"push a new dev build\", \"a build for the testers\", \"cut a release\"). Never start it on your own initiative or as a side step of other work. While Ben has dev builds (master bumps) made on his m5 (w930, 2026-10-10), follow m5-manual-build.md beside it."
+description: "Cut a release through CI on the ffbox build server — write the release notes, bump the version (FFVersion.cs + bundleVersion) and push, follow CI through the Windows/Mac main+demo builds, tests and Steam uploads, then post the patch notes as Max in #dev-patch-notes. A requested release is done only when it is live on its Steam branch AND its notes are posted; `scripts/release-status.py` says where a release is. Use when Ben or Lothsahn asks for a build in any words (\"push a new dev build\", \"a build for the testers\", \"cut a release\"). Two lanes (w1639): \"a release\" is FFBox's (this file); \"a quick release\" or \"an urgent release\" is built and uploaded by BEAST, else LothDesktop, while FFBox skips it (urgent-release.md beside it). Never start it on your own initiative or as a side step of other work."
 ---
 
 # Trigger a CI release (a version bump merged into master)
+
+> **TWO LANES (w1639; lothsahn, 2026-10-20: "Release builds should be handed by ffbox. We should update the version and
+> just let ffbox build it. But that can take up to 90m because ffbox is slow. If we need an urgent build, we should be
+> able to ask beast or Lothdesktop to build it for us ... Then Ben and I can ask for a release (ffbox) or a quick or urgent
+> release (beast, if offline, LothDesktop)").**
+>
+> - **"A release"** (any words without "quick" or "urgent"): this file. FFBox builds, uploads and sets development live;
+>   no FF Factory computer builds it, and an FF Factory worker takes no `build_plan` for it. After the merge, `wake_me` 40
+>   minutes and end the turn (FFBox lands 22 to 78 minutes after the bump, median 36), so no sandbox waits on FFBox.
+> - **"A quick release" / "an urgent release"** from Ben or Lothsahn: **`urgent-release.md`** beside this file. The bump
+>   carries `cicd/release-lane.json` (`trigger-ci-release.sh --urgent beast`), FFBox declines it, and BEAST (else
+>   LothDesktop when BEAST is offline) builds it with FFBox's own scripts after FF Factory clears it, uploads it and sets
+>   development live. Never pre-release or default.
+> - Both: the notes first, the patch-notes post as Max in #dev-patch-notes once live as the last step (section 3).
 
 > **WHERE A RELEASE LANDS (ffbox `scripts/release_lane.py`, `SETLIVE`).** Read it there, or run
 > `python scripts/release-status.py [<version>]` in the game repo, which reads it from ffbox and the
@@ -43,25 +57,13 @@ description: "Cut a release through CI on the ffbox build server — write the r
 > down, and only with Ben's OK. A failed player is not "ffbox down": get the reason from the job log,
 > report it, and fix it here (re-run the job or bump again); never switch to `mp-beta-deploy` on your own.
 >
-> **FOR NOW, DEV BUILDS (A MASTER BUMP) ARE MADE ON BEN'S M5, NOT ON FFBOX** (Ben, 2026-10-10, w930: "for the
-> next build, please just do the process on my m5 and just do the windows and mac builds (we dont need
-> demo or linux builds yet) ffbox is having issues with build speed so we are going to manually use my
-> m5 for builds for a couple days, remember this"). Until Ben or Lothsahn says FFBox builds again,
-> a dev build follows **`m5-manual-build.md`** beside this file: stop the other m5 workers and
-> close every editor and player, bump with `trigger-ci-release.sh --skip-ci` (FFBox then builds
-> nothing), build Windows + Mac main with `Editor.ReleaseBuild`, upload with steamcmd's cached login,
-> set live on `development`, verify on Steam. The notes (section 0.5, 3) and the first-hour check
-> (section 4) are unchanged. First run: Build 97, BuildID 25859327. A request may add the demo (Build 99,
-> w1006: built beside main, uploaded with nothing set live; `m5-manual-build.md`).
-> **Build 100 went back to FFBox, on Lothsahn's word for that build** (2026-10-12, w1107: "Do w1107 on
-> FFBox once the settings race condition is fixed"): a normal bump (no `--skip-ci`), `6cc31edee` at 15:14
-> UTC, tests 11832 run, 0 failed, LANDED on `development` as BuildID 25886178 at 15:46 UTC, 31 min.
-> Lothsahn's words lifted the m5 rule for Build 100 only: Ben's w930 rule still applies to the next build
-> unless Ben or Lothsahn says otherwise. When a brief says "FFBox's lane" but neither has said FFBox builds
-> again, don't bump: the brief may be a dispatcher's assumption. Ask the requester which route
-> (`waiting_on_person`), and recommend the m5 while the rule stands. **w1137** (filed by Ben on
-> 2026-10-12, the cut-over from develop to master) describes the first master bump after the cut-over
-> as built through FFBox's lane.
+> **FFBOX BUILDS AGAIN; THE M5 MANUAL BUILD IS HISTORY** (lothsahn, 2026-10-20, w1639: "Release builds should be
+> handed by ffbox. We should update the version and just let ffbox build it"). That is the "FFBox builds again" that
+> Ben's w930 rule waited for (Ben, 2026-10-10: "for the next build, please just do the process on my m5 ... ffbox is
+> having issues with build speed so we are going to manually use my m5 for builds for a couple days"). A dev build is
+> now a normal bump (section 1), and an urgent one is `urgent-release.md`. `m5-manual-build.md` stays for the record
+> (Builds 97 and 99) and for a person who asks for an m5 build by name; `mp-beta-deploy` stays the last resort when
+> FFBox CI is down and Ben has OK'd it.
 >
 > History: the 0.50.0.36/.37/.39 Mac players failed with "Disk full" on the `ffghr-loth2400-*`
 > runners (2026-09-27). Lothsahn fixed it in ffbox (the nightly cache rebuild, FinalFactory #651, and
