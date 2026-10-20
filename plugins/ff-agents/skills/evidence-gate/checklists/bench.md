@@ -1,6 +1,6 @@
 # Checklist: before a timed bench run on a shared machine (w1628)
 
-Lesson: [hold the bench lock as briefly as the question allows](../lessons/hold-the-bench-lock-briefly.md).
+Lesson: [hold the bench lock as briefly as the question allows](../lessons/settle-your-own-guesses.md#hold-the-bench-lock-as-briefly-as-the-question-allows-w1628-2026-10-20).
 Mechanics: the game repo's `Documentation/Bench-Lock.md`.
 
 - [ ] **Shortest run that answers the question.** The question and the smallest difference that would change the

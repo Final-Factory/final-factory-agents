@@ -237,7 +237,7 @@ look first and relay only with the critic's report (FF Factory `read_rules ui`).
 
 One file each under `lessons/`: the rule, why (the incident, dated), how to apply.
 
-- [Hold the bench lock as briefly as the question allows](lessons/hold-the-bench-lock-briefly.md): lothsahn,
+- [Hold the bench lock as briefly as the question allows](lessons/settle-your-own-guesses.md#hold-the-bench-lock-as-briefly-as-the-question-allows-w1628-2026-10-20): lothsahn,
   2026-10-20: "A benchmark with 90% fidelity that runs twice as fast as better one is likely the right choice." The
   shortest run that answers the question, early stop, shared tickets for untimed work (w1628: BEAST held 15.5 of 16 h).
 - [Research the decision, not the topic](lessons/research-the-decision-not-the-topic.md): the
