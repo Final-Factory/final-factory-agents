@@ -151,6 +151,23 @@ the authorize page showed an **Authorize** button (disabled for a moment after l
 `code#state` page. If the page renders blank in a background window, reload it in your own window. The code is single
 use; never echo it into a report.
 
+**Updating a doc in place and checking it without clicks (w1608, 2026-10-20, m5).**
+- **Diff without reading.** `get_file` on a big doc (130 KB) is saved to a tool-results `.txt` as JSON. Pull out its
+  `content` with `python3 -I` (`json.load(f)["content"]`) and `cmp` it with your copy. Do that before the write, so you
+  don't overwrite an edit made in the app, and again after the write. Both were byte-identical here.
+- **The driver makes the DesignSync calls.** A `general-purpose` subagent doesn't get DesignSync: its ToolSearch
+  finds nothing.
+- **Seeing the signed-in project without clicking anything:**
+  1. `osascript -e 'tell application "Safari" to make new document with properties {URL:"<project link>"}'`, run in
+     the background, opens your own window. Its `id of front window` is the CGWindowID.
+  2. The window stayed blank in the background, even after a reload.
+  3. `set index of window id <id> to 1` plus `activate`, then about 15 s, then `screencapture -x -o -l <id>` captured the
+     rendered doc.
+  4. `text of front document` shows only the top frame (the project name and the open file's name), because the doc
+     sits in a cross-origin iframe. `do JavaScript` is refused unless "Allow JavaScript from Apple Events" is on.
+     That is the person's Safari setting: leave it off.
+  5. Close the window by its id when done.
+
 **Note:** in October 2026 Claude Design shows "Claude Design is moving to Artifacts in the Claude app. You can keep
 using this version until December 14."
 
