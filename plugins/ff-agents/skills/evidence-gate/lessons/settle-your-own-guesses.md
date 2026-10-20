@@ -106,12 +106,12 @@ do not need. Only a run whose numbers are times takes the exclusive lock. Untime
 
 - BEAST's lock was held 15.5 of 16 hours, and requests spent 40 hours waiting in its queue (not counting waits behind
   their own legs).
-- lothdesktop's lock was held 13.1 hours, with 14.3 hours of waiting.
+- lothdesktop's lock was held 12.7 hours, with 14.3 hours of waiting.
 - lothsahn: "Timed runs are killing our throughput... Our workers have become almost serial instead of parallel."
 
 Where the time went:
 
-- **Builds under the exclusive lock.** They held it for 1.7 h on BEAST and 3.8 h on lothdesktop (one release build
+- **Builds under the exclusive lock.** They held it for 1.7 h on BEAST and 3.7 h on lothdesktop (one release build
   held it 58 minutes). Determinism pairs and repros held it for another 1.3 h and 1.1 h.
 - **An idle tail in every probe leg.** The player's dwell counts from the end of its command chain, but the probe
   scripts asked for `SETTLE + 2 x SAMPLE + 15` s more: 120 s of nothing per leg at the defaults. With a 240 s settle
