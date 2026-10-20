@@ -20,6 +20,13 @@ metadata:
    both, in that order), never inside it. Under the lock a slot or lab-lock wait is cut off at 2 minutes, and `quiet`
    gives the lock back after 15 minutes. Do a digest or a build after `bench_unlock`. Stopping a holding script frees
    its turn for the next in line, not for whoever polls first.
+   **Exclusive only for timed numbers, and as briefly as the question allows** (w1628, lothsahn: "A benchmark with 90%
+   fidelity that runs twice as fast as better one is likely the right choice"). Never wrap a build in `bench_lock`:
+   `build_player.sh` and `ff_unity_slot` queue a shared ticket themselves. Untimed heavy work (a determinism pair, a
+   repro, a census) takes `bench_lock --shared`. The probe scripts quit 5 s after their sample (`DWELL`; before
+   w1628 every leg idled `SETTLE + 2 x SAMPLE + 15` s under the lock) and stop at an even round once `ab_stop.py` calls
+   the result clear past the noise. `bench_queue.py report` shows who held the lock and who waited. The evidence-gate's
+   [bench checklist](../../evidence-gate/checklists/bench.md) is the pre-flight.
 2. **Your own editor counts as load.** Starting the sandbox editor, a force recompile or an editor test run while one of
    your (or anyone's) timed runs is in flight contaminated three of my runs (+3 ms each, measured: 84.0 against 87.0 ms
    on the same build). Hold the lock for editor compiles and tests too, or keep the editor stopped while legs run. A batch

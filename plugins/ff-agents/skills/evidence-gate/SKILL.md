@@ -223,6 +223,9 @@ look first and relay only with the critic's report (FF Factory `read_rules ui`).
   the table, `Flags:`, `Baseline:`), or `No curve change: <why>`; `pr_evidence.py` fails an enemy, combat or spawn change
   without it (Build 108's late-game raids, w1439).
 - [Releases](checklists/release.md)
+- [Timed bench runs](checklists/bench.md) (w1628): before taking a shared machine's bench lock: the shortest run that
+  answers the question, early stop on, the exclusive ticket only for timed numbers (`bench_lock --shared` for untimed
+  work, nothing for a build), nothing under the lock but the leg, and the lock time in the report.
 - [FFBox desync PRs](checklists/ffbox-desync-pr.md) (Lothsahn's standing policy, 2026-10-04): classify
   1 report generation only, 2 a game desync fix, 3 capture during play; tests, a 2-peer red/green
   check for 2, a before/after tick and frame measurement for 3 (under 1% merges, above escalates
@@ -234,6 +237,9 @@ look first and relay only with the critic's report (FF Factory `read_rules ui`).
 
 One file each under `lessons/`: the rule, why (the incident, dated), how to apply.
 
+- [Hold the bench lock as briefly as the question allows](lessons/hold-the-bench-lock-briefly.md): lothsahn,
+  2026-10-20: "A benchmark with 90% fidelity that runs twice as fast as better one is likely the right choice." The
+  shortest run that answers the question, early stop, shared tickets for untimed work (w1628: BEAST held 15.5 of 16 h).
 - [Research the decision, not the topic](lessons/research-the-decision-not-the-topic.md): the
   Reddit caps came from a topic survey; nobody asked what bid wins US auctions. Label every basis.
 - [Settle your own guesses](lessons/settle-your-own-guesses.md): Ben wants agents mostly
