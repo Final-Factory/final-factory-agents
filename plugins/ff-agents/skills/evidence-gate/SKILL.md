@@ -97,7 +97,9 @@ Ben, 2026-10-16: "you make bad UI mistakes constantly". The gate, at the top of 
 2. Grade every still yourself with the unity-ui `design-rubric.md` (`Eye:`).
 3. Measure it against the before with `ui_look.py colour` and `ui_layout.py shape` (`Colour:`, `Shape:`).
 4. Have a **fresh** `ff-agents:ui-critic` grade the pack `ui_look.py pack` builds (`Critic:`), and fix or answer each
-   broken or ugly finding.
+   broken or ugly finding. A STANDING one is fixed or filed with its wNNN, never "handed on", and a coverage gap the
+   critic names that is the person's own case gets its stills
+   ([lesson](lessons/verify-ui-with-full-content-like-a-player.md#a-standing-finding-is-filed-with-its-wnnn-or-fixed-and-the-critics-coverage-gap-is-shot-w1546-2026-10-19)).
 
 "Same both sides", a clean census and "Looked: yes" are not that answer. A redesign goes out as 2-3 clearly different
 options built from the game's best existing dialogs (Ben, w1296: "reuse components when you can damnit"). Orchestrators
@@ -240,7 +242,7 @@ One file each under `lessons/`: the rule, why (the incident, dated), how to appl
   four checks of totals said "nothing wrong"; the country table at 21.6 hours showed the failure.
 - [A visual fix is verified by looking](lessons/visual-fixes-are-verified-by-looking.md): a built
   player, a clip that contains the event, the intended look in the person's words; `watch_video`
-  is a second opinion; also hunt for what should not be there (ghosts, leftovers, overlaps, z-order) before saying "matches" ([section](lessons/visual-fixes-are-verified-by-looking.md#hunt-for-what-should-not-be-there-w895-w1015), w895, w1015); new art matches the art language: two solid main colours + one bright bloomy HDR accent, a highlight is the object's own emissive/rim light, never a world-space halo or UI-like indicator, compared side by side with a named reference asset ([section](lessons/visual-fixes-are-verified-by-looking.md#new-art-matches-final-factorys-art-language-w1066-w1241), checklist 5c; w1066, w1241). A glow is measured against a powered mass driver in the same built-player frame with the game repo's `scripts/feel/glow_compare.py` before it goes to the requester ([section](lessons/visual-fixes-are-verified-by-looking.md#a-glow-is-measured-against-a-glowing-reference-in-the-same-frame-w1323), checklist 5d; w1323).
+  is a second opinion; also hunt for what should not be there (ghosts, leftovers, overlaps, z-order) before saying "matches" ([section](lessons/visual-fixes-are-verified-by-looking.md#hunt-for-what-should-not-be-there-w895-w1015), w895, w1015); new art matches the art language: two solid main colours + one bright bloomy HDR accent, a highlight is the object's own emissive/rim light, never a world-space halo or UI-like indicator, compared side by side with a named reference asset ([section](lessons/visual-fixes-are-verified-by-looking.md#new-art-matches-final-factorys-art-language-w1066-w1241), checklist 5c; w1066, w1241). A glow is measured against a powered mass driver in the same built-player frame with the game repo's `scripts/feel/glow_compare.py` before it goes to the requester ([section](lessons/visual-fixes-are-verified-by-looking.md#a-glow-is-measured-against-a-glowing-reference-in-the-same-frame-w1323), checklist 5d; w1323). Every "it's gone" or "it happens" ("no z-fight", "ships spaghettify") names a 1:1 crop or a slowed segment of that moment, over every surface the effect overlaps (terrain, structures, other VFX), and the fresh critic gets it as a question; `pr_evidence.py` checks the `Close-ups:` and `Surfaces:` lines, `--note` a review note before `publish_review` ([section](lessons/visual-fixes-are-verified-by-looking.md#every-its-gone-is-shown-close-up-against-every-surface-w1567), checklist 5g; w1470, w1567).
 - [Hero art is creative and detailed](lessons/visual-fixes-are-verified-by-looking.md#hero-art-is-creative-detailed-and-different-w1470-w1466): a new model or hero VFX
   (w1470 Singularity Lance, w1466 Urso Ballista; Ben: "this is the end game weapon that needs to look really cool ...
   be creative with this", "we need high quality models") first comes as 2 or 3 different concepts, a literal object
@@ -363,6 +365,7 @@ One file each under `lessons/`: the rule, why (the incident, dated), how to appl
   `player_slots.py prune`, no clean-up step before DONE, and no rm to reuse a folder: each test leg writes to a new
   `$TMPDIR/<leg>-<timestamp>` (w1097); only when the disk is short mid-task, an `rm -rf` under `$TMPDIR`; low disk is
   fixed by the harness or by filed clean-up work, never by asking a person (w596/w626).
+  Measure Windows folders with robocopy `/L`, never Git Bash `du`, and look for your own tool processes that a stopped shell left running ([section](lessons/clean-up-after-yourself.md#measure-windows-folders-with-robocopy-l-not-git-bash-du-w1561), w1561).
   Same lesson, deletes (w896): only inside the machine's worker install folder (`$FF_WORKER_ROOT`); outside it you measure, report
   sizes and list what makes FF Factory write there, whatever the brief says (w876 cleared dotnet temp, the Unity Hub installer,
   Temp, test output and old transcripts on LothDesktop's C:; lothsahn: "in general we should only be clearing data in the

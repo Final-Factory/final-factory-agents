@@ -73,6 +73,43 @@ to the check: nobody was looking for it.
 4. Put the list in the report under "Looked for, not asked for". The checklist line is
    [visual.md](../checklists/visual.md) item 5b (Artifact hunt).
 
+## Every "it's gone" is shown close up, against every surface (w1567)
+
+**Rule.** A sentence that says a visual defect is gone ("no z-fight") or that an effect happens ("ships spaghettify",
+"pulls in the boss") is a claim with its own proof: a full-resolution (1:1) crop of that exact moment, or a slowed clip
+segment of it (0.25x and its seconds). A z-fight or occlusion claim is shown over every surface the effect overlaps
+(terrain, structures and hulls, other effects), not one. The fresh critic gets each claim as a question to answer from
+those crops, not as a statement to agree with.
+
+**Why.** Ben corrected the same claim twice on w1470, the Singularity Lance's black hole (PR #1921):
+
+- **2026-10-18, v2 clips.** The worker's review and a video review passed them. Ben: "visually it looks like its z
+  fighting in the screenshot with the antimatter nexus or something, and its not pulling in the boss".
+- **2026-10-19, the A/B/C previews.** The fix depth-tested the hole once at its own front. Its proof (PR #1921 Evidence)
+  was one clip, `w1470-lance-nexus-60fps.mp4`, against one occluder: "the ring occludes the hole with a stable edge;
+  frame-to-frame flicker over 59 frames had a median of 2.1/255". The spaghettify rested on the worker's own look
+  ("the hulls stretch into the core and thin out") with "watch_video's second opinion has not been run yet". The note
+  said the z-fight was gone and that ships spaghettify into the core. Ben: "the units dont really spagettify when they
+  get pulled in and also theres still weird z fighting where the blakc hole isnt overtop of the terrain".
+
+A z-fight at the hole's edge covers a few pixels; a frame-wide median hides it, and the terrain was never in a check.
+A stretch on a ship that is a few dozen pixels long in a 1920x1136 camp shot does not show on a contact sheet. The
+close-up crops that existed (`*-closeup.png`) were not tied to a claim, and nobody but the author was asked about one.
+(Read from PR #1921's description and its `specs/w1470-singularity-lance/plan.md`; the worker's transcript and the
+portal's review folder were not reachable from the w1567 sandbox, so the scale it judged at is inferred, not read.)
+
+**How to apply.**
+
+1. While writing the note, mark each defect-gone or effect-present sentence. For each, cut a 1:1 crop of the moment
+   (or a 0.25x segment), name it after the claim, and write `Close-ups: <claim>: <file>; ...`.
+2. For an occlusion claim, write `Surfaces:` with every surface the effect's footprint crosses in any shot (look at the
+   terrain under it, the buildings beside it, the other VFX in front), and crop the edge over each.
+3. Run `pr_evidence.py --note <note.md> --questions q.md` before `publish_review`: it fails a claim without a close-up
+   or a surface without its crop, checks the files are in the note's folder, and writes the claims as questions.
+4. Hand the fresh critic `q.md` and the crops (a new subagent, or `watch_video --mode vfx --brief q.md`). Its answers
+   go in the note; a "no" or "can't tell" sends the claim back. The checklist line is [visual.md](../checklists/visual.md)
+   item 5g; the PR's Evidence carries the same `Close-ups:` and `Surfaces:` lines, which `pr_evidence.py` checks.
+
 ## New art matches Final Factory's art language (w1066, w1241, w1332)
 
 **Rule.** Before a preview of new art (a model, a material, a glow, a highlight) goes to Ben:

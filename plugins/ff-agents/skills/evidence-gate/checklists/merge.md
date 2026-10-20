@@ -54,6 +54,10 @@ Not verified: the Bats' slot lag (simulation, follow-up PR)
   `distinct:` (what makes it distinctive), `cost:` (measured ms or fps in a built player). `Hero art: n/a (<why: a bug
   fix, a re-tint, an icon, a re-export, a third-party import>)` shows in the verdict for the reviewer
   (visual.md 5e; w1470, w1466, w1475, w1497).
+- **A defect gone or an effect shown** ("no z-fight", "no flicker", "no longer draws through", "ships spaghettify",
+  "pulls in", anywhere in the description but the person's quoted words) needs `Close-ups: <claim>: <1:1 crop.png or
+  slowed clip.mp4 and its seconds>; ...`, and an occlusion claim also `Surfaces: <every surface the effect overlaps>`
+  with a crop over each (visual.md 5g; w1470, w1567).
 - **Kind `visual`** needs the five lines from "Intended look" to "Review"
   ([visual.md](visual.md)). "Built player: no" fails. So does a "Clips" line that does not say
   where the event is.

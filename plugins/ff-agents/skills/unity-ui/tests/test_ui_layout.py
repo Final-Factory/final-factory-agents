@@ -1038,6 +1038,26 @@ class ShapeTest(unittest.TestCase):
              "sprite": "transparent-block", "spriteSize": [512, 512], "spriteBorder": [0, 0, 0, 0], "imageType": "Sliced",
              "preserveAspect": False}
 
+    # w1486 (PR #1936): the Oracle shop's last row, half under its scroll view's mask at 1920x1080. The census gives the
+    # icon's own rect and the part that shows; the shape read the clipped part as the drawn shape (6 STRETCHED, master too).
+    CLIPPED = {"path": f"{GP}/OracleEntityPanelParent/OraclePanel/ActivatedContent/ScrollView/Viewport/Content/"
+                       "OracleShopItem(Clone)/ShopImageAndLevel/ShopItemImage", "kind": "Image",
+               "rect": [1385.4, 447.3, 1428.6, 490.5], "visible": [1385.4, 447.3, 1428.6, 468.7], "color": "#FFFFFFFF",
+               "alpha": 1.0, "sprite": "afterburner", "spriteSize": [512, 512], "spriteBorder": [0, 0, 0, 0],
+               "imageType": "Simple", "preserveAspect": False}
+
+    def test_a_row_cut_by_its_scroll_view_is_not_stretched(self):
+        census = {"screen": [1920, 1080], "elements": [dict(self.CLIPPED)]}
+        self.assertEqual(ul.shape(census)["stretched"], [])
+
+    def test_the_same_icon_drawn_off_its_shape_still_is(self):
+        squashed = dict(self.CLIPPED, rect=[1385.4, 447.3, 1428.6, 468.7])
+        self.assertEqual(len(ul.shape({"screen": [1920, 1080], "elements": [squashed]})["stretched"]), 1)
+
+    def test_a_sliver_showing_under_a_mask_is_not_judged(self):
+        sliver = dict(self.CLIPPED, rect=[1385.4, 447.3, 1428.6, 490.5], visible=[1385.4, 447.3, 1428.6, 450.3])
+        self.assertEqual(ul.shape({"screen": [1920, 1080], "elements": [sliver]})["stretched"], [])
+
     @staticmethod
     def write_png(path, alpha):
         from PIL import Image  # noqa: PLC0415
