@@ -1,22 +1,25 @@
 ---
 name: bench-runs-on-a-shared-machine
-description: Timed bench legs on a machine other workers bench on too (BEAST, w1438) — a shared lock taken per run with a pause after each release, no editor start or editor tests while a timed run holds it, stop background scripts by process tree, check the save exists, and read BENCH-mode numbers from bench/summary.txt.
+description: Timed bench legs on a machine other workers bench on too (BEAST, w1438, w1615) — the machine's first-come, first-served bench queue (bench_lock per leg, given back between legs, nothing waited for under it), no editor start or editor tests while a timed run holds it, stop background scripts by process tree, check the save exists, and read BENCH-mode numbers from bench/summary.txt.
 metadata:
   type: feedback
 ---
 
 **Lessons from w1438 (2026-10-17, two workers on BEAST, worker a9560f02 option A and 40edc8fc option B).**
 
-1. **One lock per machine, taken per timed run, released with a pause.** The two workers agreed on `F:/ffw/tmp/w1438-bench.lock`
-   (`mkdir` is atomic; write an `owner` file "<sandbox> <session> <UTC time> <what>"; `rmdir` after). Every timed run,
-   determinism leg, batch build and profile digest takes it. A loop that releases and immediately loops back to `mkdir`
-   wins every time against a 15 s poll: mine held it 18:00-18:20 while the other worker never got in. Sleep 30-45 s after
-   each release. Set an EXIT trap that removes the lock only after your `mkdir` succeeded, never before (a trap that
-   always `rmdir`s can drop the other worker's lock).
-   **BEAST's shared lock is now `F:/ffw/tmp/bench.lock`** (same `mkdir` + `owner` form), **and one older than an hour is
-   taken as stale.** w1457 (2026-10-18) took it at 11:53Z for two builds, clips and then editor tests. w1459 replaced it at
-   12:55Z while those tests still ran, so both ran at once. Release it between phases (builds, clips, editor), wait 30-45 s,
-   and take it again. Never hold one lock across a long session.
+1. **One queue per machine, taken per leg, given back between legs** (w1615, 2026-10-20; the w1438 `mkdir` lock with
+   its 40-minute and one-hour stale rules is gone). `source scripts/bench/quiet_gate.sh`, then `bench_lock "<what>"`,
+   `quiet`, the leg, `bench_unlock`; loop. The queue (`scripts/bench/bench_queue.py`, the game repo's
+   `Documentation/Bench-Lock.md`) is first come, first served: a lock taken again joins the back, so a 20-leg A/B
+   interleaves with other waiters, and no pause after a release is needed. Builds, batch compiles (`ff_unity_slot`,
+   `unity-slot run`) and editor boots take shared tickets, which never run beside a leg. A ticket dies with its
+   process, even under SIGKILL, so nobody takes over a live holder and nobody needs a keep-alive. A hold over 60 minutes
+   is revoked, and `bench_unlock` then returns 2 with `Count this leg void`. `bench_status` (or
+   `python scripts/bench/bench_queue.py status`) prints the holder and the queue in one line.
+   **No waiting under the lock**: take a Unity slot before `bench_lock` (`ff_unity_slot --bench exclusive -- ...` does
+   both, in that order), never inside it. Under the lock a slot or lab-lock wait is cut off at 2 minutes, and `quiet`
+   gives the lock back after 15 minutes. Do a digest or a build after `bench_unlock`. Stopping a holding script frees
+   its turn for the next in line, not for whoever polls first.
 2. **Your own editor counts as load.** Starting the sandbox editor, a force recompile or an editor test run while one of
    your (or anyone's) timed runs is in flight contaminated three of my runs (+3 ms each, measured: 84.0 against 87.0 ms
    on the same build). Hold the lock for editor compiles and tests too, or keep the editor stopped while legs run. A batch

@@ -93,7 +93,7 @@ heartbeat-frame wall median. Master against the branch.
    (`scripts/nightly/player_slots.py launch`; in a worker-root sandbox that is its own pair, slotK-0 and slotK-1,
    and `--peer 1` gives a same-build client its own folder).
 4. Interleave: master, branch, master, branch, at least 3 runs each. On a shared machine hold the
-   GPU bench lock for each run and note what else ran.
+   bench lock (`bench_lock`, w1615) for each run and note what else ran.
 5. `python scripts/bench/ab_summary.py <runs dir> <prefix> master branch` (solo runs): mean ± standard
    deviation per build of the heartbeat median, mean and p95 and the heartbeat-frame wall median.
 

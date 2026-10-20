@@ -20,7 +20,8 @@ same: p50 3.3 ms, p99 84-168 ms vs 107-169 ms, 126-157 heartbeats per 10 s on bo
 - Compare two builds by launching both pairs together, twice. Cleanup in
   `run_build_multiplayer_audit.sh` is PID-scoped and each run takes its own port, log dir and build
   dir, so two can run at once.
-- Not every sandbox honours `/f/ffsb/gpu-bench.lock`, so holding it does not keep the machine quiet.
+- `/f/ffsb/gpu-bench.lock` is retired: hold the machine's bench queue (`bench_lock`, w1615), which builds and editor
+  boots honour too; an interactive editor's own compile still takes no ticket, so keep `quiet` before each leg.
 - A late-join or first window can differ between runs for reasons of its own; compare the steady windows.
 - **Windowed players launched side by side favour the one launched second** (w1203, lothdesktop, 2026-10-13: it takes
   the window focus). LifeSave bench pairs gave the second-launched build 18.9 against 46.9 ms frame p50; with the order
