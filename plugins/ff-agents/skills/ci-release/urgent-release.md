@@ -73,13 +73,24 @@ Right after the merge:
    It takes 60+ minutes: run it in the background and `wake_me` within 30 minutes so your editor-free sandbox stays yours.
 4. **`build_plan done` at once**, done or failed: the paused work resumes.
 5. Merge the regenerated-files PR on green, like FFBox's.
+6. **The symbols into FFBox's store, before the release counts as done.** lothsahn (w1639): "Please make sure that if
+   beast does a build that the symbols get uploaded to ffbox in the normal place so it can diagnose crashes and
+   desyncs". The run's last phase (`symbols`) packed one archive per app and platform in `<out>/symbols/` and printed
+   them. `publish_attachment` each archive it lists, then `file_ffbox_symbols` with the version and one entry per build
+   (`{app, platform, attachment}`; main's and the demo's archive is usually the same file, named in both entries). It
+   answers within 40 s; call it again with just the version until every build says `filed` (minutes). Then check
+   `list_ffbox_files what "symbols" version "<v>"`: the version is listed with `master@<commit>` and `urgent/beast@<commit>`.
+   FFBox refuses a version no urgent bump claimed and never files over its own symbols. If the run failed before
+   packing, `urgent_release.py symbols --version <v> --out <the run folder>` packs them again. Never copy files to FFBox
+   any other way: it has no other way in, by design ("We don't want a new public endpoint on ffbox").
 
 ## 4. Live, notes, first check
 
 `python scripts/release-status.py <v>` prints `Lane: URGENT` and LANDED on development with the BuildID. Then post the
 notes as Max (`SKILL.md` section 3: post_as_max, channel dev_patch_notes, key the version, from the committed
 `cicd/release-notes/<v>.md`, skip_lines 2) and do the first check (section 4). The report gives the
-`urgent-release.json` timings, the BuildIDs, the notes link, and FFBox's decline (each Release job's build step
+`urgent-release.json` timings, the BuildIDs, the notes link, the symbols (`file_ffbox_symbols`' last answer: each build
+filed, the bytes and the rate), and FFBox's decline (each Release job's build step
 `skipped` in the run; `gh run view <run> --json jobs`).
 
 ## When it fails
