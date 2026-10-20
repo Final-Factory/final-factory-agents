@@ -15,6 +15,13 @@ you open the PR. When w1137 retired `develop`, GitHub moved every open PR based 
 CLAUDE.md still said develop. `gh pr view <n> --json baseRefName`, and the rule from `git show origin/master:CLAUDE.md`,
 not from your branch's copy. A base you did not pick is a question to stop on, not a detail.
 
+**Compile the merged tree before you wait on CI** (w1555, 2026-10-20, PR #2068): after `git merge origin/master`, or
+`ff-pr push`, which merges it in again at push time, list what the merge brought (`git diff --name-only HEAD^1 HEAD --
+'*.cs'`). If any `.cs` changed, compile and run your touched tests on the merged head before you push or wait: an API
+your branch calls may have changed under it. There, master's `SimCollisionFilter` replaced Unity Physics'
+`CollisionFilter` in `FpCollisionWorld.CastRay`; the branch compiled before the merge, CI went red on `error CS1503`,
+and one CI cycle was lost.
+
 ## What goes in the pull request
 
 ```markdown

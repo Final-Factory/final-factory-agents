@@ -33,6 +33,7 @@ load-bearing for future runs even where the original defect is fixed.
 - [Host-frame profiling: a probe, not a determinism gate](#perf-probe) (055 flag lane 3)
 - [A big save: the full capture keeps the client out; the runtime detector and a capped host](#big-save-pair) (w780)
 - [Old against new in one pair: a PR's A/B switches on one peer](#ab-switch-one-peer) (w1115)
+- [Reading a pair's witness-compare.txt: pose distance is the verdict](#witness-pose-distance) (w1555)
 
 ## Full-window rule: never diagnose from a partial window {#full-window-rule}
 
@@ -495,3 +496,14 @@ w1115, 2026-10-12, nightly regression check of the Deck perf PRs (#1449, #1458, 
   `ffnightly.py`, copy `scripts/nightly/lab.win.json` into `$TMPDIR` with its own `port`, `workRoot` under `$TMPDIR`,
   `jobs: 1` and `runIn: sandbox`, and pass it as `--lab`. A sandbox has two player slots (`slotK-0`, `slotK-1`): run
   pairs one after another, and a three-peer scenario does not fit.
+
+## Reading a pair's witness-compare.txt: pose distance is the verdict {#witness-pose-distance}
+
+w1555, 2026-10-20. A Burst-off host against a Burst client shows 1-ULP differences on every heartbeat ("10296 of 10296
+shared heartbeats have a different state hash"), with a fix and without one. The per-field rows list the first
+difference of each field. Some of those fields are no longer read by the simulation, such as a rail-owned mover's
+float `LinearMotion` velocity and disabled flag, so a row there is not a fork. The drift verdict for poses is the
+growth table's `max pose distance` after heartbeat 1. With the S1 fixed-point movers it held at 0.0044 units over
+10,296 heartbeats; on master one pose was 19 units apart by heartbeat 709. Heartbeat 1's large distance on the
+player's own ship is the host's pose before the ship is placed: leave it out. Quote the windows and the largest
+distance per run, alongside the runtime detector's verdict.
