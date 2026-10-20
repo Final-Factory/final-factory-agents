@@ -30,15 +30,19 @@ python scripts/release/urgent_release.py steam-install  # Valve's steamcmd and i
 (`FF_RELEASE_UNITY` names another Unity; BEAST uses `F:\ffw\tools\unity-release\6000.3.19f1\Editor\Unity.exe`, a copy
 with the Linux module, w1639), 60 GB free, steamcmd, and the Steam login. **The Steam login needs no person**
 (lothsahn, w1639: "we should put the secret in the secrets file for ffbox and have it authenticate rather than a manual
-setup step"). FFBox's `ffsteam.py` logs the build account in by itself from `FFSTEAM_PASSWORD` and
-`FFSTEAM_GUARD_SECRET` (the authenticator's `shared_secret`, from which it makes the Guard code). FF Factory's vault
-gives both to the workers of BEAST and LothDesktop as environment; `preflight` says `automatic Steam login:
-FFSTEAM_PASSWORD, FFSTEAM_GUARD_SECRET from the vault`. Never print, echo or log either; check them by name only.
-When `preflight` says the run has no such value, or `steam login:` fails with exit 3 (ffsteam says why, and
-`auto-login.json` in the steam home keeps it), the step is a vault owner's: bring it with `waiting_on_person`, asking
-them to add or fix the vault entry (kind env, the variable's name, workers on beast and lothdesktop, shared with any
-run). Never ask them for the value, and never ask a person to type a login in a terminal. `steam-login` is only the
-fallback for a computer that cannot have the vault's values.
+setup step"). FFBox's `ffsteam.py` logs the build account in by itself from `FFSTEAM_PASSWORD`, which FF Factory's
+vault gives the workers of BEAST and LothDesktop as environment; `preflight` says `automatic Steam login:
+FFSTEAM_PASSWORD from the vault`. `FFSTEAM_GUARD_SECRET` (an authenticator's `shared_secret`) is optional: the account
+has no authenticator (lothsahn: "Let's assume no authenticator for now. If we have one we'll deal with that next.").
+Never print, echo or log either; check them by name only.
+- `preflight` says the run has no `FFSTEAM_PASSWORD`, or `steam login:` fails with exit 3 (ffsteam says why, and
+  `auto-login.json` in the steam home keeps it): the step is a vault owner's. Bring it with `waiting_on_person`, asking
+  them to add or fix the vault entry (kind env, `FFSTEAM_PASSWORD`, workers on beast and lothdesktop, shared with any
+  run). Never ask them for the value, and never ask a person to type a login in a terminal.
+- The run says `STOPPED: Steam asked for a Steam Guard code`: the password alone cannot pass the account's Steam
+  Guard. Nothing was uploaded; report it to lothsahn as the blocker (how the account handles Steam Guard is his call),
+  and do not retry.
+- `steam-login` is only the fallback for a computer that cannot have the vault's values.
 
 ## 2. The bump, with the claim
 
