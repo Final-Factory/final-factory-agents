@@ -155,6 +155,10 @@ use; never echo it into a report.
 - **Diff without reading.** `get_file` on a big doc (130 KB) is saved to a tool-results `.txt` as JSON. Pull out its
   `content` with `python3 -I` (`json.load(f)["content"]`) and `cmp` it with your copy. Do that before the write, so you
   don't overwrite an edit made in the app, and again after the write. Both were byte-identical here.
+- **The project's file name is not the repo's (w1609, 2026-10-20, m5).** The repo copy was
+  `docs/ff2-engine-study-w1295.html`; in the project the same file is `FF2 engine study (w1295).html`. `get_file` with
+  the repo name answered HTTP 404. Run `list_files` first and use its exact path in `get_file`, `finalize_plan` and
+  `write_files`; name the file `localPath` uploads with that path too (a folder per write, e.g. `$TMPDIR/doc7/`).
 - **The driver makes the DesignSync calls.** A `general-purpose` subagent doesn't get DesignSync: its ToolSearch
   finds nothing.
 - **Seeing the signed-in project without clicking anything:**
