@@ -23,16 +23,22 @@ Once per computer, before its first urgent release:
 
 ```sh
 python scripts/release/urgent_release.py preflight      # READY, or what is MISSING
-python scripts/release/urgent_release.py steam-install  # Valve's steamcmd and its config in <FF_WORKER_ROOT>/steam; no login
+python scripts/release/urgent_release.py steam-install  # Valve's steamcmd and its config in <FF_WORKER_ROOT>/steam
 ```
 
 `preflight` checks the computer is an urgent-lane one, that its Unity has Windows, Mac and Linux build support
 (`FF_RELEASE_UNITY` names another Unity; BEAST uses `F:\ffw\tools\unity-release\6000.3.19f1\Editor\Unity.exe`, a copy
-with the Linux module, w1639), 60 GB free, steamcmd, and the build account's cached login. **The Steam login is a
-person's step, once per computer**: `python scripts/release/urgent_release.py steam-login` in a terminal on that
-computer, which runs FFBox's own `ffsteam.py login` and asks for the build account's password and its Steam Guard code.
-Bring it with `waiting_on_person` (one question: "Have you run the Steam login on BEAST?"), never as a list of commands
-for them to work out. No password is stored anywhere; nothing goes in the vault.
+with the Linux module, w1639), 60 GB free, steamcmd, and the Steam login. **The Steam login needs no person**
+(lothsahn, w1639: "we should put the secret in the secrets file for ffbox and have it authenticate rather than a manual
+setup step"). FFBox's `ffsteam.py` logs the build account in by itself from `FFSTEAM_PASSWORD` and
+`FFSTEAM_GUARD_SECRET` (the authenticator's `shared_secret`, from which it makes the Guard code). FF Factory's vault
+gives both to the workers of BEAST and LothDesktop as environment; `preflight` says `automatic Steam login:
+FFSTEAM_PASSWORD, FFSTEAM_GUARD_SECRET from the vault`. Never print, echo or log either; check them by name only.
+When `preflight` says the run has no such value, or `steam login:` fails with exit 3 (ffsteam says why, and
+`auto-login.json` in the steam home keeps it), the step is a vault owner's: bring it with `waiting_on_person`, asking
+them to add or fix the vault entry (kind env, the variable's name, workers on beast and lothdesktop, shared with any
+run). Never ask them for the value, and never ask a person to type a login in a terminal. `steam-login` is only the
+fallback for a computer that cannot have the vault's values.
 
 ## 2. The bump, with the claim
 
@@ -68,8 +74,8 @@ Right after the merge:
    each player with FFBox's `ffrelease-check.py`, waits until every `Test in` job of the push run passed and FFBox
    declined every Release job, uploads each app with FFBox's `ffsteam.py` as the build account (main live on
    **development** only, never pre-release or default; the demo nowhere), opens the regenerated-files PR, and writes
-   `urgent-release.json` (every phase's start, end and seconds; the BuildIDs) in its run folder. Exit 3: the Steam login
-   is gone, a person runs `steam-login` again. Use `--preview` for a first run on a new computer (manifests, no upload).
+   `urgent-release.json` (every phase's start, end and seconds; the BuildIDs) in its run folder. Exit 3: it could not
+   log in to Steam by itself (section 1). Use `--preview` for a first run on a new computer (manifests, no upload).
    It takes 60+ minutes: run it in the background and `wake_me` within 30 minutes so your editor-free sandbox stays yours.
 4. **`build_plan done` at once**, done or failed: the paused work resumes.
 5. Merge the regenerated-files PR on green, like FFBox's.
