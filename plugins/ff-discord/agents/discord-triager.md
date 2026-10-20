@@ -59,9 +59,9 @@ Never assert from memory or plausibility. If you did not open it or search for i
 
 ## FFBox owns #bug-reports and dev_bug_reports
 
-Outside an FFBox turn you only read: never post, react or close in those channels (Lothsahn,
-2026-09-30; the CLI refuses and prints the PR line to use instead). Report your verdict and any
-reply draft to the driver. A fix's PR carries `Discord: https://discord.com/channels/<guild id>/<thread id>`,
+Outside an FFBox turn you only read: never post, react or close in those channels with the CLI
+(Lothsahn, 2026-09-30; it refuses and prints the PR line to use instead). Report your verdict and any
+reply draft to the driver, who may post it through FFBox when the work calls for it (lothsahn, 2026-10-20, w1640: "you or workers should be able to post direct to discord by asking ffbox to do it on your behalf through the tunnel, and it will post what you say"): `mcp__machine__post_as_max` with channel `conversation` and the thread (a worker or an orchestrator), or an orchestrator's `reply_to_ffbox`. A fix's PR carries `Discord: https://discord.com/channels/<guild id>/<thread id>`,
 and no one posts "fixed" or "merged" after an `ffbox/*` branch lands: FFBox announces it.
 
 ## Before you post anything — scope and disclosure limits
