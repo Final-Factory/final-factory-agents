@@ -23,7 +23,9 @@ base's parked player meets no camp at all, and its edge is where the Build 108 r
      --no-retry --jobs 3 --lab <a copy of lab.win.json with another port> --out "$TMPDIR/bal-<side>-$(date +%H%M%S)"
    ```
 
-   Copy the lab fixtures (`<nightly history>/fixtures/w1440-*.zip`) into your history folder's `fixtures/` first. A
+   Run the two sides one after the other from one sandbox: each run takes both of the sandbox's player slots, and the
+   second refuses to start (`player_slots.SlotRequired: ... no free player slot`, w1465, 2026-10-20). A light stage
+   (BAL-mid-lifeastwo) took 4.3 and 6.8 minutes there. Copy the lab fixtures (`<nightly history>/fixtures/w1440-*.zip`) into your history folder's `fixtures/` first. A
    leg costs 7 to 17 wall minutes on the light saves, about 40 on MeltCPU and over an hour on Just Play (three lanes on a
    busy lothdesktop, measured, w1440), so name the stages your change can move: a change that reaches one band runs that
    band's stages and one neighbour on each side, and says which; anything that touches late raids runs

@@ -334,6 +334,19 @@ new rows on an item's hover card) two development players take it without `execu
 not restored at 1920x1080 before the path was added). If your census fails on the base build too, the list is the first thing to read. At
 1280x800 any docked structure panel hides the quick buttons, option toggles and hotbars in both builds, and `check` prints them as "gone".
 
+## Content added behind a research: the before is the base build in the same state (w1465)
+
+A change that only adds content (a ship's row in the Fleet list, its tile in a crafting tab, its row on a Technology
+Unlocked card) is compared with **the base build's player in the same game state**: the same tour with the same research
+learned, minus the new content's own steps (its `spawn.ships`). A before taken in your own build before the unlocking
+research differs by everything that research brings on master too. Measured on w1465 (2026-10-20, lothdesktop): with a
+same-build before (Knights learned) against the after (Repair Packs learned, two Wardens), the fresh ui-critic marked two
+findings new, the Repair Pack tile alone on the Combat tab's first row and the doubled Repair Packs card text, and `moves`
+compared the Repair Packs card with the Knights card. Master b9cf5392's player on the same tour showed both findings, and
+master against the branch gave 0 moves in Crafting and 0 HUD moves at all three layouts; what was left was the Fleet list
+and the card growing by the new row from the same top-left. Build the base with `git branch -f <name> origin/master`,
+`switch_branch`, `build_player.sh` (about 15 min), and switch back before you edit.
+
 ## Compare two
 
 ```sh
