@@ -407,7 +407,7 @@ opt-in is fine, a Steam branch's settings never. **A Steam launch there is not a
 (`userdata/32947804/config/localconfig.vdf`) carries `LaunchOptions "-ffFeatures=release:1.0"` for app 1383150. Start
 the Steam-installed `steamapps\common\FinalFactory\finalfactory.exe` directly with no arguments instead:
 `SteamworksManager` calls `SteamClient.Init(appId)` itself (no restart through Steam), so the log still says
-"Connected to Steam as user ...". Hold the machine's bench lock (`bench_lock` in the game repo's `scripts/bench/quiet_gate.sh`, w1615) from launch to quit, reach the title,
+"Connected to Steam as user ...". Hold a shared bench ticket (`bench_lock --shared` in the game repo's `scripts/bench/quiet_gate.sh`, w1615/w1628: a launch check is not timed) from launch to quit, reach the title,
 quit with WM_CLOSE (`CloseMainWindow`), then read `%USERPROFILE%\AppData\LocalLow\Never Games\finalfactory\Player.log`.
 The `[FeatureToggles] release build <version>; on by default: ...; requested: ...` line ends in `(-ffFeatures=...)`
 whenever an argument was used, so its absence proves the run had none (1.0.0.0, BuildID 26019698: all nine on,
