@@ -167,6 +167,11 @@ use; never echo it into a report.
      sits in a cross-origin iframe. `do JavaScript` is refused unless "Allow JavaScript from Apple Events" is on.
      That is the person's Safari setting: leave it off.
   5. Close the window by its id when done.
+- **When the capture stays blank even in front (w1609, 2026-10-20, m5).** Step 3 gave a blank window this time, fronted
+  and after a reload, most likely because the display was asleep (no person at the m5). Don't wake the display or
+  click. Use step 4's `text of front document` (it showed the project name and the open file, so signed in), plus a
+  fresh `get_file` that is byte-identical (`cmp`) to what you wrote. Say in the report that this is how you checked,
+  and that no screenshot exists.
 
 **Note:** in October 2026 Claude Design shows "Claude Design is moving to Artifacts in the Claude app. You can keep
 using this version until December 14."
