@@ -99,6 +99,7 @@ census (`<shot>.json`: small, clipped, off-screen and overlapping text, covered 
   the saved place and measure the header's points against the topmost raycast target in that census (w1217: #1581
   let a top-left drop leave 57 of 57 header points of the Player Inventory under the top bar at 1280x800, so it could
   not be dragged out or closed by its X; the drop's own still looked fine).
+- **To test a HUD piece against a window, park the window by its saved place, not by a drag (w1564).** A dragged window sits on the `PanelShowcase` canvas above the whole HUD, so "HUD piece draws over a window" never shows after a drag. Write the window's `PanelPosition.<role>` into `settings.json` `values` (`game_data.py put`; the value is `version;x;y`, e.g. `1;1;1` bottom-right, `1;0.15;1` left; `0.15;1;1` is ignored) and restore the settings before every leg, since a drag persists. The fix for a strip that must go under windows is #1969's `HudUnderWindows.SitUnderFirstWindow` plus `HideWhileCovered` per piece (`specs/w1564-station-row-under-windows`).
 - **A tour player that quits writes quit saves into the shared saves folder (w1413).** `-ffDeckTourQuit` leaves through
   the game's quit path, and `QuitAutosave` saves a game that has ticked unless the process carries `-ffAutomationRole`
   (`AutomationSessionArgs.IsAutomationProcess`); `-ffSoloNewGame`, `-ffDeckTour` and `-ffAgentControl` do not set it. So
