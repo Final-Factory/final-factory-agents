@@ -133,6 +133,18 @@ To check the text signed out, open the link in a fresh Chrome profile with `--re
 `document.body.innerText` of the **iframe** target (`*.frame.claudeusercontent.com`): the page target holds only the
 82-character header with "Sign in". Script: `vchk2.py` in the w1295 review folder.
 
+**A first publish of a new doc, end to end (w1477, 2026-10-20, m5).**
+- `orca computer paste-text` into the Blank template's prompt box also attached whatever image sat on the clipboard
+  (a `pasted-<n>.png` thumbnail beside the Design system button). Read the tree before Send and click its
+  `Remove pasted-…` button, or an unrelated image goes into the person's project.
+- After "Publish to web", the toast's **Open** opens the artifact in a new tab of your window.
+  `osascript -e 'tell application "Safari" to get URL of every tab of every window'` then prints the
+  `https://claude.ai/artifact/<id>` link (the project tree never shows it).
+- The m5 has no Python websocket module. Node's built-in `WebSocket` (Node 22+) does the signed-out check over CDP:
+  start a fresh profile with `--remote-debugging-port=<p>`, fetch `http://127.0.0.1:<p>/json/list`, run
+  `Runtime.evaluate` of `document.body.innerText` on each target, and expect "Sign in" on the page target and the
+  doc's text in the `*.frame.claudeusercontent.com` iframe target. Close it with CDP `Browser.close`.
+
 **The authorization lapses between requests too (w1295 reopen, 2026-10-17, m5).** The first DesignSync call of the
 resumed request failed with "needs design-system authorization". The pty route above fixed it in one pass, but this time
 the authorize page showed an **Authorize** button (disabled for a moment after load, then clickable) before the
