@@ -87,7 +87,8 @@ person to download by hand before trying it, and never copy a token to a machine
 An FF Factory worker on **any** machine (beast, biscuit, m3, m5, LothDesktop) posts as Max with `mcp__machine__post_as_max`,
 and FFBox, which holds the bot, does the posting (w901, Lothsahn, 2026-10-10: "workers can request FFBox send a discord
 message"). No `ffdiscord` config or token is needed, and none should be copied. `channel` is `dev_patch_notes`, `dev_chat`
-or `agent_testing` (nothing else; never #bug-reports or dev_bug_reports); `text`, or `file` with `skip_lines`; an optional
+or `agent_testing`, or `conversation` (w1640): a conversation FFBox holds, a #bug-reports or dev_bug_reports thread
+included, named by `thread` (its id or URL) or `conversation` (FFBox's id); `text`, or `file` with `skip_lines`; an optional
 `thread` of that channel; a `key` so the message posts once (required for patch notes: the release's version). It answers
 the message link. FFBox refuses a mention (`@` before a word, `<@..>`, `@everyone`), a secret, more than 2000 characters
 and more than 12 posts an hour, and says which. It is for posts a worker was asked to make (a release's notes, a note in
@@ -119,6 +120,9 @@ report back on the thread." So:
   in-process, `ffwatch`, is never taken for an agent); its container turns have no CLI
   at all and ask the harness to post. A person at a terminal is not refused either. Config
   `ffbox_owned` (aliases) replaces the default list, and `[]` turns the refusal off.
+- **A word to a reporter goes through FFBox** (w1640): asking for a save, an answer they wait
+  for. Post it through FFBox when the work calls for it (lothsahn, 2026-10-20, w1640: "you or workers should be able to post direct to discord by asking ffbox to do it on your behalf through the tunnel, and it will post what you say"): `mcp__machine__post_as_max` with channel `conversation` and the thread (a worker or an orchestrator), or an orchestrator's `reply_to_ffbox`. FFBox keeps its secret scan and its ban on mentions, and refuses a
+  "fixed" or "merged" text in a thread it already told. Never a "fixed" notice of your own.
 - **If you fixed a bug from a thread**, add one line per thread to your PR description, exactly
   `Discord: https://discord.com/channels/<guild id>/<thread id>`. The refusal prints the line.
 - **Work on an `ffbox/*` branch is FFBox's to announce**, in whichever channel it watches
