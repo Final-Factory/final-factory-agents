@@ -30,6 +30,20 @@ base's parked player meets no camp at all, and its edge is where the Build 108 r
    busy lothdesktop, measured, w1440), so name the stages your change can move: a change that reaches one band runs that
    band's stages and one neighbour on each side, and says which; anything that touches late raids runs
    `BAL-end-justplay`, the save the runaway was reported on.
+
+   **Where the saves are.** The `lab:` stages (BAL-end-justplay, BAL-late-lifesave, BAL-end-meltcpu: `w1440-*.zip`) need
+   their lab fixtures, and BEAST has none (no `w1440-*.zip` anywhere under F:/ffw, checked 2026-10-20, w1243); the
+   baselines were measured on lothdesktop. On another machine only the stages from repo or golden-fixture saves run as
+   they are: BAL-early-economy, BAL-early-timtesting, BAL-mid-lifeastwo, BAL-mid-trailer. For the late band, run on
+   lothdesktop or get the fixtures handed over as attachments (`publish_attachment`, `fetch_attachment`), and say in
+   `Baseline:` which late stages you did not run.
+
+   **No before build.** When a before player cannot be built (w1243: the sandbox was held by another agent, so the
+   worktree could not be switched to the base) and the after numbers equal the stage baselines in
+   `scripts/nightly/balance-curve.json`, the baselines can stand as the before column. Label it with the baseline's
+   commit, machine and date. An after number that differs from its baseline needs a real before build: the baseline's
+   commit is older than your base. In w1243, radius 4 left raids per hour equal on early-economy and mid-lifeastwo: the
+   launch schedule, not the activity gate, set the rate there.
 2. **Paste the table.** `python scripts/nightly/balance_lane.py compare <before stage dir> <after stage dir>` for each
    stage, and `balance_lane.py curve <run dir>` for the whole curve (the smoothness line). The section:
 
