@@ -14,6 +14,10 @@ Learned on w111 (2026-10-01), four player builds in one BEAST sandbox while othe
 yours. A tracked file you edit during the build is back at HEAD when the manifest is written, with no message
 beyond `"restoredFiles": N` in `build-manifest.json`.
 
+- **Recovering a reverted edit** (w1465, lothdesktop, 2026-10-20): the script now prints `restored 1 tracked file(s) the build
+  changed; their diff: <cache>/<sha>-win/restored.patch` and keeps that patch. A doc edit made mid-build came back with
+  `git apply <cache>/<sha>-win/restored.patch` (check with `git diff --stat`; the patch also holds the batchmode passes' own
+  edits when there are any, so apply only your files then).
 - During a build, write only untracked files or scratch copies (`F:/ffsb-scratch/<work>/`), and apply them after
   `build-manifest.json` exists. Commits and merges are fine: a committed file no longer differs from HEAD.
 - New untracked `.cs` files are safe from the revert, but the batchmode editor imports them (it writes their
