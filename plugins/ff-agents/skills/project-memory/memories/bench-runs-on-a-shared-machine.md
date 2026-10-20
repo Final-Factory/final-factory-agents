@@ -49,4 +49,10 @@ metadata:
    `-ffBenchFreeze 1` holds the simulation for its idle window (w1438: 23 ms p50 on Just Play), which sets the heartbeat
    frame a target needs.
 
+7. **`timeout` around `scripts/bench/cpu_budget_run.sh` does not end its player** (w1590, 2026-10-20). The player
+   `player_slots.py` launches is not in the timeout's process group, so a timed-out leg leaves `finalfactory.exe` running
+   after you gave the lock back: two of mine ran 2 and 7 minutes inside other workers' holds (w1604, w1572). After every
+   leg, ended or timed out, stop the pid the leg wrote in its `contention.txt`, and cut a leg early when its log floods
+   (one dead entity reference logs a warning every heartbeat).
+
 Related: [[beast-shared-machine-perf-ab-side-by-side]], [[profile-a-save-top-systems]].
