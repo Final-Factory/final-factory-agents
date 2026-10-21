@@ -95,6 +95,15 @@ Recording notes:
   (`ES_DISPLAY_REQUIRED` alone does not switch a sleeping display back on). The game repo's
   `scripts/narration/record_story_cinematic.py` and `specs/w884-one-tutorial/oswin.wake_display()` do both. Stop a
   window capture before its window closes: one closed under it never wrote the mp4 index.
+- **`record_clip --unity` records whatever lies over the editor's window** (w1667, lothdesktop slot4, 2026-10-21): with
+  other sandboxes' editors open, 90 s of "my" editor were another sandbox's editor on top of it (another save, another
+  HUD), exit 0. Look at one frame of every desktop capture before you use it (`ffmpeg -ss 5 -i clip.mp4 -frames:v 1
+  f.jpg`). **For a simulation outcome over minutes** (buildings surviving comets on a loaded save), not an effect's look,
+  the editor's own game view works whatever covers the window. From `execute_code`, add an `EditorApplication.update`
+  callback (kept in `AppDomain.CurrentDomain.SetData` so a later call can remove it) that once a second calls
+  `ScreenCapture.CaptureScreenshot` and writes an ECS census to a CSV. Then stamp each PNG with its time and the census
+  (PIL) and encode a 10 fps time-lapse (`ffmpeg -framerate 10 -i s%04d.jpg`). It is neither real rate nor a built player,
+  so say so in the notes. Worked example: `/srv/fff/review/w1667/` (Final-Factory/FinalFactory#2118).
 - **BEAST's shared desktop (w1232, 2026-10-13): go straight to the game's own frames.** `record_clip --pid` on a
   built player: `ddagrab` delivered no frame, and the `gdigrab` fallback recorded the FF Factory dashboard window
   covering the player (80 s of the wrong picture, exit 0). Its ffmpeg (2025-07 git) has no `gfxcapture`. The frame dump
