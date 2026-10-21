@@ -73,7 +73,10 @@ Not verified: the Bats' slot lag (simulation, follow-up PR)
 - **A defect gone or an effect shown** ("no z-fight", "no flicker", "no longer draws through", "ships spaghettify",
   "pulls in", anywhere in the description but the person's quoted words) needs `Close-ups: <claim>: <1:1 crop.png or
   slowed clip.mp4 and its seconds>; ...`, and an occlusion claim also `Surfaces: <every surface the effect overlaps>`
-  with a crop over each (visual.md 5g; w1470, w1567).
+  with a crop over each (visual.md 5g; w1470, w1567). A transition ("stretches in", "swallowed", "dissolves", "stays
+  lit as itself", "spaghettify", "pulled in") needs every frame of it cropped on the object, with its seconds:
+  `<claim>: <name>-strip-3.40-6.20s-every1f.png` from `transition_strip.py`; a sheet every 0.2 s, a still or a 0.25x
+  clip fails, and so does a second opinion's "disappears" beside it with no strip (visual.md 5h; w1470, w1686).
 - **Kind `visual`** needs the five lines from "Intended look" to "Review"
   ([visual.md](visual.md)). "Built player: no" fails. So does a "Clips" line that does not say
   where the event is.

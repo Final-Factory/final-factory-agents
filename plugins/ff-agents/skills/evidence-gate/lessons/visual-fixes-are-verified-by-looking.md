@@ -110,6 +110,54 @@ portal's review folder were not reachable from the w1567 sandbox, so the scale i
    go in the note; a "no" or "can't tell" sends the claim back. The checklist line is [visual.md](../checklists/visual.md)
    item 5g; the PR's Evidence carries the same `Close-ups:` and `Surfaces:` lines, which `pr_evidence.py` checks.
 
+## A transition is stepped every frame on the object, and "it disappears" is cleared only that way (w1686)
+
+**Rule.** A claim that an object turns into its end state ("stretches into the core", "is swallowed", "dissolves",
+"stays lit as itself", "one smooth animation") is shown by **every frame** of the whole transition (every 2nd at 50 fps
+or more), cropped on the object, from the frame before it starts to its stated end state, on one numbered sheet beside
+the claim. In each frame the object's own model is on screen, a little thinner or smaller than in the one before, until
+that end state; a frame where it is gone or swapped for something else before then is a pop, and the claim is false. A
+sheet every 0.2 or 0.5 s, a still, or a clip played at 0.25x is not that proof. When a second opinion says the object
+"disappears" or "snaps", only that strip, asked of a fresh critic, clears it: never the author's reading of a coarser
+sheet.
+
+**Why.** w1470, the Singularity Lance (PR #1921), the Guardian vanishing mid-swallow. Ben corrected the look of the
+same swallow four times: 2026-10-18, "its not pulling in the boss"; 2026-10-19, "the units dont really spagettify when
+they get pulled in"; 2026-10-19, "right now shit just kind of explodes upon reaching the black hole"; and 2026-10-21,
+after the round-4 clips and a swallow preview: "The problem is the guardian especially doesn't really smoothly transition
+to the spaghetti state it just kind of disappears. I want one smoth animation for the model getting stretched and sucked
+into the black hole." The w1567 close-up rule above (filed 2026-10-19, after the second correction) was on, and missed it
+three ways (read from PR #1921's round-4 Evidence; `tests/fixtures/pr-1921-round4-swallow.md` holds those lines):
+
+- **No claim was seen.** Round 4 wrote "the Guardian stretches in about 4.0-5.6 s", "a slower swallow" and "seen as
+  itself as it stretches". None matched the w1567 words (`stretch` needed "into" or "out"), so `pr_evidence.py` asked
+  for no close-up; the ones listed were voluntary, and a round-3 clip stood in for round 4's stretch.
+- **The proof stepped too coarsely.** The swallow's close-up was `w1470-r4-B-guardian-swallow-every-0.2s-3.4-6.2s.png`:
+  1 frame in 12 at 60 fps. The 2026-10-21 preview, by the orchestrator's account, was stepped every 0.5 s (1 in 30) and
+  reported that ships "stretch" and "stay lit as themselves". A model that goes in about 0.1 s (6 frames) falls between
+  two samples, and each sample alone looks right. (The preview's note sits in the portal's review folder, which this
+  sandbox cannot read.)
+- **The critic saw it and was overruled.** watch_video's second opinion on the Guardian take said "the Guardian
+  disappears at once". The author cleared it as "its glowing hull going to the ghost's lit hull at capture (it then
+  stretches in over about 1.6 s)", citing the 0.2 s sheet. The swap at capture is the very frame Ben saw.
+
+**How to apply.**
+
+1. Mark each transition sentence in the note. Find the frame before it starts and its stated end state (gone, in the
+   core) in the clip, and crop on the object (the w1567 close-up): `python3 transition_strip.py <clip> --from <s> --to
+   <s> --crop W:H:X:Y --claim <name> --object "<the Guardian>" --out <note folder>`. It writes
+   `<name>-strip-<from>-<to>s-every1f.png`, every frame numbered, frames whose change from the one before is over 4x the
+   window's median framed in red ("POP?"), and prints the `Close-ups:` entry and the critic's question.
+2. Look at every frame yourself: the model present, thinning a little each frame, until the end state. A red-framed
+   frame is where to look first, not a verdict (a crackle strike spikes too); an unmarked sheet clears nothing.
+3. Put the entry on the `Close-ups:` line and hand the sheet and the question to a fresh critic: "is the model on
+   screen in every frame until its end state; name the first frame where it is gone or replaced". A "no" sends the
+   transition back to the code, not to a rewording.
+4. A second opinion that says "disappears", "vanishes", "at once" or SNAP during a claimed transition is answered with
+   that strip of the flagged moment, never with an explanation. `pr_evidence.py` (and `--note`) fails a transition claim
+   without an every-frame entry with its seconds, names a coarser sheet, and fails a vanish flag beside a transition
+   claim with no strip. The checklist line is [visual.md](../checklists/visual.md) item 5h.
+
 ## New art matches Final Factory's art language (w1066, w1241, w1332)
 
 **Rule.** Before a preview of new art (a model, a material, a glow, a highlight) goes to Ben:

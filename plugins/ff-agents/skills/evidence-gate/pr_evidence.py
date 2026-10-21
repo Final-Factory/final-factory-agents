@@ -113,8 +113,32 @@ EFFECTS = (
     ("lensing", r"\blens(es|ed|ing)\b|\bbent\s+(sky|light|stars)\b|\bbends?\s+(the\s+)?(sky|light|stars)\b"),
     ("wraps over", r"\bwrap(s|ped|ping)?\s+(over|around|in front)\b"),
     ("shatters", r"\bshatter\w*|\bcrumpl\w*|\bfold(s|ed|ing)?\s+(in|inward|inwards)\b"),
+    # w1686: w1470 round 4 said "the Guardian stretches in about 4.0-5.6 s", "a slower swallow" and "seen as itself as
+    # it stretches"; none matched a word above, so that round's close-ups were optional. Ben, 2026-10-21: "it just kind
+    # of disappears".
+    ("transition", r"\bswallow(s|ed|ing)?\b|\bdissolv\w*|\bmorph\w*|\bdisintegrat\w*|\bstretch(es|ed|ing)?\s+in\b|"
+                   r"\b(stays?|stayed|remains?|remained|seen)\s+(lit\s+)?(as\s+)?(itself|themselves|whole|visible)\b|"
+                   r"\bsmooth(ly)?\s+(\w+\s+)?(transition\w*|stretch\w*|shrink\w*|morph\w*|animation)\b|"
+                   r"\b(one|a single)\s+(smooth|continuous|unbroken)\s+(animation|motion|stretch|transition)\b|"
+                   r"\bshrinks?\s+(away|into\s+(the|its|a)\b)"),
 )
-STILL = re.compile(r"\.(png|jpe?g|webp)\b", re.IGNORECASE)
+# A transition (w1686): an object turning into its end state. Its close-up is every frame of the whole transition on the
+# object (transition_strip.py), never a sheet every 0.2 or 0.5 s or a clip alone: at 60 fps a 0.2 s sheet shows 1 frame
+# in 12, and the Guardian's vanish took about 0.1 s.
+TRANSITION_KEYS = ("spaghettify", "stretch", "pulled in", "shatters", "transition")
+STRIP = re.compile(r"every[-_ ]?[12]?[-_ ]?f(rames?)?\b|every[-_ ](other|2nd|second|two|2)[-_ ]frames?\b|every[-_ ]frame\b",
+                   re.IGNORECASE)
+COARSE = re.compile(r"every[-_ ]?(\d*\.\d+|\d+)[-_ ]?(s|sec|secs|seconds)\b|every[-_ ]?([3-9]|\d{2,})(th|rd)?[-_ ]?"
+                    r"(f|frames?)\b", re.IGNORECASE)
+# A second opinion that says the object vanishes (w1686: watch_video on w1470's round-4 take said "the Guardian
+# disappears at once"; its author cleared it from a sheet every 0.2 s).
+# Only beside a transition claim: in the 400 game PRs merged 2026-10-01..21, 9 explained a flagged snap (a teleport, a
+# requested impact) and none of them claimed a transition. SNAP is watch_video's flag name, so only in capitals.
+CRITIC = re.compile(r"second[- ]opinion|watch_video|\bcritic\b|gemini|blind (model )?review|model review|(?-i:\bSNAP\b)",
+                    re.IGNORECASE)
+VANISH = re.compile(r"\bdisappear\w*|\bvanish\w*|\bblinks?\s+out\b|\bpops?\s+(out|away|off)\b|\bat once\b|"
+                    r"\bin (a|one) (single )?frame\b|(?-i:\bSNAP\b)", re.IGNORECASE)
+STILL =re.compile(r"\.(png|jpe?g|webp)\b", re.IGNORECASE)
 SLOWED = re.compile(r"\bslow\w*|\b0?\.\d+\s*x\b|\b1/\d+\s*x?\b|\bquarter[- ]speed|\bhalf[- ]speed|\bframe[- ]by[- ]frame\b",
                     re.IGNORECASE)
 MEDIA_NAME = re.compile(r"[\w./\\-]+\.(?:png|jpe?g|webp|gif|mp4|webm|mov|mkv)\b", re.IGNORECASE)
@@ -814,6 +838,27 @@ def visual_claims(text: str) -> dict[str, list[str]]:
     return found
 
 
+def is_strip(entry: str) -> bool:
+    """w1686: a 'Close-ups:' entry that is every frame (or every 2nd) of a transition, with its file and its seconds."""
+    return bool(STRIP.search(entry) and not COARSE.search(entry) and PLACE.search(entry) and MEDIA_NAME.search(entry))
+
+
+def vanish_flags(text: str) -> list[str]:
+    """w1686: where a second opinion (watch_video, a critic, the blind review, a SNAP flag) says something vanishes or
+    pops ("the Guardian disappears at once"), its quoted words or the sentence. The person's words and the close-up
+    lines are left out."""
+    text = re.sub(r"<!--.*?-->", "", text or "", flags=re.DOTALL)
+    found = []
+    for line in text.split("\n"):
+        if NOT_A_CLAIM.match(line) or not CRITIC.search(line):
+            continue
+        for sentence in re.split(r"(?<=[.!?;])\s+", line):
+            if VANISH.search(sentence):
+                quoted = [a or b for a, b in re.findall(r"\"([^\"]*)\"|“([^”]*)”", sentence) if VANISH.search(a or b)]
+                found.append(quoted[0] if quoted else sentence.strip(" |-*"))
+    return found
+
+
 def closeup_problems(text: str, folder: Path | None = None, claims_text: str | None = None) -> tuple[list[str], list[str]]:
     """w1567, Ben on w1470 twice, after the notes said the defect was gone and the effect was there: "its z fighting in
     the screenshot with the antimatter nexus or something, and its not pulling in the boss", then "the units dont
@@ -822,25 +867,50 @@ def closeup_problems(text: str, folder: Path | None = None, claims_text: str | N
     moment; an occlusion claim one per surface on the 'Surfaces:' line (terrain, structures, other effects).
     With a folder (a review note's), every file named there must be in it. Returns (problems, the critic's questions)."""
     claimed = visual_claims(text if claims_text is None else claims_text)
-    if not claimed:
-        return [], []
-    keys = dict(DEFECTS + EFFECTS)
     entries = [e.strip() for line in field_block(text, "Close-ups") for e in line.split(";") if e.strip()]
+    flagged = vanish_flags(text if claims_text is None else claims_text)
+    flag_problem = None
+    if flagged and any(k in TRANSITION_KEYS for k in claimed) and not any(is_strip(e) for e in entries):
+        flag_problem = (f"a second opinion says the object vanishes ('{flagged[0][:100]}'): clear it only with every frame "
+                        f"of that moment cropped on the object (transition_strip.py), named on the 'Close-ups:' line and "
+                        f"asked of a fresh critic, never with your reading of a coarser sheet (checklists/visual.md 5h; "
+                        f"w1470 round 4 cleared \"the Guardian disappears at once\" from a sheet every 0.2 s, and Ben saw "
+                        f"it disappear)")
+    if not claimed:
+        return ([flag_problem] if flag_problem else []), []
+    keys = dict(DEFECTS + EFFECTS)
     surfaces = [s.strip() for line in field_block(text, "Surfaces") for s in re.split(r",|;|\band\b", line) if s.strip()]
     questions = [f"From the close-ups, is this true: {s}? Say what you see at that moment, frame or crop by name."
                  for sentences in claimed.values() for s in sentences[:2]]
+    questions += [f"From the every-frame strip, is the object's own model on screen in every frame until its end state "
+                  f"({s[:80]})? Name the first frame where it is gone or replaced, and what the frame before it shows."
+                  for k in claimed if k in TRANSITION_KEYS for s in claimed[k][:1]]
     problems = []
     said = ", ".join(f"'{claimed[k][0][:70]}'" for k in list(claimed)[:3])
     if not entries:
         return [f"the evidence claims a defect is gone or an effect happens ({said}) and has no 'Close-ups:' line: "
                 f"for each claim, a 1:1 crop (png) of that exact moment or a slowed clip segment (0.25x, its seconds), "
+                f"and for a transition (spaghettify, stretch, swallow) every frame of it (transition_strip.py), "
                 f"e.g. 'Close-ups: z-fight: edge-over-terrain.png, edge-over-nexus.png; spaghettify: "
-                f"pull-0.25x.mp4 2.0-3.1 s' (checklists/visual.md 5g; Ben, w1470: \"the units dont really spagettify "
-                f"when they get pulled in\")"], questions
+                f"pull-strip-2.00-3.10s-every1f.png' (checklists/visual.md 5g, 5h; Ben, w1470: \"the units dont really "
+                f"spagettify when they get pulled in\")"] + ([flag_problem] if flag_problem else []), questions
     for key in claimed:
         family = OCCLUSION_KEYS if key in OCCLUSION_KEYS else (key,)
         mine = [e for e in entries if any(re.search(keys[k], e, re.IGNORECASE) or k.split()[0][:4].lower() in e.lower()
                                           for k in family)]
+        if key in TRANSITION_KEYS:
+            if not any(is_strip(e) for e in mine):
+                coarse = next((e for e in mine if COARSE.search(e)), None)
+                problems.append(f"'{claimed[key][0][:90]}' ({key}) is a transition: its close-up is every frame (every "
+                                f"2nd at 50 fps or more) of the whole transition, cropped on the object, from the frame "
+                                f"before it starts to its end state, with its seconds, e.g. '{key}: guardian-swallow-"
+                                f"strip-3.40-6.20s-every1f.png' from transition_strip.py"
+                                + (f"; '{coarse[:70]}' steps too coarsely (at 60 fps a 0.2 s sheet shows 1 frame in 12)"
+                                   if coarse else "; a still or a slowed clip alone is not one")
+                                + " (checklists/visual.md 5h; Ben, w1470, after a sheet every 0.2 s: \"the guardian "
+                                  "especially doesn't really smoothly transition to the spaghetti state it just kind of "
+                                  "disappears\")")
+            continue
         shown = [e for e in mine if STILL.search(e) or (VIDEO.search(e) and SLOWED.search(e) and PLACE.search(e))]
         if not shown:
             problems.append(f"'{claimed[key][0][:90]}' ({key}) has no close-up on the 'Close-ups:' line: an entry naming "
@@ -857,6 +927,8 @@ def closeup_problems(text: str, folder: Path | None = None, claims_text: str | N
                 if words and not any(any(w in e.lower() for w in words) and MEDIA_NAME.search(e) for e in shown):
                     problems.append(f"'{key}' over '{surface}' has no close-up: name the surface in its entry "
                                     f"('{key} over {surface}: <crop>.png')")
+    if flag_problem:
+        problems.append(flag_problem)
     if folder is not None:
         for e in entries:
             for name in MEDIA_NAME.findall(e):

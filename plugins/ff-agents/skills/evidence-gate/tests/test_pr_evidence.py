@@ -995,8 +995,8 @@ class CloseUpTest(unittest.TestCase):
     after which Ben saw both wrong."""
 
     CLOSEUPS = ("Close-ups: z-fight over terrain: edge-terrain-1x.png; z-fight over the Nexus ring: edge-nexus-1x.png; "
-                "spaghettify: pull-0.25x.mp4 2.0-3.1 s; stretch: hull-stretch-1x.png; lensing: lens-1x.png; "
-                "pulled in: pull-0.25x.mp4 1.0-2.0 s\nSurfaces: terrain, the Nexus ring\n")
+                "spaghettify: pull-strip-2.00-3.10s-every1f.png; stretch: hull-strip-2.00-3.10s-every1f.png; "
+                "lensing: lens-1x.png; pulled in: pull-strip-1.00-2.00s-every2f.png\nSurfaces: terrain, the Nexus ring\n")
 
     def lance(self):
         body = (HERE / "fixtures" / "pr-1921-singularity-lance.md").read_text(encoding="utf-8")
@@ -1034,11 +1034,11 @@ class CloseUpTest(unittest.TestCase):
         self.assertTrue(any("no 'Surfaces:' line" in p for p in problems), problems)
 
     def test_a_clip_counts_only_slowed_and_placed(self):
-        claim = "Ships spaghettify into the core.\n"
-        self.assertTrue(pe.closeup_problems(claim + "Close-ups: spaghettify: camp.mp4\n")[0])
-        self.assertTrue(pe.closeup_problems(claim + "Close-ups: spaghettify: camp-0.25x.mp4\n")[0])
-        self.assertEqual(pe.closeup_problems(claim + "Close-ups: spaghettify: camp-0.25x.mp4 2.0-3.1 s\n")[0], [])
-        self.assertEqual(pe.closeup_problems(claim + "Close-ups: spaghettify: hull-1x.png\n")[0], [])
+        claim = "The sky lenses round the hole.\n"
+        self.assertTrue(pe.closeup_problems(claim + "Close-ups: lensing: camp.mp4\n")[0])
+        self.assertTrue(pe.closeup_problems(claim + "Close-ups: lensing: camp-0.25x.mp4\n")[0])
+        self.assertEqual(pe.closeup_problems(claim + "Close-ups: lensing: camp-0.25x.mp4 2.0-3.1 s\n")[0], [])
+        self.assertEqual(pe.closeup_problems(claim + "Close-ups: lensing: hole-1x.png\n")[0], [])
 
     def test_the_persons_words_and_pull_requests_are_not_claims(self):
         text = ('Intended look (Ben): "make them spaghettify ... no z fighting"\n'
@@ -1063,3 +1063,116 @@ class CloseUpTest(unittest.TestCase):
             self.assertIn("is this true: The hole no longer z-fights.", questions.read_text(encoding="utf-8"))
             (folder / "edge-nexus-1x.png").write_bytes(b"x")
             self.assertEqual(pe.main(["--note", str(note)]), 0)
+
+
+class TransitionStripTest(unittest.TestCase):
+    """w1686: a transition ("stretches in", "swallowed", "seen as itself as it stretches") is shown every frame on the
+    object, and a second opinion's "it disappears" is cleared only by that strip (checklists/visual.md 5h). The failing
+    case is w1470's round 4 (PR #1921): a sheet every 0.2 s, the second opinion's "the Guardian disappears at once"
+    explained away, and Ben, 2026-10-21: "it just kind of disappears"."""
+
+    def round4(self):
+        return (HERE / "fixtures" / "pr-1921-round4-swallow.md").read_text(encoding="utf-8")
+
+    def test_round_4s_words_are_transition_claims(self):
+        self.assertIn("transition", pe.visual_claims(self.round4()))
+        for words in ("The Guardian stretches in about 4.0-5.6 s.", "A swallowed ship is seen as itself as it stretches.",
+                      "Swallowed ships stay lit as themselves.", "One smooth animation from hull to strands.",
+                      "The hull dissolves into the core."):
+            self.assertIn("transition", pe.visual_claims(words), words)
+
+    def test_round_4_fails_for_its_coarse_sheet_and_the_dismissed_flag(self):
+        problems, questions = pe.closeup_problems(self.round4())
+        self.assertTrue(any("is a transition" in p and "steps too coarsely" in p for p in problems), problems)
+        self.assertTrue(any("the Guardian disappears at once" in p for p in problems), problems)
+        self.assertTrue(any("every frame until its end state" in q for q in questions), questions)
+
+    def test_round_4_fails_in_the_whole_pr_check(self):
+        body = self.round4()
+        self.assertTrue(any("is a transition" in p for p in pe.check(body, ["Assets/VFX/VfxSpaghettify.shader"])[0]))
+
+    def test_an_every_frame_strip_with_its_seconds_passes(self):
+        claim = "The Guardian stretches in about 4.0-5.6 s.\n"
+        for entry in ("guardian-swallow-strip-3.40-6.20s-every1f.png", "guardian-strip-3.40-6.20s-every2f.png",
+                      "guardian.png (3.4-6.2 s, every frame)"):
+            self.assertEqual(pe.closeup_problems(claim + f"Close-ups: swallow: {entry}\n")[0], [], entry)
+
+    def test_a_coarse_sheet_a_still_or_a_slowed_clip_alone_fails(self):
+        claim = "Ships spaghettify into the core.\n"
+        for entry in ("swallow-every-0.2s-3.4-6.2s.png", "sheet every 0.5 s 3.4-6.2 s.png", "hull-1x.png",
+                      "pull-0.25x.mp4 2.0-3.1 s", "strip-3.4-6.2s-every6f.png", "strip-every1f.png"):
+            self.assertTrue(pe.closeup_problems(claim + f"Close-ups: spaghettify: {entry}\n")[0], entry)
+
+    def test_a_vanish_flag_beside_a_transition_needs_a_strip(self):
+        flag = 'Second-opinion flags checked: "the Guardian disappears at once" is its hull going to the ghost.\n'
+        claim = "The Guardian stretches in about 4.0-5.6 s.\n"
+        strip = "Close-ups: swallow: guardian-strip-3.90-5.60s-every1f.png\n"
+        self.assertTrue(any("disappears at once" in p for p in pe.closeup_problems(claim + flag)[0]))
+        self.assertEqual(pe.closeup_problems(claim + flag + strip)[0], [])
+
+    def test_a_flagged_snap_with_no_transition_claim_is_left_alone(self):
+        # Merged PRs #2090 and #1994 (w1627, w1565): a teleport's SNAP explained, and a file named snap-rowA-*.json.
+        for text in ("Jump's POP/SNAP flags are the teleport, at the same frame and strength in both arms.\n",
+                     "Row B: `markedForRemoval` true on both | /srv/fff/review/w1565/snap-rowA-*.json\n"):
+            self.assertEqual(pe.closeup_problems(text)[0], [], text)
+        self.assertEqual(pe.vanish_flags("Row B | /srv/fff/review/w1565/snap-rowA-*.json, watch_video said so\n"), [])
+
+    def test_the_persons_vanish_words_are_not_a_flag(self):
+        text = ('Intended look (Ben): "it just kind of disappears ... one smoth animation"\n'
+                "Looked for ghosts and pops: none\n")
+        self.assertEqual(pe.vanish_flags(text), [])
+        self.assertEqual(pe.closeup_problems(text)[0], [])
+
+
+def _media_tools():
+    import shutil
+    try:
+        import numpy  # noqa: F401
+        import PIL  # noqa: F401
+    except ImportError:
+        return False
+    return bool(shutil.which("ffmpeg") and shutil.which("ffprobe"))
+
+
+@unittest.skipUnless(_media_tools(), "needs ffmpeg, ffprobe, numpy and Pillow")
+class TransitionStripToolTest(unittest.TestCase):
+    """w1686: transition_strip.py marks a model that vanishes in one frame, and not one that shrinks away smoothly."""
+
+    def clip(self, folder: Path, vanish: bool) -> Path:
+        import subprocess
+        from PIL import Image, ImageDraw
+        for i in range(120):                       # 2 s at 60 fps: a lit hull that shrinks over 1.0-1.8 s, or pops at 1.2 s
+            im = Image.new("RGB", (320, 240), (10, 10, 30))
+            if vanish:
+                size = 80 if i < 72 else 0
+            else:
+                size = 80 if i < 60 else max(0, int(80 * (1 - (i - 60) / 48)))
+            if size:
+                ImageDraw.Draw(im).rectangle((160 - size, 120 - size // 3, 160 + size, 120 + size // 3), fill=(200, 60, 200))
+            im.save(folder / f"f{i:03d}.png")
+        out = folder / ("pop.mp4" if vanish else "smooth.mp4")
+        subprocess.run(["ffmpeg", "-v", "error", "-y", "-framerate", "60", "-i", str(folder / "f%03d.png"),
+                        "-pix_fmt", "yuv420p", "-c:v", "libx264", "-crf", "12", str(out)], check=True)
+        return out
+
+    def run_tool(self, clip: Path, folder: Path) -> dict:
+        import json
+        import transition_strip as ts
+        self.assertEqual(ts.main([str(clip), "--from", "0.9", "--to", "1.9", "--claim", "hull", "--out", str(folder)]), 0)
+        png = folder / "hull-strip-0.90-1.90s-every1f.png"
+        self.assertTrue(png.exists())
+        self.assertTrue(pe.is_strip(f"hull: {png.name}"))
+        return json.loads(png.with_suffix(".json").read_text(encoding="utf-8"))
+
+    def test_a_one_frame_vanish_is_marked(self):
+        import tempfile
+        with tempfile.TemporaryDirectory() as tmp:
+            report = self.run_tool(self.clip(Path(tmp), vanish=True), Path(tmp))
+            self.assertEqual([p["frame"] for p in report["pops"]], [72], report["pops"])
+
+    def test_a_smooth_shrink_is_not(self):
+        import tempfile
+        with tempfile.TemporaryDirectory() as tmp:
+            report = self.run_tool(self.clip(Path(tmp), vanish=False), Path(tmp))
+            self.assertEqual(report["pops"], [])
+            self.assertGreaterEqual(report["frames"], 59)
