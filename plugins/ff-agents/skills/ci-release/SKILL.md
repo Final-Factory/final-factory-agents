@@ -162,6 +162,15 @@ Design and code: ffbox repo `design/ffbuild_release_design.txt`, `scripts/releas
   success <N> passed" (`gh run view <id> --json jobs`: conclusion `success`, several minutes long;
   0.50.0.45's ran 5541, 5520 passed, 0 failed). If it failed, report the failing tests; do not
   fall back to anything.
+- **That push run is the bump's one full run** (w1661, lothsahn: "when we make a version bump branch,
+  it runs test on the branch. Then when we merge to master, it re-runs those tests again"). The bump
+  pull request's required `Test in editmode` starts no editor and passes in about a minute when every
+  changed line is a version line (FFVersion.cs's `FinalFactoryVersion` and `ReleasedUtc`,
+  ProjectSettings `bundleVersion`, `cicd/release-notes/<v>.md`; game repo
+  `.github/scripts/version-bump-only.py`): its log says "only a version bump". Until then it ran the
+  whole suite (16-17 min for 1.0.0.3 and 1.0.0.4) and the push run ran it again. A bump PR that carries
+  anything else runs the gate as any pull request does. The master batch skips the bump's push (w1658),
+  so the push run's `Test in editmode` is the only full run of the commit that ships.
 
 - **Saves from master's version and every beta since still load** (hard rule, project-memory
   `save-compatibility-hard-rule`; 0.50.0.45 shipped unable to load any 0.50.0.35..44 save).
@@ -273,7 +282,8 @@ its conclusion is `success`; if it is still running, call `blocked_on` again wit
 **A notes commit costs the bump a whole CI run; when a person is waiting, don't add one** (w1541, 1.0.0.1):
 the bump PR #1957 was green at `02fdb1aff2`, a notes commit `5b8d7b7014` for two late merges restarted the
 required `Test in editmode`, and Lothsahn's "Can we merge 1.0.0.1 and get this release started?" arrived a
-minute later and waited 33 min for the rerun. When the bump is green, merge it on that run, and put the
+minute later and waited 33 min for the rerun (since w1661 a notes-only commit restarts only the editor-free
+gate, about a minute, so this costs little now; the rest still holds). When the bump is green, merge it on that run, and put the
 late player-facing merges into the notes afterwards by a notes-only PR into master (`Part of: wNNN`;
 #1964, merged before the post), then post from that committed copy. Its CI runs while the players build
 (15 min against 37 to LANDED), so the post is not delayed.
