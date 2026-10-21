@@ -13,6 +13,28 @@ Everything else in `SKILL.md` holds: the preconditions (section 0: master batch 
 question), the notes first (0.5), "Build R" in the notes, and **the patch-notes post as Max in #dev-patch-notes once live
 is the last step** (section 3), then the first check (4).
 
+## 0. One card first: A or B (w1656)
+
+lothsahn, 2026-10-21: "Update your rules to ask about B when someone asks for an urgent release. That way we can choose to
+immediately build off an older commit". Before the bump, unless the person already said which, run this in the game repo:
+
+```sh
+python scripts/release/last_green.py
+```
+
+It names the newest fully green master commit and the merges since it. Fully green means its `master-batch.yml` run
+passed (the whole EditMode suite and the smoke PlayMode test), or it is a release bump whose own push run passed `Test in
+editmode` (the whole EditMode suite; the batch skips bumps since w1658). It then prints the card. Bring it as ONE
+question with `waiting_on_person` to the person who asked (their orchestrator asks it as given), with the real sha and
+count, B recommended:
+
+- "Build now from the last fully green commit `<sha>` (B: skips the N merges since it)"
+- "Bump on master's tip (A: ships N merges that only had gate tests)"
+
+When the script says **B is not offered**, go with A and no card: master's tip is itself green (A and B are the same
+build), or the green commit is older than master's latest release (B would take that release's changes back out of
+players' hands). The game repo's `Documentation/Release-Lanes.md`, "A or B", has the design.
+
 ## 1. The computer: BEAST, else LothDesktop when BEAST is offline
 
 `list_machines` says which is online. The request runs at priority **urgent** (its bench tickets go first). Your sandbox
@@ -56,8 +78,17 @@ Never print, echo or log either; check them by name only.
 ## 2. The bump, with the claim
 
 ```sh
-scripts/trigger-ci-release.sh master --urgent beast --request wNNN --notes Temp/release-notes-<v>.md   # lothdesktop when BEAST is offline
+scripts/trigger-ci-release.sh master --urgent beast --request wNNN --notes Temp/release-notes-<v>.md   # A; lothdesktop when BEAST is offline
+scripts/trigger-ci-release.sh master --urgent beast --from green --request wNNN --notes Temp/release-notes-<v>.md   # B
 ```
+
+**B** makes the bump commit on the green commit, not on master's tip, and the claim names it (`"from"`). Its pull request
+`release/<v>` merges into master as any bump does: master's version becomes the released one, the merges since the green
+commit stay on master for the next release, and FFBox declines the merge by the claim. The lane builds **the branch's
+head** (the green commit plus the bump), so start it at once, before the merge (section 3, step 1 with the head's sha).
+It uploads only once the merge is there and is what it built. Its test gate is the green commit's own run, not the merge's
+push run. Never merge master into that branch (`ff-pr push` does: merge the bump PR with `gh pr merge`): the lane then
+refuses it.
 
 The bump commit also carries `cicd/release-lane.json` claiming the version for that computer, so the claim reaches
 master in the same merge as the version. FFBox's release lane reads it with ffbox `scripts/release_claim.py` and
@@ -70,16 +101,24 @@ lane on beast for wNNN`); it builds and uploads nothing for that version. Merge 
 
 Right after the merge:
 
+(For B, right after `trigger-ci-release.sh` pushed `release/<v>`, with that branch's head instead of the bump commit.)
+
 1. Put your sandbox on the bump commit: `git fetch origin && git branch urgent/<v> <bump sha>`, then
    `mcp__machine__switch_branch` to `urgent/<v>` (stop your editor first).
-2. `build_plan coming` (release: true, minutes 0, what "the <v> urgent release"), then `build_plan start`. FF Factory moves
-   the workers there between turns, asks the ones mid-turn to finish their step and pause, and leaves a **Live view**
-   open: its worker is told to start no compile, test or build until you are done. Never close or move a Live view's
-   editor yourself.
+2. `build_plan coming` (release: true, minutes 0, what "the <v> urgent release"), then `build_plan start`. **The release
+   build waits for no one** (w1656; lothsahn, after 1.0.0.3 waited 12 minutes for a worker to pause and 15 more behind
+   its compile and test run: "i said it was urgent. How do we never let this happen again? It was supposed to kick work
+   off the machine"). `start` says go at once. FF Factory moves the workers there between turns, asks the ones mid-turn
+   to pause, and stops the editors of the workers it paused, so their compiles and test runs end and run again after
+   `done`. Your bench tickets count as urgent, and the lane's Unity runs **pre-empt** the bench queue: whatever holds it
+   (a batch run, a timed leg) stops cleanly and runs again after `done`. Never wait on a "Not yet": if a worker has not
+   paused, build anyway. A **Live view** stays open: its worker is told to start no compile, test or build until you are
+   done. Never close or move a Live view's editor yourself.
 3. Run the lane (about an hour of Unity at first, less once each target's Library is warm; measured in w1639's proof):
 
    ```sh
-   python scripts/release/urgent_release.py run --version <v> --unity "<Unity with Linux support>"
+   python scripts/release/urgent_release.py run --version <v> --unity "<Unity with Linux support>" \
+       --out "$TMPDIR/urgent-<v>" > "$TMPDIR/urgent-<v>.log" 2>&1 &
    ```
 
    It refuses anything not claimed for this computer (FFBox builds those), then builds Windows, Mac and Linux, main then
@@ -89,7 +128,17 @@ Right after the merge:
    **development** only, never pre-release or default; the demo nowhere), opens the regenerated-files PR, and writes
    `urgent-release.json` (every phase's start, end and seconds; the BuildIDs) in its run folder. Exit 3: it could not
    log in to Steam by itself (section 1). Use `--preview` for a first run on a new computer (manifests, no upload).
-   It takes 60+ minutes: run it in the background and `wake_me` within 30 minutes so your editor-free sandbox stays yours.
+   It takes 60+ minutes. **Follow it every 2 to 3 minutes, never with a 20 or 30 minute `wake_me`** (lothsahn, w1656:
+   "Please update the urgent build instructions to have the worker check back every couple minutes to see if the build
+   is done. It's waiting for almost 20 minutes, which seems far too long."):
+
+   ```sh
+   python scripts/release/urgent_release.py wait --out "$TMPDIR/urgent-<v>" --log "$TMPDIR/urgent-<v>.log" --minutes 3
+   ```
+
+   It returns the moment a phase starts or ends, or the log says REFUSED, STOPPED, a failure or done, with one line of
+   every phase (exit 0), and after 3 minutes with nothing new (exit 1). Act on it, then call it again (a Bash call with
+   timeout 240000) until the run is done. The run's own first line names this command.
 4. **`build_plan done` at once**, done or failed: the paused work resumes.
 5. Merge the regenerated-files PR on green, like FFBox's.
 6. **The symbols into FFBox's store, before the release counts as done.** lothsahn (w1639): "Please make sure that if

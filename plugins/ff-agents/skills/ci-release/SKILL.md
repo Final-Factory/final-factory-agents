@@ -16,7 +16,9 @@ description: "Cut a release through CI on the ffbox build server — write the r
 > - **"A quick release" / "an urgent release"** from Ben or Lothsahn: **`urgent-release.md`** beside this file. The bump
 >   carries `cicd/release-lane.json` (`trigger-ci-release.sh --urgent beast`), FFBox declines it, and BEAST (else
 >   LothDesktop when BEAST is offline) builds it with FFBox's own scripts after FF Factory clears it, uploads it and sets
->   development live. Never pre-release or default.
+>   development live. Never pre-release or default. First the person picks **A or B** on one card from
+>   `scripts/release/last_green.py` (B: build now from the last fully green commit; A: bump on master's tip), the build
+>   waits for no one, and the worker follows it every 2 to 3 minutes (w1656; urgent-release.md sections 0 and 3).
 > - Both: the notes first, the patch-notes post as Max in #dev-patch-notes once live as the last step (section 3).
 
 > **WHERE A RELEASE LANDS (ffbox `scripts/release_lane.py`, `SETLIVE`).** Read it there, or run
