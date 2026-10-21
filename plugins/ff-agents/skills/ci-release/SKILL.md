@@ -13,6 +13,8 @@ description: "Cut a release through CI on the ffbox build server — write the r
 > - **"A release"** (any words without "quick" or "urgent"): this file. FFBox builds, uploads and sets development live;
 >   no FF Factory computer builds it, and an FF Factory worker takes no `build_plan` for it. After the merge, `wake_me` 40
 >   minutes and end the turn (FFBox lands 22 to 78 minutes after the bump, median 36), so no sandbox waits on FFBox.
+>   First the person picks **A or B** on the same card as an urgent release (w1656; lothsahn: "A normal release should
+>   also provide the option of starting from the last fully green commit"): section 1, "A or B first".
 > - **"A quick release" / "an urgent release"** from Ben or Lothsahn: **`urgent-release.md`** beside this file. The bump
 >   carries `cicd/release-lane.json` (`trigger-ci-release.sh --urgent beast`), FFBox declines it, and BEAST (else
 >   LothDesktop when BEAST is offline) builds it with FFBox's own scripts after FF Factory clears it, uploads it and sets
@@ -246,7 +248,20 @@ worker: `blocked_on` with `prs: ["ci:Final-Factory/FinalFactory#<n>"]`), then me
 the release** (it changes `FFVersion.cs` against its first parent), so the build starts when the PR
 merges, not when the branch is pushed.
 
-**Right before `gh pr merge`, read what master took since the bump** (w1388, Build 107: #1814, a player fix,
+**A or B first, on every release** (w1656; lothsahn, 2026-10-21: "A normal release should also provide the option of
+starting from the last fully green commit"). Unless the person already said which, run
+`python scripts/release/last_green.py` in the game repo and bring its two lines, with the real sha and count, as one
+question (an FF Factory worker: `waiting_on_person`; B recommended): "Build now from the last fully green commit `<sha>`
+(B: skips the N merges since it)" or "Bump on master's tip (A: ships N merges that only had gate tests)". When it says B
+is not offered (master's tip is itself green, or the green commit is older than master's latest release), A goes with
+no card. **B** is `scripts/trigger-ci-release.sh --from green --request wNNN --notes <file>` (no `--urgent`): the bump
+is made on the green commit, `cicd/release-lane.json` says `{"lane": "ffbox", "from": <sha>}`, FFBox grants it as any
+bump, and main.yml's versionBump (`scripts/release/release_built.py`) makes the Release jobs build the merge's second
+parent, the green commit plus the bump, not master's tip. **Merge a B bump with `gh pr merge --merge`, as it is**: never
+squash or rebase it, never merge master into it (versionBump then fails and nothing is built). `release-status.py`
+prints `Built from: <sha>` for it. The game repo's `Documentation/Release-Lanes.md`, "A or B".
+
+**Right before `gh pr merge`, read what master took since the bump** (A only: a B build ships none of it; w1388, Build 107: #1814, a player fix,
 and #1812, a toggled change, merged while the bump PR's CI ran). The merge commit ships them, so
 `git log --first-parent --format='%h %s' <bump base>..origin/master`, and a player-facing one goes into
 the notes by a commit on `release/<version>` (that push reruns the PR's CI, about 18 min). No checkout or
