@@ -23,8 +23,11 @@ Once per computer, before its first urgent release:
 
 ```sh
 python scripts/release/urgent_release.py preflight      # READY, or what is MISSING
-python scripts/release/urgent_release.py steam-install  # Valve's steamcmd and its config in <FF_WORKER_ROOT>/steam
+python scripts/release/urgent_release.py steam-install --account <name>  # steamcmd and its config in <FF_WORKER_ROOT>/steam
 ```
+
+`--account` is the build account FFBox's config names (`release.steam.account`); the first install needs it, then
+`config.json` keeps it. No account is written in code (lothsahn: "It should not be hardcoded in the code").
 
 `preflight` checks the computer is an urgent-lane one, that its Unity has Windows, Mac and Linux build support
 (`FF_RELEASE_UNITY` names another Unity; BEAST uses `F:\ffw\tools\unity-release\6000.3.19f1\Editor\Unity.exe`, a copy
