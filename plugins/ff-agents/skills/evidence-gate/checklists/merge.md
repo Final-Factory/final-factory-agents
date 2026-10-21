@@ -21,6 +21,15 @@ not from your branch's copy. A base you did not pick is a question to stop on, n
 your branch calls may have changed under it. There, master's `SimCollisionFilter` replaced Unity Physics'
 `CollisionFilter` in `FpCollisionWorld.CastRay`; the branch compiled before the merge, CI went red on `error CS1503`,
 and one CI cycle was lost.
+It recurred in w1572 (2026-10-21, PR #2089): the merge brought w1440's `TargetingSystem.cs:867` reading
+`SimCollisionWorld.UseFixedPoint`, which the branch had removed; the compile check had run before the merge.
+
+**After a removal merges, look for the removed names on master** (w1572, 2026-10-21, PR #2089): a PR that deletes or
+renames a type, member, package or asmdef reference is checked against the master it merged in, and so is every PR
+that merged minutes before it. Once yours merges, `git fetch origin && git grep -n -E '<removed names>' origin/master
+-- '*.cs' '*.asmdef'`, and fix a hit at once in its own PR. There, #2090 (w1627) merged minutes before #2089 with
+`DysonShellRecordsTest.cs:365` creating `Unity.Physics.Systems.BuildPhysicsWorld`; both PRs were green alone, and
+master's test assembly did not compile until #2091.
 
 ## What goes in the pull request
 
