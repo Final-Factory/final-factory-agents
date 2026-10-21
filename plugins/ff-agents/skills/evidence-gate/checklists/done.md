@@ -58,6 +58,10 @@ holds, or the report says what is left instead of DONE.
    ([the Deck list](deck.md), [a simulated Deck is not a Deck](../lessons/verify-ui-with-full-content-like-a-player.md#a-simulated-deck-is-not-a-deck-w770)). When the
    request is a player's report from their own Deck, DONE waits for their check: end with `wNNN: still open: waiting on
    <name> to check on the Deck` and declare it with `waiting_on_person`.
+8. **Tests tagged right** (w1690). A new or touched test that asserts on time carries `[Category("Performance")]` and
+   asserts nothing functional; a functional test does not carry it. A mis-tagged or mixed test you met is fixed in this
+   change or its own small PR, a mixed one split so its functional asserts keep running in CI
+   ([a timing test is tagged Performance](../lessons/timing-tests-are-tagged-performance.md)).
 8. **Steps handed to a person.** Every "someone has to run X" or "Ben needs to ..." in the report, a question or a
    `still open:` line was checked against the tools: nothing you, the ops worker or ssh can do is left to a person.
    Closing, opening or restarting Unity (a person's editor on a main clone too: save its scenes or back up, close it,

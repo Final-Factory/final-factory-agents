@@ -70,9 +70,10 @@ old job and pass on the new. A first built player or PlayMode load of a new feat
 **Rule.** A test CI runs is verified at the host's speed, not yours.
 
 1. A test the editmode job runs never asserts a wall-clock ratio or a time limit on shared
-   hardware. Make the benchmark `[Explicit]` (precedent: `HeldConnectionPointsCostTest`) and
-   assert what the speed-up is made of, which is deterministic: the job type, the batch count, the
-   result.
+   hardware. Put the timing in its own test tagged `[Category("Performance")]` and `[Explicit]`
+   ([a timing test is tagged Performance](timing-tests-are-tagged-performance.md), w1690), and in
+   the CI test assert what the speed-up is made of, which is deterministic: the job type, the batch
+   count, the result.
 2. A `[UnityTest]` that waits for real I/O or a worker thread counts **seconds** (a `Stopwatch`
    against the command's own deadline), never frames. A headless editor runs frames in
    microseconds, an interactive one throttles them to about 10 ms, so a frame budget passes on
