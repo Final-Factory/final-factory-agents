@@ -94,15 +94,18 @@ scripts/trigger-ci-release.sh master --urgent beast --from green --request wNNN 
 `release/<v>` merges into master as any bump does: master's version becomes the released one, the merges since the green
 commit stay on master for the next release, and FFBox declines the merge by the claim. The lane builds **the branch's
 head** (the green commit plus the bump), so start it at once, before the merge (section 3, step 1 with the head's sha).
-It uploads only once the merge is there and is what it built. Its test gate is the green commit's own run, not the merge's
-push run. Never merge master into that branch (`ff-pr push` does: merge the bump PR with `gh pr merge`): the lane then
+It uploads only once the merge is there and is what it built. Its test gates are the green commit's own run AND the
+merge's push run, as for A (w1705, lothsahn: "we only release if green"): a red push run ships nothing. Never merge master into that branch (`ff-pr push` does: merge the bump PR with `gh pr merge`): the lane then
 refuses it.
 
 The bump commit also carries `cicd/release-lane.json` claiming the version for that computer, so the claim reaches
 master in the same merge as the version. FFBox's release lane reads it with ffbox `scripts/release_claim.py` and
 declines every Release job of that run (its log: `release: declined: master <v> at <sha> is claimed by the urgent release
 lane on beast for wNNN`); it builds and uploads nothing for that version. Merge the bump PR normally on green (no
-`[skip ci]`: the push run's tests are a gate, as on FFBox). Read what master took since the bump before you merge
+`[skip ci]`: the push run's tests are a gate, as on FFBox). The bump PR's own check passes in about 2 minutes with no
+editor (the claim counts as a bump file, w1705): the push run's whole suite is the one test run, and it runs beside the
+build. lothsahn: "we should get the build going on Beast or LothDesktop in parallel to the test run.  We shouldn't wait
+for the test run.  But we also need to make sure the master full test run goes and we only release if green". Read what master took since the bump before you merge
 (`SKILL.md` section 1).
 
 ## 3. Clear the computer, build, check, upload, resume
