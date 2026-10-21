@@ -130,6 +130,20 @@ in the built player (drive-game, "The mouse cursor in a built player"; w980).
    Ben, w1470: "its z fighting in the screenshot with the antimatter nexus or something, and its not pulling in the
    boss", then, after a note said the z-fight was gone: "the units dont really spagettify when they get pulled in and
    also theres still weird z fighting where the blakc hole isnt overtop of the terrain").
+5h. **A transition is shown every frame on the object, until its end state (w1686).** A claim that something turns into
+   its end state ("stretches into", "is swallowed", "is pulled into", "dissolves", "stays lit as itself", "one smooth
+   animation") names, on the `Close-ups:` line, a sheet of **every frame** (every 2nd at 50 fps or more) of the whole
+   transition, cropped on the object, from the frame before it starts to its stated end state:
+   `transition_strip.py <clip> --from <s> --to <s> --crop W:H:X:Y --claim <name>` writes it and frames the pop
+   candidates in red. In each frame the object's own model is still on screen, a little further along, until the end
+   state; one frame where it is gone or replaced early is a pop and the claim is false. A sheet every 0.2 or 0.5 s, a
+   still or a 0.25x clip is not this proof: at 60 fps a 0.5 s step shows 1 frame in 30, and a vanish takes about 6. A
+   second opinion's "disappears", "at once" or SNAP during the transition is answered with that strip, asked of a fresh
+   critic, never explained away. `pr_evidence.py` fails a transition claim without the strip, and a vanish flag beside
+   one ([lesson](../lessons/visual-fixes-are-verified-by-looking.md#a-transition-is-stepped-every-frame-on-the-object-and-it-disappears-is-cleared-only-that-way-w1686);
+   w1470, the Guardian vanishing mid-swallow: the critic said "the Guardian disappears at once", a sheet every 0.2 s
+   cleared it, and Ben: "the guardian especially doesn't really smoothly transition to the spaghetti state it just kind
+   of disappears. I want one smoth animation for the model getting stretched and sucked into the black hole").
 6. **`watch_video` and the blind model review are a second opinion.** They have passed clips
    that did not contain the event, and agreed with a mistake the brief described as intended.
    Quote them, and say where the frames contradict them.

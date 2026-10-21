@@ -59,6 +59,11 @@ with a smooth built-game clip (recorded as below), and you stop the Live view an
    [--compare approved.mp4] [--frames 2.4-3.1]`. Read `report.md`, then LOOK at `frames.jpg` (every
    frame of the effect's life, numbered), `sheet.jpg`, `compare.jpg` (the reference and this clip side
    by side, row by row from each onset), and `gemini.md` (a blind review at 10 fps; about $0.01 a clip).
+   `frames.jpg` is the whole frame at 320 px and at most 60 frames, so a longer window skips frames. For a
+   transition on one object (a ship stretched into a hole, a hull dissolving), run the evidence-gate's
+   `transition_strip.py <clip> --from <s> --to <s> --crop W:H:X:Y` for every frame cropped on it, pops framed in
+   red; a `SNAP` or "disappears" from the review during the transition is answered with that strip, never explained
+   away (evidence-gate `checklists/visual.md` 5h; w1470, the Guardian vanishing mid-swallow, w1686).
 4. **Put in the PR**: the before/after (or approved/after) clips, `report.md`, and your verdict against
    each line of the intended look, with frame numbers, as the `## Evidence` section the `evidence-gate`
    skill describes (`checklists/merge.md`; `pr_evidence.py` checks it before the merge).
