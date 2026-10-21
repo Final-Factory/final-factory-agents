@@ -9,7 +9,7 @@ version update and do it's own release ... Then Ben and I can ask for a release 
 (beast, if offline, LothDesktop)". Any other release is `SKILL.md` section 1 (FFBox). Design and evidence: the game repo's
 `Documentation/Release-Lanes.md`.
 
-Everything else in `SKILL.md` holds: the preconditions (section 0: master batch green, saves load, the content go-live
+Everything else in `SKILL.md` holds: the preconditions (section 0: no red master batch naming a culprit, saves load, the content go-live
 question), the notes first (0.5), "Build R" in the notes, and **the patch-notes post as Max in #dev-patch-notes once live
 is the last step** (section 3), then the first check (4).
 

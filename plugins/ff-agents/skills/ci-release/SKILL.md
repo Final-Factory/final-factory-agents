@@ -140,12 +140,19 @@ Design and code: ffbox repo `design/ffbuild_release_design.txt`, `scripts/releas
   everything else (the bump, file names, `release-status.py`, ffbox).
 - Nothing already in flight for that branch: check that the latest version bump's release has finished
   (section 2) before starting another.
-- **The master batch is green** (w1180, 2026-10-13). Pull requests merge on a fast `Test in editmode` (on a pull request it runs only the tests the change touches), and
-  the whole suite runs after the merge in `master-batch.yml`: `gh run list -R Final-Factory/FinalFactory
-  --workflow master-batch.yml --branch master -L 3`. The newest completed run must be green (or
-  flaky only) at a commit at or behind the tip you bump. A red one names its culprit pull request in
-  its summary: wait for that revert to merge, then bump. A bump on a red batch fails its own `Test in
-  editmode` and does not ship (ffbox `ci_lane.release_tests`), so it only costs a version number.
+- **Bump right away: wait for no green master batch** (w1658, lothsahn: "bumps stop waiting on the
+  train, and the train skips release commits"). Pull requests merge on a fast `Test in editmode` (the
+  tests the change touches) and the whole suite runs after the merge in `master-batch.yml`, but the
+  bump's own push run tests the whole EditMode suite as `Test in editmode` and gates the upload (ffbox
+  `ci_lane.release_tests`), and the batch skips the bump commit. While merges keep coming the newest
+  batch is nearly always pending or cancelled (1.0.0.3 waited about 70 minutes on one): a pending,
+  running or cancelled batch holds nothing. **Only a batch that has finished red naming a culprit holds
+  the bump**: `gh run list -R Final-Factory/FinalFactory --workflow master-batch.yml --branch master
+  -L 10`; a `failure` with no batch that passed after it is red, and `gh run view <id>` names its
+  culprits ("Master batch: #N broke K test(s)"). Wait for that culprit's revert or fix to merge, then
+  bump. A `success` run whose `Master batch (full editmode)` job was skipped is a bump's, not a green
+  batch. A bump on a red master fails its own `Test in editmode` and does not ship, so it only costs a
+  version number. Game repo: `Documentation/Merge-Queue.md`, "Releases while the batch is red".
 - **Tests: the release run's own `Test in editmode` job is the gate; run none yourself**
   (Lothsahn, 2026-09-28, replacing the local-precheck rule of 1.16.3). The bump push runs the full
   EditMode suite on ffbox beside the builds, and the host uploads nothing until every `Test in …`
