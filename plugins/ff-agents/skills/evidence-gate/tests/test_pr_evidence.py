@@ -82,6 +82,14 @@ class CheckTest(unittest.TestCase):
         body = edit(GOOD, "MEASURED: stepped frames 118-190 of the built-player clip", "MEASURED")
         self.assertFails(body, "MEASURED needs what was measured or the source")
 
+    def test_a_measurement_table_in_the_section_is_named(self):
+        # w1648: a before/after table inside ## Evidence was read as claims, one "basis" problem per row
+        table = "| leg | fps | CPU ms a second |\n|---|---|---|\n| before | 62 | 2530 |\n| after | 66 | 2357 |\n"
+        body = edit(GOOD, "Not verified: nothing", table + "\nNot verified: nothing")
+        self.assertFails(body, "a measurement table is not the claims table")
+        body = edit(GOOD, "## Save compatibility", "## Measured\n\n" + table + "\n## Save compatibility")
+        self.assertEqual(self.problems(body), [])
+
     def test_nothing_may_be_pending(self):
         body = edit(GOOD, "Review: watch_video report in proofs/review/; no blind model review (no Gemini key here)",
                     "Review: the watch_video review is pending on BEAST")
