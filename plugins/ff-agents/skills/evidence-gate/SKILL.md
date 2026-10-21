@@ -187,7 +187,7 @@ look first and relay only with the critic's report (FF Factory `read_rules ui`).
   bound it stops or skips on, and see the test go RED with that bound's `>` flipped to `>=` (w1069: random worlds all
   passed the flip).
 - **A CI test does not gate on the clock** ([lesson](lessons/verify-simulation-at-a-slow-hosts-frame-rate.md#a-ci-test-does-not-gate-on-the-clock-w857-2026-10-10)). A test the editmode job runs asserts no wall-clock ratio or time limit (move the timing to a `[Category("Performance")]` test, assert the structure), and a `[UnityTest]` waiting on real I/O counts seconds, not frames (w857: a 19 % flake and 422 s of a 14 minute job).
-- **A timing test is tagged Performance and checks nothing else** ([lesson](lessons/timing-tests-are-tagged-performance.md)). A game test that asserts on
+- **A timing test is tagged Performance and checks nothing else** ([lesson](lessons/verify-simulation-at-a-slow-hosts-frame-rate.md#a-timing-test-is-tagged-performance-and-checks-nothing-else-w1690-2026-10-21)). A game test that asserts on
   timing (ms, frame time, throughput, a speed ceiling or ratio) carries `[Category("Performance")]` and asserts nothing
   functional; a functional test never carries it, since every CI lane leaves the category out. Performance tests run in no
   CI: locally, against a baseline from the same machine. A mis-tagged or mixed test you meet, you fix (split a mixed one).

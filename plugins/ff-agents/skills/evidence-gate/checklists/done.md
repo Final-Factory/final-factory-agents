@@ -61,7 +61,7 @@ holds, or the report says what is left instead of DONE.
 8. **Tests tagged right** (w1690). A new or touched test that asserts on time carries `[Category("Performance")]` and
    asserts nothing functional; a functional test does not carry it. A mis-tagged or mixed test you met is fixed in this
    change or its own small PR, a mixed one split so its functional asserts keep running in CI
-   ([a timing test is tagged Performance](../lessons/timing-tests-are-tagged-performance.md)).
+   ([a timing test is tagged Performance](../lessons/verify-simulation-at-a-slow-hosts-frame-rate.md#a-timing-test-is-tagged-performance-and-checks-nothing-else-w1690-2026-10-21)).
 8. **Steps handed to a person.** Every "someone has to run X" or "Ben needs to ..." in the report, a question or a
    `still open:` line was checked against the tools: nothing you, the ops worker or ssh can do is left to a person.
    Closing, opening or restarting Unity (a person's editor on a main clone too: save its scenes or back up, close it,

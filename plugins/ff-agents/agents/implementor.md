@@ -32,7 +32,7 @@ Working rules:
   `python scripts/test_select.py` prints the `run_tests` arguments (exact `test_names`), or
   FULL SUITE, in which case run all of `FFEditorTests`. CI runs the whole suite on the PR.
   A test that asserts on timing is its own test, tagged `[Category("Performance")]`; a functional
-  test never carries the tag (evidence-gate `lessons/timing-tests-are-tagged-performance.md`).
+  test never carries the tag (evidence-gate `lessons/verify-simulation-at-a-slow-hosts-frame-rate.md#a-timing-test-is-tagged-performance-and-checks-nothing-else-w1690-2026-10-21`).
 - Compile-verify per repo rules: `refresh_unity`, await the fresh domain reload, check
   `error CS` via `read_console` — a `PASSED` suite alone does not prove your code compiled
   (stale-assembly trap). New `.cs` files: confirm the `.meta` appeared, else the file was
