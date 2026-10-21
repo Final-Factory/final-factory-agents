@@ -20,3 +20,5 @@ A related trap: `producer | grep -q pattern` can make `grep` exit as soon as it 
 On a large producer, that closes the pipe and the producer may report `SIGPIPE`, so `pipefail`
 turns a successful search into a failed pipeline. When the producer's completion matters, consume
 all lines (for example, `grep pattern >/dev/null`) instead of using `grep -q`.
+
+**A pipe also hides a failed `git merge`** (w1530, 2026-10-21): `git merge --no-edit origin/master 2>&1 | tail -1 && git push ...` pushed the branch while the merge sat conflicted in `main.unity`, because the pipeline's status is `tail`'s. Never pipe `git merge` (or `git pull`) into `tail`/`head` before `&&`: run it unpiped, or with `set -o pipefail`, and check `git status --short | grep '^UU'` is empty before any push.
