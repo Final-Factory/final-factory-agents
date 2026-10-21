@@ -62,8 +62,10 @@
     "hosting": [
       {
         "host": "StructuredDock",
-        "tenants": ["*EntityPanel"],
-        "source": "docs/UI-Architecture.md in the game repo (develop), the building dock: \"a selected building's EntityPanel windows dock frameless, as tabs\" in StructuredDock, so a building panel inside the dock's frame is its tab, not an overlap"
+        "tenants": ["*EntityPanel", "AncientPortalEntity", "CometFragmentPanel", "DysonSegmentPanel", "ExplorationCenterPanel",
+                    "FuelConsumerPanel", "LaserTurretPanel", "LootableMapObjectPanel", "OracleEntityPanelParent",
+                    "TeslaArtifactPanel"],
+        "source": "docs/UI-Architecture.md in the game repo (develop), the building dock: \"a selected building's EntityPanel windows dock frameless, as tabs\" in StructuredDock, so a building panel inside the dock's frame is its tab, not an overlap. StructuredDock.Collect docks every EntityPanel under GamePanels but the move/land window (game repo StructuredDock.cs:359 and :434, master 2026-10-21); the names after *EntityPanel are the main.unity objects that carry an EntityPanel under another name (w1684: the docked Railgun window, LaserTurretPanel, read as KEPT over its own dock)"
       }
     ],
     "allowed": [

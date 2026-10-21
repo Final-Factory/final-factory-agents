@@ -148,6 +148,11 @@ census (`<shot>.json`: small, clipped, off-screen and overlapping text, covered 
   -pix_fmt yuv420p out.mp4`; if `frames.txt` holds per-frame `duration` lines, it must start with
   `ffconcat version 1.0` and give each entry `option framerate 1000`, or the clip keeps about 25 of
   every 60 frames (w1491; project-memory `beast-clip-capture-and-slot-launch-traps` item 15).
+  On a Linux PC without ffmpeg or pip (biscuit, w1684), `uv run --no-project --with pillow --with imageio-ffmpeg python`
+  gives Pillow and a static ffmpeg (`imageio_ffmpeg.get_ffmpeg_exe()`; pass it as `FFMPEG` to `clip_video.py`). `ui_check.py
+  flicker` holds every frame as full-size float32 even with `--rect` (its crop is a view), so about 600 frames at 1920x1080
+  were killed for memory (exit 137): crop the frames into a new folder first (Pillow), and centre the crop and the
+  `at` hover points on the window from a full frame of the clip, not from a guess at where it docks.
   `pr_evidence.py` only accepts a `Clips:` line that names `.mp4` files
   (with where the event is, "0 to 3 s"), so encode the before and after clips and publish them.
 - **Two steps that did not do what they look like (w902, Windows development player).** (1) The title menu's Early Access notice (`PreAlphaNotice`) stayed up after `pressUntil button_menu` and after `key Escape`, and covered New Game; click `name:Continue/FFButton` first. (2) With a station selected in the classic layout, the `T` key did not open the Technology window (`selectTech` then fails: "the technology panel is not open"); hold Esc to deselect, then `{"setup": "ffauto:ui.open|technology"}`, in both layouts. Selecting a building with storage opens the Player Inventory with it, so a `ui.open|inventory` after the selection toggles it shut ("did not open"). The whole-UI tour that uses all three: the game repo's `specs/w902-ui-check/make_tour.py`.

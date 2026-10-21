@@ -790,6 +790,13 @@ class WindowOverlapTest(unittest.TestCase):
         self.assertEqual(v["status"], "hosting")
         self.assertIn("docs/UI-Architecture.md", v["why"])
 
+    def test_a_docked_turret_window_whose_entity_panel_has_another_name_is_hosted(self):
+        # w1684, 1280x800 docked: the Railgun's LaserTurretEntityPanel sits on the object LaserTurretPanel, inside the
+        # dock's frame; `*EntityPanel` alone read the pair as KEPT when the window grew by its Connector Inventory row
+        census = screen(("StructuredDock", [751, 59, 1270, 307]), ("LaserTurretPanel/MainPanel", [771, 107, 1068, 299]))
+        (v,) = self.found(census)
+        self.assertEqual(v["status"], "hosting")
+
     def test_always_on_hud_pairs_stay_overlaps_not_window_overlaps(self):
         census = hud(quick_on_hotbar=True)
         self.assertEqual([v for v in self.found(census) if "Hotbars" in v["example"][1] and "QuickButtons" in v["example"][0]], [])
