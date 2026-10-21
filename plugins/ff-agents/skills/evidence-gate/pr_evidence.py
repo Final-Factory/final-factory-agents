@@ -19,6 +19,7 @@ w1567), and a Deck-facing change says 'Real Deck: verified ...' or 'not verified
     pr_evidence.py --repo OWNER/NAME --pr N --comment     the same, and post the verdict on it
     pr_evidence.py --body-file F [--files-file G]         the same, offline (a description and a file list; a line may be
                                                           `A<TAB>path` or `M<TAB>path<TAB>lines`, as git diff --name-status)
+    pr_evidence.py --body-file F --repo R --pr N          a draft description against that PR's own changed files (w1684)
     ... [--brief B]                                       also: every 'Moved:' quote is in the request's brief (w826)
     pr_evidence.py --note N [--note-dir D] [--questions Q] a review note before publish_review: its close-ups (w1567),
                                                           each file beside it, the claims as questions for the critic
@@ -1404,8 +1405,17 @@ def main(argv=None) -> int:
 
     if args.body_file:
         body = Path(args.body_file).read_text(encoding="utf-8")
-        files, changes = (parse_files_file(Path(args.files_file).read_text(encoding="utf-8"))
-                          if args.files_file else (None, None))
+        if args.files_file:
+            files, changes = parse_files_file(Path(args.files_file).read_text(encoding="utf-8"))
+        elif args.repo and args.pr:
+            # w1684: a draft description checked against the PR's own files; with no file list the Balance and Used by
+            # rules never ran, the draft passed, and the PR's posted verdict failed on a missing '## Balance'.
+            pr = json.loads(gh("pr", "view", str(args.pr), "--repo", args.repo, "--json", "files"))
+            files, changes = [f["path"] for f in pr.get("files") or []], changes_of(pr.get("files") or [])
+        else:
+            files, changes = None, None
+            print("note: no file list (--files-file, or --repo and --pr): the rules that read the changed files "
+                  "(Balance, Used by, Deck, UI paths) did not run", file=sys.stderr)
     elif args.repo and args.pr:
         pr = json.loads(gh("pr", "view", str(args.pr), "--repo", args.repo, "--json", "body,files"))
         body, files = pr.get("body") or "", [f["path"] for f in pr.get("files") or []]
