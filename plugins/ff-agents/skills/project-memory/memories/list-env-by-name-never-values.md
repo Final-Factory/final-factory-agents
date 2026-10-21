@@ -1,7 +1,8 @@
 ---
 name: list-env-by-name-never-values
 description: "To find out which environment variables a session has, list their names only (env | cut -d= -f1). Never print env lines and hide the values with a sed or grep you wrote: it hides only the names you thought of, and every other value lands in the transcript."
-date: 2026-10-21
+metadata:
+  type: feedback
 ---
 
 # List environment variables by name, never their values
