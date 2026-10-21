@@ -190,10 +190,15 @@ mcp__machine__post_as_max  channel: dev_patch_notes
 It answers the message link
 (`https://discord.com/channels/530867164866150410/1072387196927094845/<message id>`): put it in the
 release report. A second call with the same key answers "Already posted" and that link, so calling
-again after a timeout or from another worker never double-posts. If the call times out, call it again
-with the same key. If it times out again, wait about 5 minutes (`wake_me`) and call it once more, never with
-a new key: 1.0.0.1's post timed out three times in a row at 08:22 UTC, two minutes after LANDED while the
-lane still built the demo, and the same call posted at 08:27 (w1541). The text can also be passed as `text` instead of `file`.
+again after a timeout or from another worker never double-posts. When FFBox's answer does not come, the
+call asks again by itself with the same key for up to 75 s (FF Factory w1664), so a post that went out but
+answered late comes back "Posted as Max ... FFBox's first answer came late" with its link: that is posted,
+put the link in the report. Only an answer that still ends "FFBox did not post it: timeout ..., asked N
+times" is unsettled: call it again with the same key, and if that fails too, wait about 5 minutes
+(`wake_me`) and call it once more, never with a new key. The likely cause: FFBox answered posts on its main
+pass, behind the CI and release lanes and a 5 s sleep, against the connector's 12 s (1.0.0.1's post timed
+out three times while the lane still built the demo, w1541; 1.0.0.3's answered "timeout" and had posted,
+w1664). Since FFBox ee3a75a (2026-10-21) its queries have a thread of their own. The text can also be passed as `text` instead of `file`.
 
 **If FFBox answers `refused`, `rate_limited` or `failed`**, stop and read its reason: a mention or a
 secret in the text, over 2000 characters, 12 posts an hour, or Discord's own answer (a 403 Missing
