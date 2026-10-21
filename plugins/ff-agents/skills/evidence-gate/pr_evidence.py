@@ -1129,8 +1129,10 @@ def check(body: str, files: list[str] | None = None, brief: str | None = None,
     rows = claims(section)
     if not rows:
         problems.append("no claims table: one row per claim the title and TL;DR make, with its basis")
+    unlabelled = 0
     for claim, basis in rows:
         label = basis.split(":")[0].strip()
+        unlabelled += label not in BASES and label != "GUESS"
         if label == "GUESS":
             problems.append(f"'{claim}' rests on a guess: verify it, or move it to 'Not verified' and take it out of "
                             f"the title and TL;DR")
@@ -1138,6 +1140,10 @@ def check(body: str, files: list[str] | None = None, brief: str | None = None,
             problems.append(f"'{claim}': the basis starts with MEASURED or SOURCED, then says how or where")
         elif not has_basis(basis):
             problems.append(f"'{claim}': {label} needs what was measured or the source, after a colon")
+    if unlabelled >= 2:
+        # w1648: a table of measurements inside the section reads as claims with no basis, one problem per row
+        problems.append("several table rows carry no MEASURED/SOURCED basis: a measurement table is not the claims table; "
+                        "put it under its own '## ' heading after the Evidence section and cite it from one claim")
 
     open_lines = [l for l in section.split("\n") if not re.match(r"^\s*Not verified\s*:", l, re.IGNORECASE)]
     pending = PENDING.search("\n".join(open_lines))
