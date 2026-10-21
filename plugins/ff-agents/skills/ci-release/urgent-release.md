@@ -45,6 +45,12 @@ Never print, echo or log either; check them by name only.
 - The run says `STOPPED: Steam asked for a Steam Guard code`: the password alone cannot pass the account's Steam
   Guard. Nothing was uploaded; report it to lothsahn as the blocker (how the account handles Steam Guard is his call),
   and do not retry.
+- The run says `STOPPED: Steam emailed a Steam Guard code`: the build account has **email** Steam Guard (measured on
+  BEAST, w1639), the password was right, and this computer is new to the account. Once per computer: ask lothsahn with
+  `waiting_on_person` for the code from the newest such email, then run `preflight` once with `FFSTEAM_GUARD_CODE` set
+  to it in that one command's environment (never echoed, never in a file or commit). It logs in past the hour's wait
+  and authorises the computer; later runs need the password alone. Do not run `preflight` again before the code
+  arrives: each try emails a new code.
 - `steam-login` is only the fallback for a computer that cannot have the vault's values.
 
 ## 2. The bump, with the claim
