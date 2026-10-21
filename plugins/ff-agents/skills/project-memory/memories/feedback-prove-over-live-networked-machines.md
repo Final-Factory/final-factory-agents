@@ -1,12 +1,17 @@
 ---
 name: feedback-prove-over-live-networked-machines
-description: "Ben (2026-09-11): always test in live networked multiplayer games between machines on his network — a determinism/multiplayer fix is proven by a cross-machine networked leg (BEAST Windows host / Mac peer), never by an editor pair on one box."
+description: "Ben (2026-09-11): always test in live networked multiplayer games between machines on his network — a determinism/multiplayer fix is proven by a cross-machine networked leg on whatever machines are free (a cross-OS pair only when the change can differ by platform, w1692), never by an editor pair on one box."
 ---
 
 # Prove multiplayer work over live networked machines (Ben, 2026-09-11; reinforced 2026-09-20)
 
 **What Ben said:** "Remember you need to always be testing in live networked multiplayer games
 over machines on my network."
+
+**Which machines (lothsahn, 2026-10-21, w1692):** "Not windows by default, any OS.  Being particular about a machine
+or OS limits the fleet we can use." A determinism pair is two players on whatever machines are free; a cross-OS pair
+only when the change can differ by platform (evidence-gate `verify-simulation-at-a-slow-hosts-frame-rate.md`, "A determinism pair is any two free
+machines").
 
 ## Standing orchestration requirement — 2026-09-20
 

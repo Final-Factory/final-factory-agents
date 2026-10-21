@@ -249,7 +249,8 @@ A screen, panel or layout also goes through `ff-agents:unity-ui` and the evidenc
 
 
 For a multiplayer gameplay defect or fix, the acceptance playtest runs matching current builds on
-two physical machines. Include Windows and macOS when the affected path can differ by platform.
+two physical machines, on whatever OS is free. Add a cross-OS pair (a Mac host) only when the change can differ by
+platform ([when](../evidence-gate/lessons/verify-simulation-at-a-slow-hosts-frame-rate.md#a-determinism-pair-is-any-two-free-machines-a-cross-os-pair-only-when-the-change-can-differ-by-platform-w1692-2026-10-21)).
 Drive the other peer with a direct child or another explicitly coordinated agent, and replay the
 reported sequence through real inputs on both players. Start a fresh-join case with no actions, then
 add movement, the developer-console step when the report used one, miners, and recovery/rejoin when

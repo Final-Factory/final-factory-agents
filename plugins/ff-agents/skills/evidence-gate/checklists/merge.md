@@ -106,6 +106,11 @@ Not verified: the Bats' slot lag (simulation, follow-up PR)
   determinism run names its frame rates, with a host held near 20 fps against 60 fps clients
   ([verify at a slow host's frame rate](../lessons/verify-simulation-at-a-slow-hosts-frame-rate.md)).
   A reviewer checks the same three things.
+- **The determinism run names its pair and why** (w1692): two players on whatever machines are free, any OS. A
+  cross-OS pair (a Mac host against a Windows or Linux client) only for float or math-library use in the simulation,
+  Burst or IL2CPP codegen-sensitive code, platform APIs or file paths, the desync hash or its capture, or a desync
+  reported only across OSes; the Evidence row says which applied, or "no cross-OS pair: <why>"
+  ([any two free machines](../lessons/verify-simulation-at-a-slow-hosts-frame-rate.md#a-determinism-pair-is-any-two-free-machines-a-cross-os-pair-only-when-the-change-can-differ-by-platform-w1692-2026-10-21)).
 - **A changed shader, shader graph, subgraph, include or material** needs a `## Used by` section
   beside `## Evidence`: the output of the game repo's `python3 scripts/asset_usage.py --changed
   origin/master --markdown`, with the tool's table whole and a basis on every row (`TARGET:`,
