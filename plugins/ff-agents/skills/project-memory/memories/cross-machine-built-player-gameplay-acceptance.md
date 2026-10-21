@@ -5,8 +5,9 @@ description: "Multiplayer gameplay fixes require matching current built players 
 # Cross-machine built-player gameplay acceptance
 
 A multiplayer gameplay fix is not finished after unit tests, EditMode tests, two editors on one
-machine, or a headless audit. Run matching current built players on two physical machines. Include
-Windows and macOS when the affected path can differ by platform. Assign the other peer to a direct
+machine, or a headless audit. Run matching current built players on two physical machines, on
+whatever OS is free; a cross-OS pair (a Mac host) only when the change can differ by platform (the
+evidence-gate lesson `verify-simulation-at-a-slow-hosts-frame-rate.md`, w1692). Assign the other peer to a direct
 child or another explicitly coordinated agent so both players are observed and driven throughout
 the same run.
 

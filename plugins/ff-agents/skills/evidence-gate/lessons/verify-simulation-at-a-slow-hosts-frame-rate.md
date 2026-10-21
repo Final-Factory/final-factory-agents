@@ -1,6 +1,6 @@
 ---
 name: verify-simulation-at-a-slow-hosts-frame-rate
-description: "A simulation, timing or system-placement change is verified at both frame cadences: a frame without a heartbeat must change no simulation state, and the multiplayer check holds the host near one frame per heartbeat against fast clients. A same-speed pair cannot see a frame-order fork. A CI test asserts no wall-clock ratio and waits on real I/O in seconds, not frames. A test that asserts on timing is its own test tagged [Category(\"Performance\")], which no CI runs; a functional test never carries the tag, and a mis-tagged or mixed test is fixed where it is met."
+description: "A simulation, timing or system-placement change is verified at both frame cadences: a frame without a heartbeat must change no simulation state, and the multiplayer check holds the host near one frame per heartbeat against fast clients. A same-speed pair cannot see a frame-order fork. The pair is any two free machines; a cross-OS pair only when the change can differ by platform. A CI test asserts no wall-clock ratio and waits on real I/O in seconds, not frames. A test that asserts on timing is its own test tagged [Category(\"Performance\")], which no CI runs; a functional test never carries the tag, and a mis-tagged or mixed test is fixed where it is met."
 date: 2026-10-04
 ---
 
@@ -150,3 +150,31 @@ w1687 (PR #2142) took every timing test out of CI and split the mixed ones (`Way
   mixed test inside a tagged file: those are yours to catch.
 - Running one: `run_tests` with `assembly_names` and the exact `test_names`, master then your branch, on the same
   machine. Full text in the game repo: `Documentation/CI-Runs.md`, "Performance tests are local-only".
+
+## A determinism pair is any two free machines; a cross-OS pair only when the change can differ by platform (w1692, 2026-10-21)
+
+**Rule** (lothsahn, w1692).
+
+1. A simulation change's multiplayer determinism check runs two players on whatever machines are free, on any OS: two
+   Windows players, a Linux pair, or a Mac host with a Windows client. Do not pin the check to a machine or an OS the change does not need. A Mac
+   multiplayer client is still refused (`scripts/nightly/player_slots.py`, w1306), so a Mac takes part only as the host.
+2. A cross-OS pair (a Mac host against a Windows or Linux client: arm64 against x64, two compilers, two OSes) is needed
+   only when the change can behave differently across CPU architectures, compilers or OSes:
+   - floating-point or math-library use in the simulation (`float`, `Mathf`, `math.sin`, a library's own math);
+   - Burst or IL2CPP codegen-sensitive code (a new Burst job shape, intrinsics, float modes);
+   - platform-specific APIs, or file and IO paths;
+   - the desync hash or how it is captured;
+   - a desync reported only across OSes.
+3. The report and the PR's Evidence name the pair that ran and say in one line why the change did or did not need a
+   cross-OS pair. A brief asks for a cross-OS pair only for one of the cases in rule 2, and names it.
+
+**Why.** lothsahn, 2026-10-21: "We should only schedule a cross os determinism check if truly needed. There's only one
+m3 and m5 is often offline". For w1689 (a sleep-system guard with no floating-point math) he chose "Use two Windows
+players for w1689's multiplayer check", then corrected the default: "Not windows by default, any OS.  Being particular
+about a machine or OS limits the fleet we can use." A cross-OS pair waits for the one Mac that can host, so a needless
+one stalls the request; a same-OS pair still catches every order, frame-cadence and per-peer fork (rule 2 of the section
+at the top: hold the host near 20 fps whatever the OS).
+
+**How to apply.** Before you ask for the run, read the diff against the list in rule 2. None applies: ask for "two
+players, any free machines" and write "no cross-OS pair: <why>" in the Evidence row. One applies: ask for a Mac host
+and a Windows or Linux client, name the case, and say which machines you need and for how long.

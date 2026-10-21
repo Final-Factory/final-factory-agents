@@ -187,6 +187,10 @@ look first and relay only with the critic's report (FF Factory `read_rules ui`).
   bound it stops or skips on, and see the test go RED with that bound's `>` flipped to `>=` (w1069: random worlds all
   passed the flip).
 - **A CI test does not gate on the clock** ([lesson](lessons/verify-simulation-at-a-slow-hosts-frame-rate.md#a-ci-test-does-not-gate-on-the-clock-w857-2026-10-10)). A test the editmode job runs asserts no wall-clock ratio or time limit (move the timing to a `[Category("Performance")]` test, assert the structure), and a `[UnityTest]` waiting on real I/O counts seconds, not frames (w857: a 19 % flake and 422 s of a 14 minute job).
+- **A determinism pair is any two free machines; a cross-OS pair only when the change can differ by platform** ([lesson](lessons/verify-simulation-at-a-slow-hosts-frame-rate.md#a-determinism-pair-is-any-two-free-machines-a-cross-os-pair-only-when-the-change-can-differ-by-platform-w1692-2026-10-21)).
+  Two players on whatever machines are free, any OS; a Mac host against a Windows or Linux client only for float or
+  math-library use in the simulation, Burst or IL2CPP codegen-sensitive code, platform APIs or file paths, the desync
+  hash or its capture, or a desync reported only across OSes. The report says why the pair did or did not need it (lothsahn, w1692).
 - **A timing test is tagged Performance and checks nothing else** ([lesson](lessons/verify-simulation-at-a-slow-hosts-frame-rate.md#a-timing-test-is-tagged-performance-and-checks-nothing-else-w1690-2026-10-21)). A game test that asserts on
   timing (ms, frame time, throughput, a speed ceiling or ratio) carries `[Category("Performance")]` and asserts nothing
   functional; a functional test never carries it, since every CI lane leaves the category out. Performance tests run in no

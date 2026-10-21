@@ -70,7 +70,8 @@ audit on the Mac risks the same hang on a machine other workers share.
 
 The editor and scripted layers above are necessary checks, but they do not replace a live gameplay
 run for a multiplayer gameplay fix. Run matching current built players on two physical machines,
-including Windows and macOS when the affected path can differ by platform, and replay the reported
+on whatever OS is free; a cross-OS pair (a Mac host) only when the change can differ by platform
+([when](../evidence-gate/lessons/verify-simulation-at-a-slow-hosts-frame-rate.md#a-determinism-pair-is-any-two-free-machines-a-cross-os-pair-only-when-the-change-can-differ-by-platform-w1692-2026-10-21)), and replay the reported
 sequence through real input on both peers. A direct child or another explicitly coordinated agent
 drives the second peer. The playtest skill owns input and visual evidence; this skill owns the
 fingerprint verdict.
