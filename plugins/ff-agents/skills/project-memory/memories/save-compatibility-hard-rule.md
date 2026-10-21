@@ -43,7 +43,11 @@ Fixed in 0.50.0.46 by `Step0_50_0_45PlayerSimulationVelocity`.
   release that ships first stamps its saves at or above it and they are skipped. Before the merge,
   and again before a bump, re-version any step added since the last release above that release, and
   test a save at the last release's version (67043c1ff moved w393 to .77; a53d8acdb moved w455 from
-  .80 to .82 after two releases shipped).
+  .80 to .82 after two releases shipped). `scripts/upgrade_step_versions.py --base origin/master`
+  (CI) names the stale one. A re-version is three edits, not two: the class and file name, the
+  `Version`/`LogMessage`, and every test that asserts the version (`grep -rn "FFVersion(1, 0, 0, <old>)"
+  Assets/Tests Assets/Scripts/PlayModeTests`). w1684 renamed the first two with sed, and CI failed on
+  `RailgunCycleTest` still expecting 1.0.0.7.
 - **Tests** (all exist on develop since 0.50.0.46):
   - `SaveLayoutSnapshotTest` (fast suite) fails on any saved-layout change. Fix it by adding the
     step, then regenerate via `Final Factory/Serialization/Regenerate Save Layout Snapshot`; the
