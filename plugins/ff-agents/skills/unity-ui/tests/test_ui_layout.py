@@ -448,6 +448,17 @@ class MovedTest(unittest.TestCase):
         names = {u["path"] for u in ul.moves(before, after)["moved"]}
         self.assertFalse(any("ObjectivesPanel" in n or "ActionBarParent" in n for n in names), names)
 
+    def test_a_live_bar_whose_fill_follows_its_value_is_not_a_move(self):
+        # w1627: a production bar's Fill Area is as wide as its value; two moments of the same screen are no move.
+        def bar(fill_w):
+            panel = f"{GP}/DysonSegmentPanel/Parent/Content/Production/Slider"
+            return [el(panel, [924, 120, 1124, 132]), el(f"{panel}/Fill Area", [930, 120, 930 + fill_w, 132]),
+                    el(f"{panel}/Fill Area/Fill", [930, 120, 930 + fill_w, 132], sprite="UISprite")]
+        result = ul.moves(self.census(station_info(558, 515), bar(160)), self.census(station_info(558, 515), bar(54)))
+        self.assertEqual(result["moved"], [])
+        moved = ul.moves(self.census(station_info(558, 515), bar(160)), self.census(station_info(540, 62), bar(54)))
+        self.assertEqual([u["path"] for u in moved["moved"]], [f"{GP}/BuildInfoPanel"], "a real move is still listed")
+
     def test_two_objects_that_moved_differently_are_two_lines(self):
         # w722/w723: the objectives card went down under the strip while the box went to the top left.
         before = self.census(station_info(558, 515))

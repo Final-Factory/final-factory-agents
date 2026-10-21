@@ -159,6 +159,11 @@ def block_of(path: str, depth: int) -> str:
 
 
 IGNORE = ("[Graphy]", "DebugInfo", "AgentControlIndicator")  # development overlays, not in a release build
+# A Slider's fill and handle (Unity's default children `Fill Area`/`Fill`, `Handle Slide Area`/`Handle`) take their rect
+# from the slider's value: two censuses of a live bar (a production progress bar) at different moments differ by its
+# value, not by a layout move. `moves` leaves them out (w1627: the Dyson platform's Exotic Matter Generation bar's
+# `Fill Area` read as moved 50 to 62 px between matched before/after sessions of the same code path).
+SLIDER_VALUE = re.compile(r"/(Fill Area|Handle Slide Area)(/|$)")
 # A border, frame or outline sprite is hollow: the census has its rect, not its holes, so it cannot cover a text (the Technology
 # tab's selected tile: `SelectionFrame`, sprite `TechDependencyBorder`, orange ring over the tile's own cost text; w727).
 HOLLOW = re.compile(r"frame|border|outline|highlight|glow|shadow", re.IGNORECASE)
@@ -597,7 +602,7 @@ def moves(before: dict, after: dict, move_px: float = 4.0) -> dict:
     old, now = keyed(before), keyed(after)
     common = [k for k in now if k in old]
     delta = {k: [now[k][i] - old[k][i] for i in range(4)] for k in common}
-    moved = [k for k in common if max(abs(d) for d in delta[k]) > move_px]
+    moved = [k for k in common if max(abs(d) for d in delta[k]) > move_px and not SLIDER_VALUE.search(k[0])]
 
     def under(prefix: str):
         return [k for k in common if k[0] == prefix or k[0].startswith(prefix + "/")]
