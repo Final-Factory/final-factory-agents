@@ -40,6 +40,8 @@ way. Tests under `Assets/Tests/` that only exercise existing simulation behavior
 - New player-facing text goes through `Messages`/`Labels` constants and adds its localization
   rows for every locale, per `docs/LocalizationWorkflow.md`.
 - New or changed behavior gets EditMode coverage extending `EcsTestBase` where the task asks.
+  A test that asserts on timing is its own test, tagged `[Category("Performance")]`; a functional
+  test never carries the tag (evidence-gate `lessons/verify-simulation-at-a-slow-hosts-frame-rate.md#a-timing-test-is-tagged-performance-and-checks-nothing-else-w1690-2026-10-21`).
 - When the asked-for work is done and checked, stop. Don't add features, files, docs or
   refactors that weren't asked for; mention them at the end instead.
 

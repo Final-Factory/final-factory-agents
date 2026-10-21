@@ -265,6 +265,10 @@ to its pull request. For #1137's change the selection ran in 75 s against 376 s 
   `LocalizationHelper.ApplyLocalizedFont` (the tests need the open scene's `LocalizationHelper`), even after
   `manage_scene load main` and a domain reload; only a `unity restart` cleared it. Probe layouts in a built player's
   Deck tour (`layout.json` per shot) instead, or restart the editor before the next run.
+- **A test that asserts on timing is a Performance test** (lothsahn, w1690): it carries `[Category("Performance")]`
+  (and `[Explicit]`) and checks nothing functional; a functional test never carries the tag. No CI lane runs the category,
+  so run one by name, master then your branch on the same machine, and compare the two, never the ceiling. A mis-tagged or
+  mixed test you run into, you fix ([evidence-gate](../evidence-gate/lessons/verify-simulation-at-a-slow-hosts-frame-rate.md#a-timing-test-is-tagged-performance-and-checks-nothing-else-w1690-2026-10-21)).
 - **A whole-assembly run executes `[Explicit]` tests** (measured 2026-10-16, w1409, lothdesktop slot2): `run_tests` with
   `assembly_names` only ran `LandingTimingTest.CaptureOldLandingStates`, an `[Explicit]` fixture writer, and it rewrote its
   fixture from the wrong code (4 of 8 states; the replay then failed and the bad file was committed). A test that writes files

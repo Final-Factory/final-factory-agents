@@ -186,7 +186,12 @@ look first and relay only with the critic's report (FF Factory `read_rules ui`).
   Before you call an index or pruned search "the same pick as the full scan", have a case with a tie exactly on each
   bound it stops or skips on, and see the test go RED with that bound's `>` flipped to `>=` (w1069: random worlds all
   passed the flip).
-- **A CI test does not gate on the clock** ([lesson](lessons/verify-simulation-at-a-slow-hosts-frame-rate.md#a-ci-test-does-not-gate-on-the-clock-w857-2026-10-10)). A test the editmode job runs asserts no wall-clock ratio or time limit (make the benchmark `[Explicit]`, assert the structure), and a `[UnityTest]` waiting on real I/O counts seconds, not frames (w857: a 19 % flake and 422 s of a 14 minute job).
+- **A CI test does not gate on the clock** ([lesson](lessons/verify-simulation-at-a-slow-hosts-frame-rate.md#a-ci-test-does-not-gate-on-the-clock-w857-2026-10-10)). A test the editmode job runs asserts no wall-clock ratio or time limit (move the timing to a `[Category("Performance")]` test, assert the structure), and a `[UnityTest]` waiting on real I/O counts seconds, not frames (w857: a 19 % flake and 422 s of a 14 minute job).
+- **A timing test is tagged Performance and checks nothing else** ([lesson](lessons/verify-simulation-at-a-slow-hosts-frame-rate.md#a-timing-test-is-tagged-performance-and-checks-nothing-else-w1690-2026-10-21)). A game test that asserts on
+  timing (ms, frame time, throughput, a speed ceiling or ratio) carries `[Category("Performance")]` and asserts nothing
+  functional; a functional test never carries it, since every CI lane leaves the category out. Performance tests run in no
+  CI: locally, against a baseline from the same machine. A mis-tagged or mixed test you meet, you fix (split a mixed one).
+  Never loosen a timing threshold to pass CI (lothsahn, w1690).
 - **Read why a CI job died before re-running it** ([lesson](lessons/settle-your-own-guesses.md#read-why-a-ci-job-died-before-re-running-it-w906-2026-10-10)). A job
   cancelled at its timeout with no log at all (`BlobNotFound`) lost its runner; one with its log names the hung test
   (a watchdog prints it); "coverage file is empty" with every test green is a node child ended mid-exit. Name the
