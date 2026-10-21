@@ -41,6 +41,14 @@ players' hands). The game repo's `Documentation/Release-Lanes.md`, "A or B", has
 must be on that computer; if it is not, ask the dispatcher to place the request there (it clears a full BEAST with
 `build_plan coming` and the request's work_id first).
 
+**The build runs in that computer's slot1** (w1668; lothsahn: "Let's make sure that urgent builds always get scheduled
+in slot1 on whatever machine they run in so that it uses caches as warm as possible"). The lane builds the checkout it
+runs from, and a Library that never built Mac or Linux compiles every shader for it (1.0.0.3 in a cold slot3: about an
+hour more). FF Factory keeps slot1's caches on BEAST and LothDesktop (no trim, no reseed), and `build_plan start` moves
+you there (step 3). Its library line (`preflight`, every run) names the targets slot1 never built: then, outside an
+urgent release, a worker in slot1 runs `python scripts/release/urgent_release.py warm` once (it builds only the cold
+targets, main, uploads nothing, and waits its turn in the bench queue).
+
 Once per computer, before its first urgent release:
 
 ```sh
@@ -111,8 +119,13 @@ Right after the merge:
    off the machine"). `start` says go at once. FF Factory moves the workers there between turns, asks the ones mid-turn
    to pause, and stops the editors of the workers it paused, so their compiles and test runs end and run again after
    `done`. Your bench tickets count as urgent, and the lane's Unity runs **pre-empt** the bench queue: whatever holds it
-   (a batch run, a timed leg) stops cleanly and runs again after `done`. Never wait on a "Not yet": if a worker has not
-   paused, build anyway. A **Live view** stays open: its worker is told to start no compile, test or build until you are
+   (a batch run, a timed leg) stops cleanly and runs again after `done`. One "Not yet" is obeyed: **`Not yet (w1668)`**
+   means you are not in slot1. Commit and push, then end your turn with no check-in: FF Factory empties slot1 (its
+   workers go to other sandboxes there, on their branches) and moves you in on your branch, then resumes you there,
+   usually within two minutes. Pin the new editor instance it names, and `build_plan start` again. Declaring `coming`
+   early lets this happen at a turn you end anyway (waiting for the bump's CI). If slot1 cannot be emptied within 10
+   minutes you are told to build where you are. Never wait on any other "Not yet": if a worker has not paused, build
+   anyway. A **Live view** stays open: its worker is told to start no compile, test or build until you are
    done. Never close or move a Live view's editor yourself.
 3. Run the lane (about an hour of Unity at first, less once each target's Library is warm; measured in w1639's proof):
 
