@@ -8,7 +8,7 @@ metadata:
 ---
 
 **Lesson (w485, 2026-10-07, game 0.50.0.84, develop 4c0fe284c).** Gherik's four mods (Collector, FleetPatrol, ItemCannon, Repaint; his private repos) did not build against
-the current game, and the merged mod template (`bryding/FinalFactoryModTemplate` f21a859) does not either.
+the current game, and the merged mod template (`Final-Factory/FinalFactoryModTemplate` f21a859) does not either.
 
 ## Building a mod project (measured)
 

@@ -2,7 +2,7 @@
 
 **Lesson (2026-08-16).** The game's log-spam trace migration added a global-namespace
 `public class Debug : UnityEngine.Debug` (`Assets/Scripts/FFCore/Logging/Debug.cs:53`,
-shipped in FFCore.dll). In the mod template repo (`bryding/FinalFactoryModTemplate`),
+shipped in FFCore.dll). In the mod template repo (`Final-Factory/FinalFactoryModTemplate`),
 the copied game DLLs used to be auto-referenced into every assembly — so that one type
 produced ~260 `CS0576` ("conflicting with alias 'Debug'") errors inside Unity PACKAGE
 code (visualscripting, netcode.gameobjects, shadergraph, burst editor, services.*) and
