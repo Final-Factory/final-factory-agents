@@ -94,7 +94,8 @@ branch moves before you trigger, re-read the new commits and add them.
 
 ## 3. The file (copy the format exactly)
 
-`Temp/release-notes-<version>.md` in your checkout (the game repo ignores `Temp/`); the trigger
+`Temp/release-notes-<version>.md` in your checkout (the game repo ignores `Temp/`; but Unity deletes `Temp/` when the
+editor exits, so draft in `$TMPDIR` if the editor will stop before the trigger, as on the urgent lane, w1700); the trigger
 script's `--notes` commits it as `cicd/release-notes/<version>.md`.
 
 - **Line 1**: `steam_description: ` then a short change list for the partner site's Builds page.

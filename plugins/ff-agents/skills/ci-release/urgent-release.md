@@ -86,9 +86,13 @@ Never print, echo or log either; check them by name only.
 ## 2. The bump, with the claim
 
 ```sh
-scripts/trigger-ci-release.sh master --urgent beast --request wNNN --notes Temp/release-notes-<v>.md   # A; lothdesktop when BEAST is offline
-scripts/trigger-ci-release.sh master --urgent beast --from green --request wNNN --notes Temp/release-notes-<v>.md   # B
+scripts/trigger-ci-release.sh master --urgent beast --request wNNN --notes "$TMPDIR/release-notes-<v>.md"   # A; lothdesktop when BEAST is offline
+scripts/trigger-ci-release.sh master --urgent beast --from green --request wNNN --notes "$TMPDIR/release-notes-<v>.md"   # B
 ```
+
+**Draft the notes in `$TMPDIR`, not the project's `Temp/`, on this lane** (w1700, 1.0.0.8): the worker stops its
+sandbox's editor before the build, and Unity deletes the project's `Temp/` when the editor exits, so a draft in
+`Temp/release-notes-<v>.md` was gone when the trigger ran and had to be recovered from the transcript.
 
 **B** makes the bump commit on the green commit, not on master's tip, and the claim names it (`"from"`). Its pull request
 `release/<v>` merges into master as any bump does: master's version becomes the released one, the merges since the green

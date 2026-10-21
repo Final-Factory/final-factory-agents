@@ -193,7 +193,8 @@ change to two version lines (plus its notes) has nothing to test beyond the HEAD
 ## 0.5. Write the release notes first (they ride in the bump)
 
 **Every release carries its notes** (Ben, 2026-09-28). Before triggering, write
-`Temp/release-notes-<version>.md` in your checkout from `git log <previous release>..origin/master`,
+`Temp/release-notes-<version>.md` in your checkout (`$TMPDIR/release-notes-<version>.md` when you will stop or
+restart the editor first, as the urgent lane does: Unity deletes `Temp/` when the editor exits, w1700) from `git log <previous release>..origin/master`,
 exactly as **`patch-notes.md`** beside this file says: line 1 is `steam_description: <short change
 list>` (ffbox makes it the Steam build's description, `<version> (<sha9>): <that line>`), line 2 is
 blank, and the rest is the player-facing #dev-patch-notes post. Then pass it to the script with
