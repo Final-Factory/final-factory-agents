@@ -125,6 +125,9 @@ look first and relay only with the critic's report (FF Factory `read_rules ui`).
   `ffbox_activity show config` / `show signatures`) and quote the key and value, or say unknown.
   For what FF Factory itself did (a deploy, a clean-up, an update, a restart), read the portal's own logs with
   `mcp__machine__portal_logs` (w920) and name the source and window; never infer it from the code.
+- **List environment variables by name, never their values** ([lesson](lessons/list-env-by-name-never-values.md)).
+  `env | cut -d= -f1 | grep -i <word>`, or `printenv NAME | wc -c` to see a value is set; never `env | grep` and a sed
+  that redacts what you thought of (w1664: a filter on TOKEN printed the vault's FFSTEAM_PASSWORD into a transcript).
 - **Compile-check before you start the editor after a revert or a delete** ([lesson](../project-memory/memories/compile-check-before-you-start-the-editor.md)).
   Change code with the editor running and `refresh_unity`. With it stopped, `git grep` every name you removed (tests
   too) and run editor-ops' offline compile check before `unity start`/`restart`: a compile error on disk at boot puts
