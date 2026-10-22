@@ -129,6 +129,10 @@ since 2026-09-25 went straight to master with no check run on them). The driver 
 the push and the merge.
 A worker session's PreToolUse hook refuses `gh pr create --base master` (it guards the *game* repo's master); this
 repo's default branch is master, so run `gh pr create` without `--base` and put the body in a file (w742).
+The same hook refuses `git switch` and `git checkout <branch>` in any clone, a `$TMPDIR` clone too, while the sandbox's
+editor runs (w1770). Commit on the clone's checked-out branch and push it under a new name:
+`git push origin HEAD:refs/heads/<branch>`, then `gh pr create --head <branch>`; `git merge --ff-only origin/master`
+brings it up to date afterwards.
 
 The manifests are UTF-8 with literal em-dashes. `bumpVersion.sh` uses sed, which rewrites only
 the matched bytes; never reimplement a version edit by parsing and re-serializing the JSON,
