@@ -13,10 +13,12 @@ For any `rm`, `Remove-Item`, `del`, `rd`, `git clean`, `shutil.rmtree` or clean-
    its `root.json`. No root known: you delete nothing outside your own `$TMP` and sandbox.
 1a. **Windows: is every path you are about to measure, scan or delete on the install folder's drive?** (w1755) The drive
    of `$FF_WORKER_ROOT` (`V:` on LothDesktop, `F:` on BEAST), never a fixed letter. A path on C: (the home folder,
-   `AppData`, `~/.claude`, the system temp, `LocalLow`, Unity Hub) is not looked at at all: no `du`, `dir /s`,
+   `AppData`, `~/.claude`, the system temp, Unity Hub) is not looked at at all: no `du`, `dir /s`,
    `Get-ChildItem -Recurse`, `robocopy /L`, `find` or `ff-leftovers check` there, whatever the brief or the question asks
    (lothsahn: "You need to only look at v:.  Stop messing with my c:"; [lesson](../lessons/clean-up-after-yourself.md#windows-disk-work-stays-on-the-install-drive-never-c-w1755)).
-   An install folder on C: allows only that folder.
+   An install folder on C: allows only that folder. The one exception: the game's `Never Games` folders under AppData
+   (`LocalLow`, `Local`, `Roaming`) may be read and measured, and are never deleted, moved or written (lothsahn: "Let's let
+   it scan the never games folder, but not the rest of C.  And it shouldn't modify it.").
 2. **Is every path of this delete strictly inside it?** Write the list of paths first and compare each to the root
    ([delete only inside the worker root](../lessons/clean-up-after-yourself.md#delete-only-inside-the-workers-install-folder-outside-it-measure-and-report-w896), w896: lothsahn, "in general we
    should only be clearing data in the install folder for the worker"). One outside path, a wildcard that can reach
