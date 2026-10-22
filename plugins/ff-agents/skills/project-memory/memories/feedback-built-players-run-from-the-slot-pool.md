@@ -15,6 +15,8 @@ python scripts/nightly/player_slots.py launch [--detach] <finalfactory.exe | its
 "${FF_LAUNCH[@]}" "$PLAYER" -- <player args> &
 ```
 
+**Not beside another worker's timed run** (w1750, lothsahn: "Why is the game player running if the worker has an exclusive lock on beast?"): while another worker holds the machine's bench lock for a timed run, `player_slots.py launch` (every launch path), `record_clip` and FF Factory's shell guard refuse a player or a clip there, with `bench lock held by worker <id> (...), until HH:MMZ`. Move the work to another machine, or wait: `--bench-wait <s>` (or `FF_BENCH_WAIT_S`) waits up to that long and starts when the hold ends. Your own timed run's players pass. `python scripts/bench/bench_queue.py status` shows the queue; the game repo's `Documentation/Bench-Lock.md`, "No players or clips beside a timed run". `launch` exits 5 when refused; `player_slots.bench_gate` is the check, before a slot is leased, with the pool on or off, and over ssh (`python - acquire`) too.
+
 **Worker-root installs (lothsahn, 2026-10-07, w576; LothDesktop first):** no shared pool. Each sandbox slotK
 (K = 1..N, N the machine's sandbox count) owns exactly two player folders, `<root>\players\slotK-0` (peer 0, the
 host) and `slotK-1` (peer 1, the client), each with one inbound firewall rule; the installer's `--max-sandboxes N` makes

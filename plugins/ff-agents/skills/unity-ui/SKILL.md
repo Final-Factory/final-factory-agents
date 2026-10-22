@@ -66,6 +66,8 @@ with a scripted Deck: `-ffDeckTour <steps.json> -ffDeckTourOut <dir> -ffDeckTour
 (`python scripts/nightly/player_slots.py launch <build> -- <args>`). Each `shot` saves a PNG and a
 census (`<shot>.json`: small, clipped, off-screen and overlapping text, covered controls).
 
+**Not beside another worker's timed run** (w1750, lothsahn: "Why is the game player running if the worker has an exclusive lock on beast?"): while another worker holds the machine's bench lock for a timed run, `player_slots.py launch` (every launch path), `record_clip` and FF Factory's shell guard refuse a player or a clip there, with `bench lock held by worker <id> (...), until HH:MMZ`. Move the work to another machine, or wait: `--bench-wait <s>` (or `FF_BENCH_WAIT_S`) waits up to that long and starts when the hold ends. Your own timed run's players pass. `python scripts/bench/bench_queue.py status` shows the queue; the game repo's `Documentation/Bench-Lock.md`, "No players or clips beside a timed run".
+
 - **Wake a Mac's display first (w1165).** A locked Mac whose display has gone to sleep stalls every built player at start-up
   (under 1 % CPU, `tour.log` ends at `screen WxH Windowed`, the first `waitFor` times out after 10 minutes): run
   `caffeinate -u -d -i -t <seconds>` before the launch (it wakes the display; the lock can stay). Check with

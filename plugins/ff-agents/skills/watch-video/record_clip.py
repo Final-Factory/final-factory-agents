@@ -101,6 +101,48 @@ def repo_root():
         return os.getcwd()
 
 
+BENCH_BUSY_EXIT = 76  # the game repo's bench_queue.py EXIT_BENCH_BUSY
+
+
+def bench_gate(wait_s=None):
+    """w1750 (lothsahn, 2026-10-22: "Why is the game player running if the worker has an exclusive lock on beast?"): no
+    clip is shot while another worker's timed run holds this machine's bench lock. The game repo's own check decides
+    (`scripts/bench/bench_queue.py gate`, the same one player_slots.py launch makes): the checkout this runs in, else the
+    newest one in the worker install's sandboxes. It passes the holder's own clips (its FF_SESSION_ID or FF_BENCH_TICKET),
+    waits up to `wait_s` (default $FF_BENCH_WAIT_S, else 0) and exits 76 naming the holder and the end of its hold. With
+    no checkout that has the gate (older than w1750, or none), the clip goes ahead. FF_BENCH_GATE=off skips it."""
+    if os.environ.get("FF_BENCH_GATE", "").lower() in ("off", "0", "no"):
+        return
+    cands = [os.path.join(repo_root(), "scripts", "bench", "bench_queue.py")]
+    root = os.environ.get("FF_WORKER_ROOT")
+    if root:
+        found = []
+        try:
+            for n in os.listdir(os.path.join(root, "sandboxes")):
+                c = os.path.join(root, "sandboxes", n, "scripts", "bench", "bench_queue.py")
+                if os.path.exists(c):
+                    found.append((os.path.getmtime(c), c))
+        except OSError:
+            pass
+        cands += [c for _, c in sorted(found, reverse=True)]
+    for c in cands:
+        if not os.path.exists(c):
+            continue
+        cmd = [sys.executable, c, "gate", "--what", "a clip"] + (["--wait", str(wait_s)] if wait_s is not None else [])
+        try:
+            r = subprocess.run(cmd, stdout=subprocess.DEVNULL, stderr=subprocess.PIPE, text=True)
+        except OSError:
+            continue
+        if r.returncode == 0:
+            if r.stderr.strip():
+                print(r.stderr.strip(), file=sys.stderr)
+            return
+        if r.returncode == BENCH_BUSY_EXIT:
+            print(r.stderr.strip(), file=sys.stderr)
+            sys.exit(BENCH_BUSY_EXIT)
+        # 2: a checkout from before w1750 has no `gate`; try the next
+
+
 # ---------------------------------------------------------------------------- agent channel
 
 class Channel:
@@ -320,9 +362,13 @@ def main():
     ap.add_argument("--review", help="the intended look, in words: run watch_video --mode vfx on the clip")
     ap.add_argument("--brief", help="the intended look, as a file: run watch_video --mode vfx on the clip")
     ap.add_argument("--compare", help="an earlier (before / approved) clip for watch_video to compare against")
+    ap.add_argument("--bench-wait", type=float, metavar="SECONDS",
+                    help="while another worker's timed run holds this machine's bench lock, wait up to this long "
+                         "(default $FF_BENCH_WAIT_S, else 0: refuse at once, exit 76; w1750)")
     args = ap.parse_args()
     if not shutil.which("ffmpeg"):
         sys.exit("record_clip: needs ffmpeg on PATH")
+    bench_gate(args.bench_wait)
 
     pid = args.pid or (player_pid() if args.player else unity_pid(args.unity or repo_root()))
     eff = EFFECTS.get(args.effect, {})
