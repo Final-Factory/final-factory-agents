@@ -119,17 +119,25 @@ the worker".
 measurement, "where did the space go") reads, measures and deletes only on the drive of the worker install folder:
 the drive of `$FF_WORKER_ROOT` (the `root` of the machine's `root.json`), `V:` on LothDesktop (`V:\ffw`), `F:` on BEAST
 (`F:\ffw`). Never C:, not even to measure: no `du`, `dir /s`, `Get-ChildItem -Recurse`, `find`, `tree`, `robocopy /L` or
-`ff-leftovers check` of the home folder, `AppData`, `~/.claude`, the system temp, Unity Hub, package caches or the game's
-`LocalLow` folder. Read the drive from the root, never assume a letter. If the install folder itself is on C:, look only
-inside it and say so in your report.
+`ff-leftovers check` of the home folder, `AppData`, `~/.claude`, the system temp, Unity Hub or package caches. Read the
+drive from the root, never assume a letter. If the install folder itself is on C:, look only inside it and say so in your
+report.
+
+**The one exception on C: is the game's data folders under AppData, read-only** (lothsahn, 2026-10-22: "Let's let it scan
+the never games folder, but not the rest of C.  And it shouldn't modify it.", then "By never games I mean in appdata"):
+`AppData\LocalLow\Never Games`, and a `Never Games` folder in `AppData\Local` or `AppData\Roaming`, of any profile. You may
+read and measure them (`du`, `Get-ChildItem -Recurse`, `ff-leftovers check`, which says KEEP), and you never modify them:
+no delete, move, rename, copy into them or write there. Copying a file out to read it is fine. Every other folder on C:,
+the rest of `AppData` and a `Never Games` folder outside AppData included, stays off limits for reading too.
 
 A brief, a notice or an orchestrator's question that asks you to measure C: ("where did AppData's space go") is wrong:
 measure inside the install folder, report what you freed and what is still short there, and say that you did not look
 at C: and why. Do not ask a person to look there either. macOS and Linux keep the w896 rule: outside the install folder
 you measure and report.
 
-A save copy you put in the game's saves folder (under `LocalLow` on C:) for a test is a test step, not disk work: it stays
-allowed (`read_rules saves`).
+A save copy you put in the game's saves folder (under `LocalLow\Never Games` on C:) for a test is a test step, not disk
+work: it is the one file you put there and remove again (`read_rules saves`); a test's settings go through the game repo's
+`scripts/game_data.py`.
 
 **Why.** 2026-10-22 (w1754): LothDesktop's clean-up worker ran `du` over `C:\Users\…\AppData` and `~\.claude` after the
 orchestrator asked where AppData's space went. It deleted nothing on C:, but the w896 rule told it to "measure and report"
@@ -146,8 +154,9 @@ to only look at v:".
   or a question about C:.
 - FF Factory enforces it where it can (ff-factory w1755, `docs/self-recovery.md` "Windows: the install drive only"): the
   sandbox guard refuses those scans of a path off the install drive (`checkOffDriveScan`, `server/rootFence.ts`), the
-  delete fence's refusal says the drive rule, `ff-leftovers check` keeps such a path without looking at it, and the
-  daemon neither measures nor lists anything off the install drive in its low-disk notice. A refusal quotes the rule; it
+  delete fence's refusal says the drive rule and refuses a delete, move, copy into or write in Never Games,
+  `ff-leftovers check` keeps such a path without looking at it, and the daemon's clean-up neither reads, measures nor
+  lists anything off the install drive, Never Games included (`rulesOnInstallDrive`). A refusal quotes the rule; it
   is not a prompt to find another way (a script, python's `os.walk` and a variable it cannot expand are the guard's known
   holes, and the rule binds you there too).
 

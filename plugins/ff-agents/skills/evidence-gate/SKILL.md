@@ -399,6 +399,8 @@ One file each under `lessons/`: the rule, why (the incident, dated), how to appl
   **Windows: disk work stays on the install drive, never C:** (w1755): a clean-up, a low-disk check, a leftover scan or a
   disk measurement reads, measures and deletes only on the drive of `$FF_WORKER_ROOT` (V: on LothDesktop, F: on BEAST), not
   even a `du` of `AppData` or `~/.claude` (w1754 did; lothsahn: "You need to only look at v:.  Stop messing with my c:";
+  the game's AppData `Never Games` folders alone may be read, never modified: "Let's let it scan the never games folder, but
+  not the rest of C.  And it shouldn't modify it.";
   [lesson](lessons/clean-up-after-yourself.md#windows-disk-work-stays-on-the-install-drive-never-c-w1755), [checklist](checklists/delete.md) item 1a).
   And (w1379): a clean-up deletes only what `ff-leftovers folders` marks DELETE (closed requests, orphans); the temp, build and review
   folders of a worker whose request is open, stalled or paused stay, running or not, and a brief's list of live workers is not the ledger
