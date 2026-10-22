@@ -615,6 +615,8 @@ it there (On a worker-root install (LothDesktop since w576) each sandbox slotK h
 `"${FF_LAUNCH[@]}" "$PLAYER" -- …`. The audit, feel and bench scripts and `ffnightly.py` already
 do (project-memory `feedback-built-players-run-from-the-slot-pool`).
 
+**Not beside another worker's timed run** (w1750, lothsahn: "Why is the game player running if the worker has an exclusive lock on beast?"): while another worker holds the machine's bench lock for a timed run, `player_slots.py launch` (every launch path), `record_clip` and FF Factory's shell guard refuse a player or a clip there, with `bench lock held by worker <id> (...), until HH:MMZ`. Move the work to another machine, or wait: `--bench-wait <s>` (or `FF_BENCH_WAIT_S`) waits up to that long and starts when the hold ends. Your own timed run's players pass. `python scripts/bench/bench_queue.py status` shows the queue; the game repo's `Documentation/Bench-Lock.md`, "No players or clips beside a timed run".
+
 **A player build from a live editor can wait on a modal for good.** The first Addressables content build of a
 project in a non-batch editor asks "Addressables Build Report ... Would you like to turn it on?" (Addressables
 `BuildScriptBase.NotifyUserAboutBuildReport`); nobody answers it in a sandbox, the editor sits at 0% CPU and the

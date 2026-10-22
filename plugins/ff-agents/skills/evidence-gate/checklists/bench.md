@@ -17,6 +17,7 @@ Mechanics: the game repo's `Documentation/Bench-Lock.md`.
 - [ ] **The right ticket.** `bench_lock` (exclusive) only for a run whose numbers are times. Untimed heavy work
       (determinism pairs, repros, censuses, launch checks) takes `bench_lock --shared`. A build takes no `bench_lock`,
       because its own `ff_unity_slot` ticket queues it.
+- [ ] **The machine is yours while you hold it, and only then** (w1750). Your own players and clips pass the lock (the same `FF_SESSION_ID`, or inside `bench_lock`); other workers' are refused until you give it back, so give it back between legs. Not covered: a player already running when you were granted (your `quiet` gate waits for its CPU).
 - [ ] **Nothing under the lock but the leg.** The Unity slot is taken before the ticket. Builds and digests run
       outside it, and the lock is given back between legs.
 - [ ] **Lock time reported.** The result says how long the run held the lock (`bench_queue.py report`).

@@ -119,6 +119,8 @@ host waits for its client, and the develop nightly 3596c18d sat at the title men
 answering `state_not_playable` ("the game is 'menu'"). The automation roles are for a host and client pair
 (`scripts/audit/run_build_multiplayer_audit.sh`).
 
+**Not beside another worker's timed run** (w1750, lothsahn: "Why is the game player running if the worker has an exclusive lock on beast?"): while another worker holds the machine's bench lock for a timed run, `player_slots.py launch` (every launch path), `record_clip` and FF Factory's shell guard refuse a player or a clip there, with `bench lock held by worker <id> (...), until HH:MMZ`. Move the work to another machine, or wait: `--bench-wait <s>` (or `FF_BENCH_WAIT_S`) waits up to that long and starts when the hold ends. Your own timed run's players pass. `python scripts/bench/bench_queue.py status` shows the queue; the game repo's `Documentation/Bench-Lock.md`, "No players or clips beside a timed run". A refused launch exits 5.
+
 ⚠️ **Never run a built player from its build folder** (a sandbox's `Builds/…`, `builds/<sha>-win`,
 a temp dir): every new exe path raises the Windows Firewall "allow finalfactory.exe?" prompt and
 stalls the run. `player_slots.py launch` (game repo, `scripts/nightly/`) runs it from a player slot,

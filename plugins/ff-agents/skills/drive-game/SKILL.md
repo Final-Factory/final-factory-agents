@@ -106,6 +106,7 @@ none of it: measured **141 fps fully occluded** (against the editor's ~2), so fr
 
 Launch it through the player slot pool, never from its build folder (a new exe path raises the
 Windows Firewall prompt): `python scripts/nightly/player_slots.py launch --detach <build> -- …`.
+**Not beside another worker's timed run** (w1750, lothsahn: "Why is the game player running if the worker has an exclusive lock on beast?"): while another worker holds the machine's bench lock for a timed run, `player_slots.py launch` (every launch path), `record_clip` and FF Factory's shell guard refuse a player or a clip there, with `bench lock held by worker <id> (...), until HH:MMZ`. Move the work to another machine, or wait: `--bench-wait <s>` (or `FF_BENCH_WAIT_S`) waits up to that long and starts when the hold ends. Your own timed run's players pass. `python scripts/bench/bench_queue.py status` shows the queue; the game repo's `Documentation/Bench-Lock.md`, "No players or clips beside a timed run". A refused launch exits 5.
 Give it a quit timer (`-ffSoloQuitAfterSeconds <n>`), and before DONE end what `ff-leftovers list` shows and say in the report
 what it ended (not `ff-leftovers end` before the w1222 fix: it ended the worker's own Claude on Windows; evidence-gate
 `lessons/clean-up-after-yourself.md`) (w1196: two leftover players ran 27 h and 34 h on biscuit; evidence-gate `checklists/done.md` item 4).

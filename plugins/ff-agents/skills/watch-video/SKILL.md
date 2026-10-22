@@ -55,6 +55,7 @@ with a smooth built-game clip (recorded as below), and you stop the Live view an
    "ffauto:..."` fires any other command, and `--pre` runs set-up first. Frame the effect first (e.g.
    `ffauto:camera.zoom|600`, UI hidden). The clip is a constant-60-fps MP4 in `<tmp>/vfx_clips/`, with
    `<clip>.json` recording when the effect fired. `watch_video` anchors on that time.
+   **Not beside another worker's timed run** (w1750, lothsahn: "Why is the game player running if the worker has an exclusive lock on beast?"): while another worker holds the machine's bench lock for a timed run, `player_slots.py launch` (every launch path), `record_clip` and FF Factory's shell guard refuse a player or a clip there, with `bench lock held by worker <id> (...), until HH:MMZ`. Move the work to another machine, or wait: `--bench-wait <s>` (or `FF_BENCH_WAIT_S`) waits up to that long and starts when the hold ends. Your own timed run's players pass. `python scripts/bench/bench_queue.py status` shows the queue; the game repo's `Documentation/Bench-Lock.md`, "No players or clips beside a timed run". `record_clip` exits 76 when refused.
 3. **Review** (`--review`/`--brief` runs it for you): `watch_video clip.mp4 --mode vfx --brief look.md
    [--compare approved.mp4] [--frames 2.4-3.1]`. Read `report.md`, then LOOK at `frames.jpg` (every
    frame of the effect's life, numbered), `sheet.jpg`, `compare.jpg` (the reference and this clip side
