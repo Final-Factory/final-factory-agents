@@ -19,6 +19,9 @@ holds, or the report says what is left instead of DONE.
    sandbox's build and capture output and the rest ([workers do not clean up](../lessons/clean-up-after-yourself.md)). There
    is no `rm`, `Remove-Item` or `player_slots.py prune` in the work and no "removed N GB" in the report. What the report links
    is published (`publish_review`, `specs/<NNN>/proofs/`) and every clone you need is pushed.
+   No runtime of yours ran from `$TMPDIR` while listening (a node or python copy unpacked there): everything you started
+   bound 127.0.0.1 or ran from a stable path such as PATH's node and the player slots, so no firewall prompt was raised
+   ([lesson](../lessons/listeners-stable-paths-or-loopback.md), w1742).
    Every delete you did run was strictly inside the machine's worker install folder (`$FF_WORKER_ROOT`); what lies outside it you measured and
    reported with sizes, plus the list of what makes FF Factory write there, and did not delete, whatever the brief said
    ([the delete checklist](delete.md), [delete only inside the worker root](../lessons/clean-up-after-yourself.md#delete-only-inside-the-workers-install-folder-outside-it-measure-and-report-w896), w896).
