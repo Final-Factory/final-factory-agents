@@ -125,6 +125,13 @@ look first and relay only with the critic's report (FF Factory `read_rules ui`).
   `ffbox_activity show config` / `show signatures`) and quote the key and value, or say unknown.
   For what FF Factory itself did (a deploy, a clean-up, an update, a restart), read the portal's own logs with
   `mcp__machine__portal_logs` (w920) and name the source and window; never infer it from the code.
+- **What is in a player's build comes from running it** ([lesson](lessons/whats-in-a-players-build-is-checked-by-running-it.md)).
+  "X is in Build N", "players on development have it", "it's not in pre-1.0": run that build (or a player of its exact
+  commit) and open X, and say what you ran; from a grep, git ancestry or a past report it is a guess that names the
+  build to run. Asked to investigate, a doubt your quick look leaves is settled by the run, and an orchestrator files
+  it in the same turn. A player-facing fix's DONE names the Steam branch and build that carry it (`Ships in:`) and
+  whether pre-1.0 needs a cherry-pick (`pre-1.0:`); `python build_claim_check.py <report> [--done]` checks both
+  (w1770: Ben, "so you're lying to me, or you didn't actually check").
 - **List environment variables by name, never their values** ([lesson](../project-memory/memories/list-env-by-name-never-values.md)).
   `env | cut -d= -f1 | grep -i <word>`, or `printenv NAME | wc -c` to see a value is set; never `env | grep` and a sed
   that redacts what you thought of (w1664: a filter on TOKEN printed the vault's FFSTEAM_PASSWORD into a transcript).
@@ -213,7 +220,8 @@ look first and relay only with the critic's report (FF Factory `read_rules ui`).
 
 - [Done](checklists/done.md): before `DONE: wNNN` or saying a request is finished: merged, every
   check the brief's Done names, the steps after the merge, the `Learned:` line, your disk leftovers removed (builds, Captures, worktrees, player slots),
-  labels and ids, and every quote copied from its source (`quote_check.py`, w1399).
+  labels and ids, and every quote copied from its source (`quote_check.py`, w1399); a player-facing fix's `Ships in:` and
+  `pre-1.0:` lines, every build claim from a run (`build_claim_check.py --done`, w1770).
 - [Delete](checklists/delete.md) (w896): before any remove on a machine's disk, a clean-up above all: every path strictly inside
   the worker install folder (`$FF_WORKER_ROOT`); outside it you measure and report sizes and list what writes there, whatever
   the brief says. On Windows (w1755) you read, measure and delete only on the install folder's drive, never C:.
@@ -277,8 +285,13 @@ One file each under `lessons/`: the rule, why (the incident, dated), how to appl
 - [No merge before the review](lessons/no-merge-before-the-review.md): "pending" is not done.
 - [Merge your own pull request](lessons/merge-your-own-pr.md): verified and green means merge;
   hold only for exceptional risk or a timing reason, and say which and when. mechanics: check `git branch --show-current` after a wait, gate `gh pr merge` on a passing check (`gh pr checks N && gh pr merge N --match-head-commit <sha>`: exit 8 is pending; w864; in a worker `ff-pr merge`, one call, w1478), post the verdict only from the newest ff-agents (w807); a red check that is not your change, and `not our ref` at checkout ([section](lessons/merge-your-own-pr.md#a-red-check-that-is-not-your-change-read-the-failing-test-then-the-cause-w1337-2026-10-15), w1337).
-- [A release lands where SETLIVE says](lessons/a-release-lands-where-setlive-says.md): a master bump
-  on `development`, nothing sets `pre-release` or the default; run `release-status.py`, never recall it.
+- [What is in a player's build is checked by running it](lessons/whats-in-a-players-build-is-checked-by-running-it.md):
+  "X is (not) in Build N / on branch Z" rests on running that build or its exact commit and opening X, never a grep or
+  git ancestry (else: guess, naming the build to run); asked to investigate, run the check (an orchestrator files it in
+  the same turn); a player-facing fix's DONE says `Ships in:` and `pre-1.0:` (`build_claim_check.py`; w1770, after
+  #1760's tabs were called in Build 111 from git and players had none). Where a release lands: a master bump on
+  `development`, nothing sets `pre-release` or the default; run `release-status.py`, never recall it
+  ([section](lessons/whats-in-a-players-build-is-checked-by-running-it.md#where-a-release-lands-is-read-not-recalled-2026-10-03)).
 - [Ask before content goes live](lessons/ask-before-content-goes-live.md): a build that makes major new
   content live on any Steam branch (1.0, a toggle on by default, an open beta) waits for the person's go for
   that moment, even on an agreed plan; a brief or PR that changes what a branch serves by default names that

@@ -77,6 +77,16 @@ holds, or the report says what is left instead of DONE.
    the try or the filed request (its wNNN), and, for what is left, the blocker's evidence (the error, a screenshot) and
    the one smallest step only the person can take (their own login, password or 2FA code, an approval)
    ([research the route before you say can't](../lessons/research-the-route-before-you-say-cant.md), w935, w1287).
+8a. **Where a player-facing fix ships, and every build claim run** (w1770). A fix players see names the Steam branch
+   and build that carry it, or the bump that will, in a `Ships in:` line, and whether the pre-1.0 line needs a
+   cherry-pick in a `pre-1.0:` line (`cherry-pick needed (<wNNN or PR>)`, `#<PR>` for one you opened, or `not needed:
+   <why>`): master is the 1.0 build on `development`, pre-1.0 the line default-branch players get until 1.0 ships.
+   Every "is in", "has", "contains", "missing" or "not in" beside a build number, version or Steam branch in the report
+   rests on a run of that build or its exact commit with the feature opened (what you ran, what you saw), or says guess
+   and names the build to run; a grep, `git merge-base` or a past report is not a run. `python build_claim_check.py
+   <report> --done` checks both ([what is in a player's build is checked by running
+   it](../lessons/whats-in-a-players-build-is-checked-by-running-it.md)). Ben, on #1760's tabs called done on master
+   and then "in Build 111" from git: "so you're lying to me, or you didn't actually check".
 9. **Learned.** The report has `Learned: <file or PR>` or `Learned: nothing new`. A correction or a
    reopen gets the check that would have caught it ([lessons belong in the harness
    repo](../lessons/lessons-belong-in-the-harness-repo.md)).

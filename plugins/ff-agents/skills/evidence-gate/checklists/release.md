@@ -54,7 +54,7 @@ adds what a release rests on and the first check after it.
    <version>` (game repo) says LANDED, with the BuildID on `development` (a master bump; ffbox
    `release_lane.SETLIVE`, read by the script). `pre-release` and the default branch are set by nothing:
    a person moves them; never propose moving one while the script says BUILDING or
-   WAITING (lesson: [a release lands where SETLIVE says](../lessons/a-release-lands-where-setlive-says.md)).
+   WAITING (lesson: [where a release lands is read, not recalled](../lessons/whats-in-a-players-build-is-checked-by-running-it.md#where-a-release-lands-is-read-not-recalled-2026-10-03)).
 7. **Players are not worse off than on the previous build.** Read, by version and by platform
    (Windows, Mac): the crash and desync reports players' games uploaded for the new version
    (FFBox's intake holds them; an orchestrator sees them with `ffbox_activity`), and new threads
