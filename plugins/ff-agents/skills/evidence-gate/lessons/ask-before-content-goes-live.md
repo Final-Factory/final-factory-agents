@@ -29,7 +29,7 @@ players, even on a beta branch, and a build that is live cannot be taken back qu
   Steam branch serves by default in a way players would notice as new? Read it from the code at the
   release commit, not from the notes: the version against `FeatureToggles.OnByDefault` (a 1.0.0.0
   bump turns every 1.0 toggle on), toggles deleted (shipped) in the range, and which branch
-  `SETLIVE` sets ([a release lands where SETLIVE says](a-release-lands-where-setlive-says.md)).
+  `SETLIVE` sets ([where a release lands is read, not recalled](whats-in-a-players-build-is-checked-by-running-it.md#where-a-release-lands-is-read-not-recalled-2026-10-03)).
 - **Ask for the moment in plain words**, naming the content, the branch and what goes live with it
   ("Bumping master to 1.0.0.0 sets 1.0, with all nine 1.0 toggles on, live on development as soon
   as it builds. When should it go live?"). Then `waiting_on_person` and stop; don't bump, don't
