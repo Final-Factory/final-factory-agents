@@ -321,3 +321,35 @@ command is written out under `$TMPDIR` (after the portal deploy that carries w10
   `LocalLow`. It writes only `UserData/settings/settings.json`, `LocalSettings/settings.json` and the saves you name.
 - The w913 rule above already said "do not clean up"; w1079's worker did not count a rerun's output folders as clean-up.
   They are: never delete a folder to use it again.
+
+## A listener binds 127.0.0.1 or runs from a stable path, never from $TMPDIR (w1742)
+
+**Rule.** Windows Firewall shows an "allow access" prompt the first time a program path listens on any address but
+loopback: 0.0.0.0, `::`, or no host at all, which is the default for node's `listen(port)` and Python's
+`bind(("", port))`. A listen on 127.0.0.1 never prompts, and neither does a path a rule names. The prompt sits over the
+unattended desktop and over every clip taken under it. So:
+
+- Bind what you start to 127.0.0.1: a test server, a mock, a probe, a dev server (`--host 127.0.0.1`). A port check
+  binds loopback and finds a wildcard holder another way: connect to it, or on Windows read `netstat` (game repo
+  `player_slots.udp_port_free`). On Windows a loopback bind succeeds beside a socket on 0.0.0.0 of the same port
+  (measured).
+- Never unpack a runtime into `$TMPDIR` and run it: every session's temp folder is a new path, so a new prompt. On a
+  Windows worker, node 24 is on PATH from the root's `tools\node` (ff-factory `server/agentNode.ts`). If it is missing
+  or too old, say so in the report; do not download one.
+- A built player runs only from its slot. A launch that warns `no inbound firewall rule names ...`, or a prompt over a
+  slot player, means that machine's install lacks the rule. Put `python scripts/nightly/player_slots.py firewall`'s
+  output in the report, and have the orchestrator send the ops worker for an elevated rerun of the install. Never ask a
+  person to click the prompt.
+
+**Why.** lothsahn, 2026-10-22: "We made a bunch of static slots to fix the windows firewall which has solved it there,
+but now we're making random folders under the temp directory and nodejs is triggering the windows firewall." Measured
+on lothdesktop:
+
+- The firewall log (events 2097) held rules from prompts for three `V:\ffw\tmp\ffa-*\` node.exe copies (2026-10-12 to
+  10-20). Each was a worker that downloaded node 24 into its temp folder to run ff-factory's tests; the machine's node
+  is 22.17.
+- A listen spy over that suite found `server/testPorts.ts` binding 0.0.0.0 41 times, and nothing else beyond loopback.
+  ff-factory's `server/listenLoopback.test.ts` now fails a wide listen.
+- On BEAST the same day, a slot2-0 prompt covered all 12 of w1722's clips. On lothdesktop a slot player listened on
+  0.0.0.0:55000 with no prompt, because its rule exists. Checking what a process holds:
+  `Get-NetTCPConnection -State Listen -OwningProcess <pid>` and `Get-NetUDPEndpoint`.

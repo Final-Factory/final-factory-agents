@@ -381,7 +381,7 @@ One file each under `lessons/`: the rule, why (the incident, dated), how to appl
   and FFBox keeps the report open (w414 / #1064 left two Build 76 crash reports NEEDS-INFO).
 - [A crash inside a GPU driver is not "nothing to fix"](lessons/settle-your-own-guesses.md#a-crash-inside-a-gpu-driver-is-not-nothing-to-fix-until-four-checks-are-done-w956-2026-10-13): date the
   driver, read the CPU from the dump, measure the game step that fed it, look for a guard (w956).
-- [Listeners start from a stable path or bind loopback; a clip is checked for system dialogs](lessons/listeners-stable-paths-or-loopback.md):
+- [Listeners start from a stable path or bind loopback; a clip is checked for system dialogs](lessons/clean-up-after-yourself.md#a-listener-binds-127001-or-runs-from-a-stable-path-never-from-tmpdir-w1742):
   bind what you start to 127.0.0.1, take node from PATH (the root's `tools\node`), never a runtime unpacked into
   `$TMPDIR`, run players only from their slot (`player_slots.py firewall` names a missing rule), and look at a frame of
   every clip for a firewall, UAC or crash dialog before publishing it (w1742: node copies in temp folders prompted on

@@ -385,3 +385,13 @@ folder's files. It also puts inline what a person's orchestrator names bare (ff-
   way.
 - Before you send, run the check in [done.md](../checklists/done.md) item "Review media inline": any review path, folder,
   wildcard or `.mp4`/`.png`/`.jpg` name in the message that is not inside `![..](<..>)` is a miss.
+
+## A clip with a system dialog over the game is void (w1742)
+
+Before a clip or still is published, open a frame of each (its first, a middle and its last frame, or the contact
+sheet) and look for anything that is not the game. A Windows Firewall "allow access" prompt, UAC, a crash or a "not
+responding" box drawn over the game voids the capture: re-take it once the dialog is gone. A firewall prompt over a
+slot player also goes in the report with `player_slots.py firewall`'s output
+([the listener rule](clean-up-after-yourself.md#a-listener-binds-127001-or-runs-from-a-stable-path-never-from-tmpdir-w1742)).
+On 2026-10-22 an "allow finalfactory.exe" prompt for BEAST's slot2-0 covered all 12 of w1722's review clips, and they
+were published that way.
