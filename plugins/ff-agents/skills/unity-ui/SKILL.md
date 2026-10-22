@@ -214,6 +214,19 @@ nearly sent back as a design fault. After each click put the pointer on empty sp
   Windows capture rather than calling it real-rate. (3) `ui_layout.py moves` matches a block moved under another parent in
   the same place and prints it as "reparented, not counted" (w1487 put the map's arrow under GamePanels so windows draw
   over it; before, it read "gone from the screen", which the PR gate accepts only as asked).
+- **A merge review's census of every slide-out, four traps (w1737, Windows development players, game PR #2194).** (1) Never
+  add `-ffAutomationRole solo` to a `-ffSoloNewGame` tour: the new game gets two `MePlayer` entities and the first ffauto
+  step fails "GetSingleton() requires that exactly one entity exists ... there are 2" (stack `PlayersManager.Me`,
+  `Hotbar.AssignHotbarToPlayer`). Without the flag the leg leaves unsourced `_autosave_sp_before_quit_<1-3>` files: list
+  them with `find <saves> -newermt <start>` and `rm -f` exactly those. (2) `ffauto:ui.close|structure` is refused ("panel
+  'structure' is selection-driven"): deselect with `{"press": "button_escape"}`, then open each slide-out with `ui.open` and
+  close it with `ui.close` (the game repo's PR #2194 body lists the legs). (3) A change that adds a research asset reorders
+  the Technologies grid: `ResearchController.cs:733` sorts by cost with the unstable `List.Sort`, so equal-cost techs
+  reshuffle, and `moves` prints `TechnologySelectionPanel` with its frame unchanged and `TechButton(Clone)` parts moved
+  inside. That is a content change to report (same order in every screen of one build), not a layout move to put back.
+  (4) Read a scene diff by YAML document with the game repo's `python scripts/scene_diff.py <old> <new>`: #1937's
+  +6,819/-241 on `main.unity` was 220 documents added, 1 changed (+1 line) and 0 removed; the 241 "removed" lines were git's
+  line matching.
 - **Both arms.** The "before" is the classic screen with the same content (`{"layout": "classic"}`),
   so style and fill can be compared; the base branch with nothing open compares nothing.
 
