@@ -23,7 +23,9 @@ holds, or the report says what is left instead of DONE.
    bound 127.0.0.1 or ran from a stable path such as PATH's node and the player slots, so no firewall prompt was raised
    ([lesson](../lessons/clean-up-after-yourself.md#a-listener-binds-127001-or-runs-from-a-stable-path-never-from-tmpdir-w1742), w1742).
    Every delete you did run was strictly inside the machine's worker install folder (`$FF_WORKER_ROOT`); what lies outside it you measured and
-   reported with sizes, plus the list of what makes FF Factory write there, and did not delete, whatever the brief said
+   reported with sizes, plus the list of what makes FF Factory write there, and did not delete, whatever the brief said. On Windows you
+   read, measured and deleted nothing off the install folder's drive, C: above all, and the report says you did not look there
+   ([lesson](../lessons/clean-up-after-yourself.md#windows-disk-work-stays-on-the-install-drive-never-c-w1755), w1755)
    ([the delete checklist](delete.md), [delete only inside the worker root](../lessons/clean-up-after-yourself.md#delete-only-inside-the-workers-install-folder-outside-it-measure-and-report-w896), w896).
    A clean-up request: every folder of another worker you deleted was a DELETE row of `ff-leftovers folders`, and the report lists the KEEP rows with
    their request ([the rule](../lessons/clean-up-after-yourself.md#a-clean-up-never-takes-the-folders-of-a-request-that-has-not-closed-w1379), w1379).

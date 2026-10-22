@@ -216,7 +216,7 @@ look first and relay only with the critic's report (FF Factory `read_rules ui`).
   labels and ids, and every quote copied from its source (`quote_check.py`, w1399).
 - [Delete](checklists/delete.md) (w896): before any remove on a machine's disk, a clean-up above all: every path strictly inside
   the worker install folder (`$FF_WORKER_ROOT`); outside it you measure and report sizes and list what writes there, whatever
-  the brief says.
+  the brief says. On Windows (w1755) you read, measure and delete only on the install folder's drive, never C:.
 - [Visual changes](checklists/visual.md)
 - [UI changes](checklists/ui.md): screens, panels, tabs, HUD, layouts: a late-game save, every
   sub-view, the whole content, the classic look side by side, a real-rate clip, one written line
@@ -391,11 +391,15 @@ One file each under `lessons/`: the rule, why (the incident, dated), how to appl
   `player_slots.py prune`, no clean-up step before DONE, and no rm to reuse a folder: each test leg writes to a new
   `$TMPDIR/<leg>-<timestamp>` (w1097); only when the disk is short mid-task, an `rm -rf` under `$TMPDIR`; low disk is
   fixed by the harness or by filed clean-up work, never by asking a person (w596/w626).
-  Measure Windows folders with robocopy `/L`, never Git Bash `du`, and look for your own tool processes that a stopped shell left running ([section](lessons/clean-up-after-yourself.md#measure-windows-folders-with-robocopy-l-not-git-bash-du-w1561), w1561).
+  Measure Windows folders with robocopy `/L` on the install drive only, never Git Bash `du`, and look for your own tool processes that a stopped shell left running ([section](lessons/clean-up-after-yourself.md#measure-windows-folders-with-robocopy-l-not-git-bash-du-w1561), w1561).
   Same lesson, deletes (w896): only inside the machine's worker install folder (`$FF_WORKER_ROOT`); outside it you measure, report
   sizes and list what makes FF Factory write there, whatever the brief says (w876 cleared dotnet temp, the Unity Hub installer,
   Temp, test output and old transcripts on LothDesktop's C:; lothsahn: "in general we should only be clearing data in the
   install folder for the worker"; [checklist](checklists/delete.md)).
+  **Windows: disk work stays on the install drive, never C:** (w1755): a clean-up, a low-disk check, a leftover scan or a
+  disk measurement reads, measures and deletes only on the drive of `$FF_WORKER_ROOT` (V: on LothDesktop, F: on BEAST), not
+  even a `du` of `AppData` or `~/.claude` (w1754 did; lothsahn: "You need to only look at v:.  Stop messing with my c:";
+  [lesson](lessons/clean-up-after-yourself.md#windows-disk-work-stays-on-the-install-drive-never-c-w1755), [checklist](checklists/delete.md) item 1a).
   And (w1379): a clean-up deletes only what `ff-leftovers folders` marks DELETE (closed requests, orphans); the temp, build and review
   folders of a worker whose request is open, stalled or paused stay, running or not, and a brief's list of live workers is not the ledger
   (w1374 deleted stopped worker a735f37c's builds and clips while its request w1332 was stalled; [the rule](lessons/clean-up-after-yourself.md#a-clean-up-never-takes-the-folders-of-a-request-that-has-not-closed-w1379)).

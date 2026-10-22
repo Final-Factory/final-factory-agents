@@ -1,6 +1,6 @@
 ---
 name: clean-up-after-yourself
-description: "Workers do NOT clean up (w913): leave everything you make in your own $TMPDIR (clones, logs, builds, tour output, scratch); the daemon removes it a few minutes after no request waits for you any more (closed, or moved to another worker; a wait for CI or a person, a stop or a pause keeps it whole, since w1097) and your sandbox's build and capture output when it is released, so no rm, no player_slots prune and no clean-up step before DONE, and no rm mid-task to reuse a folder: each test leg writes to a new $TMPDIR/<leg>-<timestamp> (w1097). The one delete left to a worker (a huge build mid-task, disk short) is a plain rm -rf under $TMPDIR, which the session answers itself with no approval, and a save copy you put in the saves folder, named with your temp folder's name in front. Low disk on a machine is fixed by the harness or by filed clean-up work, never by asking a person. Every delete is strictly inside the machine's worker install folder (root.json's root, $FF_WORKER_ROOT); outside it a worker only measures and reports (w896). A clean-up deletes only the folders `ff-leftovers folders` marks DELETE (closed requests and orphans); the temp, build and review folders of a worker whose request is open, stalled or paused are kept whether or not its process runs (w1379), and a folder holding a git clone with uncommitted, unpushed or stashed work is kept whatever the ledger says: check its git state or the portal's clean-up log first (w1387). A -batchmode build you started is ended before DONE."
+description: "On Windows, disk work stays on the install drive, never C:, not even to measure (w1755). Workers do NOT clean up (w913): leave everything you make in your own $TMPDIR (clones, logs, builds, tour output, scratch); the daemon removes it a few minutes after no request waits for you any more (closed, or moved to another worker; a wait for CI or a person, a stop or a pause keeps it whole, since w1097) and your sandbox's build and capture output when it is released, so no rm, no player_slots prune and no clean-up step before DONE, and no rm mid-task to reuse a folder: each test leg writes to a new $TMPDIR/<leg>-<timestamp> (w1097). The one delete left to a worker (a huge build mid-task, disk short) is a plain rm -rf under $TMPDIR, which the session answers itself with no approval, and a save copy you put in the saves folder, named with your temp folder's name in front. Low disk on a machine is fixed by the harness or by filed clean-up work, never by asking a person. Every delete is strictly inside the machine's worker install folder (root.json's root, $FF_WORKER_ROOT); outside it a worker only measures and reports (w896). A clean-up deletes only the folders `ff-leftovers folders` marks DELETE (closed requests and orphans); the temp, build and review folders of a worker whose request is open, stalled or paused are kept whether or not its process runs (w1379), and a folder holding a git clone with uncommitted, unpushed or stashed work is kept whatever the ledger says: check its git state or the portal's clean-up log first (w1387). A -batchmode build you started is ended before DONE."
 date: 2026-10-10
 ---
 
@@ -73,17 +73,21 @@ produced; the aim was a disk that stays free without him asking, which the daemo
 
 ## Delete only inside the worker's install folder; outside it, measure and report (w896)
 
+On Windows, outside the install folder's drive you do not even measure: [the install drive only](#windows-disk-work-stays-on-the-install-drive-never-c-w1755) (w1755).
+
 **Rule.** Before any delete, name the folder it is in and the machine's worker install folder (the `root` of its
 `root.json`; `$FF_WORKER_ROOT` is set in your environment; your sandbox, your `$TMP`, the player slots and the nightly
 lab are inside it). Inside: delete what you made or what FF Factory left, as the [clean up after yourself](#clean-up-after-yourself-low-disk-is-never-a-persons-question)
-lesson says. Outside: **do not delete**. Measure (`du -sh`, `Get-ChildItem | Measure-Object -Sum Length`), report the
-sizes, and list every setting, script or tool that makes FF Factory write there, so the write can be moved inside the
-folder (a request of its own for the machine's owner). The one exception is a save copy you put in the game's saves
+lesson says. Outside: **do not delete**. On macOS and Linux, measure (`du -sh`), report the sizes, and list every
+setting, script or tool that makes FF Factory write there, so the write can be moved inside the folder (a request of its
+own for the machine's owner). On Windows, never look at C: or another drive at all, not even to measure
+([the install drive only](#windows-disk-work-stays-on-the-install-drive-never-c-w1755), w1755). The one exception is a save copy you put in the game's saves
 folder (`LocalLow\Never Games\finalfactory\saves\<your-copy>`), which you remove yourself.
 
 This holds when the brief says otherwise. A clean-up brief that tells you to clear C:, AppData, the system temp, the Unity
-Hub installer, dotnet or package caches, `LocalLow` test output or `~/.claude` transcripts is wrong: do the measuring,
-say in the report that you did not delete there and why, and carry on with what is inside the folder. Do not ask a
+Hub installer, dotnet or package caches, `LocalLow` test output or `~/.claude` transcripts is wrong: on macOS and Linux do
+the measuring, on Windows not even that (w1755), say in the report that you did not delete there and why, and carry on
+with what is inside the folder. Do not ask a
 person to approve the delete either; the answer is already "no, only inside the folder".
 
 **Why.** 2026-10-10 (w896): w876, LothDesktop's low-disk clean-up, deleted on C: outside `D:\work\ffw` (dotnet workload
@@ -109,20 +113,60 @@ the worker".
 - A machine without a root install (the portal's own host, an old install) has no folder to name: say so and measure
   only, and an owner can name the folder for it.
 
+## Windows: disk work stays on the install drive, never C: (w1755)
+
+**Rule.** On a Windows machine, every piece of disk work (a clean-up, a low-disk check, a leftover scan, a disk
+measurement, "where did the space go") reads, measures and deletes only on the drive of the worker install folder:
+the drive of `$FF_WORKER_ROOT` (the `root` of the machine's `root.json`), `V:` on LothDesktop (`V:\ffw`), `F:` on BEAST
+(`F:\ffw`). Never C:, not even to measure: no `du`, `dir /s`, `Get-ChildItem -Recurse`, `find`, `tree`, `robocopy /L` or
+`ff-leftovers check` of the home folder, `AppData`, `~/.claude`, the system temp, Unity Hub, package caches or the game's
+`LocalLow` folder. Read the drive from the root, never assume a letter. If the install folder itself is on C:, look only
+inside it and say so in your report.
+
+A brief, a notice or an orchestrator's question that asks you to measure C: ("where did AppData's space go") is wrong:
+measure inside the install folder, report what you freed and what is still short there, and say that you did not look
+at C: and why. Do not ask a person to look there either. macOS and Linux keep the w896 rule: outside the install folder
+you measure and report.
+
+A save copy you put in the game's saves folder (under `LocalLow` on C:) for a test is a test step, not disk work: it stays
+allowed (`read_rules saves`).
+
+**Why.** 2026-10-22 (w1754): LothDesktop's clean-up worker ran `du` over `C:\Users\…\AppData` and `~\.claude` after the
+orchestrator asked where AppData's space went. It deleted nothing on C:, but the w896 rule told it to "measure and report"
+outside the install folder, the daemon's low-disk notice named the home folder and AppData as the biggest consumers, and
+the w1561 lesson here sized "the whole home folder" with robocopy. Lothsahn: "Your worker on LothDesktop is still scanning
+c:  it should not.  You need to only look at v:.  Stop messing with my c:", then "Fix the instructions for Windows boxes
+to only look at v:".
+
+**How to apply.**
+
+- The [delete checklist](../checklists/delete.md) item 1a is the line that would have caught it: on Windows, is every path
+  you are about to measure or delete on the install drive?
+- Brief writers (the dispatcher, the orchestrators): a clean-up brief for a Windows machine never asks for a size, a scan
+  or a question about C:.
+- FF Factory enforces it where it can (ff-factory w1755, `docs/self-recovery.md` "Windows: the install drive only"): the
+  sandbox guard refuses those scans of a path off the install drive (`checkOffDriveScan`, `server/rootFence.ts`), the
+  delete fence's refusal says the drive rule, `ff-leftovers check` keeps such a path without looking at it, and the
+  daemon neither measures nor lists anything off the install drive in its low-disk notice. A refusal quotes the rule; it
+  is not a prompt to find another way (a script, python's `os.walk` and a variable it cannot expand are the guard's known
+  holes, and the rule binds you there too).
+
 ## Measure Windows folders with robocopy /L, not Git Bash du (w1561)
 
-**Rule.** On Windows, size a folder with `robocopy <dir> <a path that does not exist> /L /S /E /BYTES /NFL /NDL /NJH /NC
+**Rule.** Only on the install drive (w1755: never a folder on C:, [the install drive only](#windows-disk-work-stays-on-the-install-drive-never-c-w1755)).
+On Windows, size a folder with `robocopy <dir> <a path that does not exist> /L /S /E /BYTES /NFL /NDL /NJH /NC
 /NP /R:0 /W:0 /XJ /MT:16` and read its `Bytes :` line, one call per child folder. `/L` only lists and copies nothing, and
 `/XJ` skips junctions so nothing is counted twice. Never run Git Bash `du` on a large tree. When free space looks
-unchanged after a delete, re-read it exactly with `Get-PSDrive V,C`.
+unchanged after a delete, re-read it exactly with `Get-PSDrive` of the install drive (`Get-PSDrive V` on LothDesktop).
 
 **Why.** 2026-10-19, lothdesktop (w1561, disk clean-up): Git Bash `du -m --max-depth=1` took 19 minutes on
 `AppData\Local` (69 GB) and was still in `AppData\LocalLow` when it was stopped. The robocopy script measured `.cache`
 and `AppData\Local\Unity` in 0.6 s and the whole home folder (180 GB, 17 roots) in a few minutes. Git Bash `df -h`
 still showed 78G free on V: after a 10 GB delete, while `Get-PSDrive` showed 81.40 GB.
 
-**How to apply.** Write the loop as a `.ps1` in `$TMPDIR` that takes a list of roots and prints the biggest children
-in GB, then run it once for every root you need.
+**How to apply.** Write the loop as a `.ps1` in `$TMPDIR` that takes a list of roots on the install drive (the install
+folder's children) and prints the biggest children in GB, then run it once for every root you need. The home folder and
+`AppData` measured in w1561 are on C:, which w1755 put off limits: the guard refuses `robocopy /L` there now.
 
 ## A clean-up never takes the folders of a request that has not closed (w1379)
 
