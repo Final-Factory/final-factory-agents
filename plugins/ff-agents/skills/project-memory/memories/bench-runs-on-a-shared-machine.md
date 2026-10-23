@@ -37,6 +37,21 @@ metadata:
    the answer is past the noise (the numbers and spread in the report), and fit each leg well inside the 30-minute
    turn; `report` flags a hold past it. **The queue's order** (w1628): the worker's request priority first, then one timed leg and one
    shared group in turn; a build joins the waiting group of builds or goes right after the next timed leg.
+   **The priority hold** (w1860, lothsahn, 2026-10-23: "If a higher priority job holds the lock and all jobs below it are
+   lower priority, it should retain the lock until done. If this is a shared lock, existing shared lock jobs should join
+   it directly instead of queuing behind the exclusive lock"): the turn limits count only a waiter of your request's
+   priority or higher. With only lower-priority work waiting you keep the lock until you let go (no warning, no revoke;
+   the machine view says "keeps the lock"), so still give it back between legs: a same-or-higher waiter arriving later
+   starts the usual clock, warning first. A shared group's priority is its highest running ticket's; while it outranks
+   every waiting timed leg, new shared work joins it at once.
+   **Every compute job holds a ticket** (w1860, lothsahn: "builds or any compute intensive job needs a lock... Shared if
+   it's not performance sensitive and exclusive if it is"): a running sandbox editor holds a shared ticket for its whole
+   life, and so does a game player started by `player_slots.py launch` outside your hold. Your leg's own sandbox editor
+   and your own players ride along with your exclusive ticket; other sandboxes' editors and players hold it back up to
+   the shared group's hour (warning first), so a timed leg on a busy machine can wait. While an exclusive ticket holds
+   the machine, the daemon stops other sandboxes' batch Unity (builds, test runs), and `unity-slot run` ends its
+   command and exits 75 when its own ticket is revoked: run it again. `Unity -batchmode` or `Unity -projectPath` typed
+   straight into the shell is refused (`mcp__machine__unity` start, or `unity-slot run`).
 2. **Your own editor counts as load.** Starting the sandbox editor, a force recompile or an editor test run while one of
    your (or anyone's) timed runs is in flight contaminated three of my runs (+3 ms each, measured: 84.0 against 87.0 ms
    on the same build). Hold the lock for editor compiles and tests too, or keep the editor stopped while legs run. A batch
