@@ -61,6 +61,17 @@ UI_PATH = re.compile(r"/UI/|\.(uxml|uss)$|^Assets/Scenes/[^/]+\.unity$")
 # no canvas, layout or HUD element, so the layout census reads nothing). A 'Not UI: <why>' line takes such a change off
 # the UI rules, only when every UI-path file it touches is a script under UI/World/; a panel, prefab or scene never is.
 NOT_UI_OK = re.compile(r"/UI/World/[^/]+\.cs(\.meta)?$")
+
+
+def moved_to_ui_world(path: str, files: list[str] | None, changes: dict | None) -> bool:
+    """A script the PR deletes from another UI path while it adds the same file name under UI/World/ is a move, not a
+    panel change (w1767, #2292: UI/Circuits/CircuitWirePresenter.cs moved to UI/World/ and failed 'Not UI:'). Needs the
+    change letters (gh or --files-file name-status); a plain file list keeps the old answer."""
+    if (changes or {}).get(path, ("?", 0))[0] != "D" or not re.search(r"\.cs(\.meta)?$", path):
+        return False
+    name = path.rsplit("/", 1)[-1]
+    return any(f.endswith("/UI/World/" + name) and NOT_UI_OK.search(f) and (changes or {}).get(f, ("?", 0))[0] in "AR"
+               for f in files or [])
 # "1 fps sequences of the tours' shots" (#1251): stills played as a video cannot show flicker.
 SLIDESHOW = re.compile(r"\b[1-9]\s*fps\b|\b(sequences?|slide ?shows?)\s+of\s+(the\s+)?(\w+'?s?\s+)?(shots|stills|screenshots)\b",
                        re.IGNORECASE)
@@ -1194,7 +1205,7 @@ def check(body: str, files: list[str] | None = None, brief: str | None = None,
     ui = "ui" in kinds or ("visual" in kinds and bool(ui_files))
     not_ui = field(section, "Not UI")
     if not_ui and not_ui[1] and ui:
-        others = [f for f in ui_files if not NOT_UI_OK.search(f)]
+        others = [f for f in ui_files if not NOT_UI_OK.search(f) and not moved_to_ui_world(f, files, changes)]
         if "ui" in kinds:
             problems.append("'Not UI:' and 'Kind: ui' contradict each other: a screen, panel or HUD change keeps the UI rules")
         elif others:
