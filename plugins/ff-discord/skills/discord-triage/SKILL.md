@@ -78,7 +78,9 @@ can read but not reply will silently drop player-facing responses.
 **Bug reports arrive as forum posts** from the in-game reporter webhook
 (`Documentation/BugReportingSystem.md`): an embed carrying the title, the player's
 description, game version, platform, and Unity version, plus attachments — a runtime log
-(last 500 entries) and a save zip captured at report time. Player follow-up replies land in
+(last 500 entries), a save zip captured at report time and, since w1777, `Player-prev.log` (the previous
+session's log: often the session that froze or crashed). A frozen game also uploads its own hang report to FFBox
+(kind `hang`, all threads' stacks; project-memory `hang-watchdog-reports`). Player follow-up replies land in
 the same thread.
 
 ## 1. Pull what's new
