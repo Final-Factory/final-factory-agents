@@ -643,6 +643,37 @@ class MovedTest(unittest.TestCase):
         named = cluster.replace("put the panels in a tidy cluster at the top left", "the station info box goes under the strip")
         self.assertNotIn("is pinned", self.reasons("\n".join([head, named]), brief))
 
+    def test_2269s_pinned_panels_only_got_shorter_and_pass_on_bens_words(self):
+        # w1824: #2269 (w1814, the CJK font fix) made the hover card and Station Info 5 to 8 px shorter in ja/ko/zh/ru/uk,
+        # left, right and bottom edges kept. Ben had answered: "Fix it at the fonts; a few pixels shorter in those
+        # languages is fine." ff-agents 1.30.10 failed its 20 pinned lines because the quote names neither panel, and the
+        # worker had to ask him again. MEASURED: the PR's Moved block as posted, 2026-10-22.
+        brief, moved = self.fixture("pr-2269-cjk-fonts-moved.txt").split("\n", 1)
+        self.assertEqual(self.reasons(moved.strip(), brief), "")
+        # The quote still has to be the requester's words.
+        self.assertIn("HoverDescription (ja): the quote is not in the brief's quotations",
+                      self.reasons(moved.strip(), 'Ben: "make the fonts bigger"'))
+
+    def test_a_pinned_element_that_moves_while_it_resizes_still_needs_its_name(self):
+        head = self.HEAD.replace("2 element", "1 element")
+        brief = 'Ben: "Fix it at the fonts; a few pixels shorter in those languages is fine."'
+        quote = 'asked (Ben): "Fix it at the fonts; a few pixels shorter in those languages is fine."'
+        cases = {
+            # shorter, and taken up the screen into the cluster: the bottom edge left the abilities
+            "taken up": "x +0, y -119 px, size +0 x -8 px (was 823,791 274x100, now 823,668 274x92)",
+            # the same height, shifted 6 px: a move, not a resize
+            "shifted": "x +0, y +6 px (was 823,791 274x100, now 823,797 274x100)",
+            # shorter and wider: the width is part of where the panel sits over its anchor
+            "wider": "x -20, y +4 px, size +40 x -8 px (was 823,791 274x100, now 803,799 314x92)",
+            # shorter about its middle by more than the census's move threshold at the bottom edge
+            "much shorter": "x +0, y +0 px, size +0 x -40 px (was 823,791 274x100, now 823,811 274x60)",
+        }
+        for why, rect in cases.items():
+            line = f"- 1920x1080 undocked GamePanels/BuildInfoPanel (ja): {rect}: {quote}"
+            self.assertIn("is pinned (Station Info", self.reasons("\n".join([head, line]), brief), why)
+        kept = f"- 1920x1080 undocked GamePanels/BuildInfoPanel (ja): x +0, y +4 px, size +0 x -8 px (was 823,791 274x100, now 823,799 274x92): {quote}"
+        self.assertNotIn("is pinned", self.reasons("\n".join([head, kept]), brief))
+
     def test_a_broken_or_unmeasured_pin_fails_with_no_way_out(self):
         moved = next(x for x in UiTest.UI_LINES.splitlines() if x.startswith("Moved:"))
         broken = ("Pinned: 3 pin(s) in 3 census(es) (1920x1080 undocked, 1280x800 undocked, 1280x800 docked): 2 broken, 0 "

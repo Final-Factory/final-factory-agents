@@ -251,8 +251,9 @@ python "<this skill's base directory>/ui_layout.py" pins a-1920.json a-1280.json
 - Each line ends `mark: ?`. Replace it with `asked (Ben): "his words"`, from inside the brief's quotation marks and
   naming that element on that screen, or put the element back and take the after census again. `pr_evidence.py`
   (with `--brief`, or `Brief (Ben): "..."` lines in the PR) fails anything else: "not asked: justified", a quote not in
-  the brief, a Deck quote on a desktop line, a pinned element whose quote does not name it, one line for several
-  elements, and a missing screen or layout.
+  the brief, a Deck quote on a desktop line, a pinned element whose quote does not name it (unless it only got
+  taller or shorter in place, left, right and anchored edges kept: w1824), one line for several elements, and a missing
+  screen or layout.
 - `pins` checks [hud-pins.json](hud-pins.json) in every census, against no baseline: Station Info's bottom edge 0 to 6 %
   of the height above the ability row and over it (or, where the dock hides the row, in the bottom 30 % of the screen
   and the middle half of its width); the hover card the same over the minimap (or bottom right); the Player Inventory's
