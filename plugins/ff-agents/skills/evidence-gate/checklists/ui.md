@@ -369,11 +369,11 @@ control, and a redesign goes out as 2 or 3 clearly different options built from 
       Player Fleet, Select Recipe, Blueprints) at the same size and UI scale, or open one beside the new window. The
       critic's pack carries it (`ui_look.py pack` refuses to build without a reference), and every comparison names it.
     - **`ui_look.py family <after.png>::<census>#<window> --ref <ref.png>::<census>#<window>`** (unity-ui) prints the
-      `Family:` line. MIXED CORNERS: more distinct corner radii than the reference uses (2 at least), read off the
-      pixels of each drawn shape. NESTED CORNERS: a rounded shape within 4 px (or the parent's radius) of a rounded
-      parent's edge whose radius is not about the parent's less the gap. SMALL HEADER: the header's font under 0.9x the
-      reference title's. HEADER TWO LINES: it wraps. CRAMPED <EDGE>: content to edge under 0.75x the reference's and 3 px
-      or more less. Paste the line in `## Evidence`; a finding is fixed, or passes only with the requester's words
+      `Family:` line. MIXED CORNERS: more distinct corner radii than the reference uses (2 at least), or one no
+      reference uses, read off the pixels of each drawn shape (icons are not shapes). NESTED CORNERS: a circle, or a
+      shape rounder than its rounded parent, within 4 px (or the parent's radius) of the parent's edge. SMALL HEADER: the
+      header's font under 0.9x the reference title's. HEADER TWO LINES: it wraps. CRAMPED <EDGE>: content to the top or a
+      side under 0.75x the reference's and 3 px or more less; to the bottom, the same against the window's own sides. Paste the line in `## Evidence`; a finding is fixed, or passes only with the requester's words
       asking for it (`intended (who): "..."`).
     - **Left to the eye and the critic** (rubric item 9): whether the corners read as one family when the tool cannot
       read a corner (a shape too close in colour to what is behind it), the header's weight and style, and how the room

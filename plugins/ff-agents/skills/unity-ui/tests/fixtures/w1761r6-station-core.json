@@ -1,0 +1,846 @@
+{
+"screen": [
+1920.0,
+1080.0
+],
+"source": "vcrosk5wlet4-w1761-r6-reference-station-grid-1920x1080/a1-core-selected.png cropped at 916,309",
+"elements": [
+{
+"path": "InGameScene/UI Canvas/GamePanels/StationCoreEntityPanel/MainPanel",
+"kind": "Image",
+"rect": [
+8.0,
+7.5,
+372.5,
+212.5
+],
+"visible": [
+8.0,
+7.5,
+372.5,
+212.5
+],
+"color": "#FFFFFFFF",
+"alpha": 1.0,
+"sprite": "background-main",
+"raycast": true,
+"selectable": false,
+"maskOnly": false,
+"canvasOrder": -10,
+"depth": 713,
+"spriteSize": [
+512.0,
+512.0
+],
+"spriteBorder": [
+10.0,
+10.0,
+10.0,
+10.0
+],
+"imageType": "Sliced",
+"preserveAspect": false
+},
+{
+"path": "InGameScene/UI Canvas/GamePanels/StationCoreEntityPanel/MainPanel/HeaderContent",
+"kind": "HeaderHitArea",
+"rect": [
+15.2,
+7.5,
+365.3,
+54.3
+],
+"visible": [
+15.2,
+7.5,
+365.3,
+54.3
+],
+"color": "#FFFFFFFF",
+"alpha": 1.0,
+"sprite": "",
+"raycast": true,
+"selectable": false,
+"maskOnly": false,
+"canvasOrder": -10,
+"depth": 714
+},
+{
+"path": "InGameScene/UI Canvas/GamePanels/StationCoreEntityPanel/MainPanel/Content/OutputPriority/Orientation/Up/Icon",
+"kind": "Image",
+"rect": [
+234.5,
+100.2,
+250.7,
+116.4
+],
+"visible": [
+234.5,
+100.2,
+250.7,
+116.4
+],
+"color": "#FFFFFFFF",
+"alpha": 1.0,
+"sprite": "arrow-up",
+"raycast": true,
+"selectable": false,
+"maskOnly": false,
+"canvasOrder": -10,
+"depth": 731,
+"spriteSize": [
+512.0,
+512.0
+],
+"spriteBorder": [
+0.0,
+0.0,
+0.0,
+0.0
+],
+"imageType": "Simple",
+"preserveAspect": false
+},
+{
+"path": "InGameScene/UI Canvas/GamePanels/StationCoreEntityPanel/MainPanel/Content/OutputPriority/Orientation/Right/Panel",
+"kind": "Image",
+"rect": [
+300.2,
+97.5,
+321.8,
+119.1
+],
+"visible": [
+300.2,
+97.5,
+321.8,
+119.1
+],
+"color": "#FFFFFFFF",
+"alpha": 1.0,
+"sprite": "borderless-primary",
+"raycast": true,
+"selectable": false,
+"maskOnly": false,
+"canvasOrder": -10,
+"depth": 736,
+"spriteSize": [
+512.0,
+512.0
+],
+"spriteBorder": [
+20.0,
+20.0,
+20.0,
+20.0
+],
+"imageType": "Sliced",
+"preserveAspect": true
+},
+{
+"path": "InGameScene/UI Canvas/GamePanels/StationCoreEntityPanel/MainPanel/Content/ConnectorInventory/Header/Icon",
+"kind": "Image",
+"rect": [
+22.4,
+132.2,
+40.4,
+150.2
+],
+"visible": [
+22.4,
+132.2,
+40.4,
+150.2
+],
+"color": "#FFFFFFFF",
+"alpha": 1.0,
+"sprite": "connection",
+"raycast": true,
+"selectable": false,
+"maskOnly": false,
+"canvasOrder": -10,
+"depth": 739,
+"spriteSize": [
+48.0,
+48.0
+],
+"spriteBorder": [
+0.0,
+0.0,
+0.0,
+0.0
+],
+"imageType": "Simple",
+"preserveAspect": false
+},
+{
+"path": "InGameScene/UI Canvas/GamePanels/StationCoreEntityPanel/MainPanel/Content/OutputPriority/Orientation/Left/Icon",
+"kind": "Image",
+"rect": [
+200.3,
+100.2,
+216.5,
+116.4
+],
+"visible": [
+200.3,
+100.2,
+216.5,
+116.4
+],
+"color": "#FFFFFFFF",
+"alpha": 1.0,
+"sprite": "arrow-up",
+"raycast": true,
+"selectable": false,
+"maskOnly": false,
+"canvasOrder": -10,
+"depth": 728,
+"spriteSize": [
+512.0,
+512.0
+],
+"spriteBorder": [
+0.0,
+0.0,
+0.0,
+0.0
+],
+"imageType": "Simple",
+"preserveAspect": false
+},
+{
+"path": "InGameScene/UI Canvas/GamePanels/StationCoreEntityPanel/MainPanel/Content/StationCoreParent/Stability/Icon",
+"kind": "Image",
+"rect": [
+22.4,
+62.4,
+42.2,
+82.2
+],
+"visible": [
+22.4,
+62.4,
+42.2,
+82.2
+],
+"color": "#00ADFFFF",
+"alpha": 1.0,
+"sprite": "Tex_skill_63",
+"raycast": true,
+"selectable": false,
+"maskOnly": false,
+"canvasOrder": -10,
+"depth": 719,
+"spriteSize": [
+256.0,
+256.0
+],
+"spriteBorder": [
+0.0,
+0.0,
+0.0,
+0.0
+],
+"imageType": "Simple",
+"preserveAspect": false
+},
+{
+"path": "InGameScene/UI Canvas/GamePanels/StationCoreEntityPanel/MainPanel/Content/OutputPriority/Orientation/Down/Icon",
+"kind": "Image",
+"rect": [
+268.7,
+100.2,
+284.9,
+116.4
+],
+"visible": [
+268.7,
+100.2,
+284.9,
+116.4
+],
+"color": "#FFFFFFFF",
+"alpha": 1.0,
+"sprite": "arrow-up",
+"raycast": true,
+"selectable": false,
+"maskOnly": false,
+"canvasOrder": -10,
+"depth": 734,
+"spriteSize": [
+512.0,
+512.0
+],
+"spriteBorder": [
+0.0,
+0.0,
+0.0,
+0.0
+],
+"imageType": "Simple",
+"preserveAspect": false
+},
+{
+"path": "InGameScene/UI Canvas/GamePanels/StationCoreEntityPanel/MainPanel/Content/ConnectorInventory/Header/Label",
+"kind": "TextMeshProUGUI",
+"rect": [
+47.6,
+129.5,
+346.2,
+152.9
+],
+"visible": [
+47.6,
+129.5,
+346.2,
+152.9
+],
+"color": "#FFFFFFFF",
+"alpha": 1.0,
+"sprite": "",
+"raycast": true,
+"selectable": false,
+"maskOnly": false,
+"canvasOrder": -10,
+"depth": 740,
+"text": "Distribution Inventory",
+"textRect": [
+47.6,
+133.5,
+228.8,
+151.9
+],
+"lines": 1,
+"fontSize": 16.0
+},
+{
+"path": "InGameScene/UI Canvas/GamePanels/StationCoreEntityPanel/MainPanel/Content/OutputPriority/Orientation/None/Panel",
+"kind": "Image",
+"rect": [
+163.4,
+97.5,
+185.0,
+119.1
+],
+"visible": [
+163.4,
+97.5,
+185.0,
+119.1
+],
+"color": "#FFFFFFFF",
+"alpha": 1.0,
+"sprite": "borderless-primary",
+"raycast": true,
+"selectable": false,
+"maskOnly": false,
+"canvasOrder": -10,
+"depth": 724,
+"spriteSize": [
+512.0,
+512.0
+],
+"spriteBorder": [
+20.0,
+20.0,
+20.0,
+20.0
+],
+"imageType": "Sliced",
+"preserveAspect": true
+},
+{
+"path": "InGameScene/UI Canvas/GamePanels/StationCoreEntityPanel/MainPanel/Content/OutputPriority/Orientation/None/Icon",
+"kind": "Image",
+"rect": [
+166.1,
+100.2,
+182.3,
+116.4
+],
+"visible": [
+166.1,
+100.2,
+182.3,
+116.4
+],
+"color": "#FFFFFFFF",
+"alpha": 1.0,
+"sprite": "Icon_Intermediates",
+"raycast": true,
+"selectable": false,
+"maskOnly": false,
+"canvasOrder": -10,
+"depth": 725,
+"spriteSize": [
+512.0,
+512.0
+],
+"spriteBorder": [
+0.0,
+0.0,
+0.0,
+0.0
+],
+"imageType": "Simple",
+"preserveAspect": false
+},
+{
+"path": "InGameScene/UI Canvas/GamePanels/StationCoreEntityPanel/MainPanel/Content/OutputPriority/Orientation/Text (TMP)",
+"kind": "TextMeshProUGUI",
+"rect": [
+22.4,
+97.5,
+150.8,
+119.1
+],
+"visible": [
+22.4,
+97.5,
+150.8,
+119.1
+],
+"color": "#FFFFFFFF",
+"alpha": 1.0,
+"sprite": "",
+"raycast": true,
+"selectable": false,
+"maskOnly": false,
+"canvasOrder": -10,
+"depth": 722,
+"text": "Side Priority",
+"textRect": [
+22.4,
+99.7,
+104.9,
+117.0
+],
+"lines": 1,
+"fontSize": 15.0
+},
+{
+"path": "InGameScene/UI Canvas/GamePanels/StationCoreEntityPanel/MainPanel/Content/ConnectorInventory/ConnectorInventoryPanel/InventorySlots/item-slot(Clone)/Background",
+"kind": "Image",
+"rect": [
+114.6,
+164.4,
+143.6,
+193.3
+],
+"visible": [
+114.6,
+164.4,
+143.6,
+193.3
+],
+"color": "#FFFFFFFF",
+"alpha": 1.0,
+"sprite": "item-slot",
+"raycast": true,
+"selectable": false,
+"maskOnly": false,
+"canvasOrder": -10,
+"depth": 748,
+"spriteSize": [
+256.0,
+256.0
+],
+"spriteBorder": [
+60.0,
+60.0,
+60.0,
+60.0
+],
+"imageType": "Sliced",
+"preserveAspect": true
+},
+{
+"path": "InGameScene/UI Canvas/GamePanels/StationCoreEntityPanel/MainPanel/HeaderContent/Header/TitleAndIcon/Title",
+"kind": "TextMeshProUGUI",
+"rect": [
+22.4,
+16.5,
+305.9,
+45.3
+],
+"visible": [
+22.4,
+16.5,
+305.9,
+45.3
+],
+"color": "#FFFFFFFF",
+"alpha": 1.0,
+"sprite": "",
+"raycast": true,
+"selectable": false,
+"maskOnly": false,
+"canvasOrder": -10,
+"depth": 716,
+"text": "Station Core",
+"textRect": [
+22.4,
+21.7,
+137.7,
+42.4
+],
+"lines": 1,
+"fontSize": 18.0
+},
+{
+"path": "InGameScene/UI Canvas/GamePanels/StationCoreEntityPanel/MainPanel/Content/OutputPriority/Orientation/Left/Panel",
+"kind": "Image",
+"rect": [
+197.6,
+97.5,
+219.2,
+119.1
+],
+"visible": [
+197.6,
+97.5,
+219.2,
+119.1
+],
+"color": "#FFFFFFFF",
+"alpha": 1.0,
+"sprite": "borderless-primary",
+"raycast": true,
+"selectable": false,
+"maskOnly": false,
+"canvasOrder": -10,
+"depth": 727,
+"spriteSize": [
+512.0,
+512.0
+],
+"spriteBorder": [
+20.0,
+20.0,
+20.0,
+20.0
+],
+"imageType": "Sliced",
+"preserveAspect": true
+},
+{
+"path": "InGameScene/UI Canvas/GamePanels/StationCoreEntityPanel/MainPanel/Content/StationCoreParent/Stability/stability-count",
+"kind": "TextMeshProUGUI",
+"rect": [
+194.5,
+49.8,
+407.2,
+94.8
+],
+"visible": [
+194.5,
+49.8,
+407.2,
+94.8
+],
+"color": "#FFFFFFFF",
+"alpha": 1.0,
+"sprite": "",
+"raycast": true,
+"selectable": false,
+"maskOnly": false,
+"canvasOrder": -10,
+"depth": 721,
+"text": "12/170",
+"textRect": [
+194.5,
+62.0,
+246.2,
+82.7
+],
+"lines": 1,
+"fontSize": 18.0
+},
+{
+"path": "InGameScene/UI Canvas/GamePanels/StationCoreEntityPanel/MainPanel/Content/StationCoreParent/Stability/Text (TMP)",
+"kind": "TextMeshProUGUI",
+"rect": [
+51.2,
+49.8,
+185.5,
+94.8
+],
+"visible": [
+51.2,
+49.8,
+185.5,
+94.8
+],
+"color": "#FFFFFFFF",
+"alpha": 1.0,
+"sprite": "",
+"raycast": true,
+"selectable": false,
+"maskOnly": false,
+"canvasOrder": -10,
+"depth": 720,
+"text": "Station Stability:",
+"textRect": [
+51.2,
+63.1,
+170.6,
+81.6
+],
+"lines": 1,
+"fontSize": 16.0
+},
+{
+"path": "InGameScene/UI Canvas/GamePanels/StationCoreEntityPanel/MainPanel/Content/ConnectorInventory/ConnectorInventoryPanel/InventorySlots/item-slot(Clone)/Background",
+"kind": "Image",
+"rect": [
+71.4,
+164.4,
+100.4,
+193.3
+],
+"visible": [
+71.4,
+164.4,
+100.4,
+193.3
+],
+"color": "#FFFFFFFF",
+"alpha": 1.0,
+"sprite": "item-slot",
+"raycast": true,
+"selectable": false,
+"maskOnly": false,
+"canvasOrder": -10,
+"depth": 746,
+"spriteSize": [
+256.0,
+256.0
+],
+"spriteBorder": [
+60.0,
+60.0,
+60.0,
+60.0
+],
+"imageType": "Sliced",
+"preserveAspect": true
+},
+{
+"path": "InGameScene/UI Canvas/GamePanels/StationCoreEntityPanel/MainPanel/Content/OutputPriority/Orientation/Help/Icon",
+"kind": "Image",
+"rect": [
+336.2,
+99.3,
+350.6,
+113.7
+],
+"visible": [
+336.2,
+99.3,
+350.6,
+113.7
+],
+"color": "#FFFFFFFF",
+"alpha": 1.0,
+"sprite": "helpIcon",
+"raycast": true,
+"selectable": false,
+"maskOnly": false,
+"canvasOrder": -10,
+"depth": 738,
+"spriteSize": [
+256.0,
+256.0
+],
+"spriteBorder": [
+0.0,
+0.0,
+0.0,
+0.0
+],
+"imageType": "Simple",
+"preserveAspect": false
+},
+{
+"path": "InGameScene/UI Canvas/GamePanels/StationCoreEntityPanel/MainPanel/Content/OutputPriority/Orientation/Up/Panel",
+"kind": "Image",
+"rect": [
+231.8,
+97.5,
+253.4,
+119.1
+],
+"visible": [
+231.8,
+97.5,
+253.4,
+119.1
+],
+"color": "#FFFFFFFF",
+"alpha": 1.0,
+"sprite": "borderless-primary",
+"raycast": true,
+"selectable": false,
+"maskOnly": false,
+"canvasOrder": -10,
+"depth": 730,
+"spriteSize": [
+512.0,
+512.0
+],
+"spriteBorder": [
+20.0,
+20.0,
+20.0,
+20.0
+],
+"imageType": "Sliced",
+"preserveAspect": true
+},
+{
+"path": "InGameScene/UI Canvas/GamePanels/StationCoreEntityPanel/MainPanel/Content/ConnectorInventory/ConnectorInventoryPanel/InventorySlots/item-slot(Clone)/Background",
+"kind": "Image",
+"rect": [
+28.2,
+164.4,
+57.2,
+193.3
+],
+"visible": [
+28.2,
+164.4,
+57.2,
+193.3
+],
+"color": "#FFFFFFFF",
+"alpha": 1.0,
+"sprite": "item-slot",
+"raycast": true,
+"selectable": false,
+"maskOnly": false,
+"canvasOrder": -10,
+"depth": 744,
+"spriteSize": [
+256.0,
+256.0
+],
+"spriteBorder": [
+60.0,
+60.0,
+60.0,
+60.0
+],
+"imageType": "Sliced",
+"preserveAspect": true
+},
+{
+"path": "InGameScene/UI Canvas/GamePanels/StationCoreEntityPanel/MainPanel/Content/OutputPriority/Orientation/Right/Icon",
+"kind": "Image",
+"rect": [
+302.9,
+100.2,
+319.1,
+116.4
+],
+"visible": [
+302.9,
+100.2,
+319.1,
+116.4
+],
+"color": "#FFFFFFFF",
+"alpha": 1.0,
+"sprite": "arrow-up",
+"raycast": true,
+"selectable": false,
+"maskOnly": false,
+"canvasOrder": -10,
+"depth": 737,
+"spriteSize": [
+512.0,
+512.0
+],
+"spriteBorder": [
+0.0,
+0.0,
+0.0,
+0.0
+],
+"imageType": "Simple",
+"preserveAspect": false
+},
+{
+"path": "InGameScene/UI Canvas/GamePanels/StationCoreEntityPanel/MainPanel/HeaderContent/Header/exitbutton/ExitButton",
+"kind": "Image",
+"rect": [
+334.7,
+19.2,
+358.1,
+42.6
+],
+"visible": [
+334.7,
+19.2,
+358.1,
+42.6
+],
+"color": "#FFFFFFFF",
+"alpha": 1.0,
+"sprite": "x-button",
+"raycast": true,
+"selectable": true,
+"maskOnly": false,
+"canvasOrder": -10,
+"depth": 717,
+"spriteSize": [
+512.0,
+512.0
+],
+"spriteBorder": [
+0.0,
+0.0,
+0.0,
+0.0
+],
+"imageType": "Simple",
+"preserveAspect": false
+},
+{
+"path": "InGameScene/UI Canvas/GamePanels/StationCoreEntityPanel/MainPanel/Content/OutputPriority/Orientation/Down/Panel",
+"kind": "Image",
+"rect": [
+266.0,
+97.5,
+287.6,
+119.1
+],
+"visible": [
+266.0,
+97.5,
+287.6,
+119.1
+],
+"color": "#FFFFFFFF",
+"alpha": 1.0,
+"sprite": "borderless-primary",
+"raycast": true,
+"selectable": false,
+"maskOnly": false,
+"canvasOrder": -10,
+"depth": 733,
+"spriteSize": [
+512.0,
+512.0
+],
+"spriteBorder": [
+20.0,
+20.0,
+20.0,
+20.0
+],
+"imageType": "Sliced",
+"preserveAspect": true
+}
+]
+}

@@ -308,11 +308,29 @@ bottom gap is only wrong beside a 24 pt title and a 14 px gap.
   - corner radii, fitted to the pixels of each drawn shape's corners, within 1 px on synthetic shapes of radius 0 to 14;
   - the nesting of one rounded shape inside another;
   - the header's font size and line count, from the census;
-  - each edge's gap from the content (texts and controls) to the window's box, from the census.
+  - each edge's gap from the content (texts, controls and drawn images) to the window's box, from the census.
 - What it leaves to the eye: a corner too close in colour to what is behind it to read, the header's weight and style,
   and how the room feels.
-- Thresholds, each a guess until a real window calibrates it (the w1818 proof below):
-  - MIXED CORNERS: more radii than the reference uses, 2 at least.
-  - NESTED CORNERS: an inner radius over 2.5 px (or 35 %) off the parent's radius less the gap, within 4 px of its edge.
-  - SMALL HEADER: a header font under 0.9x the reference title's.
-  - CRAMPED: an edge gap under 0.75x the reference's and 3 px or more less ("a few more pixels").
+- Thresholds, measured on w1761's round-6 built player (build 610661760e, after Ben's notes; 10 Calculations stills at
+  1920x1080 and 10 at 1280x800, against the Station Core and Station Grid windows from the same build):
+  - Corner radii: a shape's radius is the lower median of its readable corners, read from the drawn edge. Round 6's
+    window frame, rows, letter tiles, buttons and fields read 2.2 to 5 px (the code draws them all at 5 units, scale
+    0.9), the Station Core window 3.3 to 6, the Station Grid window 2.75 to 5.5. Two fixes came from this run: the rows'
+    sprite draws 1-3 px inside its census rect (read as 6.5-7.9 px before the snap), and two row corners over the
+    nebula read 11-12 px (the median took them; the lower median does not). Icons are not shapes: the Station Grid
+    window's power icons read as 8-10 px corners.
+  - MIXED CORNERS: more radii than the most a reference uses (2 at least), or a radius none of them uses (within
+    1.5 px or 20 %). Round 6: 1 or 2 radii in every still, all within the references'.
+  - NESTED CORNERS: a circle, or a shape rounder than its parent by over 2.5 px (or 35 %), within 4 px (or the
+    parent's radius) of the parent's edge. The game nests the same radius a few px in (round 6's 4 px tiles 7 px
+    inside 4.5 px rows, the Station Grid window's tabs): the first rule, "about the parent's radius less the gap",
+    flagged those, so only a rounder inner shape counts, which is what Ben named.
+  - SMALL HEADER: under 0.9x the reference title's font. Round 6 18 pt and the Station Core window 18 pass; round 3's
+    15 pt (the connector window's type, w1761 commit 9d54a3c116) is 0.83x and is flagged; the Station Grid window's
+    16 pt is 0.89x and would be.
+  - CRAMPED: the top and sides under 0.75x the references' lower median and 3 px or more less; the bottom the same
+    against the window's own side padding. Every window measured has 11.7 px over its title and 14.4 at its sides
+    at 1920x1080; their bottoms are 7.2 (Station Grid, its columns) and 19.2 (Station Core, its slot grid), so a
+    reference sets no bottom. Round 6's bottom 12.6 passes; round 3's 7.2 (8 units, commit 9dc22a2517) is flagged.
+  - Real-data fixture: `test_w1761s_round_6_window_matches_the_station_core_window` (unity-ui tests): round 6 gives 0
+    findings, and the same window with round 3's title and bottom gives SMALL HEADER and CRAMPED BOTTOM.

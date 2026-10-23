@@ -321,6 +321,27 @@ class FamilyTest(unittest.TestCase):
         self.assertNotIn("HEADER TWO LINES", lines)
         self.assertIn("Family: 1 window(s) against 1 reference window(s), 0 finding(s)", text)
 
+    def test_w1761s_round_6_window_matches_the_station_core_window(self):
+        # The built game's Calculations window after Ben's notes (round 6: one corner size, the Station Core window's
+        # 18 pt title, 14 units under the last button), cut from its 1920x1080 still with its census, against the Station
+        # Core window from the same build. The rows' sprite draws 1-3 px inside its rect and two row corners sit over
+        # the nebula: both read as rounder corners before the drawn-edge snap and the lower median.
+        calc = f"{FIX / 'w1761r6-calculations.png'}::{FIX / 'w1761r6-calculations.json'}#CalculationEntityPanel/MainPanel"
+        core = f"{FIX / 'w1761r6-station-core.png'}::{FIX / 'w1761r6-station-core.json'}#StationCoreEntityPanel/MainPanel"
+        out = io.StringIO()
+        with redirect_stdout(out):
+            code = uk.main(["family", calc, "--ref", core])
+        self.assertEqual(code, 0, out.getvalue())
+        win = uk._measure(calc)[0]
+        self.assertTrue(all(2.0 <= s["radius"] <= 5.0 for s in win["shapes"]), win["shapes"])
+        # The same window with round 3's title (15 pt, the connector window's type; w1761 commit 9d54a3c116) and its
+        # 8 units under the last button (7.2 px; commit 9dc22a2517), the two Ben named: "the header font seems smaller
+        # than other headers" and "make the bottom padding a few more pixels too it feels crammed".
+        ref = uk._measure(core)
+        r3 = dict(win, header=dict(win["header"], fontSize=15.0), edges=dict(win["edges"], bottom=7.2))
+        found = [f.split(":")[0] for f in uk.family_findings(r3, ref)]
+        self.assertEqual(found, ["SMALL HEADER", "CRAMPED BOTTOM"])
+
     def test_a_two_line_header_is_flagged(self):
         s = {"radii": [], "nested": [], "screen": [1000, 400], "edges": None,
              "header": {"text": "Content removed from this save", "fontSize": 24, "lines": 2}}

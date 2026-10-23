@@ -36,16 +36,17 @@ painful on the eyes"; w1334, game PR #1817). These look at the pixels a player s
     ui_look.py family <still.png>::<census.json>[#<window>] [--ref <still.png>::<census.json>[#<window>] ...] [--json <out>]
         The `Family:` line (evidence-gate checklists/ui.md item 33): the window against the game's other windows (Ben,
         w1761: "the UI needs to be consistent and clean"). Each window is measured the same way:
-        MIXED CORNERS   more distinct corner radii than any reference window (2 at least), read off the pixels of every
-                        drawn shape: w1761's letter circles, rounded rows and Add Calculation button.
-        NESTED CORNERS  a rounded shape within 4 px (or its parent's radius) of a rounded parent's edge whose radius is not
-                        about the parent's less the gap: "a circle around each letter, which is right next to the rounded
-                        border of the item".
-        SMALL HEADER    the header (the largest text in the window's top) under 0.9x the reference headers' font size,
-                        scaled by the screen heights: "the header font seems smaller than other headers".
+        MIXED CORNERS   more distinct corner radii than any reference window (2 at least), or a radius no reference
+                        window uses, read off the pixels of every drawn panel, row, button, field and disc (icons are not
+                        shapes): w1761's letter circles, round-ended rows and Add Calculation button.
+        NESTED CORNERS  a circle, or a shape rounder than its rounded parent, within 4 px (or the parent's radius) of the
+                        parent's edge: "a circle around each letter, which is right next to the rounded border of the item".
+        SMALL HEADER    the header (the largest text in the window's top) under 0.9x the reference headers' font size
+                        (TMP sizes, canvas units): "the header font seems smaller than other headers".
         HEADER TWO LINES the header wraps (w1296: "fits on one line so its not pushing up against the top").
-        CRAMPED <EDGE>  the gap from the content (texts, controls) to an edge under 0.75x the reference windows' and 3 px
-                        or more less: "make the bottom padding a few more pixels too it feels crammed".
+        CRAMPED <EDGE>  the gap from the content (texts, controls, drawn images) to the top or a side under 0.75x the
+                        reference windows' and 3 px or more less; the bottom against the window's own side padding, the
+                        same way: or more less: "make the bottom padding a few more pixels too it feels crammed".
         References: --ref, else the other windows open in the same census. Exits 1 on any finding.
 
     ui_look.py crops <still.png> --out <dir> [--census <census.json>] [--rect x0,y0,x1,y1 ...] [--name <prefix>]
@@ -831,10 +832,18 @@ def corner_radius(still: Still, rect, corner: str) -> float | None:
     def at(dx, dy):
         return still.px(x0 + dx if left else x1 - 1 - dx, y0 + dy if top else y1 - 1 - dy)
     outside = still.px(ox, oy)
-    samples = [at(w // 2, 2), at(w // 2, 3), at(2, h // 2), at(3, h // 2)]
+    d = min(5, h // 3, w // 3)
+    samples = [at(w // 2, d - 1), at(w // 2, d), at(d - 1, h // 2), at(d, h // 2)]
     inside = tuple(sorted(s[c] for s in samples)[1] for c in range(3))
     if ul.delta_e(inside, outside) < CORNER_DE:
         return None
+    # The drawn edge, not the census rect: a sprite with transparent margin draws 1-3 px inside its rect (w1761's rows
+    # on the white-backdrop sprite), and those px would read as a rounder corner.
+    ix = next((k for k in range(d) if _coverage(at(k, h // 2), inside, outside) >= 0.5), 0)
+    iy = next((k for k in range(d) if _coverage(at(w // 2, k), inside, outside) >= 0.5), 0)
+    x0, y0, x1, y1 = (x0 + ix, y0 + iy, x1, y1) if left and top else (x0 + ix, y0, x1, y1 - iy) if left else \
+        (x0, y0 + iy, x1 - ix, y1) if top else (x0, y0, x1 - ix, y1 - iy)
+    w, h = x1 - x0, y1 - y0
     rows = min(CORNER_ROWS, h // 2)
     span = min(CORNER_ROWS + 2, w // 2)
     xs = []
@@ -863,12 +872,13 @@ def corner_radius(still: Still, rect, corner: str) -> float | None:
 
 
 def shape_radius(still: Still, rect) -> float | None:
-    """A shape's corner radius: the median of its readable corners (two or more), so one corner under an icon or a
-    neighbour does not decide it."""
+    """A shape's corner radius: the lower median of its readable corners (two or more), so one or two corners over a
+    star, a glow or a neighbour do not decide it. Those read too round, never too square: w1761's round-6 Calculations
+    rows read 4.25-5 px at most corners and 11-12 px at the two over the nebula."""
     rs = sorted(r for r in (corner_radius(still, rect, c) for c in ("tl", "tr", "bl", "br")) if r is not None)
     if len(rs) < 2:
         return None
-    return rs[len(rs) // 2] if len(rs) % 2 else (rs[len(rs) // 2 - 1] + rs[len(rs) // 2]) / 2
+    return rs[(len(rs) - 1) // 2]
 
 
 def radius_groups(radii: list[float]) -> list[float]:
@@ -893,6 +903,19 @@ def _window_prefix(census: dict, fragment: str) -> str:
     return p if nxt < 0 else p[:nxt]
 
 
+ICON_WORDS = ("icon", "arrow", "x-button", "glyph", "tex_", "logo")
+
+
+def _is_shape(e: dict) -> bool:
+    """A drawn shape whose corners count: a sliced (or tiled, or bordered) sprite, a panel, row, button or field, or a
+    plain sprite that is no icon (a disc behind a letter). An icon's outline is no corner: on w1761's reference still the
+    Station Grid window's power icons read as 8-10 px corners."""
+    if e.get("imageType") in ("Sliced", "Tiled") or any(e.get("spriteBorder") or []):
+        return True
+    name = (e["path"].rsplit("/", 1)[-1] + " " + (e.get("sprite") or "")).lower()
+    return not any(w in name for w in ICON_WORDS)
+
+
 def window_family(still: Still, census: dict, prefix: str) -> dict:
     """One window measured for the family check: its header (font size, lines, gap to the top), the gap from its content
     (texts and controls) to each edge, and the corner radius of every drawn shape in it, read off the pixels."""
@@ -915,8 +938,13 @@ def window_family(still: Still, census: dict, prefix: str) -> dict:
         tr = h.get("textRect") or h["rect"]
         header = {"path": h["path"], "text": h.get("text", ""), "fontSize": h.get("fontSize"), "lines": h.get("lines"),
                   "top": round(tr[1] - win[1], 1), "canvasOrder": h.get("canvasOrder")}
+    # Content: texts, controls and every drawn image inside the window that keeps off its edges (a background, a header
+    # strip or a frame piece touches one). Texts and controls alone put the Station Core window's bottom gap at 61 px,
+    # past its inventory slots, and the Station Grid window's at 250 px, past its columns (w1818).
+    inner = [b for b in (e.get("visible") or e["rect"] for e in images)
+             if min(b[0] - win[0], b[1] - win[1], win[2] - b[2], win[3] - b[3]) >= 1.5]
     content = [e.get("textRect") or e.get("visible") or e["rect"] for e in texts] + \
-              [e.get("visible") or e["rect"] for e in members if e.get("selectable")]
+              [e.get("visible") or e["rect"] for e in members if e.get("selectable")] + inner
     edges = None
     if content:
         edges = {"left": round(min(r[0] for r in content) - win[0], 1), "top": round(min(r[1] for r in content) - win[1], 1),
@@ -925,7 +953,7 @@ def window_family(still: Still, census: dict, prefix: str) -> dict:
     shapes = []
     for e in images:
         r = e.get("visible") or e["rect"]
-        if not e.get("sprite") or e.get("alpha", 1.0) < 0.5 or min(r[2] - r[0], r[3] - r[1]) < 8:
+        if not e.get("sprite") or e.get("alpha", 1.0) < 0.5 or min(r[2] - r[0], r[3] - r[1]) < 8 or not _is_shape(e):
             continue
         rad = shape_radius(still, r)
         if rad is not None:
@@ -943,8 +971,10 @@ def window_family(still: Still, census: dict, prefix: str) -> dict:
                   p["rect"][3] - c["rect"][3])
         if gap > max(NEST_GAP, p["radius"]):
             continue
-        want = max(0.0, p["radius"] - max(gap, 0.0))
-        if abs(c["radius"] - want) > max(NEST_OFF, 0.35 * max(c["radius"], p["radius"])):
+        # Only an inner shape rounder than its parent clashes (w1761's "circle around each letter, which is right next
+        # to the rounded border of the item"); the same radius or a squarer one a few px in is the game's own look
+        # (the Station Grid window's buttons in their rows, w1761 round 6's 4 px chips in 4.5 px rows).
+        if c["circle"] or c["radius"] > p["radius"] + max(NEST_OFF, 0.35 * p["radius"]):
             nested.append({"inner": c["path"], "inner_radius": c["radius"], "circle": c["circle"], "outer": p["path"],
                            "outer_radius": p["radius"], "gap": round(gap, 1)})
     return {"window": prefix, "rect": [round(v, 1) for v in win], "screen": [sw, sh], "header": header, "edges": edges,
@@ -957,14 +987,20 @@ def family_findings(subject: dict, refs: list[dict]) -> list[str]:
     out = []
     ref_counts = [len(r["radii"]) for r in refs]
     most = max([2] + ref_counts)
+    theirs = '; '.join(', '.join(f'{v:g}' for v in r['radii']) or 'square' for r in refs)
+    pool = [v for r in refs for v in r["radii"]]
+    foreign = [r for r in subject["radii"] if not any(abs(r - v) <= max(RADIUS_SAME, 0.2 * v) for v in pool)]
     if len(subject["radii"]) > most:
         out.append(f"MIXED CORNERS: {len(subject['radii'])} radii ({', '.join(f'{r:g}' for r in subject['radii'])} px), "
-                   f"the reference windows use at most {most} ({'; '.join(', '.join(f'{v:g}' for v in r['radii']) or 'square' for r in refs)})")
+                   f"the reference windows use at most {most} ({theirs})")
+    elif foreign:
+        out.append(f"MIXED CORNERS: radius {', '.join(f'{r:g}' for r in foreign)} px, which no reference window uses "
+                   f"({theirs})")
     for n in subject["nested"]:
         what = "a circle" if n["circle"] else f"radius {n['inner_radius']:g}"
         out.append(f"NESTED CORNERS: {what} ({ul.short(n['inner'], 2)}) {n['gap']:g} px inside "
-                   f"{ul.short(n['outer'], 2)}, radius {n['outer_radius']:g}: a tight inner corner wants about "
-                   f"{max(0.0, n['outer_radius'] - max(n['gap'], 0)):g}, or more room")
+                   f"{ul.short(n['outer'], 2)}, radius {n['outer_radius']:g}: rounder than the shape around it; give "
+                   f"it the same radius or a squarer one, or more room")
     scale = lambda r: subject["screen"][1] / r["screen"][1] if r["screen"][1] else 1.0  # noqa: E731
     h = subject["header"]
     ref_heads = [(r, r["header"]) for r in refs if r["header"] and r["header"].get("fontSize")]
@@ -972,7 +1008,7 @@ def family_findings(subject: dict, refs: list[dict]) -> list[str]:
         out.append(f"HEADER TWO LINES: \"{h['text'][:40]}\" wraps to {h['lines']} lines (Ben, w1296: a header that "
                    f"\"fits on one line so its not pushing up against the top of the panel\")")
     if h and h.get("fontSize") and ref_heads:
-        sizes = sorted(rh["fontSize"] * scale(r) for r, rh in ref_heads)
+        sizes = sorted(rh["fontSize"] for r, rh in ref_heads)  # TMP sizes are canvas units: no screen scale
         ref_size = sizes[len(sizes) // 2]
         if h["fontSize"] < HEADER_SMALL * ref_size:
             out.append(f"SMALL HEADER: \"{h['text'][:40]}\" at {h['fontSize']:g} pt, the reference windows' headers "
@@ -980,15 +1016,23 @@ def family_findings(subject: dict, refs: list[dict]) -> list[str]:
     elif not h and ref_heads:
         out.append("NO HEADER: no text in the top of the window, where every reference window has its title")
     if subject["edges"]:
+        e = subject["edges"]
+        sides = min(e["left"], e["right"])
         for side in ("top", "bottom", "left", "right"):
             gaps = sorted(r["edges"][side] * scale(r) for r in refs if r["edges"])
-            if not gaps:
-                continue
-            ref_gap = gaps[len(gaps) // 2]
-            mine = subject["edges"][side]
-            if mine < EDGE_CRAMPED * ref_gap and ref_gap - mine >= EDGE_MIN_DIFF:
+            mine = e[side]
+            # Top and sides against the references (their lower median): every game window measured has 11.7 px over
+            # its title and 14.4 at its sides at 1920x1080. The bottom only against the window's own sides: what a window
+            # ends in sets its bottom gap (the Station Core window's slot grid 19 px, the Station Grid window's columns
+            # 7 px). w1761's rejected round had 7.2 px under its last button and 14.4 px at its sides ("it feels
+            # crammed"); round 6 has 12.6 and passes.
+            ref_gap = gaps[(len(gaps) - 1) // 2] if gaps and side != "bottom" else None
+            if ref_gap is not None and mine < EDGE_CRAMPED * ref_gap and ref_gap - mine >= EDGE_MIN_DIFF:
                 out.append(f"CRAMPED {side.upper()}: {mine:g} px from the content to the window's {side} edge, the "
                            f"reference windows {', '.join(f'{g:.0f}' for g in gaps)} px")
+            elif side in ("top", "bottom") and mine < EDGE_CRAMPED * sides and sides - mine >= EDGE_MIN_DIFF:
+                out.append(f"CRAMPED {side.upper()}: {mine:g} px from the content to the window's {side} edge, against "
+                           f"{sides:g} px at its own sides")
     return out
 
 
