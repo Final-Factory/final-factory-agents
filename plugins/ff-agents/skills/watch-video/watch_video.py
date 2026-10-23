@@ -1159,14 +1159,17 @@ Write markdown with exactly these sections:
    shape, size next to the ship or object that emits it, colours, motion, whether it stays attached to its
    source, how it blends with the scene.
 2. **Problems**: one bullet each, EXACTLY in this form: `- [m:ss.ss] CATEGORY: what is wrong and the fix`.
-   Categories: POP (appears or vanishes abruptly), TIMING (too fast, slow, long or short), SHAPE, SCALE, COLOR,
-   MOTION (wrong direction, lags, detaches, jitters), FLICKER, SORTING (drawn over or under the wrong thing),
+   Categories: POP (appears or vanishes abruptly), TIMING (too fast, slow, long or short), SHAPE, SCALE,
+   COLOR (incl. an object losing its own colours for another hue), MOTION (wrong direction, lags, detaches,
+   jitters, jumps further in one frame than in the frames around it), FLICKER, SORTING (drawn over or under the wrong thing),
    ALIASING, READABILITY (hard to see or read), BRIEF (not the intended look), COMPARE (worse than video A).
 3. **Out of place** (answer this WITHOUT looking at the brief; it is a separate question from "does it match"):
    frame by frame, what looks wrong, extra or out of place whatever the brief asked for? Hunt for: a duplicate,
    ghost or leftover copy of an object left behind, a dark or unlit silhouette, stale or lingering UI, things
-   overlapping or drawn over/under the wrong thing, flicker, clipped or cut-off text, anything that is there for
-   no reason. One bullet each, EXACTLY: `- [m:ss.ss] GHOST|LEFTOVER|SILHOUETTE|STALE_UI|OVERLAP|SORTING|FLICKER|CLIPPED|OTHER: what and where in the frame`.
+   overlapping or drawn over/under the wrong thing, flicker, clipped or cut-off text, an object that jumps (moves
+   much further in one frame than in the frames around it, e.g. straight to the centre of a black hole), an object
+   that turns colours that are not its own (e.g. a grey hull going purple, or taking the colour of what pulls it in),
+   anything that is there for no reason. One bullet each, EXACTLY: `- [m:ss.ss] GHOST|LEFTOVER|SILHOUETTE|STALE_UI|OVERLAP|SORTING|FLICKER|CLIPPED|JUMP|RECOLOUR|OTHER: what and where in the frame`.
    Write "nothing out of place" only if you looked for each of those.
 4. **Against the intended look**: each point of the brief, met or not, and why.
 5. **Against the reference** (only when video A is given): what changed from A to B, better or worse.

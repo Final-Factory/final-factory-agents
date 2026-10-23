@@ -1184,3 +1184,95 @@ class TransitionStripToolTest(unittest.TestCase):
             report = self.run_tool(self.clip(Path(tmp), vanish=False), Path(tmp))
             self.assertEqual(report["pops"], [])
             self.assertGreaterEqual(report["frames"], 59)
+
+
+@unittest.skipUnless(_media_tools(), "needs ffmpeg, ffprobe, numpy and Pillow")
+class TransitionJumpAndPaletteTest(unittest.TestCase):
+    """w1816: transition_strip.py tracks the object and marks a one-frame jump in its place and a turn to colours that
+    are not its own. w1685, after a clip passed with "no vanish, pop, swap or jump", Ben: "i dont like that it suddenly
+    jumps to the center of the black hole and then also becomes that purple"."""
+
+    def clip(self, folder: Path, kind: str, double: bool = False) -> Path:
+        """A grey hull with an orange stripe spiralling into a hole with a purple disk, 2.5 s at 60 fps: smooth, with a
+        jump most of the way in at frame 70, creeping then lunging in from frame 80, or turning purple over frames
+        60-66. `double` writes each frame twice, as a half-speed capture does (w1685's half-speed take)."""
+        import math
+        import subprocess
+        from PIL import Image, ImageDraw
+        for i in range(150):
+            im = Image.new("RGB", (480, 360), (8, 8, 20))
+            d = ImageDraw.Draw(im)
+            for k in range(40):
+                d.point(((k * 97) % 480, (k * 53) % 360), fill=(150, 150, 170))
+            glow = 1.0 + 0.08 * math.sin(i * 0.2)
+            d.ellipse((188, 128, 292, 232), outline=tuple(int(c * glow) for c in (120, 60, 160)), width=12)
+            d.ellipse((210, 150, 270, 210), fill=(0, 0, 0))
+            u = min(1.0, max(0.0, (i - 30) / 108))
+            if kind == "lunge":
+                u = max(0.0, (i - 30) / 300) if i < 80 else min(1.0, 50 / 300 + (i - 80) / 40)
+            if kind == "jump" and i >= 70:
+                u = min(1.0, u + 0.45)
+            if u < 1.0:
+                r, a, s = 170 * (1 - u) ** 1.3 + 8, 0.3 + 5.0 * u, 1 - 0.8 * u
+                x, y = 240 + r * math.cos(a), 180 + r * math.sin(a)
+                hull, stripe = (150, 160, 175), (230, 140, 40)
+                if kind == "purple" and i >= 60:
+                    t = min(1.0, (i - 60) / 6)
+                    hull = tuple(int(c + (p - c) * t) for c, p in zip(hull, (150, 60, 220)))
+                    stripe = tuple(int(c + (p - c) * t) for c, p in zip(stripe, (170, 70, 230)))
+                d.rectangle((x - 28 * s, y - 9 * s, x + 28 * s, y + 9 * s), fill=hull)
+                d.rectangle((x - 28 * s, y - 2 * s, x + 28 * s, y + 2 * s), fill=stripe)
+            for k in ((2 * i, 2 * i + 1) if double else (i,)):
+                im.save(folder / f"f{k:03d}.png")
+        out = folder / f"{kind}.mp4"
+        subprocess.run(["ffmpeg", "-v", "error", "-y", "-framerate", "60", "-i", str(folder / "f%03d.png"),
+                        "-pix_fmt", "yuv420p", "-c:v", "libx264", "-crf", "12", str(out)], check=True)
+        return out
+
+    def run_tool(self, kind: str, *extra: str, double: bool = False) -> dict:
+        import json
+        import tempfile
+        import transition_strip as ts
+        a, b = (0.8, 4.8) if double else (0.4, 2.4)
+        with tempfile.TemporaryDirectory() as tmp:
+            clip = self.clip(Path(tmp), kind, double)
+            self.assertEqual(ts.main([str(clip), "--from", str(a), "--to", str(b), "--claim", kind, "--track",
+                                      "410,232", "--out", tmp, *extra]), 0)
+            return json.loads((Path(tmp) / f"{kind}-strip-{a:.2f}-{b:.2f}s-every1f.json").read_text(encoding="utf-8"))
+
+    def test_a_smooth_spiral_is_not_marked(self):
+        report = self.run_tool("smooth")
+        self.assertEqual((report["pops"], report["jumps"], report["surges"], report["off_palette"]), ([], [], [], []))
+        self.assertGreater(sum(1 for t in report["track"] if t), 100)
+
+    def test_a_creep_then_lunge_is_marked_where_it_speeds_up(self):
+        report = self.run_tool("lunge")
+        self.assertEqual(len(report["surges"]), 1, report["surges"])
+        self.assertTrue(80 <= report["surges"][0]["frame"] <= 90, report["surges"])
+        self.assertGreater(report["surges"][0]["times_before"], 3)
+
+    def test_a_half_speed_capture_is_not_full_of_pops(self):
+        """Every frame twice: before w1816 every real step was over 4x the median (half the steps are 0), so w1685's
+        half-speed take showed 14 pops."""
+        report = self.run_tool("smooth", double=True)
+        self.assertEqual((report["pops"], report["jumps"], report["surges"]), ([], [], []))
+        self.assertGreater(report["thresholds"]["repeat_frames"], 100)
+
+    def test_a_jump_to_the_centre_is_marked_at_its_frame(self):
+        report = self.run_tool("jump")
+        self.assertEqual([j["frame"] for j in report["jumps"]], [70], report["jumps"])
+        self.assertGreater(report["jumps"][0]["times_speed"], 10)
+        self.assertEqual(report["off_palette"], [])
+
+    def test_a_turn_to_purple_is_marked_from_its_first_frame(self):
+        report = self.run_tool("purple")
+        self.assertEqual(report["jumps"], [])
+        self.assertEqual(len(report["off_palette"]), 1, report["off_palette"])
+        span = report["off_palette"][0]
+        self.assertEqual(span["hue"], "purple")
+        self.assertTrue(60 <= span["from"] <= 64, span)
+        self.assertGreater(span["to"], 100)
+
+    def test_allowed_colours_are_not_foreign(self):
+        report = self.run_tool("purple", "--allow-hues", "purple,magenta,blue")
+        self.assertEqual(report["off_palette"], [])
