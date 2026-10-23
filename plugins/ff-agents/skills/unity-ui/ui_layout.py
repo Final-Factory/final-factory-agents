@@ -26,7 +26,7 @@ alpha, sprite and drawing order) taken before and after a change, same save, siz
              its anchor; a change over --tolerance px (2) between before and after: FAIL.
   Style      every panel (an Image over 2 % of the screen) that is new or changed colour, alpha or
              sprite, and every panel under a --touched fragment, against the reference panel (--ref, a
-             path fragment, from --ref-census or the before census): a delta E over 10 (sampled from
+             path fragment, from --ref-census or the before census): a delta E over 10 (the most common colour, sampled from
              --shot/--ref-shot inside each panel's rect when given, which is what a player sees), an
              alpha off by more than 0.2 on the same art, or different art without screenshots: FAIL.
 
@@ -985,7 +985,10 @@ def reference(census: dict, fragment: str):
 
 
 def sample(shot, rect):
-    """The median colour of a screenshot inside a rect (image pixels, top-left origin)."""
+    """The panel's own colour in a screenshot inside a rect (image pixels, top-left origin): the most common colour (the
+    mean of the largest bucket of pixels that agree within 8 levels a channel), which is the window's fill wherever its
+    rows and text sit. w1475: the median pixel moved with the content, so two new rows in the Station Grid window read
+    delta E 12.1 against its before at 1280x800 while its fill was #133754 against #123654 (delta E 0.8)."""
     try:
         from PIL import Image  # noqa: PLC0415
     except ImportError:
@@ -999,8 +1002,11 @@ def sample(shot, rect):
         if x1 - x0 < 2 or y1 - y0 < 2:
             return None
         crop = image.convert("RGB").crop((x0, y0, x1, y1)).resize((max(1, (x1 - x0) // 4), max(1, (y1 - y0) // 4)))
-        pixels = sorted(crop.getdata(), key=lambda p: sum(p))
-        return pixels[len(pixels) // 2]
+        buckets: dict[tuple, list] = {}
+        for p in crop.getdata():
+            buckets.setdefault((p[0] >> 3, p[1] >> 3, p[2] >> 3), []).append(p)
+        fill = max(buckets.values(), key=len)
+        return tuple(round(sum(c[i] for c in fill) / len(fill)) for i in range(3))
 
 
 def style(before: dict | None, after: dict, ref_fragment: str, shot=None, ref_shot=None, ref_census: dict | None = None,

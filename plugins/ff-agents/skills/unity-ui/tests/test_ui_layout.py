@@ -1168,6 +1168,27 @@ class CommandTest(unittest.TestCase):
             self.assertEqual(ul.main(["check", "--before", str(b), "--after", str(b)]), 0)
 
 
+class SamplePanelFillTest(unittest.TestCase):
+    FIXTURES = Path(__file__).resolve().parent / "fixtures"
+
+    def test_new_rows_in_a_window_do_not_move_its_colour(self):
+        # w1475: the Station Grid window at 1280x800 before and after two new rows; the median pixel read delta E 12.1
+        # (the rows shifted the content under it), the window's fill is the same (#133754 against #123654)
+        before = ul.sample(self.FIXTURES / "w1475-station-grid-1280-before.png", [0, 0, 567, 432])
+        after = ul.sample(self.FIXTURES / "w1475-station-grid-1280-after.png", [0, 0, 567, 432])
+        self.assertLess(ul.delta_e(after, before), 3)
+
+    def test_a_recoloured_window_still_reads_far_off(self):
+        from PIL import Image  # noqa: PLC0415
+        with Image.open(self.FIXTURES / "w1475-station-grid-1280-after.png") as image:
+            tinted = Image.eval(image.convert("RGB"), lambda v: min(255, v + 40))
+        with tempfile.TemporaryDirectory() as d:
+            path = Path(d) / "tinted.png"
+            tinted.save(path)
+            before = ul.sample(self.FIXTURES / "w1475-station-grid-1280-before.png", [0, 0, 567, 432])
+            self.assertGreater(ul.delta_e(ul.sample(path, [0, 0, 567, 432]), before), 10)
+
+
 class SampleWithoutPillowTest(unittest.TestCase):
     def test_a_missing_pillow_says_how_to_get_it(self):
         # w807: a bare "ModuleNotFoundError: No module named 'PIL'" was all a Mac with no Pillow printed
