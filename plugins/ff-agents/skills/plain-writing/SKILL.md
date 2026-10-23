@@ -92,7 +92,12 @@ Run this before delivering. Do not narrate it or report on it.
 Copy that someone will paste somewhere else (a post, an e-mail, a form, a message) goes into the chat
 as plain text: no code block, no Markdown, nothing they would have to strip. Code blocks are for commands
 and code. Give one version in their own voice, and get their sign-off before anything is sent or
-published (Ben, 2026-10-02; `evidence-gate`, `lessons/paste-text-is-plain.md`).
+published (Ben, 2026-10-02; `evidence-gate`, `lessons/public-copy-sounds-like-the-person.md`).
+
+Public copy (a site page, Steam text, a post, an email, a press kit) also goes through the evidence-gate
+`checklists/public-copy.md`: `copy_check.py` flags even rhythm, repeated openings and lines about the page itself, and a
+fresh critic that reads only the copy quotes every line that sounds machine-written. A clean word lint is not a pass
+(w1825: Ben, "this text is LLM speak lol i told you not to use llm prose!").
 
 ## Applying it to design docs and studies
 
