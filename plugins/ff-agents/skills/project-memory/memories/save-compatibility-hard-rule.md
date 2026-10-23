@@ -19,7 +19,7 @@ package upgrade counts too: it can shift every StableTypeHash.
 version save doesnt load in an old version of the game lol. just backwards compatibility is important." A
 version bump that keeps old saves loading, proved by an old-save load test, merges without a person; a newer
 save an older build refuses with the clean "newer version" error is fine; breaking the load of existing saves
-goes to a person (evidence-gate `lessons/a-save-version-bump-that-keeps-old-saves-loading-needs-no-person.md`).
+goes to a person (evidence-gate `lessons/merge-your-own-pr.md`, "A save version bump ...").
 
 **Compatibility covers saves from the current master version (the public build) and every beta
 since.** The golden fixtures are how that is proven: `Assets/Tests/Serialization/Fixtures/`

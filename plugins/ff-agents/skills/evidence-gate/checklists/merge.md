@@ -105,7 +105,7 @@ Not verified: the Bats' slot lag (simulation, follow-up PR)
   first-frame resolution, the Steam client or touch ([deck.md](deck.md); w684 -> w768, w767).
 - **Kind `simulation`** needs "Tests", "Determinism audit" (with the heartbeat count, per the
   `determinism-audit` skill) and "Save compatibility" (the repo's hard rule).
-- **Save version bumped -> old-save load test present** ([lesson](../lessons/a-save-version-bump-that-keeps-old-saves-loading-needs-no-person.md);
+- **Save version bumped -> old-save load test present** ([lesson](../lessons/merge-your-own-pr.md#a-save-version-bump-that-keeps-old-saves-loading-needs-no-person-w1826-2026-10-23);
   Ben, 2026-10-23, w1826). The PR's Save compatibility line names the test that loads a save from
   before the bump and says it ran green. With it, the bump merges without a person (a newer save
   refused by an older build is fine); without it, writing it is the work. Only a change that breaks
