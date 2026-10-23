@@ -256,6 +256,10 @@ look first and relay only with the critic's report (FF Factory `read_rules ui`).
   1 report generation only, 2 a game desync fix, 3 capture during play; tests, a 2-peer red/green
   check for 2, a before/after tick and frame measurement for 3 (under 1% merges, above escalates
   through the intake with `PERF-ESCALATION`).
+- [FFBox crash and hang diagnoses](checklists/ffbox-crash-pr.md) (lothsahn's standing policy, 2026-10-23, w1827):
+  every one is worked, a cause or not: read the report yourself, reproduce it or show the faulty path, a test red on
+  master and green with the fix, review FFBox's PR (merge it, or fix properly and close it with the reason), a
+  per-frame or per-tick cost above 1% escalates with `PERF-ESCALATION`, NOT-A-BUG is checked and closed.
 - Ads and outreach live in the ff-marketing repo: `lessons/ads.md` and `lessons/outreach.md`,
   enforced by `scripts/ads/ffads lint`.
 
