@@ -6,6 +6,12 @@ Mechanics: the game repo's `Documentation/Bench-Lock.md`.
 - [ ] **Shortest run that answers the question.** The question and the smallest difference that would change the
       decision are written down. The legs, sample and settle are the shortest that can show it (a few percent: two
       rounds of 30 to 60 s on a quiet machine), and the round count is a cap.
+- [ ] **A cost under a few percent is timed from inside, not by a whole-frame A/B** (w1780, lothsahn: "Measure the
+      watchdog's own per-frame time first, then decide"). Eight m5 rounds of a whole-frame on/off A/B read the hang
+      watchdog at 1.2% to 3.7% and could not settle it; an opt-in flag that timed its own step around the call
+      (`-ffHangWatchdogSelfTime`, the game repo's `WatchdogCost`) read under 0.01% of frame time in two runs, even on a
+      busy BEAST. Load only inflates such a self-timing, so a busy run is an upper bound. For "does X cost under N%?",
+      add the flag (off by default, zero cost without it) before planning A/B rounds.
 - [ ] **A short plan.** The fewest rounds that can answer the question (lothsahn: "Get them all to shorten their plans a
       lot"); the round count is a cap, never the plan.
 - [ ] **Early stop on, and a decision on enough signal.** The probe scripts' `ab_stop.py` stop is left on, or the
