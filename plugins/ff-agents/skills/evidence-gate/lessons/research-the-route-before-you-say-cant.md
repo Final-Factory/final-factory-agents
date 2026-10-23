@@ -108,3 +108,26 @@ Code reaches Claude Design directly (Ben: "YOU CAN USE CLAUDE DESIGN FROM CLAUDE
   you closed and which you left open.
 
 The checklist line: "Drive only the windows you opened" in [SKILL.md](../SKILL.md), "Reports and briefs".
+
+## Drive only the player you launched (w1856, 2026-10-23)
+
+**Rule.** A built player you send input to, screenshot or record is one **you** launched in this request, named by the
+pid `player_slots.py launch --detach` printed. Its agent channel is that pid's own `AgentControl/session-<pid>.json`,
+written after the launch: `python scripts/nightly/player_slots.py mine --one` (game repo) prints it, from your session's
+leases. Never the newest file in `AgentControl/`, never "the newest FinalFactory process": every player on the computer,
+any worker's, writes into that one folder, and the newest is whoever started last.
+
+**Why.** Worker c28c5061 (w1767/w1768, BEAST, 2026-10-23) found "its" player by taking the newest agent session file and
+sent its input to another worker's player on the same machine. Ben's request (w1856): "Make the drive-game /
+agent-control tooling bind to the player the worker itself launched (by pid or slot), never the newest session file".
+BEAST ran 7 workers at once that morning (portal journal, 09:56 UTC); two players starting minutes apart is the
+normal case, not a corner. w1232 had
+already lost runs to a stale file of a dead player whose pid Windows reused.
+
+**How to apply.**
+
+- Keep the pid from your launch's JSON (`{"pid", "slot", "agent_session"}`); pass it to everything: `ff-agent --pid`,
+  `record_clip --pid` (or `--player`, which now asks `player_slots.py mine`), `read_os_cursor.ps1 -PlayerPid`.
+- Lost it? `player_slots.py mine` lists yours (FF_SESSION_ID's leases) with each one's session file, or `stale_session_file`
+  when the file there predates the player. Several: `--one --pid <n>`. None: launch one; do not borrow one.
+- A player a person or another worker started is theirs, like a window they opened (the section above).

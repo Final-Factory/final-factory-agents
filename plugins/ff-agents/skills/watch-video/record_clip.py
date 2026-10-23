@@ -83,7 +83,28 @@ PLAYER_PROCESS = re.compile(r"/FinalFactory[^/]*\.app/Contents/MacOS/|FinalFacto
 
 
 def player_pid():
-    """A running built Final Factory player (the newest, if several)."""
+    """The built player THIS worker launched (w1856: a worker took the newest session file and drove another worker's
+    player on BEAST). The game checkout's `player_slots.py mine --one` answers from this session's leases (FF_SESSION_ID);
+    without it (no worker session, or a checkout older than w1856) only a single running player is taken: several are
+    refused, never the newest picked, since the newest is whichever worker's started last."""
+    slots = os.path.join(repo_root(), "scripts", "nightly", "player_slots.py")
+    if os.environ.get("FF_SESSION_ID") and os.path.exists(slots):
+        r = subprocess.run([sys.executable, slots, "mine", "--one"], capture_output=True, text=True)
+        if r.returncode == 0:
+            return int(json.loads(r.stdout)["pid"])
+        if "invalid choice" not in r.stderr:  # a checkout older than w1856 has no `mine`: fall through
+            sys.exit(f"record_clip: {r.stderr.strip().removeprefix('ERROR: ')} (or pass --pid <the pid launch printed>)")
+    pids = running_player_pids()
+    if not pids:
+        sys.exit("record_clip: no running FinalFactory player (start one from the slot pool first)")
+    if len(pids) > 1:
+        sys.exit(f"record_clip: {len(pids)} FinalFactory players run here (pids {', '.join(map(str, pids))}), and which is "
+                 "yours is unknown: pass --pid with the one you launched (player_slots.py launch --detach printed it)")
+    return pids[0]
+
+
+def running_player_pids():
+    """Every running built Final Factory player on this computer, oldest first."""
     if WIN:
         out = subprocess.run(["powershell", "-NoProfile", "-Command",
                               "Get-Process | Where-Object { $_.ProcessName -like 'FinalFactory*' } | "
@@ -93,9 +114,7 @@ def player_pid():
         out = subprocess.run(["ps", "-axo", "pid=,command="], capture_output=True, text=True).stdout
         pids = [int(l.split()[0]) for l in out.splitlines()
                 if PLAYER_PROCESS.search(l)]
-    if not pids:
-        sys.exit("record_clip: no running FinalFactory player (start one from the slot pool first)")
-    return pids[-1]
+    return pids
 
 
 def repo_root():
@@ -350,7 +369,7 @@ def start_windows(pid, raw, seconds, fps, monitor):
 def main():
     ap = argparse.ArgumentParser(description="Record a short 60 fps clip of the running game while an effect plays.")
     tgt = ap.add_mutually_exclusive_group(required=True)
-    tgt.add_argument("--player", action="store_true", help="the running built FinalFactory player")
+    tgt.add_argument("--player", action="store_true", help="the built player this worker launched (player_slots.py mine; w1856)")
     tgt.add_argument("--unity", nargs="?", const="", metavar="PROJECT",
                      help="the Unity editor open on PROJECT (default: this git checkout)")
     tgt.add_argument("--pid", type=int, help="any process id with a game window")

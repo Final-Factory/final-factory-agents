@@ -15,8 +15,9 @@ Frenzy/Afterburner/Plasma objectives only tick from real input actions (`MultiUn
 every tutorial verifier reads the HOST, the roles are: **HOST = M5 windowed built player (the
 driver), CLIENT = BEAST headless player (a background player agent)**. SSH form: put the logic in
 a script file and run `ssh beast '"C:\Program Files\Git\bin\bash.exe" -lc "bash /c/Users/rydin/ff-worker/x.sh"'`
-— cmd.exe mangles `|` and `\"` in an inline remote command. Newest session pid: list
-`AppData/LocalLow/Never Games/finalfactory/AgentControl/session-*.json` by mtime. `GET help` on
+— cmd.exe mangles `|` and `\"` in an inline remote command. Your player's session: the
+pid your `player_slots.py launch --detach` printed, its own `AgentControl/session-<pid>.json` (`player_slots.py mine
+--one` finds it), never the newest file there: another worker's player may be the newest (w1856). `GET help` on
 Windows needs `PYTHONIOENCODING=utf-8`. A launch can exceed a 180 s tool timeout — background it.
 
 **Pointer mapping (M5 host, `-screen-width 1280 -screen-height 800`).** Native coordinates are
