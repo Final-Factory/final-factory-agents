@@ -808,12 +808,11 @@ EDGE_MIN_DIFF = 3.0     # it is cramped (Ben, w1761: "make the bottom padding a 
 
 
 def _coverage(p, inside, outside) -> float:
-    """How much of a pixel is the shape: p projected on the line from the colour around the shape to the shape's own."""
-    d = [i - o for i, o in zip(inside, outside)]
-    n = sum(v * v for v in d)
-    if not n:
-        return 0.0
-    return min(1.0, max(0.0, sum((c - o) * v for c, o, v in zip(p, outside, d)) / n))
+    """How much of a pixel is the shape: its distance from the colour around the shape over the shape's own distance
+    from it, so a border drawn lighter than both the fill and the background (the Fleet panel's number fields) counts
+    as the shape's edge."""
+    n = math.dist(inside, outside)
+    return min(1.0, math.dist(p, outside) / n) if n else 0.0
 
 
 def corner_radius(still: Still, rect, corner: str) -> float | None:
@@ -823,13 +822,15 @@ def corner_radius(still: Still, rect, corner: str) -> float | None:
     to what is around it."""
     x0, y0, x1, y1 = (int(round(v)) for v in rect)
     w, h = x1 - x0, y1 - y0
-    if w < 8 or h < 8 or x0 < 2 or y0 < 2 or x1 + 2 > still.width or y1 + 2 > still.height:
-        return None
     left, top = corner[1] == "l", corner[0] == "t"
+    ox, oy = (x0 - 2 if left else x1 + 1), (y0 - 2 if top else y1 + 1)
+    if w < 8 or h < 8 or not (0 <= ox < still.width and 0 <= oy < still.height) or x0 < 0 or y0 < 0 or \
+            x1 > still.width or y1 > still.height:
+        return None
 
     def at(dx, dy):
         return still.px(x0 + dx if left else x1 - 1 - dx, y0 + dy if top else y1 - 1 - dy)
-    outside = still.px(x0 - 2 if left else x1 + 1, y0 - 2 if top else y1 + 1)
+    outside = still.px(ox, oy)
     samples = [at(w // 2, 2), at(w // 2, 3), at(2, h // 2), at(3, h // 2)]
     inside = tuple(sorted(s[c] for s in samples)[1] for c in range(3))
     if ul.delta_e(inside, outside) < CORNER_DE:
