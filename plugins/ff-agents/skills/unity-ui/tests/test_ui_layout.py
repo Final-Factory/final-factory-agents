@@ -2,6 +2,7 @@
 
     python3 -m unittest discover -s plugins/ff-agents/skills/unity-ui/tests -p 'test_*.py' -v
 """
+import importlib.util
 import json
 import sys
 import tempfile
@@ -1168,6 +1169,7 @@ class CommandTest(unittest.TestCase):
             self.assertEqual(ul.main(["check", "--before", str(b), "--after", str(b)]), 0)
 
 
+@unittest.skipUnless(importlib.util.find_spec("PIL"), "needs Pillow (the CI runner has none)")
 class SamplePanelFillTest(unittest.TestCase):
     FIXTURES = Path(__file__).resolve().parent / "fixtures"
 
