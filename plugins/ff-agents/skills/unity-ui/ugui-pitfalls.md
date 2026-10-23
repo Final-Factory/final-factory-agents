@@ -132,6 +132,11 @@ manual pages for these components are the source for the rules: "Auto Layout", "
 - **A viewport squeezed to nothing.** A fit that shrinks a scroll view below one row (the
   `WindowFit.MinListHeight` 80 / `MinViewportHeight` 60 floors) leaves one row visible and the
   player sees "scrunched", not "scrolls". Prefer giving the window the height, then the list.
+- **`Destroy` lands at the end of the frame, after you reused the object (w1773).** `CircuitTabHost.RestoreSections`
+  destroyed the parts it had added when a window went back to Main. When the next structure opened on the circuit view
+  in the same frame, the view reused those parts, and Unity's deferred `Destroy` then removed them at frame end. The
+  view showed the Filter options through it. Only temporary debug logs found it. Don't destroy a part you may take
+  back in the same frame: keep it and restore its values (or `DestroyImmediate` it and null the reference).
 
 ## Drawing order, popups, colours
 

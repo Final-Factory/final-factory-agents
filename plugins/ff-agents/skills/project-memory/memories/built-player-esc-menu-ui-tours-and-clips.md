@@ -23,3 +23,7 @@ w1316 (Load panel screenshots, beast, 2026-10-14), a release and a development b
 - **Desktop clips fail on beast:** `record_clip --pid` got no ddagrab frame in 8 s, and gdigrab recorded another
   editor's "Importing assets" dialog over the player even after `SetWindowPos(HWND_TOPMOST)`. Use the tour's `record`
   step (the game's own frames), as [[beast-clip-capture-and-slot-launch-traps]] says for gameplay.
+- **The record step can starve the game on biscuit (w1773, Linux):** a tour's `record` step held a 1920x1080 development
+  player at about 1.4 fps, so a clip of a UI change showed nothing at real rate. Record from outside instead: wait for the
+  `shot <name>:` line in `tour.log`, then `ffmpeg -f x11grab -framerate 60 -window_id <id from xwininfo -root -tree> -i :0 -t 12`
+  (static ffmpeg from `imageio_ffmpeg`); 114 distinct frames in 3 s, upright, no vflip.
