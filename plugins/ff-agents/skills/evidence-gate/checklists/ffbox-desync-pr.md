@@ -90,6 +90,11 @@ changed code runs) in your first report and in the PR description.
       never a new exe path).
 - [ ] The repo's rules: `fp` only, no wall-clock or frame dependence, the crown-jewel surfaces,
       save compatibility (an UpgradeStep and a golden fixture if saved state changes).
+- [ ] Save version bumped -> old-save load test present, run, green. Then the bump needs no person's
+      sign-off (Ben, 2026-10-23, w1826: "its fine that a later version save doesnt load in an old
+      version of the game lol. just backwards compatibility is important"): an older build refusing a
+      newer save with the clean "newer version" error is fine. Only a change that would break loading
+      of existing saves goes to a person ([lesson](../lessons/a-save-version-bump-that-keeps-old-saves-loading-needs-no-person.md)).
 - [ ] `## Evidence` Kind `simulation` with Tests, Determinism audit, Save compatibility
       (`pr_evidence.py` PASS), then merge.
 

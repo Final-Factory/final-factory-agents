@@ -15,6 +15,12 @@ reordered, or moved into padding, which changes the StableTypeHash with no size 
 an entity whose saved layout changes; a network operation whose effect persists. An Entities
 package upgrade counts too: it can shift every StableTypeHash.
 
+**Direction (Ben, 2026-10-23, w1826): only backwards compatibility is required.** "its fine that a later
+version save doesnt load in an old version of the game lol. just backwards compatibility is important." A
+version bump that keeps old saves loading, proved by an old-save load test, merges without a person; a newer
+save an older build refuses with the clean "newer version" error is fine; breaking the load of existing saves
+goes to a person (evidence-gate `lessons/a-save-version-bump-that-keeps-old-saves-loading-needs-no-person.md`).
+
 **Compatibility covers saves from the current master version (the public build) and every beta
 since.** The golden fixtures are how that is proven: `Assets/Tests/Serialization/Fixtures/`
 (slate and rules in its README; `MasterNewGame-0.21.0.34` is the master save).

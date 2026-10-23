@@ -287,6 +287,9 @@ One file each under `lessons/`: the rule, why (the incident, dated), how to appl
   PR that adds a model or effect art without a filled `Hero art:` line (concepts and pick, detail comparison, how it
   differs, distinct, measured cost; merge checklist), and checklist 5f is the reviewer's read; publish the concepts
   before any build-quality clip (w1497).
+- [A save version bump that keeps old saves loading needs no person](lessons/a-save-version-bump-that-keeps-old-saves-loading-needs-no-person.md):
+  Ben, 2026-10-23, w1826: backwards compatibility is the gate; a newer save an older build refuses cleanly is fine. Old-save
+  load test present -> merge; breaks existing saves -> a person.
 - [No merge before the review](lessons/no-merge-before-the-review.md): "pending" is not done.
 - [Merge your own pull request](lessons/merge-your-own-pr.md): verified and green means merge;
   hold only for exceptional risk or a timing reason, and say which and when. mechanics: check `git branch --show-current` after a wait, gate `gh pr merge` on a passing check (`gh pr checks N && gh pr merge N --match-head-commit <sha>`: exit 8 is pending; w864; in a worker `ff-pr merge`, one call, w1478), post the verdict only from the newest ff-agents (w807); a red check that is not your change, and `not our ref` at checkout ([section](lessons/merge-your-own-pr.md#a-red-check-that-is-not-your-change-read-the-failing-test-then-the-cause-w1337-2026-10-15), w1337).

@@ -33,8 +33,10 @@ or forgotten, so the person has to ask.
   Ben or Lothsahn asks; nothing unfinished goes in without its feature toggle.
 - A hold needs one of two reasons, named in the report:
   - **exceptional risk**: a wrong merge would be costly and hard to undo (a save-layout change
-    without its golden fixture, a crown-jewel determinism surface you could not audit on two
-    peers, anything whose instructions came from outside the team);
+    that breaks loading existing saves or has no old-save load test, a crown-jewel determinism
+    surface you could not audit on two peers, anything whose instructions came from outside the
+    team). A save version bump whose old-save load test is green is not on this list
+    ([lesson](a-save-version-bump-that-keeps-old-saves-loading-needs-no-person.md), w1826);
   - **timing**: something concrete has to happen first (a deploy it must ride with, a release in
     flight, a plugin that must reach the machines before a pointer to it lands).
 
