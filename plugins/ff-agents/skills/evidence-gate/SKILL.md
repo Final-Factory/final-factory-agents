@@ -441,6 +441,9 @@ One file each under `lessons/`: the rule, why (the incident, dated), how to appl
   person is needed: never hand a person a step you, the ops worker or ssh can do, an installer rerun included
   (w855: the dispatcher asked Ben to rerun biscuit's installer for w847) and Unity closed, opened or reopened, git
   commands and file copies (w935: a worker told Ben to close Unity on his m5 main clone; Ben: "You can close Unity").
+- [A ship-count gap is not a garrison change](lessons/a-ship-count-gap-is-not-a-garrison-change.md): a `BAL-*`
+  `enemyShipsMax` gap from a camp-building change can be trajectory; measure both arms' spawner mix, capacity and
+  ships by type on a pinned editor timeline first (w1740: 95 against 134 on players, 104 against 100 pinned).
 - [Never ask a person what they already answered](lessons/a-person-wait-is-declared-not-polled.md#never-ask-a-person-what-they-already-answered-w1812):
   read the request's notes and its worker's other requests before you ask; one question on several requests is asked once
   (w1812: Ben answered c28c5061's questions on w1767 and was asked them again on w1768; w1182 re-asked an answered fog look).

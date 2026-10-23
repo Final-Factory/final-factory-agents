@@ -64,6 +64,9 @@ base's parked player meets no camp at all, and its edge is where the Build 108 r
 3. **A flag on the after build is a stop.** Fix it, or show it is the intended new curve: then move that stage's
    baseline (and a band bound only with the person's words for it) in the same pull request, and label each new number
    measured, sourced or a guess in `Documentation/Balance-Curve.md`.
+3a. **A gap in enemy ships alive is not yet a garrison change** (w1740). When the change only alters what some camps
+   build, give both arms' built spawner mix, its capacity, and ships alive by type on a pinned editor timeline before
+   calling camps weaker or stronger: [the lesson](../lessons/a-ship-count-gap-is-not-a-garrison-change.md).
 4. **A design-level change is the person's call.** Bring the before/after curve as options with a recommendation;
    fix without asking only what is clearly a bug (a mechanism flag: raids beyond the launch schedule, a raid above
    the ship limit).
