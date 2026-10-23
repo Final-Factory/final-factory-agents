@@ -21,7 +21,8 @@ alpha, sprite and drawing order) taken before and after a change, same save, siz
              Deck's classic layout and `overlaps` counted 0, because a window is not an always-on HUD block).
   Opened     what an opened panel over the HUD must still do: draw on top of what it covers, take the clicks over
   panels     every raycast target it covers, stay inside the screen, and (with --closed, a census taken after closing
-             it) leave the covered HUD exactly where it was. Any failure: FAIL.
+             it) leave the covered HUD exactly where it was. Any failure: FAIL, unless the before census (and
+             --closed-before) fails the same way: standing, listed and not counted.
   Alignment  every cluster (an anchor and its members, by object name) measured edge by edge against
              its anchor; a change over --tolerance px (2) between before and after: FAIL.
   Style      every panel (an Image over 2 % of the screen) that is new or changed colour, alpha or
@@ -1372,23 +1373,41 @@ def run_check(args) -> int:
         print(f"  ALLOWED: {window_overlap_text(v, spec)}")
     failed |= bool(wd["new"]) or bool(wd["kept"])
 
-    problems = over["under"] + over["blocked"] + over["cut"]
+    # w1475: what the before census fails the same way is standing, listed and not counted, as the window overlaps are
+    # (at 1280x800 docked on master, Station Info draws over the docked Station Grid window: 5 UNDER on both sides).
+    over_before = opened_over_hud(before, patterns, args.block_depth)
+
+    def key(line: str) -> str:
+        return line.split(" (canvas")[0]
+
+    def split(kind: str) -> tuple[list[str], list[str]]:
+        had = {key(x) for x in over_before[kind]}
+        return [x for x in over[kind] if key(x) not in had], [x for x in over[kind] if key(x) in had]
+
+    (under, under_s), (blocked, blocked_s), (cut, cut_s) = split("under"), split("blocked"), split("cut")
     if args.closed:
-        gone = restored(load(args.closed), over["covered"], args.tolerance) if over["covered"] else []
-        problems += gone
+        gone_all = restored(load(args.closed), over["covered"], args.tolerance) if over["covered"] else []
+        gone_before = set()
+        if args.closed_before and over_before["covered"]:
+            gone_before = set(restored(load(args.closed_before), over_before["covered"], args.tolerance))
+        gone, gone_s = [x for x in gone_all if x not in gone_before], [x for x in gone_all if x in gone_before]
         back = (f"{'no' if gone else 'yes'} ({sum(len(r) for r in over['covered'].values())} covered HUD element(s) checked in "
-                f"{Path(args.closed).name})")
+                f"{Path(args.closed).name}" + (f"; {len(gone_s)} standing" if gone_s else "") + ")")
     else:
-        gone, back = [], "not checked: pass --closed, a census taken after closing the panel"
+        gone, gone_s, back = [], [], "not checked: pass --closed, a census taken after closing the panel"
+    problems = under + blocked + cut + gone
+    standing = len(under_s) + len(blocked_s) + len(cut_s) + len(gone_s)
     print(f"Opened panels: {len(over['pairs'])} opened panel pair(s) over the HUD (allowed: Ben, w732 and w742), "
-          f"{len(over['under'])} under the HUD, {len(over['blocked'])} not clickable, {len(over['cut'])} cut off by the "
+          f"{len(under)} under the HUD, {len(blocked)} not clickable, {len(cut)} cut off by the "
           f"screen edge, HUD restored on close: {back}"
+          + (f"; standing (on the before census too, not counted): {standing}" if standing else "")
           + ("" if over["measured"] else "; draw order not in the census: on-top and clickable NOT measured"))
     for (a, b), v in sorted(over["pairs"].items(), key=lambda kv: -kv[1]["px"])[:15]:
         print(f"  OPENED OVER HUD: {short(a, 2)}  x  {short(b, 1)}: {v['px']:.0f} px2, e.g. {short(v['example'][0], 2)} over "
               f"{short(v['example'][1], 2)}")
-    for kind, lines in (("UNDER", over["under"]), ("NOT CLICKABLE", over["blocked"]), ("CUT OFF", over["cut"]),
-                        ("NOT RESTORED", gone)):
+    for kind, lines in (("UNDER", under), ("NOT CLICKABLE", blocked), ("CUT OFF", cut), ("NOT RESTORED", gone),
+                        ("STANDING UNDER", under_s), ("STANDING NOT CLICKABLE", blocked_s), ("STANDING CUT OFF", cut_s),
+                        ("STANDING NOT RESTORED", gone_s)):
         for line in lines[:15]:
             print(f"  {kind}: {line}")
     failed |= bool(problems)
@@ -1513,6 +1532,8 @@ def main(argv=None) -> int:
     c.add_argument("--before", required=True)
     c.add_argument("--after", required=True)
     c.add_argument("--closed", help="a census taken after closing the opened panel again: the HUD it covered must be back")
+    c.add_argument("--closed-before", help="the before build's census after closing the panel: what it fails too is "
+                                           "standing (listed, not counted)")
     c.add_argument("--clusters", default=str(DEFAULT_CLUSTERS))
     c.add_argument("--ref", default="InventoryPanel", help="path fragment of the classic reference panel")
     c.add_argument("--shot", help="a screenshot taken with the after census")
