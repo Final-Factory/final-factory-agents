@@ -148,6 +148,15 @@ Where the time went:
 8. Decide on enough signal. Once every arm's gap is clear of the run-to-run spread (or all are inside the noise), stop
    and write the decision with the numbers and the spread; more rounds are for a question the data has not answered
    yet, not for confidence in one it has.
+9. A harness test takes no real ticket (w1894, 2026-10-23). Trying FF Factory's own bench, yield or priority code is
+   not a timed run: use its unit tests (ff-factory `server/benchTurn.test.ts`, `server/personPlay.test.ts`, with fake
+   procs and editors), a bench queue under your own `$TMPDIR` that nobody else reads, or a throwaway process tree for
+   an OS fact (a lowered priority reads back as Idle and is inherited by children started under it). A worker on BEAST
+   took exclusive ticket t00000849 for a priority A/B; the turn ended another worker's batch build in beast/slot2
+   (w1826's host player build, which a two-machine check waited on). The orchestrator, for lothsahn: "Your work is FF
+   Factory code, not a timed run. Don't take real exclusive tickets on BEAST. Exercise the yield and priority logic
+   with unit tests, or with a lock instance in your own temp folder that doesn't pause other workers." A real
+   before/after the request needs belongs to its live check, on the machine it names, when that machine is free.
 
 ## An equivalence test of a pruned search puts a tie on each bound, and fails on the flip (w1069, 2026-10-13)
 
