@@ -37,12 +37,13 @@ painful on the eyes"; w1334, game PR #1817). These look at the pixels a player s
         The `Family:` line (evidence-gate checklists/ui.md item 33): the window against the game's other windows (Ben,
         w1761: "the UI needs to be consistent and clean"). Each window is measured the same way:
         MIXED CORNERS   more distinct corner radii than any reference window (2 at least), or a radius no reference
-                        window uses, read off the pixels of every drawn panel, row, button, field and disc (icons are not
-                        shapes): w1761's letter circles, round-ended rows and Add Calculation button.
+                        window uses, read off the pixels of every drawn panel, row, button and field (icons are not
+                        shapes; a circle, a switch or a dot, counts only for NESTED): w1761's round-ended rows and
+                        its Add Calculation button.
         NESTED CORNERS  a circle, or a shape rounder than its rounded parent, within 4 px (or the parent's radius) of the
                         parent's edge: "a circle around each letter, which is right next to the rounded border of the item".
-        SMALL HEADER    the header (the largest text in the window's top) under 0.9x the reference headers' font size
-                        (TMP sizes, canvas units): "the header font seems smaller than other headers".
+        SMALL HEADER    the header (the largest text on the window's topmost line) under 0.9x the reference headers'
+                        font size (TMP sizes, canvas units): "the header font seems smaller than other headers".
         HEADER TWO LINES the header wraps (w1296: "fits on one line so its not pushing up against the top").
         CRAMPED <EDGE>  the gap from the content (texts, controls, drawn images) to the top or a side under 0.75x the
                         reference windows' and 3 px or more less; the bottom against the window's own side padding, the
@@ -934,7 +935,11 @@ def window_family(still: Still, census: dict, prefix: str) -> dict:
     top_texts = [e for e in texts if (e.get("textRect") or e["rect"])[1] - win[1] <= max(60.0, 0.2 * wh)]
     header = None
     if top_texts:
-        h = max(top_texts, key=lambda e: (e.get("fontSize") or 0, -(e.get("textRect") or e["rect"])[1]))
+        # The window's title is its topmost line (the largest text on it): the largest text in the top took a page
+        # title 55 px down, 18 pt, over w1761 round 3's 15 pt window title on its editor pages.
+        tops = [(e.get("textRect") or e["rect"])[1] for e in top_texts]
+        first = [e for e, t in zip(top_texts, tops) if t <= min(tops) + 4]
+        h = max(first, key=lambda e: e.get("fontSize") or 0)
         tr = h.get("textRect") or h["rect"]
         header = {"path": h["path"], "text": h.get("text", ""), "fontSize": h.get("fontSize"), "lines": h.get("lines"),
                   "top": round(tr[1] - win[1], 1), "canvasOrder": h.get("canvasOrder")}
@@ -978,7 +983,8 @@ def window_family(still: Still, census: dict, prefix: str) -> dict:
             nested.append({"inner": c["path"], "inner_radius": c["radius"], "circle": c["circle"], "outer": p["path"],
                            "outer_radius": p["radius"], "gap": round(gap, 1)})
     return {"window": prefix, "rect": [round(v, 1) for v in win], "screen": [sw, sh], "header": header, "edges": edges,
-            "shapes": shapes, "radii": radius_groups([s["radius"] for s in shapes]), "nested": nested}
+            # A circle (an On/Off switch, a status dot) is a round control, not a corner size: only NESTED judges it.
+            "shapes": shapes, "radii": radius_groups([s["radius"] for s in shapes if not s["circle"]]), "nested": nested}
 
 
 def family_findings(subject: dict, refs: list[dict]) -> list[str]:

@@ -334,6 +334,23 @@ bottom gap is only wrong beside a 24 pt title and a 14 px gap.
     reference sets no bottom. Round 6's bottom 12.6 passes; round 3's 7.2 (8 units, commit 9dc22a2517) is flagged.
   - Real-data fixture: `test_w1761s_round_6_window_matches_the_station_core_window` (unity-ui tests): round 6 gives 0
     findings, and the same window with round 3's title and bottom gives SMALL HEADER and CRAMPED BOTTOM.
+- **The proof on the stills Ben rejected** (w1761 round 3, built from 2187980c1d; 14 stills each at 1920x1080 and
+  1280x800), against the same two reference windows:
+  - Every one of the 28 Calculations and Circuit tab stills is flagged. SMALL HEADER on all 28 (15 pt against 18).
+    CRAMPED BOTTOM on 26 (7.2 px under the last button against 14.4 at the sides; the two pick-structure stills end
+    in a list). MIXED CORNERS on 16 (the round-ended rows read 15-18 px). NESTED CORNERS on the line stills, four on
+    "four lines": a circle letter tile 7.2 px inside each row.
+  - Round 6 at both sizes: the Calculations window 0 findings on all 20 stills. The Circuit tab flags SMALL HEADER
+    on its 15 pt Solar Panel window title. That title is the game's own, and the Station Grid Information window's is
+    15 pt too, against the Station Core window's 18. It is a standing difference the before stills show; it was not
+    made by the change.
+  - Two fixes came from this run. On the editor pages, the largest text in the top was the 18 pt page title 55 px
+    down, so the header is now the topmost line. The Circuit tab's On/Off switch and status dot read as 12 px and
+    5 px corners, so a circle counts only for NESTED. Fixture: `test_w1761s_rejected_round_3_window_is_flagged`.
+  - A fresh critic on round 6, with the new rubric item 9, named Player Fleet as its reference. It found the corners
+    one family and the header matching, and called the bottom still tight: 11 px under the button face against
+    Player Fleet's 18. The tool passes that bottom at 0.875x the sides, so a person decides from the critic's
+    judgment and the stills.
 
 ## A critic's finding names its still's state before it is fixed or filed: open or dragged, same steps both sides (w1790, w1821, 2026-10-23)
 
