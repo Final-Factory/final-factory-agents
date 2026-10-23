@@ -103,7 +103,7 @@ another request), hand the wait to FF Factory, which keeps it on the portal:
 | Waiting for | Use | Survives a portal restart and a daemon update because |
 |---|---|---|
 | a time (an import, a build, a reboot to come back) | `wake_me` (one, a person's message cancels an orchestrator's) | kept in `data/wakes.json`, re-armed at the portal's start (`Waker.restore`); one due meanwhile fires at once |
-| another request, a PR's merge, CI on your PR, a deploy | `blocked_on` | stored on the request (`WorkItem.blocked`); `BlockerWatch` looks again at every start |
+| another request, a PR's merge, CI on your PR, a deploy, files or results another request's worker makes for you | `blocked_on` (`reports: ["wNNN"]` for that worker's next report, w1841) | stored on the request (`WorkItem.blocked`); `BlockerWatch` looks again at every start |
 | a standing check ("every 2 h for 3 days, then act") | `set_timer` (orchestrators and the ops worker) | kept in `data/timers.json`; a fire due meanwhile is delivered once, with the missed count |
 | a person | `waiting_on_person` (above) | it is the ledger's state, not a timer |
 
@@ -137,3 +137,29 @@ hour, and a sandbox released for other work ends it too. A loop that finds its c
   script's tree yourself (`taskkill /T /F /PID <its bash pid>`; never Unity, which goes through `mcp__machine__unity`).
   A timing leg starts only when that list is empty. On Windows, `scripts/bench/quiet_gate.sh` passed at once until
   w1201's #1630 (Git Bash's `ps` has no `-A`), so a gate that returns instantly there is a sign it checked nothing.
+
+## Your own checks are yours: never wait on the orchestrator for them (w1841)
+
+**Rule.** A two-machine or pair check, a determinism check, a player build, a test run and CI on your own pull request
+are your own work. Run them yourself. Ask the dispatcher only for what it alone can give: a second machine's worker, a
+place on another computer. Never end a turn with `wNNN: still open: waiting on the orchestrator` (or the dispatcher)
+to run one of them.
+
+**Why.** 2026-10-23 (w1841, from w1685): worker d582a5da had Ben's go to merge the black-hole swallow (PR #2254). It
+ended its turn with "w1685: still open: waiting on the orchestrator to run the two-machine check
+`MP-W1685-black-hole-swallow-2p` (black-hole swallow, two peers) on a Windows or Linux pair, then the merge of PR #2254".
+No orchestrator runs a worker's check. Nothing set a timer or a gate, so the request showed Stalled in Ben's filter
+beside five others that were not stalled either. Ben asked: "why are these stalled?". The request filed for him (w1841): "pair
+checks are the worker's own".
+
+**How to apply.**
+
+- Before you write a `still open:` line, name who moves it on. If that is you, do it now. A person is
+  `waiting_on_person`. Another request, a pull request or a deploy is `blocked_on`. Files or results another request's
+  worker makes for you are `blocked_on` with `reports: ["wNNN"]`, and you are resumed when that worker reports. A time
+  is `wake_me`. "The orchestrator" is none of these.
+- A two-machine check needs a second machine. Run it from your own sandbox: start the peer there (the game repo's
+  scenario runner and `unity-slot run --count 2`), or ask the dispatcher in plain words for a worker on the other
+  machine. Then run the check yourself.
+- FF Factory tells a worker that ends its turn this way that the work is its own, once per request
+  (ff-factory#554, `Agents.ownWorkNudge`). The ledger's Stalled line says "that is its own work".
