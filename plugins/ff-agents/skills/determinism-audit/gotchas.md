@@ -496,6 +496,10 @@ w1115, 2026-10-12, nightly regression check of the Deck perf PRs (#1449, #1458, 
   `ffnightly.py`, copy `scripts/nightly/lab.win.json` into `$TMPDIR` with its own `port`, `workRoot` under `$TMPDIR`,
   `jobs: 1` and `runIn: sandbox`, and pass it as `--lab`. A sandbox has two player slots (`slotK-0`, `slotK-1`): run
   pairs one after another, and a three-peer scenario does not fit.
+- **`--lab scripts/nightly/lab.win.json` runs both peers on one PC** (w1739, 2026-10-22): host and client in the
+  sandbox's two slots over loopback. It counts as the two-player check when the brief allows any route, but write
+  "same-PC pair, not two machines" under Not verified; a check that must cross hardware (core counts, job scheduling)
+  needs a lab file naming two machines or the dispatcher's placement.
 
 ## Reading a pair's witness-compare.txt: pose distance is the verdict {#witness-pose-distance}
 
