@@ -20,6 +20,15 @@ candidates framed in red) and a .json beside it, and prints the 'Close-ups:' ent
 critic. A pop candidate is a frame whose change from the one before, inside the crop, is over --pop times the median
 step of the window (and over 2/255): a model that disappears or swaps in one frame. It points your eye; it does not
 judge (an effect that strikes on purpose, a crackle, also spikes). Every frame is still looked at, by you and the critic.
+
+It also tracks the object (w1816; --track X,Y, a point on it in the first frame; a green dot on the sheet shows where
+it was followed) and marks two faults a pop check cannot see: a JUMP (orange), its centre moving over --jump (4) times
+its median move in the 6 frames each side and over --jump-min (4%) of the crop's diagonal in one frame; and a HUE
+(magenta), --hue (35%) or more of its pixels in colours not in its first 3 frames' palette (--allow-hues heat for a
+glow the person asked for). w1685, after a clip passed with "no vanish, pop, swap or jump", Ben: "i dont like that it
+suddenly jumps to the center of the black hole and then also becomes that purple". The rule:
+lessons/visual-fixes-are-verified-by-looking.md,
+"A transition keeps its place and its colours", checklists/visual.md 5i and 5j.
 Needs ffmpeg; `uv run` installs numpy and Pillow from the header above (the Macs' python3 has neither, so plain
 `python3 transition_strip.py` stops on ModuleNotFoundError: w1470, 2026-10-22). The rule: lessons/visual-fixes-are-verified-by-looking.md,
 "A transition is stepped every frame on the object", checklists/visual.md 5h.
@@ -84,8 +93,169 @@ def median_step(step: list[float]) -> float:
     return rest[len(rest) // 2] if rest else 0.0
 
 
-def sheet(fr, pick: list[int], times: list[float], fnums: list[int], marked: set[int], title: str, out: Path,
-          cols: int) -> None:
+def components(mask) -> list[list[tuple[int, int]]]:
+    """The 8-connected blobs of a boolean (h, w) mask, each a list of (y, x)."""
+    h, w = mask.shape
+    seen = mask.copy()
+    blobs = []
+    for y0, x0 in zip(*mask.nonzero()):
+        if not seen[y0, x0]:
+            continue
+        seen[y0, x0] = False
+        todo, blob = [(int(y0), int(x0))], []
+        while todo:
+            y, x = todo.pop()
+            blob.append((y, x))
+            for yy in (y - 1, y, y + 1):
+                for xx in (x - 1, x, x + 1):
+                    if 0 <= yy < h and 0 <= xx < w and seen[yy, xx]:
+                        seen[yy, xx] = False
+                        todo.append((yy, xx))
+        blobs.append(blob)
+    return blobs
+
+
+def track(fr, bg, seed: tuple[float, float] | None, diff: float, min_px: int, gap: int = 3) -> list[dict | None]:
+    """Follow the object through the window (w1816). A frame's object is a blob of pixels that differ from the background
+    by over `diff` (0-255, any channel), joined across a 2 px gap so a thin strand stays one blob. Pixels that differ in
+    over half the window are the scene, not the object (the hole's turning disk, a glow that stays), and never count.
+    The first frame the object is seen in takes the blob under `seed` (x, y in sheet pixels), else the largest; each
+    later one the blob nearest its last place, weighted by size, of `min_px` pixels or more. A frame with none is None;
+    after `gap` such frames in a row the object is gone and stays gone (what is left is the scene).
+    Each entry: {x, y, area, pixels: (ys, xs)} or None."""
+    import numpy as np
+    n, h, w = fr.shape[:3]
+    diag = math.hypot(w, h)
+    raw = np.abs(fr.astype(np.float32) - bg[None]).max(axis=3) > diff
+    raw &= ~(raw.mean(axis=0) > 0.5)
+    out: list[dict | None] = []
+    last, missed = None, 0
+    for i in range(n):
+        if last is not None and missed > gap:
+            out.append(None)
+            continue
+        m = raw[i]
+        joined = m.copy()
+        for dy in (-2, -1, 0, 1, 2):                          # a 2 px dilation: strands and sparks stay one object
+            for dx in (-2, -1, 0, 1, 2):
+                joined |= np.roll(np.roll(m, dy, 0), dx, 1)
+        best, score = None, -1.0
+        for blob in components(joined[::2, ::2]):             # half resolution: the blobs only pick the pixels
+            if len(blob) * 4 < min_px:
+                continue
+            ys = np.array([p[0] for p in blob]) * 2
+            xs = np.array([p[1] for p in blob]) * 2
+            if last is None:
+                under = seed and xs.min() - 3 <= seed[0] <= xs.max() + 4 and ys.min() - 3 <= seed[1] <= ys.max() + 4
+                s = 1e9 + len(blob) if under else float(len(blob))
+            else:
+                s = len(blob) * math.exp(-math.hypot(xs.mean() - last["x"], ys.mean() - last["y"]) / (0.08 * diag))
+            if s > score:
+                best, score = (ys, xs), s
+        entry = None
+        if best is not None:
+            sel = np.zeros_like(m)
+            for oy in (0, 1):
+                for ox in (0, 1):
+                    sel[np.clip(best[0] + oy, 0, h - 1), np.clip(best[1] + ox, 0, w - 1)] = True
+            ys, xs = (sel & m).nonzero()
+            if len(ys) >= min_px:
+                entry = {"x": float(xs.mean()), "y": float(ys.mean()), "area": int(len(ys)), "pixels": (ys, xs)}
+        out.append(entry)
+        if entry:
+            last, missed = entry, 0
+        elif last is not None:
+            missed += 1
+    return out
+
+
+def jumps(tr: list[dict | None], ratio: float, floor: float, around: int = 6) -> list[tuple[int, float, float]]:
+    """Frames where the object moves further in one frame than `ratio` times its speed in the frames around it (the
+    median step of the `around` frames on each side) and over `floor` sheet pixels: a jump (w1685, Ben: "it suddenly
+    jumps to the center of the black hole"). Across a frame or two where it is not seen, the move is shared out over
+    them. (index, step per frame, the speed around it)."""
+    d: list[float | None] = [None] * len(tr)
+    prev = None
+    for i, t in enumerate(tr):
+        if t is None:
+            continue
+        if prev is not None and i - prev <= 3:
+            d[i] = math.hypot(t["x"] - tr[prev]["x"], t["y"] - tr[prev]["y"]) / (i - prev)
+        prev = i
+    found = []
+    for i, s in enumerate(d):
+        if s is None or s <= floor:
+            continue
+        near = sorted(v for v in d[max(0, i - around): i] + d[i + 1: i + 1 + around] if v is not None)
+        speed = near[len(near) // 2] if near else 0.0
+        if s > ratio * max(speed, 0.5):
+            found.append((i, s, speed))
+    return found
+
+
+HUES = (("red", 0, 15), ("orange", 15, 45), ("yellow", 45, 70), ("green", 70, 160), ("cyan", 160, 200),
+        ("blue", 200, 255), ("purple", 255, 290), ("magenta", 290, 345), ("red", 345, 360))
+HEAT = {"neutral", "red", "orange", "yellow"}                  # a heat glow: white-hot, red, orange, yellow
+
+
+def colour_classes(rgb):
+    """Each pixel's colour class: 0 neutral (grey, white, black: saturation under 0.25 or value under 0.15), else
+    1 + its hue in 10-degree bins (1..36)."""
+    import numpy as np
+    c = rgb.astype(np.float32) / 255.0
+    mx, mn = c.max(axis=1), c.min(axis=1)
+    sat = np.where(mx > 0, (mx - mn) / np.maximum(mx, 1e-6), 0)
+    r, g, b = c[:, 0], c[:, 1], c[:, 2]
+    delta = np.maximum(mx - mn, 1e-6)
+    hue = np.where(mx == r, (g - b) / delta % 6, np.where(mx == g, (b - r) / delta + 2, (r - g) / delta + 4)) * 60
+    cls = 1 + (hue // 10).astype(int) % 36
+    return np.where((sat < 0.25) | (mx < 0.15), 0, cls)
+
+
+def hue_name(cls: int) -> str:
+    if cls == 0:
+        return "neutral"
+    deg = (cls - 1) * 10 + 5
+    return next(name for name, a, b in HUES if a <= deg < b)
+
+
+def palette_shift(fr, tr: list[dict | None], frac: float, allow: set[str], first: int = 3,
+                  least: float = 0.15) -> list[tuple[int, float, str]]:
+    """Frames whose object has `frac` or more of its pixels in colours that were not its own in its first frames
+    (w1685, Ben: "then also becomes that purple ... used the objects actual colors"): its palette is every colour class
+    with 4% or more of its pixels in the first `first` frames it is seen, widened by one hue bin (10 degrees) each side.
+    Classes named in `allow` (e.g. a heat glow's red, orange, yellow and white) are never foreign. A frame where the
+    object is under `least` of its first size is not judged: a speck in the hole is mostly the hole's own pixels, and
+    the critic judges it on the sheet. (index, foreign share, the commonest foreign hue)."""
+    import numpy as np
+    seen = [i for i, t in enumerate(tr) if t][:first]
+    if not seen:
+        return []
+    size = sum(tr[i]["area"] for i in seen) / len(seen)
+    base = np.concatenate([colour_classes(fr[i][tr[i]["pixels"]]) for i in seen])
+    counts = np.bincount(base, minlength=37)
+    own = {int(c) for c in np.nonzero(counts >= 0.04 * len(base))[0]}
+    wide = {0} & own | {1 + (c - 1 + k) % 36 for c in own if c for k in (-1, 0, 1)}
+    wide |= {c for c in range(37) if hue_name(c) in allow}
+    found = []
+    for i, t in enumerate(tr):
+        if not t or t["area"] < least * size:
+            continue
+        cls = colour_classes(fr[i][t["pixels"]])
+        foreign = ~np.isin(cls, list(wide))
+        share = float(foreign.mean())
+        if share >= frac:
+            names = {}
+            for c, k in zip(*np.unique(cls[foreign], return_counts=True)):
+                names[hue_name(int(c))] = names.get(hue_name(int(c)), 0) + int(k)
+            found.append((i, share, max(names, key=names.get)))
+    return found
+
+
+def sheet(fr, pick: list[int], times: list[float], fnums: list[int], marked: dict[int, list[str]], title: str,
+          out: Path, cols: int, tr: list[dict | None] | None = None) -> None:
+    """The contact sheet: a frame framed in red is a pop, orange a jump, magenta a colour off the object's palette; a
+    green dot is where the tracker has the object (its centre), so a wrong track is seen at once."""
     from PIL import Image, ImageDraw, ImageFont
     h, w = fr.shape[1], fr.shape[2]
     rows = int(math.ceil(len(pick) / cols))
@@ -96,14 +266,19 @@ def sheet(fr, pick: list[int], times: list[float], fnums: list[int], marked: set
     except TypeError:                                         # Pillow < 10.1
         font = ImageFont.load_default()
     d.text((6, 8), title, fill=(235, 235, 235), font=font)
+    edge = {"POP": (255, 40, 40), "JUMP": (255, 150, 0), "HUE": (230, 60, 230)}
     for k, j in enumerate(pick):
         r, c = divmod(k, cols)
         x, y = 6 + c * (w + 6), 32 + r * (h + 24)
-        if j in marked:
-            d.rectangle((x - 3, y - 3, x + w + 2, y + h + 2), outline=(255, 40, 40), width=3)
+        tags = marked.get(j, [])
+        if tags:
+            d.rectangle((x - 3, y - 3, x + w + 2, y + h + 2), outline=edge[tags[0]], width=3)
         img.paste(Image.fromarray(fr[j]), (x, y))
-        d.text((x + 2, y + h + 4), f"{times[j]:.3f}s f{fnums[j]}" + ("  POP?" if j in marked else ""),
-               fill=(255, 90, 90) if j in marked else (200, 200, 200), font=font)
+        if tr and tr[j]:
+            cx, cy = x + tr[j]["x"], y + tr[j]["y"]
+            d.ellipse((cx - 2, cy - 2, cx + 2, cy + 2), fill=(60, 255, 90))
+        d.text((x + 2, y + h + 4), f"{times[j]:.3f}s f{fnums[j]}" + "".join(f" {t}?" for t in tags),
+               fill=edge[tags[0]] if tags else (200, 200, 200), font=font)
     img.save(out)
 
 
@@ -120,6 +295,19 @@ def main(argv=None) -> int:
     ap.add_argument("--width", type=int, default=240, help="each frame's width on the sheet")
     ap.add_argument("--cols", type=int, default=8)
     ap.add_argument("--pop", type=float, default=4.0, help="a step over this many times the median step is a pop candidate")
+    ap.add_argument("--track", help="X,Y in the clip's pixels: a point on the object in the first frame (default: the "
+                                    "largest thing that differs from the background)")
+    ap.add_argument("--bg", type=float, help="seconds: a frame of the clip without the object, as the background "
+                                             "(default: each pixel's median over the window)")
+    ap.add_argument("--diff", type=float, default=40.0, help="0-255: how far a pixel differs from the background to be "
+                                                             "the object")
+    ap.add_argument("--jump", type=float, default=4.0, help="a one-frame move over this many times the object's speed "
+                                                            "in the frames around it is a jump")
+    ap.add_argument("--jump-min", type=float, default=0.04, help="and over this share of the crop's diagonal")
+    ap.add_argument("--hue", type=float, default=0.35, help="a frame with this share of the object's pixels in colours "
+                                                            "not its own is off its palette")
+    ap.add_argument("--allow-hues", default="", help="comma-separated colours that are not foreign, e.g. 'heat' (white, "
+                                                     "red, orange, yellow: a heat glow) or 'blue,cyan'")
     args = ap.parse_args(argv)
     if args.b <= args.a:
         ap.error("--to must be after --from")
@@ -133,37 +321,90 @@ def main(argv=None) -> int:
     if not len(fr):
         print(f"no frames between {args.a} and {args.b} s in {args.clip}")
         return 1
+    import numpy as np
+    cw, ch, cx, cy = crop
+    scale = fr.shape[2] / cw
+    bg = (frames(args.clip, args.bg, args.bg + 1.5 / fps, crop, args.width)[0].astype(np.float32) if args.bg is not None
+          else np.median(fr, axis=0).astype(np.float32))
+    seed = None
+    if args.track:
+        tx, ty = (float(v) for v in re.split(r"[,: ]+", args.track.strip()))
+        seed = ((tx - cx) * scale, (ty - cy) * scale)
+    allow = set()
+    for word in filter(None, (v.strip().lower() for v in args.allow_hues.split(","))):
+        allow |= HEAT if word == "heat" else {word}
     step = steps(fr)
-    marked = set(pops(step, args.pop))
+    pop_at = pops(step, args.pop)
+    tr = track(fr, bg, seed, args.diff, min_px=max(6, int(fr.shape[1] * fr.shape[2] * 0.0005)))
+    jump_at = jumps(tr, args.jump, args.jump_min * math.hypot(fr.shape[1], fr.shape[2]))
+    hue_at = palette_shift(fr, tr, args.hue, allow)
+    marked: dict[int, list[str]] = {}
+    for tag, at in (("POP", pop_at), ("JUMP", [j[0] for j in jump_at]), ("HUE", [q[0] for q in hue_at])):
+        for j in at:
+            marked.setdefault(j, []).append(tag)
     times = [args.a + i / fps for i in range(len(fr))]
     fnums = [int(round(t * fps)) for t in times]
-    pick = sorted(set(range(0, len(fr), args.every)) | marked | {len(fr) - 1})
+    pick = sorted(set(range(0, len(fr), args.every)) | set(marked) | {len(fr) - 1})
     name = re.sub(r"[^\w.-]+", "-", args.claim).strip("-") or "transition"
     stem = f"{name}-strip-{args.a:.2f}-{args.b:.2f}s-every{args.every}f"
     out = Path(args.out)
     out.mkdir(parents=True, exist_ok=True)
-    cw, ch, cx, cy = crop
+    hue_spans = spans([q[0] for q in hue_at])
     title = (f"{Path(args.clip).name}  {args.a:.2f}-{args.b:.2f} s  every {'' if args.every == 1 else '2nd '}frame "
              f"({fps:.0f} fps, {len(pick)} of {len(fr)})  crop {cw}x{ch}+{cx}+{cy}  "
-             f"pops: {', '.join(f'f{fnums[j]}' for j in sorted(marked)) or 'none'}")
-    sheet(fr, pick, times, fnums, marked, title, out / f"{stem}.png", args.cols)
+             f"pops: {', '.join(f'f{fnums[j]}' for j in pop_at) or 'none'}  "
+             f"jumps: {', '.join(f'f{fnums[j[0]]}' for j in jump_at) or 'none'}  "
+             f"off-palette: {', '.join(f'f{fnums[a]}-f{fnums[b]}' for a, b in hue_spans) or 'none'}")
+    sheet(fr, pick, times, fnums, marked, title, out / f"{stem}.png", args.cols, tr)
     med = median_step(step)
+    hue_of = {q[0]: q for q in hue_at}
     report = {"clip": args.clip, "from": args.a, "to": args.b, "fps": fps, "every": args.every,
               "crop": {"w": cw, "h": ch, "x": cx, "y": cy}, "frames": len(fr), "median_step": round(med, 3),
               "pops": [{"frame": fnums[j], "t": round(times[j], 3), "step": round(step[j], 2),
-                        "times_median": round(step[j] / max(med, 0.25), 1)} for j in sorted(marked)],
+                        "times_median": round(step[j] / max(med, 0.25), 1)} for j in pop_at],
+              "jumps": [{"frame": fnums[j], "t": round(times[j], 3), "px": round(d / scale, 1),
+                         "speed_px": round(v / scale, 1), "times_speed": round(d / max(v, 0.5), 1)}
+                        for j, d, v in jump_at],
+              "off_palette": [{"from": fnums[a], "to": fnums[b], "t": round(times[a], 3),
+                               "peak_share": round(max(hue_of[k][1] for k in range(a, b + 1)), 2),
+                               "hue": hue_of[a][2]} for a, b in hue_spans],
+              "thresholds": {"pop": args.pop, "jump": args.jump, "jump_min": args.jump_min, "hue": args.hue,
+                             "diff": args.diff, "allow_hues": sorted(allow)},
+              "track": [None if t is None else {"x": round(t["x"] / scale + cx, 1), "y": round(t["y"] / scale + cy, 1),
+                                                "area": t["area"]} for t in tr],
               "steps": [round(s, 3) for s in step]}
     (out / f"{stem}.json").write_text(json.dumps(report, indent=1), encoding="utf-8")
     pop_text = "; ".join(f"f{p['frame']} {p['t']:.3f} s {p['times_median']}x" for p in report["pops"]) or "none"
+    jump_text = "; ".join(f"f{j['frame']} {j['t']:.3f} s {j['px']} px against {j['speed_px']} px/frame around it"
+                          for j in report["jumps"]) or "none"
+    hue_text = "; ".join(f"f{q['from']}-f{q['to']} to {q['hue']} (up to {q['peak_share']:.0%} of it)"
+                         for q in report["off_palette"]) or "none"
+    seen = sum(1 for t in tr if t)
     print(f"{stem}.png: {len(pick)} frames of {len(fr)} at {fps:.1f} fps, median step {med:.2f}/255, pops: {pop_text}")
+    print(f"tracked in {seen} of {len(fr)} frames; jumps: {jump_text}; off its own colours: {hue_text}")
     print(f"Close-ups entry: {args.claim}: {stem}.png ({args.a:.2f}-{args.b:.2f} s, every "
-          f"{'' if args.every == 1 else '2nd '}frame, pops: {pop_text})")
+          f"{'' if args.every == 1 else '2nd '}frame, pops: {pop_text}, jumps: {jump_text}, off-palette: {hue_text})")
+    look = ([f"f{p['frame']}" for p in report["pops"]] + [f"f{j['frame']}" for j in report["jumps"]]
+            + [f"f{q['from']}" for q in report["off_palette"]])
     print(f"Critic question: In {stem}.png, is {args.object}'s own model on screen in every frame from "
           f"{args.a:.2f} s until its end state at {args.b:.2f} s, getting thinner or smaller a little each frame? Name "
-          f"the first frame where it is gone or replaced, and say what the frame before it shows"
-          + (f"; look hardest at {', '.join(f'f{p}' for p in (q['frame'] for q in report['pops']))}" if report["pops"]
-             else "") + ".")
+          f"the first frame where it is gone or replaced, and say what the frame before it shows. Does it move about "
+          f"as far each frame as in the frames around it, or does it jump (to the centre, across the hole) in one frame? "
+          f"Name the frame. Does it keep its own colours from the first frame, or turn another colour (purple, a tint, "
+          f"a glow that hides its hull)? Name the first frame and the colour"
+          + (f"; look hardest at {', '.join(look)}" if look else "") + ".")
     return 0
+
+
+def spans(idx: list[int]) -> list[tuple[int, int]]:
+    """Runs of consecutive indices, as (first, last)."""
+    out: list[tuple[int, int]] = []
+    for i in idx:
+        if out and i == out[-1][1] + 1:
+            out[-1] = (out[-1][0], i)
+        else:
+            out.append((i, i))
+    return out
 
 
 if __name__ == "__main__":

@@ -157,6 +157,62 @@ three ways (read from PR #1921's round-4 Evidence; `tests/fixtures/pr-1921-round
    that strip of the flagged moment, never with an explanation. `pr_evidence.py` (and `--note`) fails a transition claim
    without an every-frame entry with its seconds, names a coarser sheet, and fails a vanish flag beside a transition
    claim with no strip. The checklist line is [visual.md](../checklists/visual.md) item 5h.
+5. On the model staying on screen alone the claim is not proven: the same strip, run with `--track X,Y`, also frames a
+   one-frame jump in the object's place (orange, JUMP) and a turn to colours that are not its own (magenta, HUE), and
+   the critic is asked both (w1685, Ben, after a clip passed "no vanish, pop, swap or jump": "it suddenly jumps to the
+   center of the black hole and then also becomes that purple"; [section](#a-transition-keeps-its-place-and-its-colours-w1816),
+   checklist 5i, 5j).
+
+## A transition keeps its place and its colours (w1816)
+
+**Rule.** A transition clip (a swallow, a stretch, a pull, a dissolve) is checked for three faults, each frame by
+frame on the object, before a person sees it:
+
+1. **A pop**: the object's own model gone or replaced in one frame (w1686, checklist 5h).
+2. **A jump**: the object moving further in one frame than its speed in the frames around it, e.g. to the hole's
+   centre.
+3. **A colour swap**: the object turning colours that were not its own in its first frames (here purple), instead of
+   keeping its hull's colours (a heat glow on them is a choice the person named, not a swap).
+
+`transition_strip.py` measures all three and frames them on the sheet (POP red, JUMP orange, HUE magenta; a green dot
+is where it tracked the object). The fresh critic gets all three as questions. A clip that a worker, a critic or the
+tool passed while one of these is in it goes back, whatever the note says.
+
+**Why.** Two corrections from Ben of the same kind, both on the black-hole swallow:
+
+- w1470, the Singularity Lance, 2026-10-21. The worker's note said ships "stretch" and "stay lit as themselves". Ben:
+  "The problem is the guardian especially doesn't really smoothly transition to the spaghetti state it just kind of
+  disappears. I want one smoth animation for the model getting stretched and sucked into the black hole."
+- w1685, the same swallow on the map's black holes, 2026-10-22. The worker, a fresh critic and `transition_strip.py`
+  (final-factory-agents PR #322) all passed the clip: "no vanish, pop, swap or jump". Ben: "i dont like that it
+  suddenly jumps to the center of the black hole and then also becomes that purple. it'd be cool if it more smoothly
+  swirled into the black hole and used the objects actual colors with perhaps some heat glow effect"
+
+The tool looked only at how much the crop's pixels changed from one frame to the next. A small ship that jumps across
+the hole changes few pixels, so it never stood out against the hole's own turning disk; a hull that slowly turns purple
+changes almost nothing per frame. The critic was asked only "is its own model on screen in every frame", so it
+answered that question and not the two Ben asked.
+
+**How to apply.**
+
+- Run the strip on the object, with a point on it in the first frame:
+  `uv run transition_strip.py <clip> --from <s> --to <s> --crop W:H:X:Y --track X,Y --claim <name> --object "<name>"`.
+  Check the green dot sits on the object in every frame; if it slides onto the hole or another ship, move `--track`
+  or tighten `--crop` and run it again: a wrong track measures the wrong thing.
+- **Jump** (`--jump 4 --jump-min 0.04`): a frame is marked when the object's centre moves over 4 times its median
+  per-frame move in the 6 frames on each side, and over 4% of the crop's diagonal. The ratio matches the pop check's
+  (`--pop 4`): a spiral that speeds up as it falls in changes its speed by well under 2x from one frame to the next,
+  so 4x is a step no smooth motion makes. The 4% floor keeps a slow object's 1 px jitter from counting.
+- **Colour** (`--hue 0.35`): the object's palette is every colour class (neutral, or a 10-degree hue bin) holding 4% or
+  more of its pixels in its first 3 frames, widened by one bin each side. A frame is marked when 35% or more of the
+  object's pixels fall outside it; frames where the object is under 15% of its first size are left to the eye (a
+  speck in the hole is mostly the hole). A glow the person asked for is not foreign: `--allow-hues heat` (white, red,
+  orange, yellow) for Ben's "perhaps some heat glow effect", or name the hues.
+- The marks point the eye; they do not judge. Look at every marked frame and the one before it, and ask the fresh
+  critic the printed question, which now asks all three: is it on screen every frame, does it move about as far each
+  frame as in the frames around it, does it keep its first-frame colours.
+- A smooth control from the same clip (a stretch before the swallow, or an approved take) runs clean with the same
+  thresholds; if it does not, the thresholds or the track are wrong, not the effect.
 
 ## New art matches Final Factory's art language (w1066, w1241, w1332)
 

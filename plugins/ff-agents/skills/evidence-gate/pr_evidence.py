@@ -886,6 +886,15 @@ def closeup_problems(text: str, folder: Path | None = None, claims_text: str | N
     questions += [f"From the every-frame strip, is the object's own model on screen in every frame until its end state "
                   f"({s[:80]})? Name the first frame where it is gone or replaced, and what the frame before it shows."
                   for k in claimed if k in TRANSITION_KEYS for s in claimed[k][:1]]
+    # w1816: Ben on w1685, after a clip passed with "no vanish, pop, swap or jump": "i dont like that it suddenly jumps
+    # to the center of the black hole and then also becomes that purple".
+    if any(k in TRANSITION_KEYS for k in claimed):
+        questions += ["From the every-frame strip, does the object move about as far each frame as in the frames around "
+                      "it, all the way in, or does it jump (to the centre, across the hole) in one frame? Name the frame "
+                      "and where it was in the frame before.",
+                      "From the every-frame strip, does the object keep the colours it has in its first frame (its own "
+                      "hull and lights), or does it turn another colour (purple, the hole's colour, a tint over it)? Name "
+                      "the first frame and the colour."]
     problems = []
     said = ", ".join(f"'{claimed[k][0][:70]}'" for k in list(claimed)[:3])
     if not entries:
