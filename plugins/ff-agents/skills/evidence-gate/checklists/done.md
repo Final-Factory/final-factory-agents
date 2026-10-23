@@ -60,6 +60,9 @@ holds, or the report says what is left instead of DONE.
    ([never ask what they already answered](../lessons/a-person-wait-is-declared-not-polled.md#never-ask-a-person-what-they-already-answered-w1812), w1812).
    Every other wait left open is a harness timer (`wake_me`, `blocked_on`, `set_timer`), never a background shell
    loop, `nohup`, `&` or Monitor left to finish it ([a wait is a harness timer](../lessons/a-person-wait-is-declared-not-polled.md#a-wait-on-a-machine-is-a-harness-timer-never-a-background-loop-w1106), w1106).
+   No `still open:` line waits on the orchestrator or the dispatcher for your own work: a two-machine or pair check, a
+   build, a test run or your CI you run yourself, asking the dispatcher only for a second machine's worker; files or results
+   another request's worker makes for you are `blocked_on` with `reports` ([your own checks are yours](../lessons/a-person-wait-is-declared-not-polled.md#your-own-checks-are-yours-never-wait-on-the-orchestrator-for-them-w1841), w1841).
 7. **A Deck-facing fix names its real-Deck status** (w770). A change a Steam Deck player meets (glyphs, Steam Input,
    launch resolution, Deck UI, touch) is reported "verified on a real Deck" (who, Steam client and SteamOS versions,
    what they saw) or "not verified on a real Deck: <what stays open>", never a bare done on a tour
