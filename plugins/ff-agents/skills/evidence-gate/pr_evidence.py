@@ -413,11 +413,35 @@ def missing_states(text: str) -> list[str]:
     return [want for want in REQUIRED_STATES if not any(f == want or f.startswith(want + " ") for f in found)]
 
 
+OUTER = re.compile(r"\(was (-?\d+),(-?\d+) (\d+)x(\d+), now (-?\d+),(-?\d+) (\d+)x(\d+)\)")
+# The census calls an edge change over 4 px a move (ui_layout.py moves, move_px); the printed rects are rounded, so an
+# edge computed from them is off by up to 1 px.
+HELD_PX = 4 + 1
+
+
+def resized_in_place(line: str, pin: dict) -> bool:
+    """A pinned element that only got taller or shorter: its left and right edges kept (within the rounding), and the edge
+    its pin holds against its anchor (the bottom, for an 'above' pin) within the census's move threshold. That is a
+    resize, not a move: the pins are about where Ben put a panel (hud-pins.json: over the minimap, over the abilities),
+    and every correction behind them was a panel taken somewhere else (w813, w894, w895). w1824: #2269's font fix made
+    the hover card and Station Info 5 to 8 px shorter in ja/ko/zh/ru/uk, bottom edges and widths kept, which Ben had
+    approved ("a few pixels shorter in those languages is fine"), and the gate asked him again because his words did not
+    name each panel. The quote must still be the requester's words in the brief; any other change needs the name."""
+    found = OUTER.search(line)
+    if not found or pin.get("rule") != "above":
+        return False
+    x0, y0, w0, h0, x1, y1, w1, h1 = (int(v) for v in found.groups())
+    if abs(h1 - h0) <= 1:
+        return False  # the same size: a shift, which is a move
+    return abs(x1 - x0) <= 1 and abs((x1 + w1) - (x0 + w0)) <= 1 and abs((y1 + h1) - (y0 + h0)) <= HELD_PX
+
+
 def moved_problems(section: str, brief: str | None = None) -> tuple[list[str], list[str]]:
     """Nothing moved that the requester did not ask to move (w826; w894, Ben: "stop moving panels around that I don't ask
     you to move around"). The `Moved:` line is `ui_layout.py moves` at 1920x1080, 1280x800 undocked and 1280x800 docked;
     each list line names one element and carries `asked (who): "their words"`, found word for word inside the brief's
-    quotations (--brief, or the PR's 'Brief (who):' lines), naming the element when it is pinned (hud-pins.json). There
+    quotations (--brief, or the PR's 'Brief (who):' lines), naming the element when it is pinned (hud-pins.json), unless
+    the pinned element only changed height in place (resized_in_place, w1824). There
     is no other way to pass: `not asked: justified` was used for every unasked move it let through (#1397 moved Station
     Info and the hover card in the dock and passed). `not asked: reverted` does not count: re-take the after census."""
     lines = section.split("\n")
@@ -477,10 +501,11 @@ def moved_problems(section: str, brief: str | None = None) -> tuple[list[str], l
             problems.append(f"'Moved:' {state} {name}: the quote is not in the brief's quotations word for word: "
                             f"\"{quote[:80]}\". Only the requester's own words are a target (checklists/ui.md, item 1)")
         pin = next((pn for pn in pinned if re.search(rf"(^|/){re.escape(pn['element'])}\b", name)), None)
-        if pin and not any(n in normalized(quote) for n in pin["names"]):
+        if pin and not any(n in normalized(quote) for n in pin["names"]) and not resized_in_place(line, pin):
             problems.append(f"'Moved:' {state} {name} is pinned ({pin['name']}: {pin['where']}) and the quote does not name "
                             f"it ({' / '.join(pin['names'])}). A pinned element moves only when the requester says so by "
-                            f"name, and then hud-pins.json changes with their words")
+                            f"name, and then hud-pins.json changes with their words (only a height change that keeps its "
+                            f"left, right and anchored edges is a resize the brief's words cover, w1824)")
     if accounted < int(count.group(1)):
         problems.append(f"'Moved:' counts {count.group(1)} move(s) but only {accounted} list line(s) are asked for: paste "
                         f"every line ui_layout.py moves prints and put back each one nobody asked for")

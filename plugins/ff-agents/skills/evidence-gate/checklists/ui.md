@@ -214,6 +214,12 @@ screen; on desktop three labels stopped fitting, the two windows left their defa
       Information on the left of center", which nobody said), a Deck quote on a desktop line, a pinned element whose quote
       does not name it, a line that folds several elements together, and a `Moved:` or `Pinned:` line that leaves out a
       screen or the docked layout.
+    - A pinned element that only got taller or shorter is resized, not moved: its left and right edges within 1 px and
+      its anchored edge (the bottom, over the abilities or the minimap) within 5 px (the census's 4 px plus the printed
+      rounding). Its line still carries the requester's words from the brief that approved the change, but they need not
+      name the panel: never ask a person again about something their answer already covered (w1824: Ben's "a few pixels
+      shorter in those languages is fine" covered the hover card and Station Info on #2269). Any other change to a pinned
+      element (a shift, a new width, a bottom edge that left its anchor) still needs their words naming it.
 
     The four corrections: "you did more with the overall layout than i wanted. like the station controls are not being
     put above objectives" (w722/w723); "why is station info at the top left? i didnt tell you to move that" (#1282); "it
