@@ -36,7 +36,7 @@ ffdiscord download <thread_id> <message_id> --dir <scratch>/ffbug-<thread_id>
 `<scratch>` is any writable temp dir — `$TMPDIR` on macOS/Linux, `%TEMP%` on Windows.
 
 Reports arrive two ways and you must handle both: the **in-game reporter's webhook** (an embed
-carrying title, description, game version, platform, plus a runtime log and a save zip), and
+carrying title, description, game version, platform, plus a runtime log, a save zip and, since w1777, `Player-prev.log`, the previous session's log), and
 **a player posting directly** in the forum (plain text, often with screenshots). Read the whole
 thread — follow-up replies frequently contain the actual reproduction.
 
