@@ -7,6 +7,29 @@ its `ffbox/*` PR, however it reaches you: an FF Factory intake request tagged "d
 FF Factory approves these at once and adds the policy to the worker's brief (FF Factory
 docs/intake.md, "FFBox desync PRs"); this page is the checklist and the commands.
 
+## 0. What an FFBox fix branch carries (w1819, 2026-10-23)
+
+Lothsahn: "Why does ffbox make a fix and propose it and it gets independently developed by a
+worker? Seems like we're wasting time." Since ffbox commits 1754f18 and 786f5ec:
+
+- **One branch per root cause.** Every diagnosis brief lists the open `ffbox/*` fix branches with
+  their root causes, and a diagnosis of a cause one of them already fixes joins that branch
+  (`joins_branch`) instead of pushing a second one: its conversation adopts the branch, its reports
+  come to FF Factory under that branch's key (the brief says "joined that branch"), and a change the
+  branch still needs arrives as new commits on it. So one request may carry several conversations'
+  reports. Two `ffbox/*` branches for one cause now means one predates this or two diagnoses ran at
+  once: validate the more complete one, close the other with the reason, and say which in the PR.
+- **A regression test, measured by the harness.** For a diagnosis, the container reruns the branch's
+  EditMode test classes with every file the fix changed outside its tests put back to `master`, and
+  the PR body (and the FF Factory request) carries the line `Regression test, measured by the
+  harness in its container: ... Red on master ... green with the fix ...`. Rerun that test both
+  ways yourself (`run_tests` by name on `origin/master` and on the branch) and quote it: that is the
+  failing-first test of class 2, so do not write a second one. When the line says **not measured**
+  or **does not fail without the fix**, writing a test that is red on master is your first step,
+  and the PR says the FFBox one was missing or did not reproduce. The agent's own `## Regression
+  test` section names any test the container could not run (a play-mode test, a three-peer
+  scenario): run it.
+
 ## 1. Classify before anything else
 
 Read the whole diff against `origin/master`. Write the class and the reason (the files, and when the
