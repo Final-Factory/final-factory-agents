@@ -33,6 +33,21 @@ painful on the eyes"; w1334, game PR #1817). These look at the pixels a player s
         window at its own pixels and 2x, the reference panels (default <repo>/docs/ui-style/ref/ref-*.png), and the person's
         quoted words in b/, which the prompt opens only after the stills are judged alone. Prints the pack id.
 
+    ui_look.py family <still.png>::<census.json>[#<window>] [--ref <still.png>::<census.json>[#<window>] ...] [--json <out>]
+        The `Family:` line (evidence-gate checklists/ui.md item 33): the window against the game's other windows (Ben,
+        w1761: "the UI needs to be consistent and clean"). Each window is measured the same way:
+        MIXED CORNERS   more distinct corner radii than any reference window (2 at least), read off the pixels of every
+                        drawn shape: w1761's letter circles, rounded rows and Add Calculation button.
+        NESTED CORNERS  a rounded shape within 4 px (or its parent's radius) of a rounded parent's edge whose radius is not
+                        about the parent's less the gap: "a circle around each letter, which is right next to the rounded
+                        border of the item".
+        SMALL HEADER    the header (the largest text in the window's top) under 0.9x the reference headers' font size,
+                        scaled by the screen heights: "the header font seems smaller than other headers".
+        HEADER TWO LINES the header wraps (w1296: "fits on one line so its not pushing up against the top").
+        CRAMPED <EDGE>  the gap from the content (texts, controls) to an edge under 0.75x the reference windows' and 3 px
+                        or more less: "make the bottom padding a few more pixels too it feels crammed".
+        References: --ref, else the other windows open in the same census. Exits 1 on any finding.
+
     ui_look.py crops <still.png> --out <dir> [--census <census.json>] [--rect x0,y0,x1,y1 ...] [--name <prefix>]
         Crops at the panel's own pixels (and 2x for a small one), for a critic that wants to look closer.
 
@@ -778,6 +793,252 @@ def run_crops(args) -> int:
     return 0
 
 
+# ---------------------------------------------------------------------------------------------------------------
+# FAMILY: does the window look like one of the game's other windows (w1818)
+
+CORNER_ROWS = 24        # pixel rows from each corner the radius fit reads (a radius over 24 px reads as 24)
+CORNER_DE = 8.0         # a shape at least this far (delta E) from what is drawn around it has corners that can be read
+RADIUS_SAME = 1.5       # two radii this close in px, or within 20 % of each other, are one radius
+RADIUS_ROUND = 1.5      # a corner under this radius is square
+NEST_GAP = 4.0          # a rounded shape this close (px) to its rounded parent's edge, or nearer than the parent's radius,
+NEST_OFF = 2.5          # sits tight inside it, and a radius this far from (the parent's radius less the gap) is not nested
+HEADER_SMALL = 0.9      # a header font under this share of the reference windows' header font is smaller (w1761)
+EDGE_CRAMPED = 0.75     # an edge gap under this share of the reference windows' gap and at least EDGE_MIN_DIFF px under
+EDGE_MIN_DIFF = 3.0     # it is cramped (Ben, w1761: "make the bottom padding a few more pixels too it feels crammed")
+
+
+def _coverage(p, inside, outside) -> float:
+    """How much of a pixel is the shape: p projected on the line from the colour around the shape to the shape's own."""
+    d = [i - o for i, o in zip(inside, outside)]
+    n = sum(v * v for v in d)
+    if not n:
+        return 0.0
+    return min(1.0, max(0.0, sum((c - o) * v for c, o, v in zip(p, outside, d)) / n))
+
+
+def corner_radius(still: Still, rect, corner: str) -> float | None:
+    """The radius of one corner of a drawn shape, in screen px, read off the pixels: in each of the first rows from the
+    corner, how far in the shape starts (the sum of the uncovered share of each pixel up to the first fully covered one),
+    fitted to a circle's edge, r - sqrt(r^2 - (r - k - 0.5)^2). None when the shape is too small or too close in colour
+    to what is around it."""
+    x0, y0, x1, y1 = (int(round(v)) for v in rect)
+    w, h = x1 - x0, y1 - y0
+    if w < 8 or h < 8 or x0 < 2 or y0 < 2 or x1 + 2 > still.width or y1 + 2 > still.height:
+        return None
+    left, top = corner[1] == "l", corner[0] == "t"
+
+    def at(dx, dy):
+        return still.px(x0 + dx if left else x1 - 1 - dx, y0 + dy if top else y1 - 1 - dy)
+    outside = still.px(x0 - 2 if left else x1 + 1, y0 - 2 if top else y1 + 1)
+    samples = [at(w // 2, 2), at(w // 2, 3), at(2, h // 2), at(3, h // 2)]
+    inside = tuple(sorted(s[c] for s in samples)[1] for c in range(3))
+    if ul.delta_e(inside, outside) < CORNER_DE:
+        return None
+    rows = min(CORNER_ROWS, h // 2)
+    span = min(CORNER_ROWS + 2, w // 2)
+    xs = []
+    for k in range(rows):
+        uncovered = 0.0
+        for dx in range(span):
+            cov = _coverage(at(dx, k), inside, outside)
+            uncovered += 1.0 - cov
+            if cov >= 0.95:
+                break
+        else:
+            continue
+        xs.append((k, uncovered))
+    if len(xs) < 3:
+        return None
+    best, best_err = 0.0, float("inf")
+    for step in range(int(4 * min(rows, span)) + 1):
+        r = step / 4
+        err = 0.0
+        for k, x in xs:
+            dy = r - k - 0.5
+            err += (x - (r - math.sqrt(r * r - dy * dy) if dy > 0 else 0.0)) ** 2
+        if err < best_err - 1e-9:
+            best, best_err = r, err
+    return best
+
+
+def shape_radius(still: Still, rect) -> float | None:
+    """A shape's corner radius: the median of its readable corners (two or more), so one corner under an icon or a
+    neighbour does not decide it."""
+    rs = sorted(r for r in (corner_radius(still, rect, c) for c in ("tl", "tr", "bl", "br")) if r is not None)
+    if len(rs) < 2:
+        return None
+    return rs[len(rs) // 2] if len(rs) % 2 else (rs[len(rs) // 2 - 1] + rs[len(rs) // 2]) / 2
+
+
+def radius_groups(radii: list[float]) -> list[float]:
+    """The distinct radii among rounded corners: values within RADIUS_SAME px or 20 % of the group's first are one."""
+    groups: list[list[float]] = []
+    for r in sorted(r for r in radii if r >= RADIUS_ROUND):
+        if groups and (r - groups[-1][0] <= RADIUS_SAME or r <= 1.2 * groups[-1][0]):
+            groups[-1].append(r)
+        else:
+            groups.append([r])
+    return [round(sum(g) / len(g), 1) for g in groups]
+
+
+def _window_prefix(census: dict, fragment: str) -> str:
+    """The census path of the window a fragment names: every path holding it, cut just after the segment it ends in."""
+    hits = [e["path"] for e in census.get("elements", []) if fragment in e["path"]]
+    if not hits:
+        raise ValueError(f"no element in the census has {fragment!r} in its path")
+    p = min(hits, key=len)
+    cut = p.find(fragment) + len(fragment)
+    nxt = p.find("/", cut)
+    return p if nxt < 0 else p[:nxt]
+
+
+def window_family(still: Still, census: dict, prefix: str) -> dict:
+    """One window measured for the family check: its header (font size, lines, gap to the top), the gap from its content
+    (texts and controls) to each edge, and the corner radius of every drawn shape in it, read off the pixels."""
+    sw, sh = (census.get("screen") or [still.width, still.height])[:2]
+    members = [e for e in census.get("elements", [])
+               if (e["path"] == prefix or e["path"].startswith(prefix + "/")) and not e.get("maskOnly")
+               and e.get("alpha", 1.0) >= 0.2 and not any(i in e["path"] for i in ul.IGNORE)
+               and ul.area(e.get("visible") or e["rect"]) > 0]
+    images = [e for e in members if e.get("kind") in ("Image", "RawImage")]
+    boxes = [e.get("visible") or e["rect"] for e in images if 400 <= ul.area(e.get("visible") or e["rect"]) <= 0.6 * sw * sh]
+    if not boxes:
+        raise ValueError(f"{prefix}: no drawn image to box the window with")
+    win = [min(b[0] for b in boxes), min(b[1] for b in boxes), max(b[2] for b in boxes), max(b[3] for b in boxes)]
+    wh = win[3] - win[1]
+    texts = [e for e in members if "Text" in e.get("kind", "") and (e.get("text") or "").strip()]
+    top_texts = [e for e in texts if (e.get("textRect") or e["rect"])[1] - win[1] <= max(60.0, 0.2 * wh)]
+    header = None
+    if top_texts:
+        h = max(top_texts, key=lambda e: (e.get("fontSize") or 0, -(e.get("textRect") or e["rect"])[1]))
+        tr = h.get("textRect") or h["rect"]
+        header = {"path": h["path"], "text": h.get("text", ""), "fontSize": h.get("fontSize"), "lines": h.get("lines"),
+                  "top": round(tr[1] - win[1], 1), "canvasOrder": h.get("canvasOrder")}
+    content = [e.get("textRect") or e.get("visible") or e["rect"] for e in texts] + \
+              [e.get("visible") or e["rect"] for e in members if e.get("selectable")]
+    edges = None
+    if content:
+        edges = {"left": round(min(r[0] for r in content) - win[0], 1), "top": round(min(r[1] for r in content) - win[1], 1),
+                 "right": round(win[2] - max(r[2] for r in content), 1),
+                 "bottom": round(win[3] - max(r[3] for r in content), 1)}
+    shapes = []
+    for e in images:
+        r = e.get("visible") or e["rect"]
+        if not e.get("sprite") or e.get("alpha", 1.0) < 0.5 or min(r[2] - r[0], r[3] - r[1]) < 8:
+            continue
+        rad = shape_radius(still, r)
+        if rad is not None:
+            shapes.append({"path": e["path"], "rect": [round(v, 1) for v in r], "radius": rad,
+                           "circle": rad >= 0.45 * min(r[2] - r[0], r[3] - r[1])})
+    nested = []
+    for c in shapes:
+        parents = [p for p in shapes if p is not c and p["radius"] >= 2 and ul.area(p["rect"]) > ul.area(c["rect"])
+                   and p["rect"][0] - 1 <= c["rect"][0] and p["rect"][1] - 1 <= c["rect"][1]
+                   and c["rect"][2] <= p["rect"][2] + 1 and c["rect"][3] <= p["rect"][3] + 1]
+        if not parents or c["radius"] < RADIUS_ROUND:
+            continue
+        p = min(parents, key=lambda q: ul.area(q["rect"]))
+        gap = min(c["rect"][0] - p["rect"][0], c["rect"][1] - p["rect"][1], p["rect"][2] - c["rect"][2],
+                  p["rect"][3] - c["rect"][3])
+        if gap > max(NEST_GAP, p["radius"]):
+            continue
+        want = max(0.0, p["radius"] - max(gap, 0.0))
+        if abs(c["radius"] - want) > max(NEST_OFF, 0.35 * max(c["radius"], p["radius"])):
+            nested.append({"inner": c["path"], "inner_radius": c["radius"], "circle": c["circle"], "outer": p["path"],
+                           "outer_radius": p["radius"], "gap": round(gap, 1)})
+    return {"window": prefix, "rect": [round(v, 1) for v in win], "screen": [sw, sh], "header": header, "edges": edges,
+            "shapes": shapes, "radii": radius_groups([s["radius"] for s in shapes]), "nested": nested}
+
+
+def family_findings(subject: dict, refs: list[dict]) -> list[str]:
+    """What sets a window apart from the reference windows: corners (more distinct radii than any reference, a rounded
+    shape tight inside one of another radius), its header (smaller, or on two lines) and cramped edges."""
+    out = []
+    ref_counts = [len(r["radii"]) for r in refs]
+    most = max([2] + ref_counts)
+    if len(subject["radii"]) > most:
+        out.append(f"MIXED CORNERS: {len(subject['radii'])} radii ({', '.join(f'{r:g}' for r in subject['radii'])} px), "
+                   f"the reference windows use at most {most} ({'; '.join(', '.join(f'{v:g}' for v in r['radii']) or 'square' for r in refs)})")
+    for n in subject["nested"]:
+        what = "a circle" if n["circle"] else f"radius {n['inner_radius']:g}"
+        out.append(f"NESTED CORNERS: {what} ({ul.short(n['inner'], 2)}) {n['gap']:g} px inside "
+                   f"{ul.short(n['outer'], 2)}, radius {n['outer_radius']:g}: a tight inner corner wants about "
+                   f"{max(0.0, n['outer_radius'] - max(n['gap'], 0)):g}, or more room")
+    scale = lambda r: subject["screen"][1] / r["screen"][1] if r["screen"][1] else 1.0  # noqa: E731
+    h = subject["header"]
+    ref_heads = [(r, r["header"]) for r in refs if r["header"] and r["header"].get("fontSize")]
+    if h and h.get("lines") and h["lines"] > 1:
+        out.append(f"HEADER TWO LINES: \"{h['text'][:40]}\" wraps to {h['lines']} lines (Ben, w1296: a header that "
+                   f"\"fits on one line so its not pushing up against the top of the panel\")")
+    if h and h.get("fontSize") and ref_heads:
+        sizes = sorted(rh["fontSize"] * scale(r) for r, rh in ref_heads)
+        ref_size = sizes[len(sizes) // 2]
+        if h["fontSize"] < HEADER_SMALL * ref_size:
+            out.append(f"SMALL HEADER: \"{h['text'][:40]}\" at {h['fontSize']:g} pt, the reference windows' headers "
+                       f"{', '.join(f'{s:g}' for s in sizes)} pt")
+    elif not h and ref_heads:
+        out.append("NO HEADER: no text in the top of the window, where every reference window has its title")
+    if subject["edges"]:
+        for side in ("top", "bottom", "left", "right"):
+            gaps = sorted(r["edges"][side] * scale(r) for r in refs if r["edges"])
+            if not gaps:
+                continue
+            ref_gap = gaps[len(gaps) // 2]
+            mine = subject["edges"][side]
+            if mine < EDGE_CRAMPED * ref_gap and ref_gap - mine >= EDGE_MIN_DIFF:
+                out.append(f"CRAMPED {side.upper()}: {mine:g} px from the content to the window's {side} edge, the "
+                           f"reference windows {', '.join(f'{g:.0f}' for g in gaps)} px")
+    return out
+
+
+def _family_spec(spec: str):
+    """still.png::census.json[#window path fragment]."""
+    still, _, rest = spec.partition("::")
+    if not rest:
+        raise ValueError(f"{spec!r}: the family check needs a census: still.png::census.json[#window]")
+    census, _, fragment = rest.partition("#")
+    return still, census, fragment or None
+
+
+def _measure(spec: str, skip: set[str] | None = None) -> list[dict]:
+    still_path, census_path, fragment = _family_spec(spec)
+    still, census = load_still(still_path), ul.load(census_path)
+    prefixes = [_window_prefix(census, fragment)] if fragment else [p for p, _ in window_rects(census)]
+    return [dict(window_family(still, census, p), source=still_path) for p in prefixes if p not in (skip or set())]
+
+
+def run_family(args) -> int:
+    subjects = _measure(args.window)
+    if not subjects:
+        raise ValueError(f"{args.window}: no opened window in the census; name it with #<path fragment>")
+    refs = []
+    for spec in args.ref or []:
+        refs += _measure(spec)
+    if not refs:
+        refs = _measure(args.window.split("#")[0], skip={s["window"] for s in subjects})
+    if not refs:
+        raise ValueError("no reference window: open another of the game's windows in the same still, or give "
+                         "--ref <still.png>::<census.json>#<window> (a panel nobody asked to change: docs/UI-Style.md)")
+    total = 0
+    report = {"subjects": [], "refs": refs}
+    for s in subjects:
+        found = family_findings(s, refs)
+        total += len(found)
+        report["subjects"].append(dict(s, findings=found))
+        print(f"{ul.short(s['window'], 2)}: header {s['header'] and s['header'].get('fontSize')} pt "
+              f"({s['header'] and s['header'].get('lines')} line(s)), edges {s['edges']}, radii {s['radii'] or 'square'}")
+        for f in found:
+            print(f"  {f}")
+    for r in refs:
+        print(f"reference {ul.short(r['window'], 2)}: header {r['header'] and r['header'].get('fontSize')} pt, edges "
+              f"{r['edges']}, radii {r['radii'] or 'square'}")
+    print(f"Family: {len(subjects)} window(s) against {len(refs)} reference window(s), {total} finding(s)"
+          + (": " + "; ".join(f.split(':')[0] for s in report['subjects'] for f in s['findings']) if total else ""))
+    if args.json:
+        Path(args.json).write_text(json.dumps(report, indent=1), encoding="utf-8")
+    return 1 if total else 0
+
+
 PACK_PROMPT = """# Design review pack {pack}
 
 You are reviewing UI stills of Final Factory, a space factory game whose panels are dense tool UI on a dark navy theme.
@@ -793,8 +1054,13 @@ Reference panels (the game's look; not under review), in {refs}:
 {ref_files}
 
 For each still: what you see first; a verdict, BROKEN, UGLY or OK; at most three problems, each with the file and the area;
-the eight rubric answers; then side by side against the reference panels, item by item: does it look as finished as they
-do, and like the same game? Write Pass A for every still before you open anything in {b}.
+the nine rubric answers; then side by side against the reference panels, item by item: does it look as finished as they
+do, and like the same game? For item 9 name the reference window you compared and write three lines: the corner radii
+you see (one family, or which differ, and any rounded shape tight inside one of another radius); the header's size and
+lines against the reference's title; the gap at each edge, top and bottom first, against the reference's. A mismatch a
+player sees beside another window is UGLY (w1761, Ben: "i dont like the differing border-radius values all smashed
+together", "the header font seems smaller than other headers", "make the bottom padding a few more pixels too it feels
+crammed"). Write Pass A for every still before you open anything in {b}.
 
 ## Pass B: what was asked
 
@@ -887,6 +1153,9 @@ def run_pack(args) -> int:
     refs = list(args.ref or [])
     if not refs and args.repo:
         refs = sorted(str(p) for p in (Path(args.repo) / "docs" / "ui-style" / "ref").glob("ref-*.png"))  # not the dont-*.png
+    if not refs:
+        raise ValueError("no reference panel: give --repo <game repo> (its docs/ui-style/ref/ref-*.png) or --ref <a still "
+                         "of one of the game's windows>; the critic judges a window beside the game's others (w1818)")
     ref_files = []
     for k, ref in enumerate(refs, start=1):
         name = f"ref{k}-{re.sub(r'[^A-Za-z0-9]+', '-', Path(ref).stem).strip('-')}.png"
@@ -903,7 +1172,7 @@ def run_pack(args) -> int:
     befores_line = ("and the before and after of " + ", ".join(sorted({n.split("-")[0] for n in paired})) + " (" +
                     ", ".join(f"`{n}`" for n in paired) + "; a still with no pair here has no before). ") if paired else ". "
     prompt = PACK_PROMPT.format(pack=pack, rubric=rubric, a=a_dir, a_files="\n".join(a_files), refs=ref_dir,
-                                ref_files="\n".join(ref_files) or "- (none given: say so in the report)", b=b_dir,
+                                ref_files="\n".join(ref_files), b=b_dir,
                                 words_line="`words.md` (the person's words, verbatim)", b_files_line=" " + befores_line
                                 if paired else ". ",
                                 report=report)
@@ -940,9 +1209,14 @@ def main(argv=None) -> int:
     q.add_argument("--words", action="append", help="a quote of the person's to add")
     q.add_argument("--rect", action="append", help="the panel's rect when there is no census, x0,y0,x1,y1")
     q.add_argument("--out", required=True)
+    f = sub.add_parser("family", help="corners, header and edges against the game's other windows (w1818)")
+    f.add_argument("window", help="still.png::census.json[#window path fragment]: the window under review")
+    f.add_argument("--ref", action="append", help="a reference window, still.png::census.json[#window] (default: the "
+                                                   "other windows open in the same still)")
+    f.add_argument("--json", help="write the measurements here")
     args = ap.parse_args(argv)
     try:
-        return {"colour": run_colour, "color": run_colour, "crops": run_crops, "pack": run_pack}[args.cmd](args)
+        return {"colour": run_colour, "color": run_colour, "crops": run_crops, "pack": run_pack, "family": run_family}[args.cmd](args)
     except (ValueError, OSError, KeyError) as error:
         print(f"ui_look: {error}", file=sys.stderr)
         return 2

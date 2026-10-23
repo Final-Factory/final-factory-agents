@@ -1,6 +1,6 @@
 # UI design rubric (w1399)
 
-Every still of a UI change is graded on these eight questions before anyone else sees it: by the worker for its `Eye:`
+Every still of a UI change is graded on these nine questions before anyone else sees it: by the worker for its `Eye:`
 line, by a fresh critic for its report ([critic.md](critic.md)), and by the orchestrator before it relays. Each answer is
 PASS or FAIL with what you saw and where (the crop and the element). A FAIL is **BROKEN** or **UGLY** when a player would
 call the screen broken, ugly or confusing at first sight, as Ben did three times on 2026-10-16; otherwise it is minor. Judge the
@@ -41,6 +41,18 @@ still. Look at the panel at its own pixels, not only the whole screen: `ui_look.
    damnit"). FAIL: a look invented for one panel (w1334 round 2's flat style came from an HTML mock; its accent
    #5FC3E4 is used nowhere else in the game); a different button style for the same role; a control drawn in a style no
    other panel uses.
+9. **It matches the game's other windows, measured side by side.** Put the window beside a reference window at the same
+   size (one is always in the pack) and compare three things. PASS: one corner radius for the window's rows, buttons and
+   fields, and a shape inside a rounded one either has the parent's radius less the gap or room around it; the header at
+   the size and weight of the other windows' titles, on one line, with the same room above it; the same padding at each
+   edge as the reference, nothing touching the top or the bottom. FAIL: radii mixed together (w1761's Calculations
+   window, after a fresh critic "found nothing broken or ugly": "i dont like the differing border-radius values all
+   smashed together. theres a circle around each letter, which is right next to the rounded border of the item, and the
+   add calculation button has another separate radius"); a header smaller than the others ("the header font seems
+   smaller than other headers") or on two lines (w1296: "the header for Content removed from this save looks bad since
+   it's on too lines"); an edge tighter than the reference's (w1761: "make the bottom padding a few more pixels too it
+   feels crammed"). Name the reference window and the numbers you compared; `ui_look.py family` measures them
+   (`Family:` line).
 
 **And the person's words, at the size they asked for.** Each quoted ask is visibly met, and a small ask stays small: Ben
 asked for the Add stop button to "stand out just a little more" (w1334) and got the brightest fill in the panel.
@@ -52,7 +64,7 @@ One line per still, while you look at it:
 ```
 w1334r2-panel-1920: UGLY. 1 PASS; 2 FAIL UGLY (the "+ Add stop" fill, pale cyan, is the brightest thing in the panel);
 3 FAIL UGLY (the "Cargo holds full" chip in stop 1 is mauve-grey, the same chip in stop 3 dark grey); 7 FAIL UGLY
-("+ Add stop" white on pale cyan, 2:1); 4-6 and 8 PASS; words: "a little more" not met
+("+ Add stop" white on pale cyan, 2:1); 4-6, 8 and 9 PASS; words: "a little more" not met
 ```
 
 (That is round 2 of w1334 as w1399 measured it on Ben's own still: the chips delta E 13.6 apart, the label 2.13:1.)

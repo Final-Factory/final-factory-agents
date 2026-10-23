@@ -274,3 +274,45 @@ while". So the stills came back for a third round. The fix was 20 lines of CSS. 
 - **When the critic names a coverage gap that is the person's own case, shoot that state before anyone sees the
   stills.** For example: many items, long text, the busy day the request is about. Then have a new critic judge it. A
   missing still of the requester's scenario is a gap in the proof, not a minor finding.
+
+## A window is judged beside the game's other windows: corners, header, padding (w1818, 2026-10-23)
+
+**Rule.** A new or changed window is compared with one of the game's existing windows, at the same size, on three things a
+player sees only side by side: the corner radii are one family, with no rounded shape tight inside one of another radius;
+the header has the size and weight of the other windows' titles and fits on one line; the padding at each edge matches,
+with nothing against the top or the bottom. `ui_look.py family` measures what it can, and the critic always gets a
+reference window and answers rubric item 9 against it.
+
+### Why: two corrections from Ben, the second after a fresh critic passed the window
+
+- w1296, the mods-per-save dialog (game PR #1744, 2026-10-15). The worker's own stills showed it and nobody flagged it:
+  "the header for Content removed from this save looks bad since it's on too lines. The header should say something
+  shorter that fits on one line so its not pushing up against the top of the panel".
+- w1761, the circuit Calculations window (2026-10-22). A fresh critic "found nothing broken or ugly". Ben: "i dont like
+  the differing border-radius values all smashed together. theres a circle around each letter, which is right next to
+  the rounded border of the item, and the add calculation button has another separate radius. this needs to look
+  cleaner and more unified, also the header font seems smaller than other headers. the UI needs to be consistent and
+  clean", and "make the bottom padding a few more pixels too it feels crammed".
+
+The rubric judged each window on its own (hierarchy, colour, state, shape, space, grouping, legibility, "like the same
+game"), and the critic's side-by-side look asked only "does it look as finished": nothing named radii, header size or
+edge padding, so a model looking at one window found nothing. Each of these defects is relative. A 19 pt title or a 4 px
+bottom gap is only wrong beside a 24 pt title and a 14 px gap.
+
+### How to apply
+
+- Take a reference window's still and census at the same size and UI scale (`docs/UI-Style.md` lists the panels nobody
+  asked to change), or open one beside the new window. `ui_look.py pack` refuses to build without a reference.
+- Run `ui_look.py family <after>::<census>#<window> --ref <ref>::<census>#<window>` and paste its `Family:` line
+  (checklist `ui.md` item 33). What it measures:
+  - corner radii, fitted to the pixels of each drawn shape's corners, within 1 px on synthetic shapes of radius 0 to 14;
+  - the nesting of one rounded shape inside another;
+  - the header's font size and line count, from the census;
+  - each edge's gap from the content (texts and controls) to the window's box, from the census.
+- What it leaves to the eye: a corner too close in colour to what is behind it to read, the header's weight and style,
+  and how the room feels.
+- Thresholds, each a guess until a real window calibrates it (the w1818 proof below):
+  - MIXED CORNERS: more radii than the reference uses, 2 at least.
+  - NESTED CORNERS: an inner radius over 2.5 px (or 35 %) off the parent's radius less the gap, within 4 px of its edge.
+  - SMALL HEADER: a header font under 0.9x the reference title's.
+  - CRAMPED: an edge gap under 0.75x the reference's and 3 px or more less ("a few more pixels").

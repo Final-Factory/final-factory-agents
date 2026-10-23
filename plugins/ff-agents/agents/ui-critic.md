@@ -28,12 +28,22 @@ your report: you judge what is on screen. Never read the game's code, the pull r
    `python "<unity-ui skill>/ui_look.py" crops <still> --rect x0,y0,x1,y1 --out <dir> --name zoom` (the skill folder is
    the one holding the rubric). A model sees a whole 1920x1080 still shrunk; small tints, washed-out controls and squashed
    switches show only in a crop.
-3. Write down what you see before you judge it: the panel's parts, their colours, sizes and places. Then grade the eight
+3. Write down what you see before you judge it: the panel's parts, their colours, sizes and places. Then grade the nine
    rubric items, PASS or FAIL, each with the element and where it is (the crop file and the area). "Looks fine" is not
    an answer; name what you checked.
 4. Compare side by side, item by item: the after against the reference panels ("does it look like the same game: frame,
    navy, buttons, state marks, spacing?") and the after against the before ("better, the same or worse on each item?").
    Do not let the order you looked at them decide.
+   Then rubric item 9, the window against one reference window you name, each at its own pixels: (a) list every corner
+   radius you see (the frame, rows, buttons, fields, chips, circles) and say whether they are one family, and whether a
+   rounded shape sits tight inside one of another radius; (b) the header's height and weight beside the reference's
+   title, and whether it fits on one line with the same room above it; (c) the gap at each edge, top and bottom first,
+   beside the reference's. A fresh critic on w1761's Calculations window "found nothing broken or ugly", and Ben then
+   saw all three: "i dont like the differing border-radius values all smashed together. theres a circle around each
+   letter, which is right next to the rounded border of the item, and the add calculation button has another separate
+   radius. this needs to look cleaner and more unified, also the header font seems smaller than other headers. the UI
+   needs to be consistent and clean" and "make the bottom padding a few more pixels too it feels crammed". Each of these
+   a player can see beside another window is UGLY, not minor.
 5. **Only what the person named moves.** Put each after still beside its before and look for every panel, window, button
    row or HUD element that sits in another place or at another size. Each one the person's words do not name is BROKEN
    and NEW, however good it looks: an option or mock that moves an element the person did not name is never offered.
@@ -50,7 +60,7 @@ your report: you judge what is on screen. Never read the game's code, the pull r
 Write `critic.md` where the brief says, in this order:
 
 - **Inputs**: the files you were given (paths), and anything in the brief you ignored.
-- **Per still**: one paragraph of what you see; its verdict, BROKEN, UGLY or OK; the eight rubric answers (`1 PASS: ...`,
+- **Per still**: one paragraph of what you see; its verdict, BROKEN, UGLY or OK; the nine rubric answers (`1 PASS: ...`,
   `3 FAIL UGLY: ...`); the
   side-by-side verdicts.
 - **Flaws**, BROKEN and UGLY first: each marked NEW or STANDING, with the still, the element, where, the rubric item,
