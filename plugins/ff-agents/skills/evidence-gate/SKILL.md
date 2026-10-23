@@ -272,8 +272,9 @@ One file each under `lessons/`: the rule, why (the incident, dated), how to appl
 - [Hold the bench lock as briefly as the question allows](lessons/settle-your-own-guesses.md#hold-the-bench-lock-as-briefly-as-the-question-allows-w1628-2026-10-20): lothsahn,
   2026-10-20: "A benchmark with 90% fidelity that runs twice as fast as better one is likely the right choice." The
   shortest run that answers the question, early stop, shared tickets for untimed work (w1628: BEAST held 15.5 of 16 h);
-  "Get them all to shorten their plans a lot", "if they have sufficient signal, just make a decision", and no exclusive
-  hold over 1 hour.
+  "Get them all to shorten their plans a lot", "if they have sufficient signal, just make a decision"; since w1832 the
+  queue itself ends a turn while someone waits (30 minutes exclusive, a shared group's hour, a 5-minute warning first),
+  and exclusive is only for exact timings or the whole machine.
 - [Research the decision, not the topic](lessons/research-the-decision-not-the-topic.md): the
   Reddit caps came from a topic survey; nobody asked what bid wins US auctions. Label every basis.
 - [Settle your own guesses](lessons/settle-your-own-guesses.md): Ben wants agents mostly
