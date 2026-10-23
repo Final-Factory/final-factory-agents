@@ -61,4 +61,11 @@ metadata:
    leg, ended or timed out, stop the pid the leg wrote in its `contention.txt`, and cut a leg early when its log floods
    (one dead entity reference logs a warning every heartbeat).
 
+8. **The quiet gate can wait forever while another sandbox's editor works** (w1739, 2026-10-22, BEAST). `quiet`
+   gives the lock back after 15 minutes and the leg queues again; with another sandbox's editor compiling and running
+   tests at 1-5 cores, that loop lost 30 minutes twice and timed nothing. After one such give-back, run the legs with
+   the gate off (`NOGATE=1` in the probe and cpu_budget scripts), keep each leg's `contention.txt`, and label the noise:
+   release frame rounds then spread 2-4 ms (master alone 35.0-43.1 ms on JustPlay1003), so an effect of a few tenths of
+   a ms needs the profile's job CPU (`CpuBudget` digest, 3.3 ms and both pairs agreeing) as its measure.
+
 Related: [[beast-shared-machine-perf-ab-side-by-side]], [[profile-a-save-top-systems]].

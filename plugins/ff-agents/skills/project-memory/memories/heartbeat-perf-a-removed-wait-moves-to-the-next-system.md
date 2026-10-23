@@ -47,3 +47,20 @@ main-thread `LocalTransform` read, which completes Unity Physics' `ExportPhysics
 writer) and so the whole physics pipeline; and its `JobHandle.Complete` sits directly under the system's marker, so
 only a wait-path digest (`rawreader/WaitPaths.cs`) plus reading the update's main-thread calls finds which call it is.
 Game repo `Documentation/Performance-CollisionWorld-Sync-2026-10-13.md`.
+
+**w1739 (2026-10-22, JustPlay1003, BEAST, dev and release players, interleaved): the presentation case, and a wait
+named after a dispose job.** w1726's profile showed `HoverFieldVfxPresentationSystem` waiting 1.25-1.42 ms a frame
+on a `NativeListDisposeJob`. The dispose job costs nothing: it is the last link of the chain
+`WorldEntityInterpolationRenderSystem`'s `OverwriteJob` (`LocalToWorld` RW, ~16-20 ms of worker CPU a frame) ends,
+and whichever system first reads `LocalToWorld` on the main thread pays the whole chain (`SelectionMarkerLookSystem`
+on master 1fc879cdb6; PR #2189's early-out had moved it to HoverFieldVfx). Rendering needs `LocalToWorld` that frame,
+so the only lever is a cheaper writer: game PRs #2227 and #2230 cut `OverwriteJob` 19.6 → 16.1 → 13.1 ms of CPU and
+the first reader's wait 0.74 → 0.52 ms, measured in CpuBudget digests (`rawreader/CpuBudget.cs`, the job's own row)
+and the SyncPoints digest; the release frame barely moves (a few tenths of a ms). Same rule on the fixed side: removing
+`CombatMoverRailProvisioningSystem`'s `CompleteAllJobs` (#2214) moved 2.5 ms to `LocalPlayerMotionSystem`.
+**How to apply:** when a wait sits on a dispose or other trivial job, read the chain back to its writer (WaitPaths
+digest) and measure that writer's job CPU, not the waiting system.
+For a chunk skip in `OverwriteJob`: the snapshot component's chunk change version is no signal (written on every
+heartbeat, so at 2x speed 100% of chunks report it), and one moving entity marks its chunk: 52% of connector-item
+chunks changed while 6% of the items moved (measured, review w1739 `census-JustPlay1003.txt`); the per-entity
+bit-equal check (`AtRest`, `SameBits`) is what skips them.
