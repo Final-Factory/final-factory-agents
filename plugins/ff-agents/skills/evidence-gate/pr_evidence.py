@@ -890,7 +890,8 @@ def closeup_problems(text: str, folder: Path | None = None, claims_text: str | N
     # to the center of the black hole and then also becomes that purple".
     if any(k in TRANSITION_KEYS for k in claimed):
         questions += ["From the every-frame strip, does the object move about as far each frame as in the frames around "
-                      "it, all the way in, or does it jump (to the centre, across the hole) in one frame? Name the frame "
+                      "it, all the way in, or does it jump (to the centre, across the hole) in one frame, or creep and then "
+                      "lunge? Name the frame "
                       "and where it was in the frame before.",
                       "From the every-frame strip, does the object keep the colours it has in its first frame (its own "
                       "hull and lights), or does it turn another colour (purple, the hole's colour, a tint over it)? Name "

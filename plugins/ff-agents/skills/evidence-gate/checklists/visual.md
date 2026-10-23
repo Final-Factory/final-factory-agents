@@ -150,12 +150,13 @@ in the built player (drive-game, "The mouse cursor in a built player"; w980).
    w1470, the Guardian vanishing mid-swallow: the critic said "the Guardian disappears at once", a sheet every 0.2 s
    cleared it, and Ben: "the guardian especially doesn't really smoothly transition to the spaghetti state it just kind
    of disappears. I want one smoth animation for the model getting stretched and sucked into the black hole").
-5i. **No frame where the object jumps (w1816).** On the same strip, the object moves about as far each frame as in the
-   frames around it, all the way to its end state: no frame where it leaps to the hole's centre or across the screen.
-   Run `transition_strip.py` with `--track X,Y` (a point on the object in the first frame), check its green dot stays
-   on the object, and look at every frame it frames in orange (JUMP: a move over 4 times the median move of the 6
-   frames each side, and over 4% of the crop's diagonal). The critic is asked "does it jump in one frame? Name the
-   frame." ([lesson](../lessons/visual-fixes-are-verified-by-looking.md#a-transition-keeps-its-place-and-its-colours-w1816); w1685, after the clip passed with "no
+5i. **No frame where the object jumps or lunges (w1816).** On the same strip, the object moves about as far each frame
+   as in the frames around it, all the way to its end state: no frame where it leaps to the hole's centre or across
+   the screen, and no creep that turns into a dive (several times its pace within a few frames). Run
+   `transition_strip.py` with `--track X,Y` (a point on one object in the first frame), check its green dot stays on
+   the object, and look at every frame it frames in orange (JUMP: a move in one frame over 4 times the median move of
+   the 6 frames each side and over half its size; LUNGE: over 6 frames, over 3 times its pace of the 30 before). The
+   critic is asked "does it jump in one frame, or creep and then lunge? Name the frame." ([lesson](../lessons/visual-fixes-are-verified-by-looking.md#a-transition-keeps-its-place-and-its-colours-w1816); w1685, after the clip passed with "no
    vanish, pop, swap or jump", Ben: "i dont like that it suddenly jumps to the center of the black hole").
 5j. **The object keeps its own colours (w1816).** In every frame of the transition the object shows the colours it
    had in its first frames (its hull, its lights), not another hue: no frame where it turns purple, takes the hole's

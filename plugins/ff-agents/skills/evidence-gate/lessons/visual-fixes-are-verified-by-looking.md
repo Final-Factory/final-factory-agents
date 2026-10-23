@@ -169,13 +169,13 @@ three ways (read from PR #1921's round-4 Evidence; `tests/fixtures/pr-1921-round
 frame on the object, before a person sees it:
 
 1. **A pop**: the object's own model gone or replaced in one frame (w1686, checklist 5h).
-2. **A jump**: the object moving further in one frame than its speed in the frames around it, e.g. to the hole's
-   centre.
+2. **A jump**: the object moving further in one frame than its speed in the frames around it, or creeping and then
+   lunging (several times its pace in a few frames), e.g. into the hole's centre.
 3. **A colour swap**: the object turning colours that were not its own in its first frames (here purple), instead of
    keeping its hull's colours (a heat glow on them is a choice the person named, not a swap).
 
-`transition_strip.py` measures all three and frames them on the sheet (POP red, JUMP orange, HUE magenta; a green dot
-is where it tracked the object). The fresh critic gets all three as questions. A clip that a worker, a critic or the
+`transition_strip.py` measures all three and frames them on the sheet (POP red, JUMP and LUNGE orange, HUE magenta; a
+green dot is where it tracked the object). The fresh critic gets all three as questions. A clip that a worker, a critic or the
 tool passed while one of these is in it goes back, whatever the note says.
 
 **Why.** Two corrections from Ben of the same kind, both on the black-hole swallow:
@@ -188,31 +188,57 @@ tool passed while one of these is in it goes back, whatever the note says.
   suddenly jumps to the center of the black hole and then also becomes that purple. it'd be cool if it more smoothly
   swirled into the black hole and used the objects actual colors with perhaps some heat glow effect"
 
-The tool looked only at how much the crop's pixels changed from one frame to the next. A small ship that jumps across
-the hole changes few pixels, so it never stood out against the hole's own turning disk; a hull that slowly turns purple
-changes almost nothing per frame. The critic was asked only "is its own model on screen in every frame", so it
-answered that question and not the two Ben asked.
+The tool looked only at how much the crop's pixels changed from one frame to the next, so a ship that moves without
+vanishing never stood out against the hole's own swirling disk, and a hull that turns purple over a few frames changes
+almost nothing per frame. The critic was asked only "is its own model on screen in every frame", and answered that
+question, not the two Ben asked.
+
+What the two w1685 clips show, measured with the defaults below (w1816, 2026-10-22; the half-speed take is
+`w1685-final-half.mp4`, the normal one `w1685-final-normal.mp4`):
+
+- **Purple.** The ships' first frames are a navy hull, cyan lights and the disk's orange showing at their edges. From
+  f114 (1.90 s) to f246 the tracked ship is 97% at most in purple and magenta (median hue 255-275 degrees) at normal
+  speed, and from f144 to f235 at half speed: both marked HUE.
+- **The jump.** No frame teleports the ship. It creeps along the rim at about 1 px a frame for some 1.5 s, then its
+  strand's tail shoots down into the hole while its head stays at the rim, so the object's centre moves into the
+  hole several times faster than before: normal speed f211 (3.52 s), 24 px in one frame against 1.7 around it, and
+  2.3 px a frame over 6 frames after 0.6 before (JUMP and LUNGE); half speed f276 (4.60 s), 3.6 px a frame after
+  1.1 (LUNGE). Both are about 2 s of game time after the ships reach the rim. That is the "suddenly jumps to the
+  center ... it'd be cool if it more smoothly swirled" Ben saw: a lunge, not a teleport, which is why the check
+  looks for both.
+- **Controls.** The same clips before the swallow (normal 1.62-1.82 s, half 1.00-1.48 s) mark nothing; the ships
+  creeping along the rim (normal 1.62-2.95 s) mark no jump or lunge. A smooth synthetic spiral marks nothing
+  (`TransitionJumpAndPaletteTest`). Before this change the half-speed take also showed 14 false pops: it shows every
+  frame twice, so half its steps were 0 and every real step looked 4x the median.
 
 **How to apply.**
 
-- Run the strip on the object, with a point on it in the first frame:
+- Run the strip on one object, with a point on it in the first frame it is in:
   `uv run transition_strip.py <clip> --from <s> --to <s> --crop W:H:X:Y --track X,Y --claim <name> --object "<name>"`.
-  Check the green dot sits on the object in every frame; if it slides onto the hole or another ship, move `--track`
-  or tighten `--crop` and run it again: a wrong track measures the wrong thing.
-- **Jump** (`--jump 4 --jump-min 0.04`): a frame is marked when the object's centre moves over 4 times its median
-  per-frame move in the 6 frames on each side, and over 4% of the crop's diagonal. The ratio matches the pop check's
-  (`--pop 4`): a spiral that speeds up as it falls in changes its speed by well under 2x from one frame to the next,
-  so 4x is a step no smooth motion makes. The 4% floor keeps a slow object's 1 px jitter from counting.
-- **Colour** (`--hue 0.35`): the object's palette is every colour class (neutral, or a 10-degree hue bin) holding 4% or
-  more of its pixels in its first 3 frames, widened by one bin each side. A frame is marked when 35% or more of the
-  object's pixels fall outside it; frames where the object is under 15% of its first size are left to the eye (a
-  speck in the hole is mostly the hole). A glow the person asked for is not foreign: `--allow-hues heat` (white, red,
-  orange, yellow) for Ben's "perhaps some heat glow effect", or name the hues.
+  A box `--track X,Y,W,H` follows everything in it (a group of ships) and suits the colour check; for the motion
+  checks track one ship, since a group's centre moves when one of its ships fades. Check the green dot stays on the
+  object in every frame; a move marked "its size changed over 1.8x too" may be the tracker taking a neighbour (ships
+  merging or parting): look at that frame and the one before before you call it either way.
+- **What is the object** (`--diff 80`): a pixel that differs by over 80/255 from the median of the frames 8-30 away
+  on each side (half a second of clip is read beyond each end for that). Measured on w1685: the disk's own change is
+  50-79 at the 99th percentile, the ship's 210-230; at 40 the ship merged with the disk.
+- **JUMP** (`--jump 4 --jump-min 0.5`): its centre moves over 4 times its median move of the 6 frames each side in one
+  frame, and over half its own size. 4x matches the pop check; a size floor, not a share of the crop, so the crop you
+  choose does not decide it (a 4% floor missed w1685's drop in a 480 px crop and caught it in a 220 px one).
+- **LUNGE** (`--surge 3`): over 6 frames it moves over 3 times faster than its median pace over the 30 frames before,
+  and over half its size: the creep-then-drop above, which takes several frames and so is not a one-frame jump.
+- **HUE** (`--hue 0.35`): its palette is every colour class (neutral, or a 10-degree hue bin) with 4% or more of its
+  pixels in its first 3 frames, widened a bin each side. A frame with 35% or more of the object outside it is marked;
+  one where the object is under 15% of its first size is left to the eye (a speck in the hole is mostly the hole). A
+  glow the person asked for is not foreign: `--allow-hues heat` (white, red, orange, yellow) for Ben's "perhaps some
+  heat glow effect", or name the hues.
+- A half-speed take that shows each frame twice is found by itself (35% or more of its frames copies) and its copies
+  leave the pop, jump and lunge medians.
 - The marks point the eye; they do not judge. Look at every marked frame and the one before it, and ask the fresh
-  critic the printed question, which now asks all three: is it on screen every frame, does it move about as far each
-  frame as in the frames around it, does it keep its first-frame colours.
-- A smooth control from the same clip (a stretch before the swallow, or an approved take) runs clean with the same
-  thresholds; if it does not, the thresholds or the track are wrong, not the effect.
+  critic the printed question, which asks all three: is it on screen every frame, does it move about as far each
+  frame as in the frames around it (or creep and then lunge), does it keep its first-frame colours.
+- Run a control from the same clip before the effect starts: it marks nothing with the same thresholds, or the
+  thresholds or the track are wrong, not the effect.
 
 ## New art matches Final Factory's art language (w1066, w1241, w1332)
 

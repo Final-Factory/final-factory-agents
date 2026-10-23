@@ -1192,9 +1192,10 @@ class TransitionJumpAndPaletteTest(unittest.TestCase):
     are not its own. w1685, after a clip passed with "no vanish, pop, swap or jump", Ben: "i dont like that it suddenly
     jumps to the center of the black hole and then also becomes that purple"."""
 
-    def clip(self, folder: Path, kind: str) -> Path:
+    def clip(self, folder: Path, kind: str, double: bool = False) -> Path:
         """A grey hull with an orange stripe spiralling into a hole with a purple disk, 2.5 s at 60 fps: smooth, with a
-        jump most of the way in at frame 70, or turning purple over frames 60-66."""
+        jump most of the way in at frame 70, creeping then lunging in from frame 80, or turning purple over frames
+        60-66. `double` writes each frame twice, as a half-speed capture does (w1685's half-speed take)."""
         import math
         import subprocess
         from PIL import Image, ImageDraw
@@ -1207,6 +1208,8 @@ class TransitionJumpAndPaletteTest(unittest.TestCase):
             d.ellipse((188, 128, 292, 232), outline=tuple(int(c * glow) for c in (120, 60, 160)), width=12)
             d.ellipse((210, 150, 270, 210), fill=(0, 0, 0))
             u = min(1.0, max(0.0, (i - 30) / 108))
+            if kind == "lunge":
+                u = max(0.0, (i - 30) / 300) if i < 80 else min(1.0, 50 / 300 + (i - 80) / 40)
             if kind == "jump" and i >= 70:
                 u = min(1.0, u + 0.45)
             if u < 1.0:
@@ -1219,26 +1222,41 @@ class TransitionJumpAndPaletteTest(unittest.TestCase):
                     stripe = tuple(int(c + (p - c) * t) for c, p in zip(stripe, (170, 70, 230)))
                 d.rectangle((x - 28 * s, y - 9 * s, x + 28 * s, y + 9 * s), fill=hull)
                 d.rectangle((x - 28 * s, y - 2 * s, x + 28 * s, y + 2 * s), fill=stripe)
-            im.save(folder / f"f{i:03d}.png")
+            for k in ((2 * i, 2 * i + 1) if double else (i,)):
+                im.save(folder / f"f{k:03d}.png")
         out = folder / f"{kind}.mp4"
         subprocess.run(["ffmpeg", "-v", "error", "-y", "-framerate", "60", "-i", str(folder / "f%03d.png"),
                         "-pix_fmt", "yuv420p", "-c:v", "libx264", "-crf", "12", str(out)], check=True)
         return out
 
-    def run_tool(self, kind: str, *extra: str) -> dict:
+    def run_tool(self, kind: str, *extra: str, double: bool = False) -> dict:
         import json
         import tempfile
         import transition_strip as ts
+        a, b = (0.8, 4.8) if double else (0.4, 2.4)
         with tempfile.TemporaryDirectory() as tmp:
-            clip = self.clip(Path(tmp), kind)
-            self.assertEqual(ts.main([str(clip), "--from", "0.4", "--to", "2.4", "--claim", kind, "--track", "410,232",
-                                      "--out", tmp, *extra]), 0)
-            return json.loads((Path(tmp) / f"{kind}-strip-0.40-2.40s-every1f.json").read_text(encoding="utf-8"))
+            clip = self.clip(Path(tmp), kind, double)
+            self.assertEqual(ts.main([str(clip), "--from", str(a), "--to", str(b), "--claim", kind, "--track",
+                                      "410,232", "--out", tmp, *extra]), 0)
+            return json.loads((Path(tmp) / f"{kind}-strip-{a:.2f}-{b:.2f}s-every1f.json").read_text(encoding="utf-8"))
 
     def test_a_smooth_spiral_is_not_marked(self):
         report = self.run_tool("smooth")
-        self.assertEqual((report["pops"], report["jumps"], report["off_palette"]), ([], [], []))
+        self.assertEqual((report["pops"], report["jumps"], report["surges"], report["off_palette"]), ([], [], [], []))
         self.assertGreater(sum(1 for t in report["track"] if t), 100)
+
+    def test_a_creep_then_lunge_is_marked_where_it_speeds_up(self):
+        report = self.run_tool("lunge")
+        self.assertEqual(len(report["surges"]), 1, report["surges"])
+        self.assertTrue(80 <= report["surges"][0]["frame"] <= 90, report["surges"])
+        self.assertGreater(report["surges"][0]["times_before"], 3)
+
+    def test_a_half_speed_capture_is_not_full_of_pops(self):
+        """Every frame twice: before w1816 every real step was over 4x the median (half the steps are 0), so w1685's
+        half-speed take showed 14 pops."""
+        report = self.run_tool("smooth", double=True)
+        self.assertEqual((report["pops"], report["jumps"], report["surges"]), ([], [], []))
+        self.assertGreater(report["thresholds"]["repeat_frames"], 100)
 
     def test_a_jump_to_the_centre_is_marked_at_its_frame(self):
         report = self.run_tool("jump")
