@@ -200,12 +200,15 @@ What the two w1685 clips show, measured with the defaults below (w1816, 2026-10-
   f114 (1.90 s) to f246 the tracked ship is 97% at most in purple and magenta (median hue 255-275 degrees) at normal
   speed, and from f144 to f235 at half speed: both marked HUE.
 - **The jump.** No frame teleports the ship. It creeps along the rim at about 1 px a frame for some 1.5 s, then its
-  strand's tail shoots down into the hole while its head stays at the rim, so the object's centre moves into the
-  hole several times faster than before: normal speed f211 (3.52 s), 24 px in one frame against 1.7 around it, and
-  2.3 px a frame over 6 frames after 0.6 before (JUMP and LUNGE); half speed f276 (4.60 s), 3.6 px a frame after
-  1.1 (LUNGE). Both are about 2 s of game time after the ships reach the rim. That is the "suddenly jumps to the
-  center ... it'd be cool if it more smoothly swirled" Ben saw: a lunge, not a teleport, which is why the check
-  looks for both.
+  strand's tail shoots down into the hole while its head stays at the rim (normal speed f190-f219, 3.17-3.65 s,
+  stepped by eye): a dive, not a swirl. The tool marks JUMP and LUNGE inside that drop (normal f211, 3.52 s: 24 px in
+  one frame against 1.7 around it; half speed f276, 4.60 s: 3.6 px a frame after 1.1), but on the sheet its green
+  dot hops there between ships of the two groups, so those marks are not proof it followed the ship Ben watched.
+  On footage like this (a swirling disk, ships that merge and part, strands fading into the black) the motion marks
+  point the eye and no more; the critic's question ("does it jump in one frame, or creep and then lunge?") and your
+  own look at every frame of the drop are what catch it. The tool's motion rules are proven on synthetic clips
+  (`TransitionJumpAndPaletteTest`: a jump marked at its frame, a creep-then-lunge where it speeds up, a smooth
+  spiral not marked).
 - **Controls.** The same clips before the swallow (normal 1.62-1.82 s, half 1.00-1.48 s) mark nothing; the ships
   creeping along the rim (normal 1.62-2.95 s) mark no jump or lunge. A smooth synthetic spiral marks nothing
   (`TransitionJumpAndPaletteTest`). Before this change the half-speed take also showed 14 false pops: it shows every
