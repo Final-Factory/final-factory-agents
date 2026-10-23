@@ -1,8 +1,16 @@
-# Checklist: before a timed bench run on a shared machine (w1628)
+# Checklist: before any timing measurement on a shared machine (w1628, w1923)
 
 Lesson: [hold the bench lock as briefly as the question allows](../lessons/settle-your-own-guesses.md#hold-the-bench-lock-as-briefly-as-the-question-allows-w1628-2026-10-20).
 Mechanics: the game repo's `Documentation/Bench-Lock.md`.
 
+- [ ] **Every timing holds an exclusive ticket, editor snippets included** (w1923, [lesson](../lessons/settle-your-own-guesses.md#every-timing-measurement-holds-an-exclusive-ticket-w1923-2026-10-23);
+      lothsahn: "How do we make sure workers aren't timing things without exclusive locks?"). Before the first number
+      that is a time, from a bench script's leg or from a snippet in your editor (`unity-bridge.py eval`/`eval_file`,
+      MCP `execute_code`: Stopwatch, ProfilerRecorder, realtimeSinceStartup, in-job counters), a local Performance test
+      or a profiler capture, you hold an exclusive ticket: `unity-bridge.py ... --timed "<what>"` for one call,
+      `bench_queue.py timed --what "<what>"` in the background across calls (`timed --release` after), `--bench
+      exclusive` for a batch run. The report names the ticket beside its numbers; a number taken without one is a guess
+      about a busy machine (w1892: an hour of editor micro-benchmarks on a LothDesktop at 100% CPU, none held).
 - [ ] **Shortest run that answers the question.** The question and the smallest difference that would change the
       decision are written down. The legs, sample and settle are the shortest that can show it (a few percent: two
       rounds of 30 to 60 s on a quiet machine), and the round count is a cap.

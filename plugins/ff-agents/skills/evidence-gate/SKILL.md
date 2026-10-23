@@ -255,7 +255,7 @@ look first and relay only with the critic's report (FF Factory `read_rules ui`).
   the table, `Flags:`, `Baseline:`), or `No curve change: <why>`; `pr_evidence.py` fails an enemy, combat or spawn change
   without it (Build 108's late-game raids, w1439).
 - [Releases](checklists/release.md)
-- [Timed bench runs](checklists/bench.md) (w1628): before taking a shared machine's bench lock: the shortest run that
+- [Timed bench runs](checklists/bench.md) (w1628, w1923): before any timing measurement, an editor snippet's included (an exclusive ticket for every one): the shortest run that
   answers the question, the fewest rounds, early stop on and a decision once the signal is clear, at most one hour per
   exclusive hold, the exclusive ticket only for timed numbers (`bench_lock --shared` for untimed work, nothing for a
   build), nothing under the lock but the leg, and the lock time in the report.
@@ -362,6 +362,11 @@ One file each under `lessons/`: the rule, why (the incident, dated), how to appl
   shader or material for it, or a built-player before/after of every user; the PR's `## Used by`
   lists them and `pr_evidence.py` and CI fail without it (w410: one sprite-shader edit for the
   Alt-view icons darkened every range ring in Build 77).
+- [Every timing measurement holds an exclusive ticket](lessons/settle-your-own-guesses.md#every-timing-measurement-holds-an-exclusive-ticket-w1923-2026-10-23): not only a
+  bench script's leg but a snippet that reads a clock in the editor (`unity-bridge.py eval`, MCP `execute_code`), in-job
+  counters, a local Performance test and a profiler capture; `unity-bridge.py --timed` for one call, `bench_queue.py
+  timed` across calls; the game repo's tools and FF Factory's guard refuse it without one (w1923: w1892 timed a Burst job
+  in its editor for an hour on a LothDesktop at 100% CPU with none).
 - [Harness tests never take a real exclusive bench ticket](lessons/settle-your-own-guesses.md#hold-the-bench-lock-as-briefly-as-the-question-allows-w1628-2026-10-20):
   FF Factory's own bench, yield or priority code is tried with its unit tests or a queue under your `$TMPDIR`, never
   with `bench_lock --timing`/`--machine` on a shared machine (w1894: a test ticket on BEAST ended w1826's host build).
