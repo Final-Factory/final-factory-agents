@@ -155,6 +155,10 @@ look first and relay only with the critic's report (FF Factory `read_rules ui`).
   editor, terminal, dashboard), even when it holds the signed-in session you need: open your own browser window or use
   Claude Code's own tool. Touched one by mistake: put it back and report each click (w1287; Ben: "WHY IS IT POKING
   AROUND IN MY CLAUDE DESKTOP APP").
+- **Drive only the player you launched** ([lesson](lessons/research-the-route-before-you-say-cant.md#drive-only-the-player-you-launched-w1856-2026-10-23)).
+  Input, screenshots and clips go to the pid your `player_slots.py launch --detach` printed, through that pid's own
+  session file (`player_slots.py mine --one`), never the newest file in `AgentControl/` or the newest FinalFactory
+  process: every worker's player writes there (w1856: a worker drove another worker's player on BEAST).
 - **Never ask a person what they already answered** ([lesson](lessons/a-person-wait-is-declared-not-polled.md#never-ask-a-person-what-they-already-answered-w1812)).
   Before you ask (`waiting_on_person`, `decide_work ask`, `ask_person`, a relayed `[needs you]`), read the request's
   notes and log and those of the other requests its worker holds: an answer given after the question was raised is the

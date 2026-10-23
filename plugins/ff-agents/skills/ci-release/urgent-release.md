@@ -119,7 +119,9 @@ Right after the merge:
 (For B, right after `trigger-ci-release.sh` pushed `release/<v>`, with that branch's head instead of the bump commit.)
 
 1. Put your sandbox on the bump commit: `git fetch origin && git branch urgent/<v> <bump sha>`, then
-   `mcp__machine__switch_branch` to `urgent/<v>` (stop your editor first).
+   `mcp__machine__switch_branch` to `urgent/<v>` (stop your editor first). Always through switch_branch: it records the
+   branch the sandbox left, and `build_plan done` puts the sandbox back there (w1856). `urgent/<v>` is only a pointer at
+   the commit to build: nobody commits on it, and FF Factory's shell guard refuses a commit there.
 2. `build_plan coming` (release: true, minutes 0, what "the <v> urgent release"), then `build_plan start`. **The release
    build waits for no one** (w1656; lothsahn, after 1.0.0.3 waited 12 minutes for a worker to pause and 15 more behind
    its compile and test run: "i said it was urgent. How do we never let this happen again? It was supposed to kick work
@@ -159,7 +161,15 @@ Right after the merge:
    It returns the moment a phase starts or ends, or the log says REFUSED, STOPPED, a failure or done, with one line of
    every phase (exit 0), and after 3 minutes with nothing new (exit 1). Act on it, then call it again (a Bash call with
    timeout 240000) until the run is done. The run's own first line names this command.
-4. **`build_plan done` at once**, done or failed: the paused work resumes.
+4. **`build_plan done` at once**, done or failed: the paused work resumes, and first FF Factory switches your sandbox
+   back to the branch it left for `urgent/<v>` (w1856; Ben, after 1.0.0.12 left beast/slot1 on `urgent/1.0.0.12` and the
+   next worker there committed on it). Its answer says `Hand-back (w1856): <sandbox> is back on <branch>`. The run
+   already handed the rest back (its `hand-back:` line and the record's `handback` phase): the tree as committed,
+   `Library/Bee`, `ScriptAssemblies` and `ScriptMapper` cleared (the stale state whose next player builds failed in
+   `EntitiesILPostProcessors` on `Unity.Jobs.dll`), the project opened again on this computer's own build target. If
+   either says it could not (`STILL on the release branch`, `NOT cleared, held open`), stop the sandbox editor, run
+   `python scripts/release/urgent_release.py handback --restore-tree` and `switch_branch` to the branch it names before
+   your turn ends.
 5. Merge the regenerated-files PR on green, like FFBox's.
 6. **The symbols into FFBox's store, before the release counts as done.** lothsahn (w1639): "Please make sure that if
    beast does a build that the symbols get uploaded to ffbox in the normal place so it can diagnose crashes and
@@ -197,7 +207,9 @@ filed, the bytes and the rate), and FFBox's decline (each Release job's build st
   version (1.0.0.12 passed: 15252 tests).
 - **After the run, the sandbox editor stops on "Unsupported Platform: Platform 'Linux' is not installed"**: the
   lane's Linux build leaves the project's active build target on Linux, and the sandbox editor's Unity has no Linux
-  module (measured on BEAST slot1, w1836). Stop the editor (`mcp__machine__unity` stop), then run
+  module (measured on BEAST slot1, w1836). Since w1856 the run's hand-back opens the project on Win64 itself; when its
+  line says `active build target: left on linux` or `switch to win64 failed`, stop the editor
+  (`mcp__machine__unity` stop) and run `urgent_release.py handback`, or by hand
   `unity-slot run --label "<what>" -- "<the release Unity>" -batchmode -nographics -ignoreCompilerErrors
   -projectPath <sandbox> -buildTarget Win64 -quit -logFile "$TMPDIR/<name>.log"` and start the editor again.
   `-ignoreCompilerErrors` matters when another worker in the sandbox has uncommitted code that does not compile:

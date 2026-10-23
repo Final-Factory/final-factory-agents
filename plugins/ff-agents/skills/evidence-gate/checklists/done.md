@@ -12,6 +12,9 @@ holds, or the report says what is left instead of DONE.
    open", whatever the PR's "Not verified" says. A failed run is explained with evidence (`git
    merge-base --is-ancestor <fix> <build>`, the fixture fixed and rerun), never waved off (w704:
    DONE on unit tests, reopened when the live run read 0 of 100).
+   A built-player run counts only from the player you launched: its pid from your `launch --detach`, its session
+   file from `player_slots.py mine` ([w1856](../lessons/research-the-route-before-you-say-cant.md#drive-only-the-player-you-launched-w1856-2026-10-23):
+   the newest session file was another worker's player).
 3. **Steps after the merge.** Each step the brief asks for after the merge (a paired audit, a
    release's first-hour check, the patch notes posted) ran, and the report says how it went
    ([say DONE per request](../lessons/say-done-per-request.md)).

@@ -138,7 +138,11 @@ dies on "Determinism report publication failed". ⚠️ Windowed, never `-batchm
 renders no frames, so `/v1/screenshot` answers 409 `no_frame_available`.
 
 The game publishes `session-{pid}.json` (port + bearer token) under
-`<persistentDataPath>/AgentControl/`. Drive it with `ff-agent` if the kit is on the machine
+`<persistentDataPath>/AgentControl/`, **one folder for every player on the computer, any worker's**: bind to the pid
+your `launch --detach` printed (its JSON names that pid's `agent_session` file) or ask
+`python scripts/nightly/player_slots.py mine --one` (your session's own players, each with its own file), and pass
+`--pid` to `ff-agent`; never take the newest file there (w1856: a worker drove another worker's player that way; evidence-gate
+`lessons/research-the-route-before-you-say-cant.md`, "Drive only the player you launched"). Drive it with `ff-agent` if the kit is on the machine
 (`Tools/AgentKit/<platform>/ff-agent`), otherwise `curl` — same HTTP surface, and
 `contracts/agent-channel-http.md` in the 068 spec is the contract either way. **127.0.0.1, never
 `localhost`**: Mono's `HttpListener` answers a `localhost` Host header with 400.

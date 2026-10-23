@@ -114,7 +114,12 @@ On a worker-root install (LothDesktop since w576) each sandbox slotK has its own
 Launch it with `-ffAgentControl true` and it publishes `session-{pid}.json` (port + bearer token)
 under `<persistentDataPath>/AgentControl/` (**wait for one written after your launch**: the folder keeps hundreds of
 dead players' files, Windows reuses pids, and a stale one names a port that refuses every connection; w1232 lost 2 of
-4 clip runs on beast to it, so check the file's mtime against your launch time); from there an outside process drives the same bounded
+4 clip runs on beast to it, so check the file's mtime against your launch time). **Bind to YOUR player by its pid,
+never the newest file there** (w1856: a worker on BEAST took the newest session file and drove another worker's player;
+every player on the computer writes into that one folder): keep the pid `launch --detach` printed (its JSON also names
+`agent_session`, that pid's own file), pass it on (`ff-agent --pid`, `record_clip --pid`), and if you lost it,
+`python scripts/nightly/player_slots.py mine --one` prints your player and its session file from your session's leases
+(evidence-gate `lessons/research-the-route-before-you-say-cant.md`, "Drive only the player you launched"); from there an outside process drives the same bounded
 `ffauto` vocabulary over loopback HTTP — `POST /v1/command` instead of `execute_code`, a blocking
 `GET /v1/chain/{id}?timeoutMs=…` (`ff-agent … --wait`) instead of pump-and-poll, `GET
 /v1/snapshot/<scope>` instead of `observe.state`, and `GET /v1/screenshot` for a real game frame
