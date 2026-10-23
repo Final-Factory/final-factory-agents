@@ -342,6 +342,25 @@ class FamilyTest(unittest.TestCase):
         found = [f.split(":")[0] for f in uk.family_findings(r3, ref)]
         self.assertEqual(found, ["SMALL HEADER", "CRAMPED BOTTOM"])
 
+    def test_w1761s_rejected_round_3_window_is_flagged(self):
+        # The stills Ben answered on w1761 (round 3, built from 2187980c1d): "i dont like the differing border-radius
+        # values all smashed together. theres a circle around each letter, which is right next to the rounded border of
+        # the item ... also the header font seems smaller than other headers" and "make the bottom padding a few more
+        # pixels too it feels crammed". Against the Station Core window of round 6's build.
+        core = f"{FIX / 'w1761r6-station-core.png'}::{FIX / 'w1761r6-station-core.json'}#StationCoreEntityPanel/MainPanel"
+        ref = uk._measure(core)
+        lines = uk._measure(f"{FIX / 'w1761r3-calculations.png'}::{FIX / 'w1761r3-calculations.json'}"
+                            "#CalculationEntityPanel/MainPanel")[0]
+        found = [f.split(":")[0] for f in uk.family_findings(lines, ref)]
+        self.assertEqual(sorted(set(found)), ["CRAMPED BOTTOM", "MIXED CORNERS", "NESTED CORNERS", "SMALL HEADER"])
+        self.assertEqual(found.count("NESTED CORNERS"), 4)  # a circle letter tile in each of the four rows
+        self.assertTrue(all(n["circle"] for n in lines["nested"]), lines["nested"])
+        # The editor page: its 18 pt page title, 55 px down, is not the window's title; the 15 pt one at its top is.
+        editor = uk._measure(f"{FIX / 'w1761r3-calculations-editor.png'}::{FIX / 'w1761r3-calculations-editor.json'}"
+                             "#CalculationEntityPanel/MainPanel")[0]
+        self.assertEqual((editor["header"]["text"], editor["header"]["fontSize"]), ("Circuit Module", 15.0))
+        self.assertIn("SMALL HEADER", [f.split(":")[0] for f in uk.family_findings(editor, ref)])
+
     def test_a_two_line_header_is_flagged(self):
         s = {"radii": [], "nested": [], "screen": [1000, 400], "edges": None,
              "header": {"text": "Content removed from this save", "fontSize": 24, "lines": 2}}

@@ -1,0 +1,1443 @@
+{
+"screen": [
+1920.0,
+1080.0
+],
+"source": "gyj2q0incyk3-w1761-r3-calculations-circuit-1920x1080/s1-new-line-editor.png cropped at 916,460",
+"elements": [
+{
+"path": "InGameScene/UI Canvas/GamePanels/CalculationEntityPanel/MainPanel/CalculationView/EditPage/SecondValue/Pill/Panel",
+"kind": "Image",
+"rect": [
+237.7,
+216.6,
+324.8,
+241.8
+],
+"visible": [
+237.7,
+216.6,
+324.8,
+241.8
+],
+"color": "#FFFFFFFF",
+"alpha": 1.0,
+"sprite": "white-backdrop",
+"raycast": true,
+"selectable": false,
+"maskOnly": false,
+"canvasOrder": -10,
+"depth": 370,
+"spriteSize": [
+512.0,
+512.0
+],
+"spriteBorder": [
+20.0,
+20.0,
+20.0,
+20.0
+],
+"imageType": "Sliced",
+"preserveAspect": true
+},
+{
+"path": "InGameScene/UI Canvas/GamePanels/CalculationEntityPanel/MainPanel/CalculationView/EditPage/PageHeader/ActionButton",
+"kind": "Image",
+"rect": [
+22.4,
+60.9,
+98.0,
+87.9
+],
+"visible": [
+22.4,
+60.9,
+98.0,
+87.9
+],
+"color": "#FFFFFFFF",
+"alpha": 1.0,
+"sprite": "white-backdrop",
+"raycast": true,
+"selectable": true,
+"maskOnly": false,
+"canvasOrder": -10,
+"depth": 333,
+"spriteSize": [
+512.0,
+512.0
+],
+"spriteBorder": [
+20.0,
+20.0,
+20.0,
+20.0
+],
+"imageType": "Sliced",
+"preserveAspect": true
+},
+{
+"path": "InGameScene/UI Canvas/GamePanels/CalculationEntityPanel/MainPanel/CalculationView/EditPage/Operation/Pill/Panel",
+"kind": "Image",
+"rect": [
+348.2,
+177.0,
+391.4,
+207.6
+],
+"visible": [
+348.2,
+177.0,
+391.4,
+207.6
+],
+"color": "#FFFFFFFF",
+"alpha": 1.0,
+"sprite": "white-backdrop",
+"raycast": true,
+"selectable": false,
+"maskOnly": false,
+"canvasOrder": -10,
+"depth": 363,
+"spriteSize": [
+512.0,
+512.0
+],
+"spriteBorder": [
+20.0,
+20.0,
+20.0,
+20.0
+],
+"imageType": "Sliced",
+"preserveAspect": true
+},
+{
+"path": "InGameScene/UI Canvas/GamePanels/CalculationEntityPanel/MainPanel/CalculationView/EditPage/FirstValue/Pill/Text (TMP)",
+"kind": "TextMeshProUGUI",
+"rect": [
+252.8,
+101.0,
+351.8,
+116.3
+],
+"visible": [
+252.8,
+101.0,
+351.8,
+116.3
+],
+"color": "#FFFFFFFF",
+"alpha": 1.0,
+"sprite": "",
+"raycast": true,
+"selectable": false,
+"maskOnly": false,
+"canvasOrder": -10,
+"depth": 342,
+"text": "Reading",
+"textRect": [
+272.2,
+100.0,
+332.4,
+118.4
+],
+"lines": 1,
+"fontSize": 16.0
+},
+{
+"path": "InGameScene/UI Canvas/GamePanels/CalculationEntityPanel/MainPanel/CalculationView/EditPage/Preview/Text",
+"kind": "TextMeshProUGUI",
+"rect": [
+31.4,
+255.3,
+449.0,
+280.5
+],
+"visible": [
+31.4,
+255.3,
+449.0,
+280.5
+],
+"color": "#FFFFFFFF",
+"alpha": 1.0,
+"sprite": "",
+"raycast": false,
+"selectable": false,
+"maskOnly": false,
+"canvasOrder": -10,
+"depth": 377,
+"text": "A = 0 + 1 = 1",
+"textRect": [
+31.4,
+257.0,
+141.2,
+278.9
+],
+"lines": 1,
+"fontSize": 19.0
+},
+{
+"path": "InGameScene/UI Canvas/GamePanels/CalculationEntityPanel/MainPanel/CalculationView/EditPage/Reading/Words",
+"kind": "TextMeshProUGUI",
+"rect": [
+65.6,
+139.2,
+269.0,
+159.0
+],
+"visible": [
+65.6,
+139.2,
+269.0,
+159.0
+],
+"color": "#FFFFFFFF",
+"alpha": 1.0,
+"sprite": "",
+"raycast": false,
+"selectable": false,
+"maskOnly": false,
+"canvasOrder": -10,
+"depth": 345,
+"text": "A",
+"textRect": [
+65.6,
+140.5,
+75.6,
+157.8
+],
+"lines": 1,
+"fontSize": 15.0
+},
+{
+"path": "InGameScene/UI Canvas/GamePanels/CalculationEntityPanel/MainPanel/CalculationView/EditPage/Reading/ActionButton/Text (TMP)",
+"kind": "TextMeshProUGUI",
+"rect": [
+381.4,
+140.1,
+433.8,
+158.1
+],
+"visible": [
+381.4,
+140.1,
+433.8,
+158.1
+],
+"color": "#FFFFFFFF",
+"alpha": 1.0,
+"sprite": "",
+"raycast": true,
+"selectable": false,
+"maskOnly": false,
+"canvasOrder": -10,
+"depth": 348,
+"text": "Change",
+"textRect": [
+381.4,
+140.5,
+433.8,
+157.8
+],
+"lines": 1,
+"fontSize": 15.0
+},
+{
+"path": "InGameScene/UI Canvas/GamePanels/CalculationEntityPanel/MainPanel/CalculationView/EditPage/SecondValue/Pill/Panel",
+"kind": "Image",
+"rect": [
+143.4,
+216.6,
+230.5,
+241.8
+],
+"visible": [
+143.4,
+216.6,
+230.5,
+241.8
+],
+"color": "#FFFFFFFF",
+"alpha": 1.0,
+"sprite": "white-backdrop",
+"raycast": true,
+"selectable": false,
+"maskOnly": false,
+"canvasOrder": -10,
+"depth": 367,
+"spriteSize": [
+512.0,
+512.0
+],
+"spriteBorder": [
+20.0,
+20.0,
+20.0,
+20.0
+],
+"imageType": "Sliced",
+"preserveAspect": true
+},
+{
+"path": "InGameScene/UI Canvas/GamePanels/CalculationEntityPanel/MainPanel/HeaderContent",
+"kind": "HeaderHitArea",
+"rect": [
+15.2,
+8.7,
+465.2,
+55.5
+],
+"visible": [
+15.2,
+8.7,
+465.2,
+55.5
+],
+"color": "#FFFFFFFF",
+"alpha": 1.0,
+"sprite": "",
+"raycast": true,
+"selectable": false,
+"maskOnly": false,
+"canvasOrder": -10,
+"depth": 329
+},
+{
+"path": "InGameScene/UI Canvas/GamePanels/CalculationEntityPanel/MainPanel/CalculationView/EditPage/PageHeader/Title",
+"kind": "TextMeshProUGUI",
+"rect": [
+107.0,
+61.8,
+458.0,
+87.0
+],
+"visible": [
+107.0,
+61.8,
+458.0,
+87.0
+],
+"color": "#FFFFFFFF",
+"alpha": 1.0,
+"sprite": "",
+"raycast": false,
+"selectable": false,
+"maskOnly": false,
+"canvasOrder": -10,
+"depth": 335,
+"text": "Calculation A",
+"textRect": [
+107.0,
+64.1,
+229.7,
+84.8
+],
+"lines": 1,
+"fontSize": 18.0
+},
+{
+"path": "InGameScene/UI Canvas/GamePanels/CalculationEntityPanel/MainPanel/CalculationView/EditPage/Operation/Pill/Text (TMP)",
+"kind": "TextMeshProUGUI",
+"rect": [
+247.4,
+182.0,
+290.6,
+202.7
+],
+"visible": [
+247.4,
+182.0,
+290.6,
+202.7
+],
+"color": "#9FB6C8FF",
+"alpha": 1.0,
+"sprite": "",
+"raycast": true,
+"selectable": false,
+"maskOnly": false,
+"canvasOrder": -10,
+"depth": 358,
+"text": "\u00c3\u2014",
+"textRect": [
+263.4,
+180.2,
+274.6,
+205.5
+],
+"lines": 1,
+"fontSize": 22.0
+},
+{
+"path": "InGameScene/UI Canvas/GamePanels/CalculationEntityPanel/MainPanel/HeaderContent/Header/TitleAndIcon/Title",
+"kind": "TextMeshProUGUI",
+"rect": [
+22.4,
+17.7,
+305.9,
+46.5
+],
+"visible": [
+22.4,
+17.7,
+305.9,
+46.5
+],
+"color": "#FFFFFFFF",
+"alpha": 1.0,
+"sprite": "",
+"raycast": true,
+"selectable": false,
+"maskOnly": false,
+"canvasOrder": -10,
+"depth": 331,
+"text": "Circuit Module",
+"textRect": [
+22.4,
+24.6,
+135.7,
+41.9
+],
+"lines": 1,
+"fontSize": 15.0
+},
+{
+"path": "InGameScene/UI Canvas/GamePanels/CalculationEntityPanel/MainPanel/HeaderContent/Header/exitbutton/ExitButton",
+"kind": "Image",
+"rect": [
+434.6,
+20.4,
+458.0,
+43.8
+],
+"visible": [
+434.6,
+20.4,
+458.0,
+43.8
+],
+"color": "#FFFFFFFF",
+"alpha": 1.0,
+"sprite": "x-button",
+"raycast": true,
+"selectable": true,
+"maskOnly": false,
+"canvasOrder": -10,
+"depth": 332,
+"spriteSize": [
+512.0,
+512.0
+],
+"spriteBorder": [
+0.0,
+0.0,
+0.0,
+0.0
+],
+"imageType": "Simple",
+"preserveAspect": false
+},
+{
+"path": "InGameScene/UI Canvas/GamePanels/CalculationEntityPanel/MainPanel/CalculationView/EditPage/Operation/Pill/Text (TMP)",
+"kind": "TextMeshProUGUI",
+"rect": [
+297.8,
+182.0,
+341.0,
+202.7
+],
+"visible": [
+297.8,
+182.0,
+341.0,
+202.7
+],
+"color": "#9FB6C8FF",
+"alpha": 1.0,
+"sprite": "",
+"raycast": true,
+"selectable": false,
+"maskOnly": false,
+"canvasOrder": -10,
+"depth": 361,
+"text": "\u00c3\u00b7",
+"textRect": [
+313.8,
+180.2,
+325.0,
+205.5
+],
+"lines": 1,
+"fontSize": 22.0
+},
+{
+"path": "InGameScene/UI Canvas/GamePanels/CalculationEntityPanel/MainPanel/CalculationView/EditPage/Reading/Value",
+"kind": "TextMeshProUGUI",
+"rect": [
+276.2,
+139.2,
+357.2,
+159.0
+],
+"visible": [
+276.2,
+139.2,
+357.2,
+159.0
+],
+"color": "#FFFFFFFF",
+"alpha": 1.0,
+"sprite": "",
+"raycast": false,
+"selectable": false,
+"maskOnly": false,
+"canvasOrder": -10,
+"depth": 346,
+"text": "= 0",
+"textRect": [
+331.2,
+139.3,
+358.3,
+158.9
+],
+"lines": 1,
+"fontSize": 17.0
+},
+{
+"path": "InGameScene/UI Canvas/GamePanels/CalculationEntityPanel/MainPanel/CalculationView/EditPage/SaveRow/ActionButton",
+"kind": "Image",
+"rect": [
+155.6,
+293.1,
+281.6,
+321.9
+],
+"visible": [
+155.6,
+293.1,
+281.6,
+321.9
+],
+"color": "#FFFFFFFF",
+"alpha": 1.0,
+"sprite": "white-backdrop",
+"raycast": true,
+"selectable": true,
+"maskOnly": false,
+"canvasOrder": -10,
+"depth": 380,
+"spriteSize": [
+512.0,
+512.0
+],
+"spriteBorder": [
+20.0,
+20.0,
+20.0,
+20.0
+],
+"imageType": "Sliced",
+"preserveAspect": true
+},
+{
+"path": "InGameScene/UI Canvas/GamePanels/CalculationEntityPanel/MainPanel/CalculationView/EditPage/SaveRow/ActionButton",
+"kind": "Image",
+"rect": [
+22.4,
+293.1,
+148.4,
+321.9
+],
+"visible": [
+22.4,
+293.1,
+148.4,
+321.9
+],
+"color": "#FFFFFFFF",
+"alpha": 1.0,
+"sprite": "white-backdrop",
+"raycast": true,
+"selectable": true,
+"maskOnly": false,
+"canvasOrder": -10,
+"depth": 378,
+"spriteSize": [
+512.0,
+512.0
+],
+"spriteBorder": [
+20.0,
+20.0,
+20.0,
+20.0
+],
+"imageType": "Sliced",
+"preserveAspect": true
+},
+{
+"path": "InGameScene/UI Canvas/GamePanels/CalculationEntityPanel/MainPanel/CalculationView/EditPage/Operation/Label",
+"kind": "TextMeshProUGUI",
+"rect": [
+22.4,
+179.7,
+139.4,
+204.9
+],
+"visible": [
+22.4,
+179.7,
+139.4,
+204.9
+],
+"color": "#9FB6C8FF",
+"alpha": 1.0,
+"sprite": "",
+"raycast": false,
+"selectable": false,
+"maskOnly": false,
+"canvasOrder": -10,
+"depth": 349,
+"text": "Operation",
+"textRect": [
+22.4,
+183.1,
+95.9,
+201.5
+],
+"lines": 1,
+"fontSize": 16.0
+},
+{
+"path": "InGameScene/UI Canvas/GamePanels/CalculationEntityPanel/MainPanel/CalculationView/EditPage/Operation/Pill/Text (TMP)",
+"kind": "TextMeshProUGUI",
+"rect": [
+197.0,
+182.0,
+240.2,
+202.7
+],
+"visible": [
+197.0,
+182.0,
+240.2,
+202.7
+],
+"color": "#9FB6C8FF",
+"alpha": 1.0,
+"sprite": "",
+"raycast": true,
+"selectable": false,
+"maskOnly": false,
+"canvasOrder": -10,
+"depth": 355,
+"text": "\u00e2\u02c6\u2019",
+"textRect": [
+213.0,
+180.2,
+224.2,
+205.5
+],
+"lines": 1,
+"fontSize": 22.0
+},
+{
+"path": "InGameScene/UI Canvas/GamePanels/CalculationEntityPanel/MainPanel/CalculationView/EditPage/SaveRow/ActionButton/Text (TMP)",
+"kind": "TextMeshProUGUI",
+"rect": [
+195.4,
+300.3,
+241.8,
+314.7
+],
+"visible": [
+195.4,
+300.3,
+241.8,
+314.7
+],
+"color": "#FFFFFFFF",
+"alpha": 1.0,
+"sprite": "",
+"raycast": true,
+"selectable": false,
+"maskOnly": false,
+"canvasOrder": -10,
+"depth": 381,
+"text": "Cancel",
+"textRect": [
+195.4,
+298.9,
+241.8,
+316.2
+],
+"lines": 1,
+"fontSize": 15.0
+},
+{
+"path": "InGameScene/UI Canvas/GamePanels/CalculationEntityPanel/MainPanel/CalculationView/EditPage/FirstValue/Pill/Text (TMP)",
+"kind": "TextMeshProUGUI",
+"rect": [
+146.6,
+101.0,
+245.6,
+116.3
+],
+"visible": [
+146.6,
+101.0,
+245.6,
+116.3
+],
+"color": "#9FB6C8FF",
+"alpha": 1.0,
+"sprite": "",
+"raycast": true,
+"selectable": false,
+"maskOnly": false,
+"canvasOrder": -10,
+"depth": 339,
+"text": "Number",
+"textRect": [
+166.0,
+100.0,
+226.2,
+118.4
+],
+"lines": 1,
+"fontSize": 16.0
+},
+{
+"path": "InGameScene/UI Canvas/GamePanels/CalculationEntityPanel/MainPanel/CalculationView/EditPage/SecondValue/AmountField/Text Area/Text",
+"kind": "TextMeshProUGUI",
+"rect": [
+332.0,
+216.6,
+458.0,
+241.8
+],
+"visible": [
+332.0,
+216.6,
+458.0,
+241.8
+],
+"color": "#FFFFFFFF",
+"alpha": 1.0,
+"sprite": "",
+"raycast": true,
+"selectable": false,
+"maskOnly": false,
+"canvasOrder": -10,
+"depth": 375,
+"text": "1",
+"textRect": [
+448.9,
+220.0,
+454.4,
+238.4
+],
+"lines": 1,
+"fontSize": 16.0
+},
+{
+"path": "InGameScene/UI Canvas/GamePanels/CalculationEntityPanel/MainPanel/CalculationView/EditPage/Preview",
+"kind": "Image",
+"rect": [
+22.4,
+249.9,
+458.0,
+285.9
+],
+"visible": [
+22.4,
+249.9,
+458.0,
+285.9
+],
+"color": "#0D2F4AFF",
+"alpha": 1.0,
+"sprite": "white-backdrop",
+"raycast": true,
+"selectable": false,
+"maskOnly": false,
+"canvasOrder": -10,
+"depth": 376,
+"spriteSize": [
+512.0,
+512.0
+],
+"spriteBorder": [
+20.0,
+20.0,
+20.0,
+20.0
+],
+"imageType": "Sliced",
+"preserveAspect": false
+},
+{
+"path": "InGameScene/UI Canvas/GamePanels/CalculationEntityPanel/MainPanel/CalculationView/EditPage/FirstValue/Pill/Panel",
+"kind": "Image",
+"rect": [
+146.6,
+96.0,
+245.6,
+121.2
+],
+"visible": [
+146.6,
+96.0,
+245.6,
+121.2
+],
+"color": "#FFFFFFFF",
+"alpha": 1.0,
+"sprite": "white-backdrop",
+"raycast": true,
+"selectable": false,
+"maskOnly": false,
+"canvasOrder": -10,
+"depth": 338,
+"spriteSize": [
+512.0,
+512.0
+],
+"spriteBorder": [
+20.0,
+20.0,
+20.0,
+20.0
+],
+"imageType": "Sliced",
+"preserveAspect": true
+},
+{
+"path": "InGameScene/UI Canvas/GamePanels/CalculationEntityPanel/MainPanel/CalculationView/EditPage/Operation/Pill/Text (TMP)",
+"kind": "TextMeshProUGUI",
+"rect": [
+348.2,
+182.0,
+391.4,
+202.7
+],
+"visible": [
+348.2,
+182.0,
+391.4,
+202.7
+],
+"color": "#9FB6C8FF",
+"alpha": 1.0,
+"sprite": "",
+"raycast": true,
+"selectable": false,
+"maskOnly": false,
+"canvasOrder": -10,
+"depth": 364,
+"text": "%",
+"textRect": [
+362.0,
+180.2,
+377.6,
+205.5
+],
+"lines": 1,
+"fontSize": 22.0
+},
+{
+"path": "InGameScene/UI Canvas/GamePanels/CalculationEntityPanel/MainPanel/CalculationView/EditPage/Operation/Pill/Panel",
+"kind": "Image",
+"rect": [
+247.4,
+177.0,
+290.6,
+207.6
+],
+"visible": [
+247.4,
+177.0,
+290.6,
+207.6
+],
+"color": "#FFFFFFFF",
+"alpha": 1.0,
+"sprite": "white-backdrop",
+"raycast": true,
+"selectable": false,
+"maskOnly": false,
+"canvasOrder": -10,
+"depth": 357,
+"spriteSize": [
+512.0,
+512.0
+],
+"spriteBorder": [
+20.0,
+20.0,
+20.0,
+20.0
+],
+"imageType": "Sliced",
+"preserveAspect": true
+},
+{
+"path": "InGameScene/UI Canvas/GamePanels/CalculationEntityPanel/MainPanel/CalculationView/EditPage/SecondValue/Label",
+"kind": "TextMeshProUGUI",
+"rect": [
+22.4,
+216.6,
+136.2,
+241.8
+],
+"visible": [
+22.4,
+216.6,
+136.2,
+241.8
+],
+"color": "#9FB6C8FF",
+"alpha": 1.0,
+"sprite": "",
+"raycast": false,
+"selectable": false,
+"maskOnly": false,
+"canvasOrder": -10,
+"depth": 365,
+"text": "Second value",
+"textRect": [
+22.4,
+220.0,
+119.5,
+238.4
+],
+"lines": 1,
+"fontSize": 16.0
+},
+{
+"path": "InGameScene/UI Canvas/GamePanels/CalculationEntityPanel/MainPanel/CalculationView/EditPage/Operation/Pill/Text (TMP)",
+"kind": "TextMeshProUGUI",
+"rect": [
+146.6,
+182.0,
+189.8,
+202.7
+],
+"visible": [
+146.6,
+182.0,
+189.8,
+202.7
+],
+"color": "#FFFFFFFF",
+"alpha": 1.0,
+"sprite": "",
+"raycast": true,
+"selectable": false,
+"maskOnly": false,
+"canvasOrder": -10,
+"depth": 352,
+"text": "+",
+"textRect": [
+162.6,
+180.2,
+173.8,
+205.5
+],
+"lines": 1,
+"fontSize": 22.0
+},
+{
+"path": "InGameScene/UI Canvas/GamePanels/CalculationEntityPanel/MainPanel/CalculationView/EditPage/SaveRow/ActionButton/Text (TMP)",
+"kind": "TextMeshProUGUI",
+"rect": [
+69.2,
+300.3,
+101.7,
+314.7
+],
+"visible": [
+69.2,
+300.3,
+101.7,
+314.7
+],
+"color": "#FFFFFFFF",
+"alpha": 1.0,
+"sprite": "",
+"raycast": true,
+"selectable": false,
+"maskOnly": false,
+"canvasOrder": -10,
+"depth": 379,
+"text": "Save",
+"textRect": [
+69.2,
+298.9,
+101.6,
+316.2
+],
+"lines": 1,
+"fontSize": 15.0
+},
+{
+"path": "InGameScene/UI Canvas/GamePanels/CalculationEntityPanel/MainPanel/CalculationView/EditPage/FirstValue/Label",
+"kind": "TextMeshProUGUI",
+"rect": [
+22.4,
+96.0,
+139.4,
+121.2
+],
+"visible": [
+22.4,
+96.0,
+139.4,
+121.2
+],
+"color": "#9FB6C8FF",
+"alpha": 1.0,
+"sprite": "",
+"raycast": false,
+"selectable": false,
+"maskOnly": false,
+"canvasOrder": -10,
+"depth": 336,
+"text": "First value",
+"textRect": [
+22.4,
+99.4,
+96.5,
+117.8
+],
+"lines": 1,
+"fontSize": 16.0
+},
+{
+"path": "InGameScene/UI Canvas/GamePanels/CalculationEntityPanel/MainPanel/CalculationView/EditPage/PageHeader/ActionButton/Text (TMP)",
+"kind": "TextMeshProUGUI",
+"rect": [
+43.7,
+68.1,
+76.7,
+80.7
+],
+"visible": [
+43.7,
+68.1,
+76.7,
+80.7
+],
+"color": "#FFFFFFFF",
+"alpha": 1.0,
+"sprite": "",
+"raycast": true,
+"selectable": false,
+"maskOnly": false,
+"canvasOrder": -10,
+"depth": 334,
+"text": "Back",
+"textRect": [
+43.7,
+65.8,
+76.7,
+83.1
+],
+"lines": 1,
+"fontSize": 15.0
+},
+{
+"path": "InGameScene/UI Canvas/GamePanels/CalculationEntityPanel/MainPanel/CalculationView/EditPage/Reading/ActionButton",
+"kind": "Image",
+"rect": [
+364.4,
+132.9,
+450.8,
+165.3
+],
+"visible": [
+364.4,
+132.9,
+450.8,
+165.3
+],
+"color": "#FFFFFFFF",
+"alpha": 1.0,
+"sprite": "white-backdrop",
+"raycast": true,
+"selectable": true,
+"maskOnly": false,
+"canvasOrder": -10,
+"depth": 347,
+"spriteSize": [
+512.0,
+512.0
+],
+"spriteBorder": [
+20.0,
+20.0,
+20.0,
+20.0
+],
+"imageType": "Sliced",
+"preserveAspect": true
+},
+{
+"path": "InGameScene/UI Canvas/GamePanels/CalculationEntityPanel/MainPanel",
+"kind": "Image",
+"rect": [
+8.0,
+8.7,
+472.4,
+329.1
+],
+"visible": [
+8.0,
+8.7,
+472.4,
+329.1
+],
+"color": "#FFFFFFFF",
+"alpha": 1.0,
+"sprite": "background-main",
+"raycast": true,
+"selectable": false,
+"maskOnly": false,
+"canvasOrder": -10,
+"depth": 328,
+"spriteSize": [
+512.0,
+512.0
+],
+"spriteBorder": [
+10.0,
+10.0,
+10.0,
+10.0
+],
+"imageType": "Sliced",
+"preserveAspect": false
+},
+{
+"path": "InGameScene/UI Canvas/GamePanels/CalculationEntityPanel/MainPanel/CalculationView/EditPage/SecondValue/AmountField",
+"kind": "Image",
+"rect": [
+332.0,
+216.6,
+458.0,
+241.8
+],
+"visible": [
+332.0,
+216.6,
+458.0,
+241.8
+],
+"color": "#FFFFFFFF",
+"alpha": 1.0,
+"sprite": "input-field",
+"raycast": true,
+"selectable": true,
+"maskOnly": false,
+"canvasOrder": -10,
+"depth": 372,
+"spriteSize": [
+512.0,
+512.0
+],
+"spriteBorder": [
+20.0,
+20.0,
+20.0,
+20.0
+],
+"imageType": "Sliced",
+"preserveAspect": false
+},
+{
+"path": "InGameScene/UI Canvas/GamePanels/CalculationEntityPanel/MainPanel/CalculationView/EditPage/Reading",
+"kind": "Image",
+"rect": [
+22.4,
+129.3,
+458.0,
+168.9
+],
+"visible": [
+22.4,
+129.3,
+458.0,
+168.9
+],
+"color": "#081C2CC7",
+"alpha": 0.78,
+"sprite": "white-backdrop",
+"raycast": true,
+"selectable": false,
+"maskOnly": false,
+"canvasOrder": -10,
+"depth": 343,
+"spriteSize": [
+512.0,
+512.0
+],
+"spriteBorder": [
+20.0,
+20.0,
+20.0,
+20.0
+],
+"imageType": "Sliced",
+"preserveAspect": false
+},
+{
+"path": "InGameScene/UI Canvas/GamePanels/CalculationEntityPanel/MainPanel/CalculationView/EditPage/Operation/Pill/Panel",
+"kind": "Image",
+"rect": [
+297.8,
+177.0,
+341.0,
+207.6
+],
+"visible": [
+297.8,
+177.0,
+341.0,
+207.6
+],
+"color": "#FFFFFFFF",
+"alpha": 1.0,
+"sprite": "white-backdrop",
+"raycast": true,
+"selectable": false,
+"maskOnly": false,
+"canvasOrder": -10,
+"depth": 360,
+"spriteSize": [
+512.0,
+512.0
+],
+"spriteBorder": [
+20.0,
+20.0,
+20.0,
+20.0
+],
+"imageType": "Sliced",
+"preserveAspect": true
+},
+{
+"path": "InGameScene/UI Canvas/GamePanels/CalculationEntityPanel/MainPanel/CalculationView/EditPage/Reading/Icon",
+"kind": "Image",
+"rect": [
+29.6,
+134.7,
+58.4,
+163.5
+],
+"visible": [
+29.6,
+134.7,
+58.4,
+163.5
+],
+"color": "#FFFFFFFF",
+"alpha": 1.0,
+"sprite": "CircuitModule",
+"raycast": false,
+"selectable": false,
+"maskOnly": false,
+"canvasOrder": -10,
+"depth": 344,
+"spriteSize": [
+512.0,
+512.0
+],
+"spriteBorder": [
+0.0,
+0.0,
+0.0,
+0.0
+],
+"imageType": "Simple",
+"preserveAspect": true
+},
+{
+"path": "InGameScene/UI Canvas/GamePanels/CalculationEntityPanel/MainPanel/CalculationView/EditPage/Operation/Pill/Panel",
+"kind": "Image",
+"rect": [
+146.6,
+177.0,
+189.8,
+207.6
+],
+"visible": [
+146.6,
+177.0,
+189.8,
+207.6
+],
+"color": "#FFFFFFFF",
+"alpha": 1.0,
+"sprite": "white-backdrop",
+"raycast": true,
+"selectable": false,
+"maskOnly": false,
+"canvasOrder": -10,
+"depth": 351,
+"spriteSize": [
+512.0,
+512.0
+],
+"spriteBorder": [
+20.0,
+20.0,
+20.0,
+20.0
+],
+"imageType": "Sliced",
+"preserveAspect": true
+},
+{
+"path": "InGameScene/UI Canvas/GamePanels/CalculationEntityPanel/MainPanel/CalculationView/EditPage/Operation/Pill/Panel",
+"kind": "Image",
+"rect": [
+197.0,
+177.0,
+240.2,
+207.6
+],
+"visible": [
+197.0,
+177.0,
+240.2,
+207.6
+],
+"color": "#FFFFFFFF",
+"alpha": 1.0,
+"sprite": "white-backdrop",
+"raycast": true,
+"selectable": false,
+"maskOnly": false,
+"canvasOrder": -10,
+"depth": 354,
+"spriteSize": [
+512.0,
+512.0
+],
+"spriteBorder": [
+20.0,
+20.0,
+20.0,
+20.0
+],
+"imageType": "Sliced",
+"preserveAspect": true
+},
+{
+"path": "InGameScene/UI Canvas/GamePanels/CalculationEntityPanel/MainPanel/CalculationView/EditPage/FirstValue/Pill/Panel",
+"kind": "Image",
+"rect": [
+252.8,
+96.0,
+351.8,
+121.2
+],
+"visible": [
+252.8,
+96.0,
+351.8,
+121.2
+],
+"color": "#FFFFFFFF",
+"alpha": 1.0,
+"sprite": "white-backdrop",
+"raycast": true,
+"selectable": false,
+"maskOnly": false,
+"canvasOrder": -10,
+"depth": 341,
+"spriteSize": [
+512.0,
+512.0
+],
+"spriteBorder": [
+20.0,
+20.0,
+20.0,
+20.0
+],
+"imageType": "Sliced",
+"preserveAspect": true
+},
+{
+"path": "InGameScene/UI Canvas/GamePanels/CalculationEntityPanel/MainPanel/CalculationView/EditPage/SecondValue/Pill/Text (TMP)",
+"kind": "TextMeshProUGUI",
+"rect": [
+143.4,
+221.6,
+230.5,
+236.9
+],
+"visible": [
+143.4,
+221.6,
+230.5,
+236.9
+],
+"color": "#FFFFFFFF",
+"alpha": 1.0,
+"sprite": "",
+"raycast": true,
+"selectable": false,
+"maskOnly": false,
+"canvasOrder": -10,
+"depth": 368,
+"text": "Number",
+"textRect": [
+156.8,
+220.6,
+217.0,
+239.0
+],
+"lines": 1,
+"fontSize": 16.0
+},
+{
+"path": "InGameScene/UI Canvas/GamePanels/CalculationEntityPanel/MainPanel/CalculationView/EditPage/SecondValue/Pill/Text (TMP)",
+"kind": "TextMeshProUGUI",
+"rect": [
+237.7,
+221.6,
+324.8,
+236.9
+],
+"visible": [
+237.7,
+221.6,
+324.8,
+236.9
+],
+"color": "#9FB6C8FF",
+"alpha": 1.0,
+"sprite": "",
+"raycast": true,
+"selectable": false,
+"maskOnly": false,
+"canvasOrder": -10,
+"depth": 371,
+"text": "Reading",
+"textRect": [
+251.1,
+220.6,
+311.3,
+239.0
+],
+"lines": 1,
+"fontSize": 16.0
+}
+]
+}
