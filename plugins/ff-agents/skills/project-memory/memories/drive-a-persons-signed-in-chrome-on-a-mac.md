@@ -31,3 +31,9 @@ The full helper (`ax.py dump/press/shot`) and the GoDaddy specifics are in `/srv
 fff-portal. GoDaddy facts from the same run: Renewals & Billing > Manage Subscriptions has a status filter with
 "Auto-Renew On/Off". The per-domain auto-renew switch is hidden once auto-renew is on. The domain list's expiration
 date opens a checkout with a protection add-on ticked by default, so cancel it.
+
+**GoDaddy can ask for its "Continue & Verify" identity check on every DNS save (w1922, from the w1844 DNS edits).** It
+asked three times for one domain (nevergames.com) and never for the other (final-factory.com). Only the person can pass
+it. So batch the records into one save per domain where the UI allows it, and warn the person before you start that
+they may need to pass the check, so the session is not left waiting on them. If it appears mid-run, declare the wait
+(`waiting_on_person`) instead of retrying the save.
