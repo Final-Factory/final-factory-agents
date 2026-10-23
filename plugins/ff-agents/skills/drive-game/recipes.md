@@ -380,6 +380,10 @@ and deconstruction 790-791, repeatable to 1 heartbeat across runs.
   there. A 20×10 Strut grid placed at `0|10` covered tiles x −9..10, z 6..15, so a `construction.cut`
   rectangle worked out from the corner missed 116 of 200. After placing, read `Placeable.GridTile`
   min/max and cut that rectangle with a margin. (`scripts/nightly/make_blueprint.py` writes the grid.)
+- **Close the mini Player Inventory before pointer clicks in a built player** (w1919, 2026-10-23, Linux player): while
+  it is up (a structure selected, or a blueprint copied) a paste click or `ui.selecttile` lands "under UI 'Image'" and
+  does nothing. Send `ffauto:input.action|Toggle Inventory Panel` (the E key) first, and again after each panel still;
+  `ui.close|inventory` closes a different panel.
 - **The placed blueprint stays in the player's hand.** Its copies are `PlayerPlaced` + `OutOfPlay` with
   no `ConstructionTaskData`, so count *built* = `!OutOfPlay && !ConstructionTaskData` and *remaining* =
   `!OutOfPlay || ConstructionTaskData`. A count of every `PlayerPlaced` entity never reaches 0.
