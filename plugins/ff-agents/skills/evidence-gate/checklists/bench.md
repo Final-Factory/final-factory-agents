@@ -40,7 +40,7 @@ Mechanics: the game repo's `Documentation/Bench-Lock.md`.
       tests, takes `bench_lock --shared`. An exclusive ticket names its reason (`--reason`, `--bench-reason`); with
       none it is taken for timing and says so. A build takes no `bench_lock`, because its own `ff_unity_slot` ticket
       queues it.
-- [ ] **A timed game run, not a harness test** (w1894, [lesson](../lessons/no-real-bench-ticket-for-harness-tests.md)).
+- [ ] **A timed game run, not a harness test** (w1894, [lesson](../lessons/settle-your-own-guesses.md#hold-the-bench-lock-as-briefly-as-the-question-allows-w1628-2026-10-20)).
       Trying FF Factory's own bench, yield or priority code takes no real ticket: its unit tests or a queue under your
       `$TMPDIR`. An exclusive turn closes the machine's editors and ends other workers' batch builds.
 - [ ] **The machine is yours while you hold it, and only then** (w1750). Your own players and clips pass the lock (the same `FF_SESSION_ID`, or inside `bench_lock`); other workers' are refused until you give it back, so give it back between legs. Not covered: a player already running when you were granted (your `quiet` gate waits for its CPU).
