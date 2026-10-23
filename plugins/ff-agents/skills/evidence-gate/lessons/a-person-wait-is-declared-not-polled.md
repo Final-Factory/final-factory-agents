@@ -69,6 +69,32 @@ person does not come back because a timer fired.
 - FF Factory side: `docs/orchestrators.md`, "Waiting, Queued, Blocked" (`waiting_on_person`,
   `personWaitIn`).
 
+## Never ask a person what they already answered (w1812)
+
+**Rule.** Before you ask a person anything (a worker's `waiting_on_person`, the dispatcher's `decide_work ask`, an
+orchestrator's `ask_person` or relayed `[needs you]`), read the request's notes and log, and those of the other requests
+the same worker holds. An answer of theirs given after the question was raised is the answer: use it, pass it on, and do
+not ask again. One question that shows on several requests is asked once, and the answer on one is the answer on all.
+
+**Why.** 2026-10-22: worker c28c5061 held w1767 (circuit markers in normal view) and w1768 (the circuit alt mode) and
+asked one set of four design questions. They showed as Waiting on input on both. Ben answered on w1767, then was asked
+the same four on w1768: "i already answered this why are you asking me in the waiting on input for this still". Earlier,
+2026-10-15, w1182 (fog of war): an orchestrator re-asked a stale `[needs you]` from a stopped worker that Ben had already
+answered: "i already said it looks good and asked for the fog to be a blueish not just grey".
+
+**How to apply.**
+
+- Before you ask, open the request (`read_work wNNN`, `list_work` with its id) and its worker's other requests. Look
+  for a note by that person dated after the question.
+- A worker declaring for one of several requests names it (`waiting_on_person` `request`). A question for all of them is
+  one declaration with no request, never one per request.
+- A `[needs you]` that says "waits on wNNN too" is ONE question: ask it once and record the answer on the request it
+  came on.
+- FF Factory enforces it since w1812: one `[needs you]` per shared question; an answer on any of those requests answers
+  all of them; no `[needs you]` when the answer is already logged; `ask_person` and `decide_work ask` refuse a repeat once,
+  with the person's words (ff-factory `docs/orchestrators.md`, "Questions for a person"). A refusal from them is the
+  answer: pass it on.
+
 ## A wait on a machine is a harness timer, never a background loop (w1106)
 
 **Rule.** When something must be checked again after your turn ends (a machine going idle, a build, an import, CI,
