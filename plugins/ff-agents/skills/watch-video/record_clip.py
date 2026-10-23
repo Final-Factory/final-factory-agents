@@ -77,6 +77,11 @@ def unity_pid(project):
     sys.exit(f"record_clip: no Unity editor open on {project}")
 
 
+# Any case: build_player.sh names the player finalfactory.app / finalfactory.x86_64 (w1797, 2026-10-23: a case-sensitive
+# "FinalFactory" missed a running player on the M3).
+PLAYER_PROCESS = re.compile(r"/FinalFactory[^/]*\.app/Contents/MacOS/|FinalFactory\S*\.x86_64", re.IGNORECASE)
+
+
 def player_pid():
     """A running built Final Factory player (the newest, if several)."""
     if WIN:
@@ -87,7 +92,7 @@ def player_pid():
     else:
         out = subprocess.run(["ps", "-axo", "pid=,command="], capture_output=True, text=True).stdout
         pids = [int(l.split()[0]) for l in out.splitlines()
-                if re.search(r"/FinalFactory[^/]*\.app/Contents/MacOS/", l) or re.search(r"FinalFactory\S*\.x86_64", l)]
+                if PLAYER_PROCESS.search(l)]
     if not pids:
         sys.exit("record_clip: no running FinalFactory player (start one from the slot pool first)")
     return pids[-1]
