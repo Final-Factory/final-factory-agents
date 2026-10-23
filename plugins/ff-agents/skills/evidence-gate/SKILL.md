@@ -100,6 +100,8 @@ Ben, 2026-10-16: "you make bad UI mistakes constantly". The gate, at the top of 
    broken or ugly finding. A STANDING one is fixed or filed with its wNNN, never "handed on", and a coverage gap the
    critic names that is the person's own case gets its stills
    ([lesson](lessons/verify-ui-with-full-content-like-a-player.md#a-standing-finding-is-filed-with-its-wnnn-or-fixed-and-the-critics-coverage-gap-is-shot-w1546-2026-10-19)).
+   A finding names its still's state (open or dragged) and is checked in the censuses before it is fixed or filed
+   ([lesson](lessons/verify-ui-with-full-content-like-a-player.md#a-critics-finding-names-its-stills-state-before-it-is-fixed-or-filed-open-or-dragged-same-steps-both-sides-w1790-w1821-2026-10-23)).
 
 "Same both sides", a clean census and "Looked: yes" are not that answer. A redesign goes out as 2-3 clearly different
 options built from the game's best existing dialogs (Ben, w1296: "reuse components when you can damnit"). Orchestrators

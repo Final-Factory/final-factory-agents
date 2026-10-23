@@ -319,7 +319,7 @@ control, and a redesign goes out as 2 or 3 clearly different options built from 
     child given the pack's `prompt.md`); never brief it with what you changed or meant. Its `critic.md` goes in the review
     folder with the stills. Fix every NEW broken or ugly finding or answer it with the person's words asking for exactly
     that; file the STANDING ones (wNNN in the report: "handed on to be filed" is still open; a small fix on a screen you
-    already shoot is made here, w1546); shoot any coverage gap the critic names that is the person's own case; then pack the new stills for a new critic. NEW: this change made it, or the
+    already shoot is made here, w1546); shoot any coverage gap the critic names that is the person's own case; then pack the new stills for a new critic. Before fixing or filing a finding, name the census its still came from (as the windows open, or after a leg dragged one) and check it there; the before and after stills come from the same steps on both builds (w1790, w1821). NEW: this change made it, or the
     person's words ask for its kind of fix (w1386: "fix the ones that are clearly bugs", and the panel it fixed showed its
     On/Off switch stretched 14x, as on master). STANDING: the before still shows it too and no words ask for it. After
     three rounds with one still open, the person gets the options and the critic's report. The PR carries `Critic: <critic.md> (pack <id>, run R): N stills, M
