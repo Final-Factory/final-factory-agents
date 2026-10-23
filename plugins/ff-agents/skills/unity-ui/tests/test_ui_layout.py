@@ -243,6 +243,16 @@ class OpenedPanelTest(unittest.TestCase):
         self.assertIn("UNDER: ", out)
         self.assertNotIn(" 0 under the HUD", the_line(out, "Opened panels"))
 
+    def test_a_panel_already_drawn_under_the_hud_before_is_standing(self):
+        # w1475: at 1280x800 docked, master's Station Info draws over the docked window on both sides of the change;
+        # that is not the change's to fix, so it is listed as standing and not counted.
+        under = hud(slideout=True, slideout_depth=-5)
+        code, out = Cmd.run(under, hud(slideout=True, slideout_depth=-5), closed=hud())
+        self.assertEqual(code, 0, out)
+        self.assertIn(" 0 under the HUD", the_line(out, "Opened panels"))
+        self.assertIn("standing (on the before census too, not counted)", the_line(out, "Opened panels"))
+        self.assertIn("STANDING UNDER: ", out)
+
     def test_a_panel_whose_graphics_ignore_clicks_leaves_the_hud_clickable_through_it(self):
         code, out = Cmd.run(hud(), hud(slideout=True, slideout_raycast=False), closed=hud())
         self.assertEqual(code, 1)
