@@ -3,7 +3,7 @@
 Lesson: [hold the bench lock as briefly as the question allows](../lessons/settle-your-own-guesses.md#hold-the-bench-lock-as-briefly-as-the-question-allows-w1628-2026-10-20).
 Mechanics: the game repo's `Documentation/Bench-Lock.md`.
 
-- [ ] **Every timing holds an exclusive ticket, editor snippets included** (w1923, [lesson](../lessons/every-timing-holds-an-exclusive-ticket.md);
+- [ ] **Every timing holds an exclusive ticket, editor snippets included** (w1923, [lesson](../lessons/settle-your-own-guesses.md#every-timing-measurement-holds-an-exclusive-ticket-w1923-2026-10-23);
       lothsahn: "How do we make sure workers aren't timing things without exclusive locks?"). Before the first number
       that is a time, from a bench script's leg or from a snippet in your editor (`unity-bridge.py eval`/`eval_file`,
       MCP `execute_code`: Stopwatch, ProfilerRecorder, realtimeSinceStartup, in-job counters), a local Performance test

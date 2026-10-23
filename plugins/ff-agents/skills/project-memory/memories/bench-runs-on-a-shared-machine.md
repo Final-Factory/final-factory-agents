@@ -7,7 +7,7 @@ metadata:
 
 **Lessons from w1438 (2026-10-17, two workers on BEAST, worker a9560f02 option A and 40edc8fc option B).**
 
-0. **Timing in the editor needs the ticket too** (w1923, evidence-gate `lessons/every-timing-holds-an-exclusive-ticket.md`):
+0. **Timing in the editor needs the ticket too** (w1923, evidence-gate `lessons/settle-your-own-guesses.md`, "Every timing measurement holds an exclusive ticket"):
    a snippet that reads a clock (`unity-bridge.py eval_file ... --timed "<what>"`), MCP `execute_code` reads and a local
    Performance test run inside `python scripts/bench/bench_queue.py timed --what "<what>"` (in the background, then
    `timed --release`). Without one, `unity-bridge.py`, `unity_slot.py` and FF Factory's guard refuse it.

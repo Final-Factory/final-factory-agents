@@ -362,7 +362,7 @@ One file each under `lessons/`: the rule, why (the incident, dated), how to appl
   shader or material for it, or a built-player before/after of every user; the PR's `## Used by`
   lists them and `pr_evidence.py` and CI fail without it (w410: one sprite-shader edit for the
   Alt-view icons darkened every range ring in Build 77).
-- [Every timing measurement holds an exclusive ticket](lessons/every-timing-holds-an-exclusive-ticket.md): not only a
+- [Every timing measurement holds an exclusive ticket](lessons/settle-your-own-guesses.md#every-timing-measurement-holds-an-exclusive-ticket-w1923-2026-10-23): not only a
   bench script's leg but a snippet that reads a clock in the editor (`unity-bridge.py eval`, MCP `execute_code`), in-job
   counters, a local Performance test and a profiler capture; `unity-bridge.py --timed` for one call, `bench_queue.py
   timed` across calls; the game repo's tools and FF Factory's guard refuse it without one (w1923: w1892 timed a Burst job
