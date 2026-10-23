@@ -354,6 +354,9 @@ One file each under `lessons/`: the rule, why (the incident, dated), how to appl
   shader or material for it, or a built-player before/after of every user; the PR's `## Used by`
   lists them and `pr_evidence.py` and CI fail without it (w410: one sprite-shader edit for the
   Alt-view icons darkened every range ring in Build 77).
+- [Harness tests never take a real exclusive bench ticket](lessons/no-real-bench-ticket-for-harness-tests.md):
+  FF Factory's own bench, yield or priority code is tried with its unit tests or a queue under your `$TMPDIR`, never
+  with `bench_lock --timing`/`--machine` on a shared machine (w1894: a test ticket on BEAST ended w1826's host build).
 - [Check every kind of object shared presentation draws](lessons/check-every-kind-of-object-shared-presentation-draws.md):
   a change to the selection boxes, highlights, icons or panels is verified on every kind of object
   they draw, spinning and moving ones included, and a discriminating component is counted against
