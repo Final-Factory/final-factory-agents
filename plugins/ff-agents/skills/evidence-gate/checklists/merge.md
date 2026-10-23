@@ -24,6 +24,14 @@ and one CI cycle was lost.
 It recurred in w1572 (2026-10-21, PR #2089): the merge brought w1440's `TargetingSystem.cs:867` reading
 `SimCollisionWorld.UseFixedPoint`, which the branch had removed; the compile check had run before the merge.
 
+**A CI fix that edits an asset runs every test and builder that reads it** (w1470, 2026-10-22, PR #1921): when a
+red test makes you change an asset (a prefab child removed, a material renamed, a fixture line added), find what
+else names that asset or child, `git grep -n -E '<asset file name>|<child name>' -- Assets/Tests Assets/Editor`,
+and run those classes too, not only the ones that failed. There, `StructureMapIconsTest` (w1488) failed on the
+Lance prefab's hand-placed `StationDisplay` map plane; removing it passed that class, and on the next CI run the
+Lance's own `SingularityLanceConfigTest` threw a NullReferenceException reading `Find("StationDisplay")`, and the
+editor builder that makes the prefab still set the plane's scale. One CI cycle was lost.
+
 **After a removal merges, look for the removed names on master** (w1572, 2026-10-21, PR #2089): a PR that deletes or
 renames a type, member, package or asmdef reference is checked against the master it merged in, and so is every PR
 that merged minutes before it. Once yours merges, `git fetch origin && git grep -n -E '<removed names>' origin/master
