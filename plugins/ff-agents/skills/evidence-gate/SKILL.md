@@ -101,6 +101,8 @@ Ben, 2026-10-16: "you make bad UI mistakes constantly". The gate, at the top of 
    broken or ugly finding. A STANDING one is fixed or filed with its wNNN, never "handed on", and a coverage gap the
    critic names that is the person's own case gets its stills
    ([lesson](lessons/verify-ui-with-full-content-like-a-player.md#a-standing-finding-is-filed-with-its-wnnn-or-fixed-and-the-critics-coverage-gap-is-shot-w1546-2026-10-19)).
+   A finding names its still's state (open or dragged) and is checked in the censuses before it is fixed or filed
+   ([lesson](lessons/verify-ui-with-full-content-like-a-player.md#a-critics-finding-names-its-stills-state-before-it-is-fixed-or-filed-open-or-dragged-same-steps-both-sides-w1790-w1821-2026-10-23)).
 
 "Same both sides", a clean census and "Looked: yes" are not that answer. A redesign goes out as 2-3 clearly different
 options built from the game's best existing dialogs (Ben, w1296: "reuse components when you can damnit"). Orchestrators
@@ -257,6 +259,10 @@ look first and relay only with the critic's report (FF Factory `read_rules ui`).
   1 report generation only, 2 a game desync fix, 3 capture during play; tests, a 2-peer red/green
   check for 2, a before/after tick and frame measurement for 3 (under 1% merges, above escalates
   through the intake with `PERF-ESCALATION`).
+- [FFBox crash and hang diagnoses](checklists/ffbox-crash-pr.md) (lothsahn's standing policy, 2026-10-23, w1827):
+  every one is worked, a cause or not: read the report yourself, reproduce it or show the faulty path, a test red on
+  master and green with the fix, review FFBox's PR (merge it, or fix properly and close it with the reason), a
+  per-frame or per-tick cost above 1% escalates with `PERF-ESCALATION`, NOT-A-BUG is checked and closed.
 - Ads and outreach live in the ff-marketing repo: `lessons/ads.md` and `lessons/outreach.md`,
   enforced by `scripts/ads/ffads lint`.
 
@@ -267,8 +273,9 @@ One file each under `lessons/`: the rule, why (the incident, dated), how to appl
 - [Hold the bench lock as briefly as the question allows](lessons/settle-your-own-guesses.md#hold-the-bench-lock-as-briefly-as-the-question-allows-w1628-2026-10-20): lothsahn,
   2026-10-20: "A benchmark with 90% fidelity that runs twice as fast as better one is likely the right choice." The
   shortest run that answers the question, early stop, shared tickets for untimed work (w1628: BEAST held 15.5 of 16 h);
-  "Get them all to shorten their plans a lot", "if they have sufficient signal, just make a decision", and no exclusive
-  hold over 1 hour.
+  "Get them all to shorten their plans a lot", "if they have sufficient signal, just make a decision"; since w1832 the
+  queue itself ends a turn while someone waits (30 minutes exclusive, a shared group's hour, a 5-minute warning first),
+  and exclusive is only for exact timings or the whole machine.
 - [Research the decision, not the topic](lessons/research-the-decision-not-the-topic.md): the
   Reddit caps came from a topic survey; nobody asked what bid wins US auctions. Label every basis.
 - [Settle your own guesses](lessons/settle-your-own-guesses.md): Ben wants agents mostly
@@ -290,7 +297,7 @@ One file each under `lessons/`: the rule, why (the incident, dated), how to appl
   before any build-quality clip (w1497).
 - [No merge before the review](lessons/no-merge-before-the-review.md): "pending" is not done.
 - [Merge your own pull request](lessons/merge-your-own-pr.md): verified and green means merge;
-  hold only for exceptional risk or a timing reason, and say which and when. mechanics: check `git branch --show-current` after a wait, gate `gh pr merge` on a passing check (`gh pr checks N && gh pr merge N --match-head-commit <sha>`: exit 8 is pending; w864; in a worker `ff-pr merge`, one call, w1478), post the verdict only from the newest ff-agents (w807); a red check that is not your change, and `not our ref` at checkout ([section](lessons/merge-your-own-pr.md#a-red-check-that-is-not-your-change-read-the-failing-test-then-the-cause-w1337-2026-10-15), w1337).
+  hold only for exceptional risk or a timing reason, and say which and when. A save version bump with its old-save load test green is not a risk (Ben, 2026-10-23, w1826: backwards compatibility is the gate). mechanics: check `git branch --show-current` after a wait, gate `gh pr merge` on a passing check (`gh pr checks N && gh pr merge N --match-head-commit <sha>`: exit 8 is pending; w864; in a worker `ff-pr merge`, one call, w1478), post the verdict only from the newest ff-agents (w807); a red check that is not your change, and `not our ref` at checkout ([section](lessons/merge-your-own-pr.md#a-red-check-that-is-not-your-change-read-the-failing-test-then-the-cause-w1337-2026-10-15), w1337).
 - [What is in a player's build is checked by running it](lessons/whats-in-a-players-build-is-checked-by-running-it.md):
   "X is (not) in Build N / on branch Z" rests on running that build or its exact commit and opening X, never a grep or
   git ancestry (else: guess, naming the build to run); asked to investigate, run the check (an orchestrator files it in
@@ -452,6 +459,9 @@ One file each under `lessons/`: the rule, why (the incident, dated), how to appl
 - [Never ask a person what they already answered](lessons/a-person-wait-is-declared-not-polled.md#never-ask-a-person-what-they-already-answered-w1812):
   read the request's notes and its worker's other requests before you ask; one question on several requests is asked once
   (w1812: Ben answered c28c5061's questions on w1767 and was asked them again on w1768; w1182 re-asked an answered fog look).
+- [Your own checks are yours](lessons/a-person-wait-is-declared-not-polled.md#your-own-checks-are-yours-never-wait-on-the-orchestrator-for-them-w1841):
+  a two-machine or pair check, a build, a test run and your CI are yours to run; never end a turn waiting on the
+  orchestrator for them (w1841: w1685's worker did, and the request sat Stalled; w1841 as filed for Ben: "pair checks are the worker's own").
 - [Research the route before you say "can't"](lessons/research-the-route-before-you-say-cant.md): before "I can't" or
   "you do it", research the route (docs, the machines and sessions already signed in, the tools), then try it or file
   it; only a concrete blocker with evidence and the smallest step only the person can take reach them (w935; w1287:

@@ -11,12 +11,24 @@ Mechanics: the game repo's `Documentation/Bench-Lock.md`.
 - [ ] **Early stop on, and a decision on enough signal.** The probe scripts' `ab_stop.py` stop is left on, or the
       report says why `EARLY_STOP=0`. Once the data shows the answer beyond the noise, stop and decide (lothsahn: "if
       they have sufficient signal, just make a decision"), with the measured numbers and their spread in the report.
-- [ ] **At most one hour per exclusive hold.** The run is split so each hold ends within 60 minutes and the lock is
-      given back between them (lothsahn: "subdivide their work to not hold the exclusive lock longer than 1 hour at a
-      time"); `bench_unlock` warns past the hour and `report` flags it.
-- [ ] **The right ticket.** `bench_lock` (exclusive) only for a run whose numbers are times. Untimed heavy work
-      (determinism pairs, repros, censuses, launch checks) takes `bench_lock --shared`. A build takes no `bench_lock`,
-      because its own `ff_unity_slot` ticket queues it.
+- [ ] **Each leg fits its turn; the queue enforces it** (w1832, lothsahn: "The harness should let workers run with
+      the exclusive lock for at most 30 minutes. They should get a warning at 25 minutes. Once their turn is over, if
+      they need more time they can apply for a new exclusive lock and they go to the back of the queue"). Plan each
+      leg well inside 30 minutes and each build or shared job inside an hour, and give the lock back between legs.
+      The queue ends a turn only while another worker waits behind it: an exclusive turn at 30 minutes, a shared
+      group an hour after its newest ticket started once a timed leg waits. A warning always comes 5 minutes before,
+      in the command output and as a message. At the deadline the ticket is revoked and the script and its players
+      are stopped, and that leg is void. A re-request goes to the back of the queue. Exempt: the urgent release lane,
+      the scheduled nightly, and a machine that hosts a single worker.
+- [ ] **At the warning, commit and push** the work-in-progress branch (lothsahn: "Workers should be encouraged to push
+      their uncommitted work at the warning threshold so they can be scheduled on other machines").
+- [ ] **The right ticket: exclusive only for exact timings or the whole machine** (lothsahn, w1832: "request an
+      exclusive lock if and only if they need the machine or exact timings. Otherwise they should use a shared lock").
+      `bench_lock --timing "<what>"` for a run whose numbers are times, `--machine` for one that needs the whole
+      machine; everything else, including determinism pairs, repros, censuses, launch checks, installs and functional
+      tests, takes `bench_lock --shared`. An exclusive ticket names its reason (`--reason`, `--bench-reason`); with
+      none it is taken for timing and says so. A build takes no `bench_lock`, because its own `ff_unity_slot` ticket
+      queues it.
 - [ ] **The machine is yours while you hold it, and only then** (w1750). Your own players and clips pass the lock (the same `FF_SESSION_ID`, or inside `bench_lock`); other workers' are refused until you give it back, so give it back between legs. Not covered: a player already running when you were granted (your `quiet` gate waits for its CPU).
 - [ ] **Nothing under the lock but the leg.** The Unity slot is taken before the ticket. Builds and digests run
       outside it, and the lock is given back between legs.

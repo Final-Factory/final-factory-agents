@@ -215,6 +215,12 @@ screen; on desktop three labels stopped fitting, the two windows left their defa
       Information on the left of center", which nobody said), a Deck quote on a desktop line, a pinned element whose quote
       does not name it, a line that folds several elements together, and a `Moved:` or `Pinned:` line that leaves out a
       screen or the docked layout.
+    - A pinned element that only got taller or shorter is resized, not moved: its left and right edges within 1 px and
+      its anchored edge (the bottom, over the abilities or the minimap) within 5 px (the census's 4 px plus the printed
+      rounding). Its line still carries the requester's words from the brief that approved the change, but they need not
+      name the panel: never ask a person again about something their answer already covered (w1824: Ben's "a few pixels
+      shorter in those languages is fine" covered the hover card and Station Info on #2269). Any other change to a pinned
+      element (a shift, a new width, a bottom edge that left its anchor) still needs their words naming it.
 
     The four corrections: "you did more with the overall layout than i wanted. like the station controls are not being
     put above objectives" (w722/w723); "why is station info at the top left? i didnt tell you to move that" (#1282); "it
@@ -314,7 +320,7 @@ control, and a redesign goes out as 2 or 3 clearly different options built from 
     child given the pack's `prompt.md`); never brief it with what you changed or meant. Its `critic.md` goes in the review
     folder with the stills. Fix every NEW broken or ugly finding or answer it with the person's words asking for exactly
     that; file the STANDING ones (wNNN in the report: "handed on to be filed" is still open; a small fix on a screen you
-    already shoot is made here, w1546); shoot any coverage gap the critic names that is the person's own case; then pack the new stills for a new critic. NEW: this change made it, or the
+    already shoot is made here, w1546); shoot any coverage gap the critic names that is the person's own case; then pack the new stills for a new critic. Before fixing or filing a finding, name the census its still came from (as the windows open, or after a leg dragged one) and check it there; the before and after stills come from the same steps on both builds (w1790, w1821). NEW: this change made it, or the
     person's words ask for its kind of fix (w1386: "fix the ones that are clearly bugs", and the panel it fixed showed its
     On/Off switch stretched 14x, as on master). STANDING: the before still shows it too and no words ask for it. After
     three rounds with one still open, the person gets the options and the critic's report. The PR carries `Critic: <critic.md> (pack <id>, run R): N stills, M

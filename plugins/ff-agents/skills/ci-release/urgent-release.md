@@ -187,5 +187,20 @@ filed, the bytes and the rate), and FFBox's decline (each Release job's build st
   computer) owns the version.
 - **A player NOT GOOD, a test failed, or FFBox built it too**: nothing is uploaded. Nobody releases that version now:
   bump the next one, normally (FFBox) or urgent again. Versions are cheap; never re-tag or reuse one.
+- **The push run's `Test in editmode` fails a test every merge batch passed**: read its log for `BC0101` before
+  anything else. Merge batches run with Burst off (w1759), and the release push run keeps it on, so a Burst-only
+  break shows up first on a bump. 1.0.0.10 and 1.0.0.11 (w1836) both failed `ImpactHullBatchRasterizeTest` by 1 ulp
+  because Burst error BC0101 on `RepairPackRules..cctor` (a `static readonly fp` set through fp's implicit
+  `decimal` conversion, known debt in `StaticFpDecimalGuardTest`) dropped a compile group of FFSystems jobs to
+  managed code. A second bump on the same code failed the same way, so re-running or re-bumping is not the fix. Fix
+  the static (`(fp)200`, not `200`) in a PR, take the type off the guard test's debt list, merge, then bump the next
+  version (1.0.0.12 passed: 15252 tests).
+- **After the run, the sandbox editor stops on "Unsupported Platform: Platform 'Linux' is not installed"**: the
+  lane's Linux build leaves the project's active build target on Linux, and the sandbox editor's Unity has no Linux
+  module (measured on BEAST slot1, w1836). Stop the editor (`mcp__machine__unity` stop), then run
+  `unity-slot run --label "<what>" -- "<the release Unity>" -batchmode -nographics -ignoreCompilerErrors
+  -projectPath <sandbox> -buildTarget Win64 -quit -logFile "$TMPDIR/<name>.log"` and start the editor again.
+  `-ignoreCompilerErrors` matters when another worker in the sandbox has uncommitted code that does not compile:
+  without it the switch aborts.
 - **steamcmd failed mid-upload** (one Steam session per account, and FFBox uses the same account): run again with
   `--skip-build --out <the same folder>`; it re-checks and uploads what is built.

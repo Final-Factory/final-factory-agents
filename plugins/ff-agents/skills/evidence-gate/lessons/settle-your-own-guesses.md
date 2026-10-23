@@ -104,8 +104,11 @@ do not need. Only a run whose numbers are times takes the exclusive lock. Untime
 lothsahn, later the same day: "Get them all to shorten their plans a lot" and "And if they have sufficient signal, just
 make a decision". So plan the fewest rounds that can answer the question, and stop and decide as soon as the data shows
 the answer beyond the noise, with the measured numbers and their spread in the report. And: "We should request workers
-subdivide their work to not hold the exclusive lock longer than 1 hour at a time too." One exclusive hold lasts at most
-an hour: give the lock back between legs or rounds and queue again.
+subdivide their work to not hold the exclusive lock longer than 1 hour at a time too." Since w1832 (2026-10-23) the
+queue enforces a shorter rule itself: "The harness should let workers run with the exclusive lock for at most 30
+minutes. They should get a warning at 25 minutes", pre-emption "should not occur if there's no other workers waiting
+in line", and a shared group ends an hour after its newest start once a timed leg waits, always after a 5-minute
+warning. Give the lock back between legs or rounds and queue again; at the warning, commit and push your work.
 
 **Why.** On 2026-10-20 (00:00 to 15:58 UTC, measured from each machine's transcripts and run logs; the game repo's
 `Documentation/Bench-Lock.md`):

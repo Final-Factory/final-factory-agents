@@ -334,3 +334,29 @@ bottom gap is only wrong beside a 24 pt title and a 14 px gap.
     reference sets no bottom. Round 6's bottom 12.6 passes; round 3's 7.2 (8 units, commit 9dc22a2517) is flagged.
   - Real-data fixture: `test_w1761s_round_6_window_matches_the_station_core_window` (unity-ui tests): round 6 gives 0
     findings, and the same window with round 3's title and bottom gives SMALL HEADER and CRAMPED BOTTOM.
+
+## A critic's finding names its still's state before it is fixed or filed: open or dragged, same steps both sides (w1790, w1821, 2026-10-23)
+
+**Rule:** give the critic before and after stills made by the same steps on both builds (the same tour, the same
+leg), and before you fix or file a finding, say which census the still came from: as the windows open, or after a
+leg moved one. Check the claim against the censuses, not the still alone.
+
+### Why
+
+- w1790 (lothsahn: "Why are UI windows not able to go on top of each other anymore?"): the first critic was given
+  stills of lothsahn's save in which the before and after builds had opened the windows in different places. It read
+  a window as "moved" (BROKEN). Like-for-like tour stills of both builds showed it where it opened in both
+  (84,231 in both open censuses).
+- w1821: the w1790 critic's s2 ("at 1280x800 the Station Grid covers the Station strip's Hide button") was filed as a
+  size problem. The still came from a tour leg that had dragged the Station Grid window onto the strip. Nothing
+  covered the button where the windows open in the Assembler census. The real size problem was another screen:
+  with a Cargo Hold selected at 1280x800, the Player Inventory hid the whole strip. That census had no strip
+  element at all: a piece `HideWhileCovered` hides is not drawn, so it is absent rather than overlapped.
+
+### How to apply
+
+- Pack the critic from one tour run per build (`ui_look.py pack` with the same `<leg>` stills on both sides).
+- Answer a "moved" finding with both builds' rects from the open census of that leg.
+- Before you fix or file a "covers" or "missing" finding, name its leg and state. Then check every open census at
+  every size: does the element's rect meet any window's rect? Is the element in the census at all? An element
+  missing where it should show is a finding of its own.

@@ -218,6 +218,30 @@ brief's own words; `pr_evidence.py --brief`. The places Ben fixed himself are in
 hover card (right edge at 358 of 1280 px) at 1280x800 docked, and passes 1920x1080 and 1280x800 undocked. The fix itself is
 w895's.
 
+### A pinned panel that only got shorter was resized, not moved (w1824, 2026-10-22)
+
+**Rule.** A pinned element whose `Moved:` line shows only a height change, left and right edges within 1 px and the
+edge its pin holds (the bottom, over the abilities or the minimap) within 5 px, is resized in place. The requester's
+words from the brief that approved the change cover it without naming it; `pr_evidence.py` (`resized_in_place`) checks
+the line's own was/now rects. A shift, a new width or a bottom edge that left its anchor still needs their words naming
+the panel, and `ui_layout.py pins` still checks every pin.
+
+**Why.** The pins are about where Ben put a panel, and every correction behind them was a panel taken somewhere else
+(the top-left cluster). On #2269 (w1814, the Japanese/Korean/Chinese font fix) Ben answered the card "may windows get 3–8
+px shorter in ja/ko/zh/ru" with "Fix it at the fonts; a few pixels shorter in those languages is fine." The hover card and
+Station Info came out 5 to 8 px shorter in those languages, bottom edges and widths kept, pins 0 broken. ff-agents
+1.30.10 failed all 20 of their `Moved:` lines because the quote named neither panel, and the worker had to put the same
+question to Ben again; Ben does not want questions he has already answered asked again. The other reading, a quote that
+names a scope ("windows ... in those languages") covering every panel in it, was not taken: a script cannot tell a scope
+from a vague phrase, and "put the panels in a tidy cluster at the top left" is exactly the kind of words that moved
+Station Info before.
+
+**How to apply.** Paste `ui_layout.py moves` lines as printed (the gate reads their `(was x,y wxh, now x,y wxh)`) and mark
+them with the requester's words that approved the change. A resize that also moves the anchored edge more than 5 px is a
+move: ask, naming the panel, or put it back. MEASURED: #2269's Moved block passes, and a shift, a wider panel, a panel
+taken up the screen and one shrunk 40 px about its middle still fail (`tests/test_pr_evidence.py`, `MovedTest`,
+`tests/fixtures/pr-2269-cjk-fonts-moved.txt`).
+
 These checks gate the pull request only. The options and mocks offered before it follow the same rule, checked by
 `ui_layout.py options` before the round goes out: [Options and mocks move only what the person named](#options-and-mocks-move-only-what-the-person-named-w1429-2026-10-17)
 (w1429, the fifth correction).
