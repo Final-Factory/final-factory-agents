@@ -8,30 +8,34 @@ metadata:
 **Lessons from w1438 (2026-10-17, two workers on BEAST, worker a9560f02 option A and 40edc8fc option B).**
 
 1. **One queue per machine, taken per leg, given back between legs** (w1615, 2026-10-20; the w1438 `mkdir` lock with
-   its 40-minute and one-hour stale rules is gone). `source scripts/bench/quiet_gate.sh`, then `bench_lock "<what>"`,
+   its 40-minute and one-hour stale rules is gone). `source scripts/bench/quiet_gate.sh`, then `bench_lock --timing "<what>"`,
    `quiet`, the leg, `bench_unlock`; loop. The queue (`scripts/bench/bench_queue.py`, the game repo's
    `Documentation/Bench-Lock.md`) is first come, first served: a lock taken again joins the back, so a 20-leg A/B
    interleaves with other waiters, and no pause after a release is needed. Builds, batch compiles (`ff_unity_slot`,
    `unity-slot run`) and editor boots take shared tickets, which never run beside a leg. A ticket dies with its
-   process, even under SIGKILL, so nobody takes over a live holder and nobody needs a keep-alive. A hold over 60 minutes
-   is revoked, and `bench_unlock` then returns 2 with `Count this leg void`. `bench_status` (or
+   process, even under SIGKILL, so nobody takes over a live holder and nobody needs a keep-alive. **Turn limits** (w1832,
+   enforced by the queue): while another worker waits, an exclusive turn ends at 30 minutes and a shared group an hour
+   after its newest start; a 5-minute warning always comes first (the command output, and a message from FF Factory
+   with your unpushed work: commit and push then). At the deadline the script and its players are stopped and
+   `bench_unlock` returns 2 with `Count this leg void`; ask again and you go to the back. Nobody waiting, nothing ends. `bench_status` (or
    `python scripts/bench/bench_queue.py status`) prints the holder and the queue in one line.
    **No waiting under the lock**: take a Unity slot before `bench_lock` (`ff_unity_slot --bench exclusive -- ...` does
    both, in that order), never inside it. Under the lock a slot or lab-lock wait is cut off at 2 minutes, and `quiet`
-   gives the lock back after 15 minutes. Do a digest or a build after `bench_unlock`. Stopping a holding script frees
+   gives the lock back after 5 minutes. Do a digest or a build after `bench_unlock`. Stopping a holding script frees
    its turn for the next in line, not for whoever polls first.
-   **Exclusive only for timed numbers, and as briefly as the question allows** (w1628, lothsahn: "A benchmark with 90%
+   **Exclusive only for exact timings or the whole machine** (w1832, lothsahn: "request an exclusive lock if and only if
+   they need the machine or exact timings. Otherwise they should use a shared lock": `--timing`, `--machine`, else
+   `--shared`), **and as briefly as the question allows** (w1628, lothsahn: "A benchmark with 90%
    fidelity that runs twice as fast as better one is likely the right choice"). Never wrap a build in `bench_lock`:
    `build_player.sh` and `ff_unity_slot` queue a shared ticket themselves. Untimed heavy work (a determinism pair, a
    repro, a census) takes `bench_lock --shared`. The probe scripts quit 5 s after their sample (`DWELL`; before
    w1628 every leg idled `SETTLE + 2 x SAMPLE + 15` s under the lock) and stop at an even round once `ab_stop.py` calls
    the result clear past the noise. `bench_queue.py report` shows who held the lock and who waited. The evidence-gate's
    [bench checklist](../../evidence-gate/checklists/bench.md) is the pre-flight.
-   **Short plans, a decision on enough signal, one hour per hold** (w1628, lothsahn: "Get them all to shorten their
-   plans a lot", "if they have sufficient signal, just make a decision", "subdivide their work to not hold the exclusive
-   lock longer than 1 hour at a time"): plan the fewest rounds, stop and decide once the answer is past the noise (the
-   numbers and spread in the report), and give the lock back within the hour; past it `bench_unlock` warns and
-   `report` flags it. **The queue's order** (w1628): the worker's request priority first, then one timed leg and one
+   **Short plans, a decision on enough signal, legs that fit the turn** (w1628, lothsahn: "Get them all to shorten their
+   plans a lot", "if they have sufficient signal, just make a decision"): plan the fewest rounds, stop and decide once
+   the answer is past the noise (the numbers and spread in the report), and fit each leg well inside the 30-minute
+   turn; `report` flags a hold past it. **The queue's order** (w1628): the worker's request priority first, then one timed leg and one
    shared group in turn; a build joins the waiting group of builds or goes right after the next timed leg.
 2. **Your own editor counts as load.** Starting the sandbox editor, a force recompile or an editor test run while one of
    your (or anyone's) timed runs is in flight contaminated three of my runs (+3 ms each, measured: 84.0 against 87.0 ms
