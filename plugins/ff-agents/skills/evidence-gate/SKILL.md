@@ -267,6 +267,12 @@ look first and relay only with the critic's report (FF Factory `read_rules ui`).
   every one is worked, a cause or not: read the report yourself, reproduce it or show the faulty path, a test red on
   master and green with the fix, review FFBox's PR (merge it, or fix properly and close it with the reason), a
   per-frame or per-tick cost above 1% escalates with `PERF-ESCALATION`, NOT-A-BUG is checked and closed.
+- [Public copy](checklists/public-copy.md) (w1926): website pages, Steam store text, Discord and Reddit posts, emails,
+  press kits, text to paste. Cut any line that doesn't need to exist. Write the way the person talks: short, plain,
+  casual. No taglines or marketing words, no run of sentences or paragraphs all the same length, and no lines explaining
+  what the page is. Then a fresh critic reads only the copy and quotes every line that sounds machine-written. A clean
+  word lint isn't a pass. `copy_check.py` flags rhythm, repeated openings, explainers and stock phrases, and never passes anything
+  (w1825's Patch notes intro passed a word lint and Ben called it "LLM speak").
 - Ads and outreach live in the ff-marketing repo: `lessons/ads.md` and `lessons/outreach.md`,
   enforced by `scripts/ads/ffads lint`.
 
@@ -327,8 +333,10 @@ One file each under `lessons/`: the rule, why (the incident, dated), how to appl
   `$VAR/*` or `$VAR/{a,b}` (or a critical path) asks (measured, w1097). A new folder per run,
   multi-step logic in a script file in `$TMPDIR`, the game's settings and saves through
   `scripts/game_data.py`.
-- [Text for the person to paste is plain](lessons/paste-text-is-plain.md): no code block, no
-  formatting, their voice.
+- [Public copy sounds like the person](lessons/public-copy-sounds-like-the-person.md): short, plain, their voice,
+  every line earning its place, and a fresh critic before anyone sees it; a clean word lint passed w1825's "LLM speak"
+  (2026-10-02, w1825, w1926; [checklist](checklists/public-copy.md)). Text to paste goes in the chat as plain text, no
+  code block or formatting ([section](lessons/public-copy-sounds-like-the-person.md#text-for-the-person-to-paste-is-plain-2026-10-02)).
 - [Review media goes inline](lessons/visual-fixes-are-verified-by-looking.md#review-media-goes-inline-never-as-a-bare-path-w1384): every still and clip as `![name](<absolute path>)`,
   a folder as its files, never a bare path (w1384).
 - [Say what an id is, every time](lessons/say-what-an-id-is.md): w293, #972, a sha or a sandbox
