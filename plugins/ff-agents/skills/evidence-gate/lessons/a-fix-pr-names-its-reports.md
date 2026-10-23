@@ -71,3 +71,34 @@ them only as references. Lothsahn: "make it automatic going forward".
 - Nothing is posted to Discord about a report; FFBox only records it.
 
 The checklist lines: [merges](../checklists/merge.md).
+
+## Every bug thread has an owner (w1783, 2026-10-22)
+
+**Rule.** A bug sweep covers every thread in its window, not titles someone picked: list every #bug-reports and
+dev_bug_reports thread created or active in the window, open or archived, and give each one a row (the request or PR
+that owns it, a decision that it is not a bug, or the fix you start). And an owner's acknowledgement in a bug thread is a
+filed request: when Ben or Lothsahn answers a report as a real bug, in any words ("Will fix", "yeah that's a bug",
+"good catch", "oops", "on it", "I broke this"), that thread has a request of theirs, approved by that reply, with the
+thread as its subject. A request owns a thread by its subjects or source; a sweep's window or a brief that only
+mentions the thread does not.
+
+**Why.** Ben corrected the same miss twice on 2026-10-22. First: "I asked you to go through the bug reports and look at
+them and make sure you file a report for each of them or spawn a worker or whatever. Clearly you didn't do that" (the
+w1773 sweep was scoped from thread titles an orchestrator picked, so newer and older threads, the multiplayer invisible
+asteroid among them, had no request). Then: "when I respond to a Discord thread and say, we'll fix, that means you're
+fixing it" (the w1779 audit found two threads with his "Will fix" and no request), and "it doesn't have to literally
+say, will fix. Like, any indication that I'm acknowledging it as a bug is sufficient. Like, you're supposed to be
+intelligent."
+
+**How to apply.**
+
+- FF Factory now does both by itself (ff-factory `server/bugThreads.ts`, docs/intake.md "Every bug thread has an
+  owner"): a model judges every owner reply and files the owner's approved request, and an hourly coverage check files
+  each thread of the last seven days that no request, no PR `Discord:` line and no FFBox PR owns, for a reviewer. Its
+  journal lines (`portal_logs` grep "bug threads") list today's unowned threads: read them instead of sweeping by hand.
+- A sweep you are asked for still starts from the full thread list of its window, never from a list of titles, and
+  its report has one row per thread.
+- A judgement of "is this an acknowledgement" is a model's reading of the whole message, never a phrase list; a
+  question back to the reporter, "works as designed", "a feature request" and "already fixed in <build>" are not.
+- When you take a thread's work, make the thread a subject of your request (`request_work` / `update_work` `subjects`),
+  so the check and FFBox's ledger check see it as owned.

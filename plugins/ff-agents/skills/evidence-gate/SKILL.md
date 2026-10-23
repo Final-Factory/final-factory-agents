@@ -391,7 +391,10 @@ One file each under `lessons/`: the rule, why (the incident, dated), how to appl
   `Discord: <thread or message link>` line before it merges, and `RESOLVED: already fixed by PR #N`;
   FFBox tells the reporter from those only (w436 / #1076 went untold). And a `Report: <id>` line per
   player crash or desync report it fixes, or the id as a request subject; a brief's ids claim nothing,
-  and FFBox keeps the report open (w414 / #1064 left two Build 76 crash reports NEEDS-INFO).
+  and FFBox keeps the report open (w414 / #1064 left two Build 76 crash reports NEEDS-INFO). Every bug thread has an
+  owner ([section](lessons/a-fix-pr-names-its-reports.md#every-bug-thread-has-an-owner-w1783-2026-10-22), w1783): a
+  sweep covers every thread in its window, not titles someone picked, and an owner's acknowledgement in any words is a
+  filed request (FF Factory's coverage check and owner watch now do both).
 - [A crash inside a GPU driver is not "nothing to fix"](lessons/settle-your-own-guesses.md#a-crash-inside-a-gpu-driver-is-not-nothing-to-fix-until-four-checks-are-done-w956-2026-10-13): date the
   driver, read the CPU from the dump, measure the game step that fed it, look for a guard (w956).
 - [Listeners start from a stable path or bind loopback; a clip is checked for system dialogs](lessons/clean-up-after-yourself.md#a-listener-binds-127001-or-runs-from-a-stable-path-never-from-tmpdir-w1742):

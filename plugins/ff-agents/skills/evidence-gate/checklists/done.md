@@ -87,7 +87,12 @@ holds, or the report says what is left instead of DONE.
    <report> --done` checks both ([what is in a player's build is checked by running
    it](../lessons/whats-in-a-players-build-is-checked-by-running-it.md)). Ben, on #1760's tabs called done on master
    and then "in Build 111" from git: "so you're lying to me, or you didn't actually check".
-9. **Learned.** The report has `Learned: <file or PR>` or `Learned: nothing new`. A correction or a
+9. **Every bug thread.** A request to sweep, triage or cover bug reports has one row per #bug-reports and dev_bug_reports
+   thread created or active in its window, read from the full thread list (FF Factory's `bug threads: coverage` journal
+   lines, or the channels themselves), never from titles someone picked; and every thread where an owner acknowledged
+   the bug, in any words, has a request whose subject it is
+   ([every bug thread has an owner](../lessons/a-fix-pr-names-its-reports.md#every-bug-thread-has-an-owner-w1783-2026-10-22), w1783).
+10. **Learned.** The report has `Learned: <file or PR>` or `Learned: nothing new`. A correction or a
    reopen gets the check that would have caught it ([lessons belong in the harness
    repo](../lessons/lessons-belong-in-the-harness-repo.md)).
    A GitHub 403 or "Resource not accessible" you met on a person's or the portal's token, for a permission or repository
