@@ -7,6 +7,11 @@ metadata:
 
 **Lessons from w1438 (2026-10-17, two workers on BEAST, worker a9560f02 option A and 40edc8fc option B).**
 
+0. **Timing in the editor needs the ticket too** (w1923, evidence-gate `lessons/every-timing-holds-an-exclusive-ticket.md`):
+   a snippet that reads a clock (`unity-bridge.py eval_file ... --timed "<what>"`), MCP `execute_code` reads and a local
+   Performance test run inside `python scripts/bench/bench_queue.py timed --what "<what>"` (in the background, then
+   `timed --release`). Without one, `unity-bridge.py`, `unity_slot.py` and FF Factory's guard refuse it.
+
 1. **One queue per machine, taken per leg, given back between legs** (w1615, 2026-10-20; the w1438 `mkdir` lock with
    its 40-minute and one-hour stale rules is gone). `source scripts/bench/quiet_gate.sh`, then `bench_lock --timing "<what>"`,
    `quiet`, the leg, `bench_unlock`; loop. The queue (`scripts/bench/bench_queue.py`, the game repo's
