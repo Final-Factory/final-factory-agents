@@ -258,6 +258,21 @@ Eye: 12 stills looked at full size, 0 look broken or poor (proofs/shots.md)
         self.assertEqual(self.problems(body, self.ARROW_FILES), [])
         self.assertIn("not UI", "\n".join(pe.check(body, self.ARROW_FILES)[1]))
 
+    def test_1767_a_script_moved_into_ui_world_is_covered_by_not_ui(self):
+        """w1767 (#2292): CircuitWirePresenter.cs moved from UI/Circuits/ to UI/World/; the deleted old path failed."""
+        old, new = "Assets/Scripts/UI/Circuits/CircuitWirePresenter.cs", "Assets/Scripts/UI/World/CircuitWirePresenter.cs"
+        files = [old, old + ".meta", new, new + ".meta"]
+        moved = {old: ("D", 300), old + ".meta": ("D", 11), new: ("A", 570), new + ".meta": ("A", 11)}
+        body = self.with_not_ui()
+        self.assertEqual(pe.check(body, files, changes=moved)[0], [])
+        # Deleted with nothing of that name added under UI/World/, or only modified: still a UI change.
+        gone = {old: ("D", 300), new: ("A", 570), "Assets/Scripts/UI/Panels/Old.cs": ("D", 40)}
+        self.assertIn("'Not UI:' covers only scripts under UI/World/",
+                      "\n".join(pe.check(body, list(gone), changes=gone)[0]))
+        edited = {old: ("M", 3), new: ("A", 570)}
+        self.assertIn("'Not UI:' covers only scripts under UI/World/",
+                      "\n".join(pe.check(body, list(edited), changes=edited)[0]))
+
     def test_not_ui_does_not_cover_a_panel_a_prefab_a_short_reason_or_kind_ui(self):
         body = self.with_not_ui()
         panel = self.ARROW_FILES + ["Assets/Scripts/UI/Panels/StationInfoPanel.cs"]
