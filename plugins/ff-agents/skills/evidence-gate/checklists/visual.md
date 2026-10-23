@@ -139,7 +139,8 @@ in the built player (drive-game, "The mouse cursor in a built player"; w980).
    its end state ("stretches into", "is swallowed", "is pulled into", "dissolves", "stays lit as itself", "one smooth
    animation") names, on the `Close-ups:` line, a sheet of **every frame** (every 2nd at 50 fps or more) of the whole
    transition, cropped on the object, from the frame before it starts to its stated end state:
-   `transition_strip.py <clip> --from <s> --to <s> --crop W:H:X:Y --claim <name>` writes it and frames the pop
+   `uv run transition_strip.py <clip> --from <s> --to <s> --crop W:H:X:Y --claim <name>` (uv installs its numpy and
+   Pillow; plain python3 has neither on the Macs) writes it and frames the pop
    candidates in red. In each frame the object's own model is still on screen, a little further along, until the end
    state; one frame where it is gone or replaced early is a pop and the claim is false. A sheet every 0.2 or 0.5 s, a
    still or a 0.25x clip is not this proof: at 60 fps a 0.5 s step shows 1 frame in 30, and a vanish takes about 6. A

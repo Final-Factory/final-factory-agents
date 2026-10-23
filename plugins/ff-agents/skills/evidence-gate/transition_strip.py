@@ -1,4 +1,8 @@
 #!/usr/bin/env python3
+# /// script
+# requires-python = ">=3.10"
+# dependencies = ["numpy", "pillow"]
+# ///
 """Every frame of a visual transition on one contact sheet, cropped on the object, with its pops marked (w1686).
 
 A transition claim ("the Guardian stretches into the hole", "a swallowed ship stays lit as itself", "dissolves into")
@@ -8,7 +12,7 @@ the Singularity Lance, round 4 (2026-10-20): the second opinion said "the Guardi
 0.2 s cleared it; Ben, 2026-10-21: "the guardian especially doesn't really smoothly transition to the spaghetti state it
 just kind of disappears".
 
-    python3 transition_strip.py CLIP --from 3.4 --to 6.2 --crop 480:480:900:300 --claim guardian-swallow \
+    uv run transition_strip.py CLIP --from 3.4 --to 6.2 --crop 480:480:900:300 --claim guardian-swallow \
         --object "the Guardian" [--every 1] [--out DIR]
 
 Writes <out>/<claim>-strip-<from>-<to>s-every<N>f.png (each frame stamped with its time and frame number, the pop
@@ -16,7 +20,8 @@ candidates framed in red) and a .json beside it, and prints the 'Close-ups:' ent
 critic. A pop candidate is a frame whose change from the one before, inside the crop, is over --pop times the median
 step of the window (and over 2/255): a model that disappears or swaps in one frame. It points your eye; it does not
 judge (an effect that strikes on purpose, a crackle, also spikes). Every frame is still looked at, by you and the critic.
-Needs ffmpeg, numpy and Pillow (as watch_video.py does). The rule: lessons/visual-fixes-are-verified-by-looking.md,
+Needs ffmpeg; `uv run` installs numpy and Pillow from the header above (the Macs' python3 has neither, so plain
+`python3 transition_strip.py` stops on ModuleNotFoundError: w1470, 2026-10-22). The rule: lessons/visual-fixes-are-verified-by-looking.md,
 "A transition is stepped every frame on the object", checklists/visual.md 5h.
 """
 import argparse
