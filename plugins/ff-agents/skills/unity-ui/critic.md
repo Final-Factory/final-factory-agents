@@ -57,7 +57,8 @@ brief's reasoning or the worker's notes, given only what a person would see.
 3. **Its report** is `<tmp>/pack-1/critic.md`. Publish it with the stills. Per still it gives:
    - what it sees first;
    - a verdict, BROKEN, UGLY or OK;
-   - the eight rubric answers, each with where;
+   - the nine rubric answers, each with where (item 9: the window against a named reference window: corner radii,
+     header, edge padding);
    - a side-by-side look at the reference panels and the before still, item by item;
    - the flaws, BROKEN and UGLY first, each with a fix direction.
 

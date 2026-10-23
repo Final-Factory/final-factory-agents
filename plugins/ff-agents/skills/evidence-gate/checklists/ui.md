@@ -11,7 +11,8 @@ mistakes constantly", after three screens their workers and their orchestrator h
    stronger here than in a mock (linear blending, measured), so give controls opaque fills and show state on an edge or
    a number.
 2. Grade every still yourself with the unity-ui `design-rubric.md`: the `Eye:` line (item 27).
-3. Measure every after still against its before: `ui_look.py colour` and `ui_layout.py shape` (items 28 and 31).
+3. Measure every after still against its before: `ui_look.py colour` and `ui_layout.py shape` (items 28 and 31), and
+   against a reference window of the game's: `ui_look.py family` (corners, header, padding; item 33).
 4. A fresh `ff-agents:ui-critic` on the pack `ui_look.py pack` builds, never you; fix or answer each broken or ugly
    finding, then a new critic (item 30).
 
@@ -285,7 +286,7 @@ control, and a redesign goes out as 2 or 3 clearly different options built from 
 ([lesson](../lessons/verify-ui-with-full-content-like-a-player.md#judge-every-still-by-eye-before-the-person-sees-it-w1386-w1296-2026-10-16)).
 
 27. **Eye check, per still, apart from every comparison (w1386, w1296).** Open each still at full size, grade it with the
-    unity-ui `design-rubric.md` (eight questions, each PASS or FAIL with where) and write one line: is anything stretched or squashed out of its shape, is a window mostly empty or crammed into one corner, do
+    unity-ui `design-rubric.md` (nine questions, each PASS or FAIL with where) and write one line: is anything stretched or squashed out of its shape, is a window mostly empty or crammed into one corner, do
     labels run into each other or the title, is a dialog a dense block of text with no hierarchy, would a player call
     any of it broken or ugly? "Same both sides" answers another question: w1386's docked On/Off switch was a 485x23 bar
     on both sides and passed. A still that looks broken or poor is fixed before it goes to anyone; one standing on
@@ -360,6 +361,32 @@ control, and a redesign goes out as 2 or 3 clearly different options built from 
     - The fresh critic gets master's still as each option's `--before`; it fails every option with an unnamed move
       (`Unnamed moves:` in its report, item 30).
     - The report that offers the options pastes the `Options:` line. An orchestrator relaying the round checks it first.
+
+33. **The window matches the game's other windows: corners, header, padding (w1818). Measured, then looked at side by
+    side.** A panel judged on its own passed twice with defects a player sees only beside another window. w1296's
+    mods-per-save dialog (#1744): "the header for Content removed from this save looks bad since it's on too lines. The
+    header should say something shorter that fits on one line so its not pushing up against the top of the panel".
+    w1761's Calculations window, after a fresh critic "found nothing broken or ugly": "i dont like the differing
+    border-radius values all smashed together. theres a circle around each letter, which is right next to the rounded
+    border of the item, and the add calculation button has another separate radius. this needs to look cleaner and more
+    unified, also the header font seems smaller than other headers. the UI needs to be consistent and clean", and "make
+    the bottom padding a few more pixels too it feels crammed". Before any person sees the stills:
+    - **A reference window, always.** Take a still and census of a window nobody asked to change (`docs/UI-Style.md`:
+      Player Fleet, Select Recipe, Blueprints) at the same size and UI scale, or open one beside the new window. The
+      critic's pack carries it (`ui_look.py pack` refuses to build without a reference), and every comparison names it.
+    - **`ui_look.py family <after.png>::<census>#<window> --ref <ref.png>::<census>#<window>`** (unity-ui) prints the
+      `Family:` line. MIXED CORNERS: more distinct corner radii than the reference uses (2 at least), or one no
+      reference uses, read off the pixels of each drawn shape (icons are not shapes). NESTED CORNERS: a circle, or a
+      shape rounder than its rounded parent, within 4 px (or the parent's radius) of the parent's edge. SMALL HEADER: the
+      header's font under 0.9x the reference title's. HEADER TWO LINES: it wraps. CRAMPED <EDGE>: content to the top or a
+      side under 0.75x the reference's and 3 px or more less; to the bottom, the same against the window's own sides. Paste the line in `## Evidence`; a finding is fixed, or passes only with the requester's words
+      asking for it (`intended (who): "..."`).
+    - **Left to the eye and the critic** (rubric item 9): whether the corners read as one family when the tool cannot
+      read a corner (a shape too close in colour to what is behind it), the header's weight and style, and how the room
+      feels. Say which you looked at.
+    - One corner radius for the window's rows, buttons and fields; a shape inside a rounded one takes the parent's radius
+      less the gap, or gets room around it; the header at the other windows' title size and weight, on one line, with
+      the same room above; the same padding at each edge as the reference, nothing against the top or the bottom.
 
 19. **The Deck tour is a stand-in (w770).** It forces its own window size and a scripted Deck, so it cannot show Steam's
     layout choice, the Proton first-frame resolution, the Steam client version or touch. A Deck UI change says "verified on

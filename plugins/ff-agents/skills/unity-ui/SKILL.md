@@ -280,7 +280,7 @@ still or a mock goes to anyone:
    **UI alpha blends in linear space here** (measured, w1399): a see-through colour draws much stronger than in an sRGB
    mock, so give controls opaque fills, show a selected row's state on an edge or its number, and read colours off the
    built pixels.
-2. **Grade every still yourself** with [design-rubric.md](design-rubric.md), eight PASS/FAIL questions with where. That is
+2. **Grade every still yourself** with [design-rubric.md](design-rubric.md), nine PASS/FAIL questions with where. That is
    the `Eye:` line.
 3. **Measure the colour against the before:**
 
@@ -300,6 +300,19 @@ still or a mock goes to anyone:
    popup's card (w1334: eleven stop-row texts under the Add stop menu at 1.1:1, none of them drawn), and `pr_evidence.py`
    then fails the `Colour:` line. Check that still outside the popup's own rect, four `--rect` bands around it taken from
    the census (above, below, left, right), check the popup's own labels in the whole-still run, and say both in the line.
+3b. **Measure it against the game's other windows** (w1818; Ben on w1761: "the UI needs to be consistent and clean"):
+
+   ```sh
+   python "<this skill's base directory>/ui_look.py" family after-1920.png::after-1920-layout.json#CalculationView \
+       --ref fleet-1920.png::fleet-1920-layout.json#FleetInfoPanel
+   ```
+
+   It prints the `Family:` line: MIXED CORNERS (more distinct corner radii than the reference, read off the pixels),
+   NESTED CORNERS (a rounded shape tight inside one of another radius), SMALL HEADER and HEADER TWO LINES (the census's
+   font size and line count against the reference's title), CRAMPED TOP/BOTTOM/LEFT/RIGHT (content to edge, under 0.75x
+   the reference and 3 px or more less). The reference is a window nobody asked to change (`docs/UI-Style.md`), taken
+   with its census at the same size; with no `--ref` it is the other windows open in the same still. The weight and
+   style of the header, and whether the corners look unified, stay with the eye and the critic.
 4. **A fresh critic, never you.** [critic.md](critic.md) is the recipe:
 
    ```sh
@@ -310,7 +323,7 @@ still or a mock goes to anyone:
    Then run `Agent` with `subagent_type: "ff-agents:ui-critic"` and the line the pack prints. Fix or answer every broken or
    ugly finding, then run a new critic on a new pack. Publish its `critic.md` with the stills and paste its `Critic:` line.
 
-The evidence-gate's design gate (checklist `ui.md`, at its top, items 27, 28, 30, 31) is the rule; `pr_evidence.py` checks
+The evidence-gate's design gate (checklist `ui.md`, at its top, items 27, 28, 30, 31, 33) is the rule; `pr_evidence.py` checks
 the four lines.
 
 ## 5b. Check the rest of the screen, before and after

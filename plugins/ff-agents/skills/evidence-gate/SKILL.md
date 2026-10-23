@@ -95,7 +95,8 @@ with an unnamed move (item 32).
 Ben, 2026-10-16: "you make bad UI mistakes constantly". The gate, at the top of the [UI checklist](checklists/ui.md):
 1. Build from the game's own components and colours (the game repo's `docs/UI-Style.md`).
 2. Grade every still yourself with the unity-ui `design-rubric.md` (`Eye:`).
-3. Measure it against the before with `ui_look.py colour` and `ui_layout.py shape` (`Colour:`, `Shape:`).
+3. Measure it against the before with `ui_look.py colour` and `ui_layout.py shape` (`Colour:`, `Shape:`), and against a
+   reference window of the game's with `ui_look.py family` (`Family:`: corners, header, padding; item 33).
 4. Have a **fresh** `ff-agents:ui-critic` grade the pack `ui_look.py pack` builds (`Critic:`), and fix or answer each
    broken or ugly finding. A STANDING one is fixed or filed with its wNNN, never "handed on", and a coverage gap the
    critic names that is the person's own case gets its stills
@@ -105,7 +106,7 @@ Ben, 2026-10-16: "you make bad UI mistakes constantly". The gate, at the top of 
 
 "Same both sides", a clean census and "Looked: yes" are not that answer. A redesign goes out as 2-3 clearly different
 options built from the game's best existing dialogs (Ben, w1296: "reuse components when you can damnit"). Orchestrators
-look first and relay only with the critic's report (FF Factory `read_rules ui`). Items 27-31;
+look first and relay only with the critic's report (FF Factory `read_rules ui`). Items 27-31 and 33;
 [lesson](lessons/verify-ui-with-full-content-like-a-player.md#a-fresh-critic-not-the-author-judges-the-design-w1399-2026-10-16).
 
 ## Reports and briefs
@@ -362,7 +363,11 @@ One file each under `lessons/`: the rule, why (the incident, dated), how to appl
   do better", "reuse components when you can damnit"; checklist ui.md 27-29). And a fresh critic, never the author, grades
   every still from a pack of crops, reference panels and the person's words before a person sees it, with `ui_look.py
   colour` clean against the before (w1399: three rejected screens all said "Looked: yes"; round 2's see-through chips drawn
-  delta E 13.6 off their twins in a plain row; UI alpha blends in linear space here; checklist ui.md 30-31).
+  delta E 13.6 off their twins in a plain row; UI alpha blends in linear space here; checklist ui.md 30-31). And the
+  window is measured and judged beside a reference window of the game's: one family of corner radii, the header at the
+  other titles' size on one line, the same edge padding (`ui_look.py family`; w1761, Ben after a fresh critic passed it:
+  "i dont like the differing border-radius values all smashed together"; checklist ui.md 33;
+  [lesson](lessons/verify-ui-with-full-content-like-a-player.md#a-window-is-judged-beside-the-games-other-windows-corners-header-padding-w1818-2026-10-23)).
 - [Verify UI with full content, like a player](lessons/verify-ui-with-full-content-like-a-player.md):
   every screen and sub-view in a late-game save, whole, on the classic look, still in a real-rate
   clip, each still checked against the requester's words (w718: the w644 hub, #1251, passed a tour

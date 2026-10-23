@@ -275,6 +275,66 @@ while". So the stills came back for a third round. The fix was 20 lines of CSS. 
   stills.** For example: many items, long text, the busy day the request is about. Then have a new critic judge it. A
   missing still of the requester's scenario is a gap in the proof, not a minor finding.
 
+## A window is judged beside the game's other windows: corners, header, padding (w1818, 2026-10-23)
+
+**Rule.** A new or changed window is compared with one of the game's existing windows, at the same size, on three things a
+player sees only side by side: the corner radii are one family, with no rounded shape tight inside one of another radius;
+the header has the size and weight of the other windows' titles and fits on one line; the padding at each edge matches,
+with nothing against the top or the bottom. `ui_look.py family` measures what it can, and the critic always gets a
+reference window and answers rubric item 9 against it.
+
+### Why: two corrections from Ben, the second after a fresh critic passed the window
+
+- w1296, the mods-per-save dialog (game PR #1744, 2026-10-15). The worker's own stills showed it and nobody flagged it:
+  "the header for Content removed from this save looks bad since it's on too lines. The header should say something
+  shorter that fits on one line so its not pushing up against the top of the panel".
+- w1761, the circuit Calculations window (2026-10-22). A fresh critic "found nothing broken or ugly". Ben: "i dont like
+  the differing border-radius values all smashed together. theres a circle around each letter, which is right next to
+  the rounded border of the item, and the add calculation button has another separate radius. this needs to look
+  cleaner and more unified, also the header font seems smaller than other headers. the UI needs to be consistent and
+  clean", and "make the bottom padding a few more pixels too it feels crammed".
+
+The rubric judged each window on its own (hierarchy, colour, state, shape, space, grouping, legibility, "like the same
+game"), and the critic's side-by-side look asked only "does it look as finished": nothing named radii, header size or
+edge padding, so a model looking at one window found nothing. Each of these defects is relative. A 19 pt title or a 4 px
+bottom gap is only wrong beside a 24 pt title and a 14 px gap.
+
+### How to apply
+
+- Take a reference window's still and census at the same size and UI scale (`docs/UI-Style.md` lists the panels nobody
+  asked to change), or open one beside the new window. `ui_look.py pack` refuses to build without a reference.
+- Run `ui_look.py family <after>::<census>#<window> --ref <ref>::<census>#<window>` and paste its `Family:` line
+  (checklist `ui.md` item 33). What it measures:
+  - corner radii, fitted to the pixels of each drawn shape's corners, within 1 px on synthetic shapes of radius 0 to 14;
+  - the nesting of one rounded shape inside another;
+  - the header's font size and line count, from the census;
+  - each edge's gap from the content (texts, controls and drawn images) to the window's box, from the census.
+- What it leaves to the eye: a corner too close in colour to what is behind it to read, the header's weight and style,
+  and how the room feels.
+- Thresholds, measured on w1761's round-6 built player (build 610661760e, after Ben's notes; 10 Calculations stills at
+  1920x1080 and 10 at 1280x800, against the Station Core and Station Grid windows from the same build):
+  - Corner radii: a shape's radius is the lower median of its readable corners, read from the drawn edge. Round 6's
+    window frame, rows, letter tiles, buttons and fields read 2.2 to 5 px (the code draws them all at 5 units, scale
+    0.9), the Station Core window 3.3 to 6, the Station Grid window 2.75 to 5.5. Two fixes came from this run: the rows'
+    sprite draws 1-3 px inside its census rect (read as 6.5-7.9 px before the snap), and two row corners over the
+    nebula read 11-12 px (the median took them; the lower median does not). Icons are not shapes: the Station Grid
+    window's power icons read as 8-10 px corners.
+  - MIXED CORNERS: more radii than the most a reference uses (2 at least), or a radius none of them uses (within
+    1.5 px or 20 %). Round 6: 1 or 2 radii in every still, all within the references'.
+  - NESTED CORNERS: a circle, or a shape rounder than its parent by over 2.5 px (or 35 %), within 4 px (or the
+    parent's radius) of the parent's edge. The game nests the same radius a few px in (round 6's 4 px tiles 7 px
+    inside 4.5 px rows, the Station Grid window's tabs): the first rule, "about the parent's radius less the gap",
+    flagged those, so only a rounder inner shape counts, which is what Ben named.
+  - SMALL HEADER: under 0.9x the reference title's font. Round 6 18 pt and the Station Core window 18 pass; round 3's
+    15 pt (the connector window's type, w1761 commit 9d54a3c116) is 0.83x and is flagged; the Station Grid window's
+    16 pt is 0.89x and would be.
+  - CRAMPED: the top and sides under 0.75x the references' lower median and 3 px or more less; the bottom the same
+    against the window's own side padding. Every window measured has 11.7 px over its title and 14.4 at its sides
+    at 1920x1080; their bottoms are 7.2 (Station Grid, its columns) and 19.2 (Station Core, its slot grid), so a
+    reference sets no bottom. Round 6's bottom 12.6 passes; round 3's 7.2 (8 units, commit 9dc22a2517) is flagged.
+  - Real-data fixture: `test_w1761s_round_6_window_matches_the_station_core_window` (unity-ui tests): round 6 gives 0
+    findings, and the same window with round 3's title and bottom gives SMALL HEADER and CRAMPED BOTTOM.
+
 ## A critic's finding names its still's state before it is fixed or filed: open or dragged, same steps both sides (w1790, w1821, 2026-10-23)
 
 **Rule:** give the critic before and after stills made by the same steps on both builds (the same tour, the same

@@ -1,0 +1,1317 @@
+{
+"screen": [
+1920.0,
+1080.0
+],
+"source": "7y8r148r8fn6-w1761-r6-calculations-circuit-1920x1080/s7-four-lines.png cropped at 916,438",
+"elements": [
+{
+"path": "InGameScene/UI Canvas/GamePanels/CalculationEntityPanel/MainPanel/CalculationView/ListPage/Calculations/Viewport/Content/LineD/Texts/Formula",
+"kind": "TextMeshProUGUI",
+"rect": [
+71.0,
+284.7,
+308.6,
+304.5
+],
+"visible": [
+71.0,
+284.7,
+308.6,
+304.5
+],
+"color": "#FFFFFFFF",
+"alpha": 1.0,
+"sprite": "",
+"raycast": false,
+"selectable": false,
+"maskOnly": false,
+"canvasOrder": -10,
+"depth": 360,
+"text": "C  \u00c3\u00b7  0",
+"textRect": [
+71.0,
+286.0,
+111.4,
+303.2
+],
+"lines": 1,
+"fontSize": 15.0
+},
+{
+"path": "InGameScene/UI Canvas/GamePanels/CalculationEntityPanel/MainPanel/CalculationView/ListPage/Calculations/Viewport/Content/LineB/RemoveButton(Clone)/IconParent/Icon",
+"kind": "Image",
+"rect": [
+431.0,
+172.8,
+445.4,
+187.2
+],
+"visible": [
+431.0,
+172.8,
+445.4,
+187.2
+],
+"color": "#FFFFFFFF",
+"alpha": 1.0,
+"sprite": "Exit",
+"raycast": true,
+"selectable": false,
+"maskOnly": false,
+"canvasOrder": -10,
+"depth": 349,
+"spriteSize": [
+128.0,
+128.0
+],
+"spriteBorder": [
+0.0,
+0.0,
+0.0,
+0.0
+],
+"imageType": "Simple",
+"preserveAspect": false
+},
+{
+"path": "InGameScene/UI Canvas/GamePanels/CalculationEntityPanel/MainPanel/CalculationView/ListPage/Calculations/Viewport/Content/LineD/Texts/Status",
+"kind": "TextMeshProUGUI",
+"rect": [
+71.0,
+304.5,
+308.6,
+319.5
+],
+"visible": [
+71.0,
+304.5,
+308.6,
+319.5
+],
+"color": "#FFA31EFF",
+"alpha": 1.0,
+"sprite": "",
+"raycast": false,
+"selectable": false,
+"maskOnly": false,
+"canvasOrder": -10,
+"depth": 361,
+"text": "Divided by 0: the result is 0",
+"textRect": [
+71.0,
+304.5,
+230.1,
+319.5
+],
+"lines": 1,
+"fontSize": 13.0
+},
+{
+"path": "InGameScene/UI Canvas/GamePanels/CalculationEntityPanel/MainPanel/CalculationView/ListPage/Calculations/Viewport/Content/LineC/Value",
+"kind": "TextMeshProUGUI",
+"rect": [
+336.6,
+228.5,
+416.6,
+253.7
+],
+"visible": [
+336.6,
+228.5,
+416.6,
+253.7
+],
+"color": "#FFFFFFFF",
+"alpha": 1.0,
+"sprite": "",
+"raycast": false,
+"selectable": false,
+"maskOnly": false,
+"canvasOrder": -10,
+"depth": 354,
+"text": "112",
+"textRect": [
+389.8,
+229.5,
+417.9,
+252.6
+],
+"lines": 1,
+"fontSize": 20.0
+},
+{
+"path": "InGameScene/UI Canvas/GamePanels/CalculationEntityPanel/MainPanel/CalculationView/ListPage/Calculations/Viewport/Content/LineB/Value",
+"kind": "TextMeshProUGUI",
+"rect": [
+317.6,
+167.4,
+416.6,
+192.6
+],
+"visible": [
+317.6,
+167.4,
+416.6,
+192.6
+],
+"color": "#FFFFFFFF",
+"alpha": 1.0,
+"sprite": "",
+"raycast": false,
+"selectable": false,
+"maskOnly": false,
+"canvasOrder": -10,
+"depth": 347,
+"text": "1",
+"textRect": [
+409.7,
+168.5,
+417.9,
+191.6
+],
+"lines": 1,
+"fontSize": 20.0
+},
+{
+"path": "InGameScene/UI Canvas/GamePanels/CalculationEntityPanel/MainPanel/HeaderContent",
+"kind": "HeaderHitArea",
+"rect": [
+15.2,
+7.8,
+465.2,
+54.6
+],
+"visible": [
+15.2,
+7.8,
+465.2,
+54.6
+],
+"color": "#FFFFFFFF",
+"alpha": 1.0,
+"sprite": "",
+"raycast": true,
+"selectable": false,
+"maskOnly": false,
+"canvasOrder": -10,
+"depth": 329
+},
+{
+"path": "InGameScene/UI Canvas/GamePanels/CalculationEntityPanel/MainPanel/CalculationView/ListPage/Calculations/Viewport/Content/LineD/Value",
+"kind": "TextMeshProUGUI",
+"rect": [
+317.6,
+289.5,
+416.6,
+314.7
+],
+"visible": [
+317.6,
+289.5,
+416.6,
+314.7
+],
+"color": "#FFFFFFFF",
+"alpha": 1.0,
+"sprite": "",
+"raycast": false,
+"selectable": false,
+"maskOnly": false,
+"canvasOrder": -10,
+"depth": 362,
+"text": "0",
+"textRect": [
+404.2,
+290.6,
+417.9,
+313.6
+],
+"lines": 1,
+"fontSize": 20.0
+},
+{
+"path": "InGameScene/UI Canvas/GamePanels/CalculationEntityPanel/MainPanel/CalculationView/ListPage/Calculations/Viewport/Content/LineB/Letter",
+"kind": "Image",
+"rect": [
+29.6,
+163.8,
+62.0,
+196.2
+],
+"visible": [
+29.6,
+163.8,
+62.0,
+196.2
+],
+"color": "#8E58B8FF",
+"alpha": 1.0,
+"sprite": "white-backdrop",
+"raycast": true,
+"selectable": false,
+"maskOnly": false,
+"canvasOrder": -10,
+"depth": 344,
+"spriteSize": [
+512.0,
+512.0
+],
+"spriteBorder": [
+20.0,
+20.0,
+20.0,
+20.0
+],
+"imageType": "Sliced",
+"preserveAspect": false
+},
+{
+"path": "InGameScene/UI Canvas/GamePanels/CalculationEntityPanel/MainPanel/CalculationView/ListPage/AddRow/ActionButton",
+"kind": "Image",
+"rect": [
+22.4,
+332.7,
+220.4,
+361.5
+],
+"visible": [
+22.4,
+332.7,
+220.4,
+361.5
+],
+"color": "#FFFFFFFF",
+"alpha": 1.0,
+"sprite": "white-backdrop",
+"raycast": true,
+"selectable": true,
+"maskOnly": false,
+"canvasOrder": -10,
+"depth": 366,
+"spriteSize": [
+512.0,
+512.0
+],
+"spriteBorder": [
+20.0,
+20.0,
+20.0,
+20.0
+],
+"imageType": "Sliced",
+"preserveAspect": true
+},
+{
+"path": "InGameScene/UI Canvas/GamePanels/CalculationEntityPanel/MainPanel/CalculationView/ListPage/Calculations/Viewport/Content/LineB/Texts/Formula",
+"kind": "TextMeshProUGUI",
+"rect": [
+71.0,
+170.1,
+308.6,
+189.9
+],
+"visible": [
+71.0,
+170.1,
+308.6,
+189.9
+],
+"color": "#FFFFFFFF",
+"alpha": 1.0,
+"sprite": "",
+"raycast": false,
+"selectable": false,
+"maskOnly": false,
+"canvasOrder": -10,
+"depth": 346,
+"text": "A  %  40",
+"textRect": [
+71.0,
+171.4,
+122.1,
+188.7
+],
+"lines": 1,
+"fontSize": 15.0
+},
+{
+"path": "InGameScene/UI Canvas/GamePanels/CalculationEntityPanel/MainPanel/CalculationView/ListPage/Calculations/Viewport/Content/LineC/Letter/Text",
+"kind": "TextMeshProUGUI",
+"rect": [
+29.6,
+224.9,
+62.0,
+257.3
+],
+"visible": [
+29.6,
+224.9,
+62.0,
+257.3
+],
+"color": "#FFFFFFFF",
+"alpha": 1.0,
+"sprite": "",
+"raycast": false,
+"selectable": false,
+"maskOnly": false,
+"canvasOrder": -10,
+"depth": 352,
+"text": "C",
+"textRect": [
+39.2,
+229.5,
+53.7,
+252.6
+],
+"lines": 1,
+"fontSize": 20.0
+},
+{
+"path": "InGameScene/UI Canvas/GamePanels/CalculationEntityPanel/MainPanel/CalculationView/ListPage/Calculations/Viewport/Content/LineB/RemoveButton(Clone)",
+"kind": "Image",
+"rect": [
+425.6,
+167.4,
+450.8,
+192.6
+],
+"visible": [
+425.6,
+167.4,
+450.8,
+192.6
+],
+"color": "#FFFFFFFF",
+"alpha": 1.0,
+"sprite": "white-backdrop",
+"raycast": true,
+"selectable": true,
+"maskOnly": false,
+"canvasOrder": -10,
+"depth": 348,
+"spriteSize": [
+512.0,
+512.0
+],
+"spriteBorder": [
+20.0,
+20.0,
+20.0,
+20.0
+],
+"imageType": "Sliced",
+"preserveAspect": true
+},
+{
+"path": "InGameScene/UI Canvas/GamePanels/CalculationEntityPanel/MainPanel/CalculationView/ListPage/AddRow/ActionButton/IconParent/Icon",
+"kind": "Image",
+"rect": [
+59.4,
+341.7,
+70.2,
+352.5
+],
+"visible": [
+59.4,
+341.7,
+70.2,
+352.5
+],
+"color": "#FFFFFFFF",
+"alpha": 1.0,
+"sprite": "connection",
+"raycast": true,
+"selectable": false,
+"maskOnly": false,
+"canvasOrder": -10,
+"depth": 367,
+"spriteSize": [
+48.0,
+48.0
+],
+"spriteBorder": [
+0.0,
+0.0,
+0.0,
+0.0
+],
+"imageType": "Simple",
+"preserveAspect": false
+},
+{
+"path": "InGameScene/UI Canvas/GamePanels/CalculationEntityPanel/MainPanel/CalculationView/ListPage/Calculations/Viewport/Content/LineA/RemoveButton(Clone)/IconParent/Icon",
+"kind": "Image",
+"rect": [
+431.0,
+118.8,
+445.4,
+133.2
+],
+"visible": [
+431.0,
+118.8,
+445.4,
+133.2
+],
+"color": "#FFFFFFFF",
+"alpha": 1.0,
+"sprite": "Exit",
+"raycast": true,
+"selectable": false,
+"maskOnly": false,
+"canvasOrder": -10,
+"depth": 342,
+"spriteSize": [
+128.0,
+128.0
+],
+"spriteBorder": [
+0.0,
+0.0,
+0.0,
+0.0
+],
+"imageType": "Simple",
+"preserveAspect": false
+},
+{
+"path": "InGameScene/UI Canvas/GamePanels/CalculationEntityPanel/MainPanel/CalculationView/ListPage/Calculations/Viewport/Content/LineC/Texts/Formula",
+"kind": "TextMeshProUGUI",
+"rect": [
+71.0,
+214.2,
+327.6,
+267.9
+],
+"visible": [
+71.0,
+214.2,
+327.6,
+267.9
+],
+"color": "#FFFFFFFF",
+"alpha": 1.0,
+"sprite": "",
+"raycast": false,
+"selectable": false,
+"maskOnly": false,
+"canvasOrder": -10,
+"depth": 353,
+"text": "Cargo Hold: Iron Ore in main inventory  ",
+"textRect": [
+71.0,
+214.2,
+311.9,
+267.9
+],
+"lines": 3,
+"fontSize": 15.0
+},
+{
+"path": "InGameScene/UI Canvas/GamePanels/CalculationEntityPanel/MainPanel/CalculationView/ListPage/Calculations/Viewport/Content/LineD/RemoveButton(Clone)/IconParent/Icon",
+"kind": "Image",
+"rect": [
+431.0,
+294.9,
+445.4,
+309.3
+],
+"visible": [
+431.0,
+294.9,
+445.4,
+309.3
+],
+"color": "#FFFFFFFF",
+"alpha": 1.0,
+"sprite": "Exit",
+"raycast": true,
+"selectable": false,
+"maskOnly": false,
+"canvasOrder": -10,
+"depth": 364,
+"spriteSize": [
+128.0,
+128.0
+],
+"spriteBorder": [
+0.0,
+0.0,
+0.0,
+0.0
+],
+"imageType": "Simple",
+"preserveAspect": false
+},
+{
+"path": "InGameScene/UI Canvas/GamePanels/CalculationEntityPanel/MainPanel/CalculationView/ListPage/Hint",
+"kind": "TextMeshProUGUI",
+"rect": [
+22.4,
+60.0,
+458.0,
+95.4
+],
+"visible": [
+22.4,
+60.0,
+458.0,
+95.4
+],
+"color": "#9FB6C8FF",
+"alpha": 1.0,
+"sprite": "",
+"raycast": false,
+"selectable": false,
+"maskOnly": false,
+"canvasOrder": -10,
+"depth": 333,
+"text": "Lines run 4 times a second, top to botto",
+"textRect": [
+22.4,
+60.0,
+434.0,
+95.4
+],
+"lines": 2,
+"fontSize": 15.0
+},
+{
+"path": "InGameScene/UI Canvas/GamePanels/CalculationEntityPanel/MainPanel/CalculationView/ListPage/Calculations/Viewport/Content/LineD",
+"kind": "Image",
+"rect": [
+22.4,
+276.9,
+458.0,
+327.3
+],
+"visible": [
+22.4,
+276.9,
+458.0,
+327.3
+],
+"color": "#081C2CC7",
+"alpha": 0.78,
+"sprite": "white-backdrop",
+"raycast": true,
+"selectable": true,
+"maskOnly": false,
+"canvasOrder": -10,
+"depth": 357,
+"spriteSize": [
+512.0,
+512.0
+],
+"spriteBorder": [
+20.0,
+20.0,
+20.0,
+20.0
+],
+"imageType": "Sliced",
+"preserveAspect": false
+},
+{
+"path": "InGameScene/UI Canvas/GamePanels/CalculationEntityPanel/MainPanel/HeaderContent/Header/exitbutton/ExitButton",
+"kind": "Image",
+"rect": [
+434.6,
+19.5,
+458.0,
+42.9
+],
+"visible": [
+434.6,
+19.5,
+458.0,
+42.9
+],
+"color": "#FFFFFFFF",
+"alpha": 1.0,
+"sprite": "x-button",
+"raycast": true,
+"selectable": true,
+"maskOnly": false,
+"canvasOrder": -10,
+"depth": 332,
+"spriteSize": [
+512.0,
+512.0
+],
+"spriteBorder": [
+0.0,
+0.0,
+0.0,
+0.0
+],
+"imageType": "Simple",
+"preserveAspect": false
+},
+{
+"path": "InGameScene/UI Canvas/GamePanels/CalculationEntityPanel/MainPanel/CalculationView/ListPage/Calculations/Viewport/Content/LineA/Letter/Text",
+"kind": "TextMeshProUGUI",
+"rect": [
+29.6,
+109.8,
+62.0,
+142.2
+],
+"visible": [
+29.6,
+109.8,
+62.0,
+142.2
+],
+"color": "#FFFFFFFF",
+"alpha": 1.0,
+"sprite": "",
+"raycast": false,
+"selectable": false,
+"maskOnly": false,
+"canvasOrder": -10,
+"depth": 338,
+"text": "A",
+"textRect": [
+39.1,
+114.5,
+53.7,
+137.6
+],
+"lines": 1,
+"fontSize": 20.0
+},
+{
+"path": "InGameScene/UI Canvas/GamePanels/CalculationEntityPanel/MainPanel/CalculationView/ListPage/Calculations/Viewport/Content/LineA/Letter",
+"kind": "Image",
+"rect": [
+29.6,
+109.8,
+62.0,
+142.2
+],
+"visible": [
+29.6,
+109.8,
+62.0,
+142.2
+],
+"color": "#5366C7FF",
+"alpha": 1.0,
+"sprite": "white-backdrop",
+"raycast": true,
+"selectable": false,
+"maskOnly": false,
+"canvasOrder": -10,
+"depth": 337,
+"spriteSize": [
+512.0,
+512.0
+],
+"spriteBorder": [
+20.0,
+20.0,
+20.0,
+20.0
+],
+"imageType": "Sliced",
+"preserveAspect": false
+},
+{
+"path": "InGameScene/UI Canvas/GamePanels/CalculationEntityPanel/MainPanel/CalculationView/ListPage/Calculations/Viewport/Content/LineD/RemoveButton(Clone)",
+"kind": "Image",
+"rect": [
+425.6,
+289.5,
+450.8,
+314.7
+],
+"visible": [
+425.6,
+289.5,
+450.8,
+314.7
+],
+"color": "#FFFFFFFF",
+"alpha": 1.0,
+"sprite": "white-backdrop",
+"raycast": true,
+"selectable": true,
+"maskOnly": false,
+"canvasOrder": -10,
+"depth": 363,
+"spriteSize": [
+512.0,
+512.0
+],
+"spriteBorder": [
+20.0,
+20.0,
+20.0,
+20.0
+],
+"imageType": "Sliced",
+"preserveAspect": true
+},
+{
+"path": "InGameScene/UI Canvas/GamePanels/CalculationEntityPanel/MainPanel/CalculationView/ListPage/Calculations/Viewport/Content/LineA/Texts/Formula",
+"kind": "TextMeshProUGUI",
+"rect": [
+71.0,
+116.1,
+308.6,
+135.9
+],
+"visible": [
+71.0,
+116.1,
+308.6,
+135.9
+],
+"color": "#FFFFFFFF",
+"alpha": 1.0,
+"sprite": "",
+"raycast": false,
+"selectable": false,
+"maskOnly": false,
+"canvasOrder": -10,
+"depth": 339,
+"text": "A  +  1",
+"textRect": [
+71.0,
+117.4,
+107.3,
+134.7
+],
+"lines": 1,
+"fontSize": 15.0
+},
+{
+"path": "InGameScene/UI Canvas/GamePanels/CalculationEntityPanel/MainPanel/CalculationView/ListPage/Calculations/Viewport/Content/LineA",
+"kind": "Image",
+"rect": [
+22.4,
+100.8,
+458.0,
+151.2
+],
+"visible": [
+22.4,
+100.8,
+458.0,
+151.2
+],
+"color": "#081C2CC7",
+"alpha": 0.78,
+"sprite": "white-backdrop",
+"raycast": true,
+"selectable": true,
+"maskOnly": false,
+"canvasOrder": -10,
+"depth": 336,
+"spriteSize": [
+512.0,
+512.0
+],
+"spriteBorder": [
+20.0,
+20.0,
+20.0,
+20.0
+],
+"imageType": "Sliced",
+"preserveAspect": false
+},
+{
+"path": "InGameScene/UI Canvas/GamePanels/CalculationEntityPanel/MainPanel/CalculationView/ListPage/AddRow/ActionButton/Text (TMP)",
+"kind": "TextMeshProUGUI",
+"rect": [
+77.4,
+339.9,
+183.4,
+354.3
+],
+"visible": [
+77.4,
+339.9,
+183.4,
+354.3
+],
+"color": "#FFFFFFFF",
+"alpha": 1.0,
+"sprite": "",
+"raycast": true,
+"selectable": false,
+"maskOnly": false,
+"canvasOrder": -10,
+"depth": 368,
+"text": "Add calculation",
+"textRect": [
+77.4,
+338.4,
+183.4,
+355.7
+],
+"lines": 1,
+"fontSize": 15.0
+},
+{
+"path": "InGameScene/UI Canvas/GamePanels/CalculationEntityPanel/MainPanel/CalculationView/ListPage/Calculations/Viewport/Content/LineC/Letter",
+"kind": "Image",
+"rect": [
+29.6,
+224.9,
+62.0,
+257.3
+],
+"visible": [
+29.6,
+224.9,
+62.0,
+257.3
+],
+"color": "#3F8A4EFF",
+"alpha": 1.0,
+"sprite": "white-backdrop",
+"raycast": true,
+"selectable": false,
+"maskOnly": false,
+"canvasOrder": -10,
+"depth": 351,
+"spriteSize": [
+512.0,
+512.0
+],
+"spriteBorder": [
+20.0,
+20.0,
+20.0,
+20.0
+],
+"imageType": "Sliced",
+"preserveAspect": false
+},
+{
+"path": "InGameScene/UI Canvas/GamePanels/CalculationEntityPanel/MainPanel/CalculationView/ListPage/Calculations/Viewport/Content/LineC/RemoveButton(Clone)/IconParent/Icon",
+"kind": "Image",
+"rect": [
+431.0,
+233.9,
+445.4,
+248.3
+],
+"visible": [
+431.0,
+233.9,
+445.4,
+248.3
+],
+"color": "#FFFFFFFF",
+"alpha": 1.0,
+"sprite": "Exit",
+"raycast": true,
+"selectable": false,
+"maskOnly": false,
+"canvasOrder": -10,
+"depth": 356,
+"spriteSize": [
+128.0,
+128.0
+],
+"spriteBorder": [
+0.0,
+0.0,
+0.0,
+0.0
+],
+"imageType": "Simple",
+"preserveAspect": false
+},
+{
+"path": "InGameScene/UI Canvas/GamePanels/CalculationEntityPanel/MainPanel/CalculationView/ListPage/Calculations/Viewport/Content/LineB",
+"kind": "Image",
+"rect": [
+22.4,
+154.8,
+458.0,
+205.2
+],
+"visible": [
+22.4,
+154.8,
+458.0,
+205.2
+],
+"color": "#081C2CC7",
+"alpha": 0.78,
+"sprite": "white-backdrop",
+"raycast": true,
+"selectable": true,
+"maskOnly": false,
+"canvasOrder": -10,
+"depth": 343,
+"spriteSize": [
+512.0,
+512.0
+],
+"spriteBorder": [
+20.0,
+20.0,
+20.0,
+20.0
+],
+"imageType": "Sliced",
+"preserveAspect": false
+},
+{
+"path": "InGameScene/UI Canvas/GamePanels/CalculationEntityPanel/MainPanel/CalculationView/ListPage/Calculations/Viewport",
+"kind": "Image",
+"rect": [
+22.4,
+100.8,
+458.0,
+327.3
+],
+"visible": [
+22.4,
+100.8,
+458.0,
+327.3
+],
+"color": "#FFFFFFFF",
+"alpha": 1.0,
+"sprite": "UIMask",
+"raycast": true,
+"selectable": false,
+"maskOnly": true,
+"canvasOrder": -10,
+"depth": 335,
+"spriteSize": [
+32.0,
+32.0
+],
+"spriteBorder": [
+10.0,
+10.0,
+10.0,
+10.0
+],
+"imageType": "Sliced",
+"preserveAspect": false
+},
+{
+"path": "InGameScene/UI Canvas/GamePanels/CalculationEntityPanel/MainPanel/CalculationView/ListPage/Calculations/Viewport/Content/LineC/RemoveButton(Clone)",
+"kind": "Image",
+"rect": [
+425.6,
+228.5,
+450.8,
+253.7
+],
+"visible": [
+425.6,
+228.5,
+450.8,
+253.7
+],
+"color": "#FFFFFFFF",
+"alpha": 1.0,
+"sprite": "white-backdrop",
+"raycast": true,
+"selectable": true,
+"maskOnly": false,
+"canvasOrder": -10,
+"depth": 355,
+"spriteSize": [
+512.0,
+512.0
+],
+"spriteBorder": [
+20.0,
+20.0,
+20.0,
+20.0
+],
+"imageType": "Sliced",
+"preserveAspect": true
+},
+{
+"path": "InGameScene/UI Canvas/GamePanels/CalculationEntityPanel/MainPanel/CalculationView/ListPage/Calculations/Viewport/Content/LineA/Value",
+"kind": "TextMeshProUGUI",
+"rect": [
+317.6,
+113.4,
+416.6,
+138.6
+],
+"visible": [
+317.6,
+113.4,
+416.6,
+138.6
+],
+"color": "#FFFFFFFF",
+"alpha": 1.0,
+"sprite": "",
+"raycast": false,
+"selectable": false,
+"maskOnly": false,
+"canvasOrder": -10,
+"depth": 340,
+"text": "121",
+"textRect": [
+389.8,
+114.5,
+417.9,
+137.6
+],
+"lines": 1,
+"fontSize": 20.0
+},
+{
+"path": "InGameScene/UI Canvas/GamePanels/CalculationEntityPanel/MainPanel/CalculationView/ListPage/Calculations/Viewport/Content/LineB/Letter/Text",
+"kind": "TextMeshProUGUI",
+"rect": [
+29.6,
+163.8,
+62.0,
+196.2
+],
+"visible": [
+29.6,
+163.8,
+62.0,
+196.2
+],
+"color": "#FFFFFFFF",
+"alpha": 1.0,
+"sprite": "",
+"raycast": false,
+"selectable": false,
+"maskOnly": false,
+"canvasOrder": -10,
+"depth": 345,
+"text": "B",
+"textRect": [
+39.4,
+168.5,
+53.4,
+191.6
+],
+"lines": 1,
+"fontSize": 20.0
+},
+{
+"path": "InGameScene/UI Canvas/GamePanels/CalculationEntityPanel/MainPanel/CalculationView/ListPage/Calculations/Viewport/Content/LineD/Letter/Text",
+"kind": "TextMeshProUGUI",
+"rect": [
+29.6,
+285.9,
+62.0,
+318.3
+],
+"visible": [
+29.6,
+285.9,
+62.0,
+318.3
+],
+"color": "#FFFFFFFF",
+"alpha": 1.0,
+"sprite": "",
+"raycast": false,
+"selectable": false,
+"maskOnly": false,
+"canvasOrder": -10,
+"depth": 359,
+"text": "D",
+"textRect": [
+38.8,
+290.6,
+54.1,
+313.6
+],
+"lines": 1,
+"fontSize": 20.0
+},
+{
+"path": "InGameScene/UI Canvas/GamePanels/CalculationEntityPanel/MainPanel/HeaderContent/Header/TitleAndIcon/Title",
+"kind": "TextMeshProUGUI",
+"rect": [
+22.4,
+16.8,
+305.9,
+45.6
+],
+"visible": [
+22.4,
+16.8,
+305.9,
+45.6
+],
+"color": "#FFFFFFFF",
+"alpha": 1.0,
+"sprite": "",
+"raycast": true,
+"selectable": false,
+"maskOnly": false,
+"canvasOrder": -10,
+"depth": 331,
+"text": "Circuit Module",
+"textRect": [
+22.4,
+21.9,
+158.4,
+42.7
+],
+"lines": 1,
+"fontSize": 18.0
+},
+{
+"path": "InGameScene/UI Canvas/GamePanels/CalculationEntityPanel/MainPanel/CalculationView/ListPage/Calculations/Viewport/Content/LineA/RemoveButton(Clone)",
+"kind": "Image",
+"rect": [
+425.6,
+113.4,
+450.8,
+138.6
+],
+"visible": [
+425.6,
+113.4,
+450.8,
+138.6
+],
+"color": "#FFFFFFFF",
+"alpha": 1.0,
+"sprite": "white-backdrop",
+"raycast": true,
+"selectable": true,
+"maskOnly": false,
+"canvasOrder": -10,
+"depth": 341,
+"spriteSize": [
+512.0,
+512.0
+],
+"spriteBorder": [
+20.0,
+20.0,
+20.0,
+20.0
+],
+"imageType": "Sliced",
+"preserveAspect": true
+},
+{
+"path": "InGameScene/UI Canvas/GamePanels/CalculationEntityPanel/MainPanel/CalculationView/ListPage/Calculations/Viewport/Content/LineD/Letter",
+"kind": "Image",
+"rect": [
+29.6,
+285.9,
+62.0,
+318.3
+],
+"visible": [
+29.6,
+285.9,
+62.0,
+318.3
+],
+"color": "#B04E78FF",
+"alpha": 1.0,
+"sprite": "white-backdrop",
+"raycast": true,
+"selectable": false,
+"maskOnly": false,
+"canvasOrder": -10,
+"depth": 358,
+"spriteSize": [
+512.0,
+512.0
+],
+"spriteBorder": [
+20.0,
+20.0,
+20.0,
+20.0
+],
+"imageType": "Sliced",
+"preserveAspect": false
+},
+{
+"path": "InGameScene/UI Canvas/GamePanels/CalculationEntityPanel/MainPanel/CalculationView/ListPage/Calculations/Viewport/Content/LineC",
+"kind": "Image",
+"rect": [
+22.4,
+208.8,
+458.0,
+273.3
+],
+"visible": [
+22.4,
+208.8,
+458.0,
+273.3
+],
+"color": "#081C2CC7",
+"alpha": 0.78,
+"sprite": "white-backdrop",
+"raycast": true,
+"selectable": true,
+"maskOnly": false,
+"canvasOrder": -10,
+"depth": 350,
+"spriteSize": [
+512.0,
+512.0
+],
+"spriteBorder": [
+20.0,
+20.0,
+20.0,
+20.0
+],
+"imageType": "Sliced",
+"preserveAspect": false
+},
+{
+"path": "InGameScene/UI Canvas/GamePanels/CalculationEntityPanel/MainPanel",
+"kind": "Image",
+"rect": [
+8.0,
+7.8,
+472.4,
+374.1
+],
+"visible": [
+8.0,
+7.8,
+472.4,
+374.1
+],
+"color": "#FFFFFFFF",
+"alpha": 1.0,
+"sprite": "background-main",
+"raycast": true,
+"selectable": false,
+"maskOnly": false,
+"canvasOrder": -10,
+"depth": 328,
+"spriteSize": [
+512.0,
+512.0
+],
+"spriteBorder": [
+10.0,
+10.0,
+10.0,
+10.0
+],
+"imageType": "Sliced",
+"preserveAspect": false
+}
+]
+}

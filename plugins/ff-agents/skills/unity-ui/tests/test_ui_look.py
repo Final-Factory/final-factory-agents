@@ -9,7 +9,7 @@ import subprocess
 import sys
 import tempfile
 import unittest
-from contextlib import redirect_stdout
+from contextlib import redirect_stderr, redirect_stdout
 from pathlib import Path
 
 HERE = Path(__file__).resolve().parent
@@ -218,6 +218,144 @@ class PackTest(unittest.TestCase):
             self.assertNotIn("stand out", prompt)        # the words wait in b/ until Pass A is written
             self.assertTrue((out / "b" / "s1-before.png").exists() and (out / "b" / "s1-after.png").exists())
             self.assertTrue(any(p.name.startswith("ref1-") for p in (out / "refs").iterdir()))
+
+    def test_a_pack_without_a_reference_window_is_refused(self):
+        """The critic judges a window beside the game's others (w1818): no --ref and no --repo is an error."""
+        with tempfile.TemporaryDirectory() as d:
+            with redirect_stdout(io.StringIO()):
+                code = uk.main(["pack", "--after", f"{RealCaseTest.R2}@0,0,450,310", "--out", str(Path(d) / "pack")])
+            self.assertEqual(code, 2)
+
+
+def rounded(img, rect, radius, colour, alpha=1.0, sub=4):
+    """A rounded rectangle drawn with anti-aliased corners (sub x sub samples a pixel), as uGUI draws a sliced sprite."""
+    data, width, height = img
+    x0, y0, x1, y1 = rect
+    for y in range(max(0, y0), min(height, y1)):
+        for x in range(max(0, x0), min(width, x1)):
+            hits = 0
+            for sy in range(sub):
+                for sx in range(sub):
+                    px, py = x + (sx + 0.5) / sub, y + (sy + 0.5) / sub
+                    cx = min(max(px, x0 + radius), x1 - radius)
+                    cy = min(max(py, y0 + radius), y1 - radius)
+                    hits += (px - cx) ** 2 + (py - cy) ** 2 <= radius * radius
+            a = alpha * hits / (sub * sub)
+            if a:
+                i = 3 * (y * width + x)
+                for c in range(3):
+                    data[i + c] = int(round(a * colour[c] + (1 - a) * data[i + c]))
+
+
+FRAME, ROW, BUTTON, DISC = (0x13, 0x3A, 0x54), (0x08, 0x1C, 0x2C), (0x21, 0x78, 0xC6), (0x2C, 0x83, 0x9C)
+
+
+def family_window(img, x, name, header_pt, header_lines, bottom_pad, disc_radius, disc_gap, button_radius):
+    """A window at x on a dark screen: a frame (radius 8), a header, two rows (radius 6), a disc in each row's left end
+    and a button at the bottom. Returns its census elements."""
+    path = f"{name}Panel"
+    top, w = 20, 300
+    rounded(img, (x, top, x + w, 380), 8, FRAME)
+    els = [el(path, (x, top, x + w, 380), sprite="background-main"),
+           el(f"{path}/Title", (x + 14, top + 10, x + 200, top + 10 + 1.3 * header_pt * header_lines),
+              kind="TextMeshProUGUI", text="Calculations", fontSize=header_pt, lines=header_lines,
+              textRect=[x + 14, top + 12, x + 180, top + 8 + 1.2 * header_pt * header_lines])]
+    for k in range(2):
+        ry = 80 + 70 * k
+        rounded(img, (x + 14, ry, x + w - 14, ry + 50), 6, ROW)
+        els.append(el(f"{path}/Rows/Row{k}", (x + 14, ry, x + w - 14, ry + 50), sprite="row"))
+        d = 2 * disc_radius
+        dx, dy = x + 14 + disc_gap, ry + 25 - disc_radius
+        rounded(img, (dx, dy, dx + d, dy + d), disc_radius, DISC)
+        els.append(el(f"{path}/Rows/Row{k}/Disc", (dx, dy, dx + d, dy + d), sprite="circle"))
+        els.append(el(f"{path}/Rows/Row{k}/Label", (dx + d + 8, ry + 15, dx + d + 120, ry + 35), kind="TextMeshProUGUI",
+                      text=f"Signal {k}", fontSize=16, lines=1))
+    by1 = 380 - bottom_pad
+    rounded(img, (x + 14, by1 - 32, x + 160, by1), button_radius, BUTTON)
+    els.append(el(f"{path}/Add", (x + 14, by1 - 32, x + 160, by1), sprite="button", selectable=True))
+    return els
+
+
+class FamilyTest(unittest.TestCase):
+    """The window against the game's other windows: corners, header, edges (w1818; Ben on w1761 and w1296)."""
+
+    @classmethod
+    def setUpClass(cls):
+        cls.dir = tempfile.TemporaryDirectory()
+        d = Path(cls.dir.name)
+        img = canvas(1000, 400, (0x05, 0x0A, 0x14))
+        # the reference: one radius family (the frame 8, rows and button 6, a disc tucked in concentrically), 24 pt title
+        ref = family_window(img, 20, "Fleet", 24, 1, 14, 6, 0, 6)
+        # w1761's look: letter circles (radius 11) 3 px inside rows of radius 6, a button of radius 14, a 19 pt header
+        # and the button 4 px off the bottom
+        bad = family_window(img, 350, "Calc", 19, 1, 4, 11, 3, 14)
+        # the same window made consistent
+        good = family_window(img, 680, "Clean", 24, 1, 14, 6, 0, 6)
+        uk.write_png(d / "s.png", still(img))
+        (d / "s.json").write_text(json.dumps({"screen": [1000, 400], "elements": ref + bad + good}), encoding="utf-8")
+        cls.spec = f"{d / 's.png'}::{d / 's.json'}"
+
+    @classmethod
+    def tearDownClass(cls):
+        cls.dir.cleanup()
+
+    def test_corner_radius_is_read_off_the_pixels(self):
+        for r in (0, 3, 6, 10, 14):
+            img = canvas(80, 80, (0x05, 0x0A, 0x14))
+            rounded(img, (10, 10, 70, 60), r, FRAME)
+            got = uk.shape_radius(still(img), (10, 10, 70, 60))
+            self.assertIsNotNone(got)
+            self.assertLess(abs(got - r), 1.0, f"radius {r} read as {got}")
+
+    def test_w1761s_look_is_flagged_and_a_consistent_window_is_not(self):
+        out = io.StringIO()
+        with redirect_stdout(out):
+            bad = uk.main(["family", self.spec + "#CalcPanel", "--ref", self.spec + "#FleetPanel"])
+            good = uk.main(["family", self.spec + "#CleanPanel", "--ref", self.spec + "#FleetPanel"])
+        text = out.getvalue()
+        self.assertEqual(bad, 1, text)
+        self.assertEqual(good, 0, text)
+        lines = text.split("Family:")[1]
+        for tag in ("MIXED CORNERS", "NESTED CORNERS", "SMALL HEADER", "CRAMPED BOTTOM"):
+            self.assertIn(tag, lines)
+        self.assertNotIn("HEADER TWO LINES", lines)
+        self.assertIn("Family: 1 window(s) against 1 reference window(s), 0 finding(s)", text)
+
+    def test_w1761s_round_6_window_matches_the_station_core_window(self):
+        # The built game's Calculations window after Ben's notes (round 6: one corner size, the Station Core window's
+        # 18 pt title, 14 units under the last button), cut from its 1920x1080 still with its census, against the Station
+        # Core window from the same build. The rows' sprite draws 1-3 px inside its rect and two row corners sit over
+        # the nebula: both read as rounder corners before the drawn-edge snap and the lower median.
+        calc = f"{FIX / 'w1761r6-calculations.png'}::{FIX / 'w1761r6-calculations.json'}#CalculationEntityPanel/MainPanel"
+        core = f"{FIX / 'w1761r6-station-core.png'}::{FIX / 'w1761r6-station-core.json'}#StationCoreEntityPanel/MainPanel"
+        out = io.StringIO()
+        with redirect_stdout(out):
+            code = uk.main(["family", calc, "--ref", core])
+        self.assertEqual(code, 0, out.getvalue())
+        win = uk._measure(calc)[0]
+        self.assertTrue(all(2.0 <= s["radius"] <= 5.0 for s in win["shapes"]), win["shapes"])
+        # The same window with round 3's title (15 pt, the connector window's type; w1761 commit 9d54a3c116) and its
+        # 8 units under the last button (7.2 px; commit 9dc22a2517), the two Ben named: "the header font seems smaller
+        # than other headers" and "make the bottom padding a few more pixels too it feels crammed".
+        ref = uk._measure(core)
+        r3 = dict(win, header=dict(win["header"], fontSize=15.0), edges=dict(win["edges"], bottom=7.2))
+        found = [f.split(":")[0] for f in uk.family_findings(r3, ref)]
+        self.assertEqual(found, ["SMALL HEADER", "CRAMPED BOTTOM"])
+
+    def test_a_two_line_header_is_flagged(self):
+        s = {"radii": [], "nested": [], "screen": [1000, 400], "edges": None,
+             "header": {"text": "Content removed from this save", "fontSize": 24, "lines": 2}}
+        r = {"radii": [], "screen": [1000, 400], "edges": None, "header": {"text": "Mods", "fontSize": 24, "lines": 1}}
+        self.assertTrue(any(f.startswith("HEADER TWO LINES") for f in uk.family_findings(s, [r])))
+
+    def test_no_reference_window_is_an_error(self):
+        d = Path(self.dir.name)
+        census = json.loads((d / "s.json").read_text(encoding="utf-8"))
+        census["elements"] = [e for e in census["elements"] if "/CalcPanel" in e["path"]]
+        (d / "alone.json").write_text(json.dumps(census), encoding="utf-8")
+        with redirect_stdout(io.StringIO()), redirect_stderr(io.StringIO()):
+            code = uk.main(["family", f"{d / 's.png'}::{d / 'alone.json'}#CalcPanel"])
+        self.assertEqual(code, 2)
 
 
 if __name__ == "__main__":
