@@ -20,6 +20,11 @@ Mechanics: the game repo's `Documentation/Bench-Lock.md`.
       in the command output and as a message. At the deadline the ticket is revoked and the script and its players
       are stopped, and that leg is void. A re-request goes to the back of the queue. Exempt: the urgent release lane,
       the scheduled nightly, and a machine that hosts a single worker.
+- [ ] **Priority counts** (w1860, lothsahn: "If a higher priority job holds the lock and all jobs below it are lower
+      priority, it should retain the lock until done"). Only a waiter of the holder's request priority or higher starts
+      its clock; with only lower-priority work waiting the holder keeps the lock until it lets go. That is no reason to
+      hold it longer: give it back between legs anyway. A timed leg can wait behind other sandboxes' running editors
+      and players, which hold shared tickets for their whole life (yours ride along), up to the shared group's hour.
 - [ ] **At the warning, commit and push** the work-in-progress branch (lothsahn: "Workers should be encouraged to push
       their uncommitted work at the warning threshold so they can be scheduled on other machines").
 - [ ] **The right ticket: exclusive only for exact timings or the whole machine** (lothsahn, w1832: "request an
