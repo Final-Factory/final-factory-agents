@@ -245,6 +245,11 @@ Proven driving the full early tutorial with the editor occluded (Step-pumped).
   - If ghost/route-display cleanup goes wrong you'll see per-frame `ArgumentException: The entity does
     not exist` spam from `LogisticsRouteDisplaySystem` — destroy the `LogisticsDisplayReferences`
     entities whose `RouteDisplay` no longer exists.
+  - **A Landing Zone also needs `EnsureInstantPlacementsInPlay(placed)`** (w1902, m5, master c5766a9433). It is the one
+    `PlacesWithoutBlueprint` / `EphemeralStructureMarker` item: `EnsureConstructionTasks` skips it, so without that call it
+    stays `OutOfPlay` with no task for good (the remote-apply branch makes the same call). Call all three on `placed`.
+  - **A fresh flat game has no construction bots**: send `ffauto:cheats.enable`, then `ffauto:player.devunlock|8`, before
+    placing anything that has to be built. Plain `ffauto:player.devunlock` gives `bots=0`, and the frames wait forever.
 - **Structure removal**: `ffauto:construction.remove|<centerTile.x>|<centerTile.z>` (the 016 queue
   path) works in live solo sessions — cbot deconstructs and refunds the item (~2 s).
 - **Withdrawing from a structure** (tutorial "collect ore", Ctrl+click equivalent):
