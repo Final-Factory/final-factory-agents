@@ -152,6 +152,11 @@ look first and relay only with the critic's report (FF Factory `read_rules ui`).
   editor, terminal, dashboard), even when it holds the signed-in session you need: open your own browser window or use
   Claude Code's own tool. Touched one by mistake: put it back and report each click (w1287; Ben: "WHY IS IT POKING
   AROUND IN MY CLAUDE DESKTOP APP").
+- **Never ask a person what they already answered** ([lesson](lessons/a-person-wait-is-declared-not-polled.md#never-ask-a-person-what-they-already-answered-w1812)).
+  Before you ask (`waiting_on_person`, `decide_work ask`, `ask_person`, a relayed `[needs you]`), read the request's
+  notes and log and those of the other requests its worker holds: an answer given after the question was raised is the
+  answer, so pass it on. One question on several requests is asked once (w1812; Ben: "i already answered this why are
+  you asking me in the waiting on input for this still").
 - **Say what every id is, every time** ([lesson](lessons/say-what-an-id-is.md)). Before you send
   anything a person reads, scan it for request ids (w293), PR numbers (#972), commits, worker or
   session ids and sandbox names: each one gets its plain-English words beside it, on every
@@ -436,6 +441,9 @@ One file each under `lessons/`: the rule, why (the incident, dated), how to appl
   person is needed: never hand a person a step you, the ops worker or ssh can do, an installer rerun included
   (w855: the dispatcher asked Ben to rerun biscuit's installer for w847) and Unity closed, opened or reopened, git
   commands and file copies (w935: a worker told Ben to close Unity on his m5 main clone; Ben: "You can close Unity").
+- [Never ask a person what they already answered](lessons/a-person-wait-is-declared-not-polled.md#never-ask-a-person-what-they-already-answered-w1812):
+  read the request's notes and its worker's other requests before you ask; one question on several requests is asked once
+  (w1812: Ben answered c28c5061's questions on w1767 and was asked them again on w1768; w1182 re-asked an answered fog look).
 - [Research the route before you say "can't"](lessons/research-the-route-before-you-say-cant.md): before "I can't" or
   "you do it", research the route (docs, the machines and sessions already signed in, the tools), then try it or file
   it; only a concrete blocker with evidence and the smallest step only the person can take reach them (w935; w1287:
