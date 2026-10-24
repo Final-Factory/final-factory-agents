@@ -482,6 +482,7 @@ One file each under `lessons/`: the rule, why (the incident, dated), how to appl
 - [Your own checks are yours](lessons/a-person-wait-is-declared-not-polled.md#your-own-checks-are-yours-never-wait-on-the-orchestrator-for-them-w1841):
   a two-machine or pair check, a build, a test run and your CI are yours to run; never end a turn waiting on the
   orchestrator for them (w1841: w1685's worker did, and the request sat Stalled; w1841 as filed for Ben: "pair checks are the worker's own").
+  A check on two or more computers at once is `request_pair`: its legs start together and your sandbox is freed meanwhile (w1945).
 - [Research the route before you say "can't"](lessons/research-the-route-before-you-say-cant.md): before "I can't" or
   "you do it", research the route (docs, the machines and sessions already signed in, the tools), then try it or file
   it; only a concrete blocker with evidence and the smallest step only the person can take reach them (w935; w1287:
