@@ -23,3 +23,8 @@ and no `BENCH=1`. All four legs ran, exited 0 and gave a 4.9 ms difference, on a
   for four logs), then delete the scratch folder. The profiler adds cost: frame times from the unprofiled run,
   job times from the profiled one.
 - Result there: TargeterJob lazy 11.0/12.7 ms vs all-rays 22.3/36.1 ms per frame, frame p50 ~62 ms both (main-thread bound).
+- **From another request, file it as a leg, not `timed_run`** (w1440, same day): `mcp__machine__timed_run` refuses
+  `-ffBenchFight` in its args ("-ffBenchFight is set by the run itself"), so a fight A/B goes through `timed_place`
+  (a leg that runs `probe_ab_win_switches.sh` with `BENCH=1`). Name that leg's request in `blocked_on` `reports`, and
+  ask in its brief for a report line `For wNNN:` with the table: w1985's numbers never reached w1440 until the
+  orchestrator relayed them by hand.
