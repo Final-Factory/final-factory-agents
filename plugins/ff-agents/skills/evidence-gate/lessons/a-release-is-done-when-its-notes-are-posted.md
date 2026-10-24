@@ -60,7 +60,7 @@ without them, and nothing in its report said the post was missing.
 2. **It is not our workflow.** No git branches, dev flow, CI, merge queue, FF Factory, FFBox, agents,
    workers or PRs.
 
-`python release_notes_check.py <notes> --repo <game clone> --range <previous release sha>..<release sha>` (beside
+`python "$FF_SKILLS/evidence-gate/release_notes_check.py" <notes> --repo <game clone> --range <previous release sha>..<release sha>` (beside
 `pr_evidence.py` in the `evidence-gate` skill) checks both. Exit 0 before the bump and before the post.
 
 **Why.** Ben corrected the same family of mistake twice on 2026-10-13:

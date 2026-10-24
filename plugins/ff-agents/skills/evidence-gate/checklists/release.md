@@ -35,7 +35,7 @@ adds what a release rests on and the first check after it.
 2c. **Every line is something a release player gets** (Ben, 2026-10-13, w1242: "Mobile stations take their bots
    and barges with them / Isnt this behind a feature toggle?"). A release player has every feature toggle off,
    so a change behind a toggle still declared in `FeatureToggles.cs` at the release commit is not a note.
-   `python release_notes_check.py <notes> --repo <game clone> --range <previous release>..<release>` (beside
+   `python "$FF_SKILLS/evidence-gate/release_notes_check.py" <notes> --repo <game clone> --range <previous release>..<release>` (beside
    `pr_evidence.py`) lists the toggled PRs in the range and fails on a bullet that matches one, and on workflow
    words (2b). Exit 0 before the bump and before `post_as_max`; read its list of toggled PRs against the notes
    once (lesson: [patch notes list only what players can use](../lessons/a-release-is-done-when-its-notes-are-posted.md#patch-notes-list-only-what-players-can-use-build-104-w1242)).

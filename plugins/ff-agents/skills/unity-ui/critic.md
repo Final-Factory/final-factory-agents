@@ -23,7 +23,7 @@ brief's reasoning or the worker's notes, given only what a person would see.
 1. **Build the pack.** A script builds it, so nothing of yours reaches the critic:
 
    ```sh
-   python "<unity-ui skill>/ui_look.py" pack --after after-1920.png::after-1920-layout.json \
+   python "$FF_SKILLS/unity-ui/ui_look.py" pack --after after-1920.png::after-1920-layout.json \
        --after after-docked.png::after-docked-layout.json --before before-1920.png --before before-docked.png \
        --repo <game repo> --brief <the request's brief, saved to a file> --out <tmp>/pack-1
    ```

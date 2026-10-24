@@ -51,7 +51,7 @@ anymore? hooks? a script?" (the section below).
 
 - Before writing "in", "has", "contains", "missing" or "not in" next to a build number, a version or a Steam branch:
   either you ran it (say so, labelled measured, with what you opened) or the sentence says guess and names the build to
-  run. `python build_claim_check.py <report>` (this skill) flags a build claim that carries neither, and `--done` checks
+  run. `python "$FF_SKILLS/evidence-gate/build_claim_check.py" <report>` (this skill) flags a build claim that carries neither, and `--done` checks
   a player-facing fix's `Ships in:` and `pre-1.0:` lines.
 - Which build a branch serves and which commit made it: `python scripts/release-status.py [<version>]` in the game repo
   (each Steam branch's BuildID, the version's bump commit). Then run that build, or build that commit in the slot pool

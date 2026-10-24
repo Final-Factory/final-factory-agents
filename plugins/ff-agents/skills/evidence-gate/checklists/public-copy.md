@@ -19,7 +19,7 @@ sounds machine-written. A clean word lint isn't a pass.
    habits; for Ben, ff-marketing `brand/voice.md`.
 3. **Uneven rhythm.** Three sentences of about the same length in a row, or paragraphs that all land within a few words of each other (w1825: 34 to
    36), read as a template. Shorten one, or merge two.
-4. **Run the flagger:** `python copy_check.py <file>...` (.md, .txt or .html, or `-` for stdin).
+4. **Run the flagger:** `python "$FF_SKILLS/evidence-gate/copy_check.py" <file>...` (.md, .txt or .html, or `-` for stdin).
    Fix each flag or have a reason for keeping it. It misses things, so step 5 still runs.
 5. **A fresh critic.** Start a new subagent (Claude Code: `general-purpose`; Codex: a new
    default agent) and give it only the copy, no brief and no draft history, with: "You are a

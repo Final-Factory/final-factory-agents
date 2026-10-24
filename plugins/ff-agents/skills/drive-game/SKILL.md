@@ -5,6 +5,8 @@ description: Drive the running Final Factory game in the Unity editor via the MC
 
 # Driving the Final Factory game from an agent runtime
 
+**Scripts** (w2012): this skill's scripts are in `$FF_SKILLS/drive-game/` (`python "$FF_SKILLS/drive-game/check_steam_event.py"`; PowerShell `$env:FF_SKILLS`). FF Factory sets `FF_SKILLS` for its workers to the `skills` folder of the ff-agents plugin the session loaded; without it, the folder is the "Base directory for this skill" Claude Code printed above this text. Never search a disk for them: `find / -name ui_look.py` walked all of lothsahn's C: ("Stop messing with my c:"), and FF Factory's guard refuses a search of `/`, a drive or a home folder.
+
 ## ⛔ MANDATORY preflight — run BOTH checks, every time
 
 Run these **before you start driving the game** AND **before you conclude the bridge or editor is

@@ -5,6 +5,8 @@ description: "Build and verify Final Factory's Unity uGUI screens (panels, windo
 
 # Unity UI: build it, then verify it like a player
 
+**Scripts** (w2012): this skill's scripts are in `$FF_SKILLS/unity-ui/` (`python "$FF_SKILLS/unity-ui/ui_look.py"`; PowerShell `$env:FF_SKILLS`). FF Factory sets `FF_SKILLS` for its workers to the `skills` folder of the ff-agents plugin the session loaded; without it, the folder is the "Base directory for this skill" Claude Code printed above this text. Never search a disk for them: `find / -name ui_look.py` walked all of lothsahn's C: ("Stop messing with my c:"), and FF Factory's guard refuses a search of `/`, a drive or a home folder.
+
 The w644 Deck hub (#1251) passed a tour of 28 stills and broke on Ben's Deck: navy instead of the
 game's teal-blue, Crafting cut to one row, no tech grid, the Blueprints preview off the bottom with
 flickering icons, Factory info in a corner of its pane. Every check had asked "does it open and
@@ -293,7 +295,7 @@ still or a mock goes to anyone:
 3. **Measure the colour against the before:**
 
    ```sh
-   python "<this skill's base directory>/ui_look.py" colour after-1920.png::after-1920-layout.json \
+   python "$FF_SKILLS/unity-ui/ui_look.py" colour after-1920.png::after-1920-layout.json \
        --before before-1920.png::before-1920-layout.json
    ```
 
@@ -311,7 +313,7 @@ still or a mock goes to anyone:
 3b. **Measure it against the game's other windows** (w1818; Ben on w1761: "the UI needs to be consistent and clean"):
 
    ```sh
-   python "<this skill's base directory>/ui_look.py" family after-1920.png::after-1920-layout.json#CalculationView \
+   python "$FF_SKILLS/unity-ui/ui_look.py" family after-1920.png::after-1920-layout.json#CalculationView \
        --ref fleet-1920.png::fleet-1920-layout.json#FleetInfoPanel
    ```
 
@@ -324,7 +326,7 @@ still or a mock goes to anyone:
 4. **A fresh critic, never you.** [critic.md](critic.md) is the recipe:
 
    ```sh
-   python "<this skill's base directory>/ui_look.py" pack --after a-1920.png::a-1920-layout.json --after a-docked.png::a-docked-layout.json \
+   python "$FF_SKILLS/unity-ui/ui_look.py" pack --after a-1920.png::a-1920-layout.json --after a-docked.png::a-docked-layout.json \
        --before b-1920.png --before b-docked.png --repo <game repo> --brief brief.txt --out <tmp>/pack-1
    ```
 
@@ -343,7 +345,7 @@ the Blueprints window opaque navy (w733). Take the layout census
 the whole HUD showing, every slide-out open and your screen on top, plus a screenshot of each, then:
 
 ```sh
-python "<this skill's base directory>/ui_layout.py" check --before before.json --after after.json \
+python "$FF_SKILLS/unity-ui/ui_layout.py" check --before before.json --after after.json \
     --touched <your window> --shot after.png --ref-shot classic.png --ref-census classic.json
 ```
 
@@ -373,9 +375,9 @@ don't ask you to move around"). Take the before and after censuses at 1920x1080 
 1280x800 docked, a station selected so Station Info and the building hover card are up, then:
 
 ```sh
-python "<this skill's base directory>/ui_layout.py" moves --pair b-1920.json a-1920.json \
+python "$FF_SKILLS/unity-ui/ui_layout.py" moves --pair b-1920.json a-1920.json \
     --pair b-1280.json a-1280.json --pair b-docked.json a-docked.json
-python "<this skill's base directory>/ui_layout.py" pins a-1920.json a-1280.json a-docked.json
+python "$FF_SKILLS/unity-ui/ui_layout.py" pins a-1920.json a-1280.json a-docked.json
 ```
 
 `moves` prints the `Moved:` line and one line per HUD block that moved or resized more than 4 px, labelled with its
@@ -395,7 +397,7 @@ you not to twelve times"). An option may move only the elements the person named
 the same screens, then:
 
 ```sh
-python "<this skill's base directory>/ui_layout.py" options --option A m-1280.json a-1280.json     --option B m-1280.json b-1280.json --option C m-1280.json c-1280.json --named <census path of each named element>
+python "$FF_SKILLS/unity-ui/ui_layout.py" options --option A m-1280.json a-1280.json     --option B m-1280.json b-1280.json --option C m-1280.json c-1280.json --named <census path of each named element>
 ```
 
 It prints the `Options:` line, each option IN or OUT with every unnamed object it moved, resized or hid and every pin it
@@ -409,7 +411,7 @@ switch, a 225x150 sprite, drawn as a 485x23 bar in the dock on master and on the
 Ben: "the light panel is really messed up obviously"). Run
 
 ```sh
-python "<this skill's base directory>/ui_layout.py" shape a-1920.json a-1280.json a-docked.json [--repo <game repo>]
+python "$FF_SKILLS/unity-ui/ui_layout.py" shape a-1920.json a-1280.json a-docked.json [--repo <game repo>]
 ```
 
 for the `Shape:` line: STRETCHED (a sprite drawn 2x or more off its own aspect), MOSTLY EMPTY (a window or dialog under

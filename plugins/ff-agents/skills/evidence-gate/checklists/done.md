@@ -46,7 +46,7 @@ holds, or the report says what is left instead of DONE.
    ([processes you started end before DONE](../lessons/clean-up-after-yourself.md#processes-you-started-end-before-done-w1196-w1197)).
 5. **Labels and ids.** Each number and recommendation is labelled measured, sourced or guess, and
    every id has its plain words beside it ([say what an id is](../lessons/say-what-an-id-is.md)).
-   **Quotes are copied, not recalled** (w1399): `python quote_check.py <report or PR body> <the files it quotes>...` lists
+   **Quotes are copied, not recalled** (w1399): `python "$FF_SKILLS/evidence-gate/quote_check.py" <report or PR body> <the files it quotes>...` lists
    every quoted piece that is not word for word in its source (the brief, the person's words, the reports you cite). Copy
    the source's words or drop the quote marks. w1399's draft proof had Ben asking for "making the add stop button look
    nicer", which he never wrote (his words: "stand out just a little more"), and four critic quotes retyped from memory.
@@ -93,7 +93,7 @@ holds, or the report says what is left instead of DONE.
    <why>`): master is the 1.0 build on `development`, pre-1.0 the line default-branch players get until 1.0 ships.
    Every "is in", "has", "contains", "missing" or "not in" beside a build number, version or Steam branch in the report
    rests on a run of that build or its exact commit with the feature opened (what you ran, what you saw), or says guess
-   and names the build to run; a grep, `git merge-base` or a past report is not a run. `python build_claim_check.py
+   and names the build to run; a grep, `git merge-base` or a past report is not a run. `python "$FF_SKILLS/evidence-gate/build_claim_check.py"
    <report> --done` checks both ([what is in a player's build is checked by running
    it](../lessons/whats-in-a-players-build-is-checked-by-running-it.md)). Ben, on #1760's tabs called done on master
    and then "in Build 111" from git: "so you're lying to me, or you didn't actually check".
