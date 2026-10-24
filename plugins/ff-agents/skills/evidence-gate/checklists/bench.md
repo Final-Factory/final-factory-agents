@@ -65,3 +65,8 @@ Mechanics: the game repo's `Documentation/Bench-Lock.md`.
 - [ ] **Nothing under the lock but the leg.** The Unity slot is taken before the ticket. Builds and digests run
       outside it, and the lock is given back between legs.
 - [ ] **Lock time reported.** The result says how long the run held the lock (`bench_queue.py report`).
+- [ ] **At most two player builds of your own, and each leg checks its exe** (w1891, 2026-10-24). FF Factory's clean-up
+  pass deletes a session's player builds beyond its newest 2 once they are untouched for 6 h (portal_logs, cleanup
+  source, BEAST 2026-10-24T03:31Z: it removed devB and relB in the middle of a profiled A/B, and the whole A/B ran
+  again). Delete the builds you no longer need as soon as you are done with them, rebuild instead of keeping a fourth,
+  and have the leg script stop when a build's `finalfactory.exe` is missing, rather than time nothing.
