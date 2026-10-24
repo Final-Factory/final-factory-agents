@@ -18,7 +18,8 @@ Any change to visual effects, shaders, animations, particles, camera feel or oth
 verified with short **60 fps clips, before and after**, from gameplay angles, covering the effect's whole
 lifetime, reviewed with `watch_video --mode vfx` against a written description of the intended look, plus
 stepping through the frames. **Screenshots alone do not count.** The PR links the clips and the review
-report. Once Ben has approved a look, compare against that approved clip, not just the previous build.
+report. Once Ben has approved a look, compare against that approved clip, not just the previous build. Effect specifics
+(shaders, materials, prefabs and systems of the combat effects): the game repo's `Documentation/Combat-VFX.md`.
 
 **Where review media goes** (w309, Lothsahn 2026-10-03): publish the stills, clips and review report with FF Factory's `publish_review` tool (`mcp__sandbox__publish_review` in a BEAST sandbox, `mcp__machine__publish_review` on a machine; `topic`, `files`, `note`). It puts them in the review folder on BEAST (`F:\ffsb\_review\<topic>\`) and answers the paths to put in your report and the PR. Never ssh, scp or copy review files across machines. A session without the tool (FF Factory not yet updated) keeps them in its worktree, lists the local paths, and says they are not published.
 
