@@ -141,8 +141,8 @@ hour, and a sandbox released for other work ends it too. A loop that finds its c
 ## Your own checks are yours: never wait on the orchestrator for them (w1841)
 
 **Rule.** A two-machine or pair check, a determinism check, a player build, a test run and CI on your own pull request
-are your own work. Run them yourself. Ask the dispatcher only for what it alone can give: a second machine's worker, a
-place on another computer. Never end a turn with `wNNN: still open: waiting on the orchestrator` (or the dispatcher)
+are your own work. Run them yourself. A check that needs two or more computers at once is `mcp__machine__request_pair`
+(w1945); ask the dispatcher only for what it alone can give, such as a place on another computer. Never end a turn with `wNNN: still open: waiting on the orchestrator` (or the dispatcher)
 to run one of them.
 
 **Why.** 2026-10-23 (w1841, from w1685): worker d582a5da had Ben's go to merge the black-hole swallow (PR #2254). It
@@ -158,8 +158,13 @@ checks are the worker's own".
   `waiting_on_person`. Another request, a pull request or a deploy is `blocked_on`. Files or results another request's
   worker makes for you are `blocked_on` with `reports: ["wNNN"]`, and you are resumed when that worker reports. A time
   is `wake_me`. "The orchestrator" is none of these.
-- A two-machine check needs a second machine. Run it from your own sandbox: start the peer there (the game repo's
-  scenario runner and `unity-slot run --count 2`), or ask the dispatcher in plain words for a worker on the other
-  machine. Then run the check yourself.
+- A two-machine check needs a second machine. Run it from your own sandbox where one computer is enough (the game repo's
+  scenario runner and `unity-slot run --count 2`). Where it needs two or more computers at once, call
+  `mcp__machine__request_pair` (what, brief, legs, `cross_os` only for w1692's reasons, `timed`): it files one pair request
+  whose legs the dispatcher starts together, one free sandbox per computer, and Blocks your request on its report, so your
+  sandbox is freed as your turn ends and the host leg's `For wNNN:` line resumes you. The legs talk with `message_pair`.
+  Never hold your sandbox waiting for a second machine's worker (w1945, lothsahn: "Can we make the dispatcher smart enough
+  so it queues work properly that requires running together across multiple machines and doesn't waste slots?"; w665's
+  worker held m3's only sandbox for hours waiting on a Windows pair).
 - FF Factory tells a worker that ends its turn this way that the work is its own, once per request
   (ff-factory#554, `Agents.ownWorkNudge`). The ledger's Stalled line says "that is its own work".
