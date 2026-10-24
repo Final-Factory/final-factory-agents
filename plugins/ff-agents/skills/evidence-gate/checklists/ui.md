@@ -269,6 +269,9 @@ screen; on desktop three labels stopped fitting, the two windows left their defa
     the requester asked for, their words in it and the situation they set (Ben, w873: "yes put the station panel
     controls above station info and it should be over the player inventory" allows the strip over the Inventory only
     while the strip stands above Station Info); add one only in a harness PR with their words, never to pass a check.
+    **A fix that clears one overlap runs `unity-ui/window_changes.py` on every before/after pair (w1911, 2026-10-24):** a NEW COVER
+    of a window that was clear, or a RESIZED window nobody named, is a bug in the placement; when no way avoids it, put the
+    options to the person with a still of each (lesson `a-ui-change-leaves-the-rest-of-the-screen-as-it-was`).
 25. **A structure-selection window may cover the game world (w1019, w961).** The windows that selecting a structure
     opens (a building's window, Station Core, Cargo Hold, Player Inventory and the like) may cover the game world,
     the selected structure included: not an overlap defect, so do not flag it and do not move or resize a window to

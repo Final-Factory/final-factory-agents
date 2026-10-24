@@ -335,3 +335,17 @@ not have told either way.
 (`CoveredTextTest`: the label with its glyphs under the bar, clear of it, bar drawn below, translucent bar, no `textRect`,
 masked text). Limits: a text clipped by a mask is skipped (the census has no mask rect for glyphs), and text under a
 translucent element (alpha under 0.9) is not flagged. A border, frame or outline graphic (path leaf or sprite named frame, border, outline, highlight, glow or shadow) is skipped as hollow: the first real run, on a late-game Technology tab at 1280x800 (`JustPlay` save, `-ffSoloLoad`, 170 s wait: the world takes over a minute to load, and a tour that starts earlier shows the loading box), flagged the selected tile's `SelectionFrame` ring over its own cost text. That run found no covered text; the Excess Research label wrapped under the bar only with a short value, so the real case itself is covered by the `CoveredTextTest` fixture, not by a live census.
+
+## A fix that clears one overlap must not land on a window that was clear (w1911, 2026-10-24)
+
+The first w1911 pack (the Inventory and Crafting windows lifted off Station Info) went to the orchestrator with
+`pr_evidence.py` FAIL on kept window-over-window overlaps and new covered text, which the report called inherent. The
+orchestrator refused it before it reached Ben: at 1280x800 the lifted Crafting window lay over Station Core's title and rows
+(clear before), Station Grid had been cut 45 px short for a 10 px sliver, and at 3440x1440 the lifted Inventory covered a
+Station Grid row. All were in the gate's output and measurable. **Rule:** a placement fix moves a window only where it covers
+no window that was clear and resizes nothing nobody named; the way is found by search (every way round the HUD piece, scored
+by what it newly covers, `StationHudClearance` in the game repo), not by lifting. When every way covers something, that is a
+fork put to the person with a still of each way, not an "inherent" line in a report. Check: `unity-ui/window_changes.py
+<before census> <after census> ...` lists NEW COVER, RESIZED and moved windows pair by pair (fixture: `tests/test_window_changes.py`);
+a gate FAIL on `Window overlaps:` or `Covered text:` after such a fix is a regression until proven otherwise.
+
