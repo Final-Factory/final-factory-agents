@@ -10,7 +10,9 @@
    of the sandbox is queued or running; stop it first (`TaskStop`). On Windows, check it went: on lothlaptop
    (w1952/w1915, 2026-10-23) `TaskStop` of a background Bash ended the shell but left its children running twice: a
    `unity-slot run` Unity that finished the build, and a bench leg's bash and `bench_queue.py hold`, which kept the
-   bench lock (`ff-leftovers list` did not list them). Find them by command line
+   bench lock (`ff-leftovers list` did not list them). A third time on lothdesktop (w2039, 2026-10-24): `TaskStop` of a
+   background `ffnightly.py run` chain left the nightly runner going, it held the sandbox's player slots, the next run
+   was refused, and `ff-leftovers list` again showed nothing. Find them by command line
    (`Get-CimInstance Win32_Process | ? CommandLine -match '<out dir>'`) and end the non-Unity ones by pid; a Unity
    batch goes through `mcp__machine__unity` `clear_batch`. For a before player, keep your
    branch and put the base's versions of the changed files in place:
