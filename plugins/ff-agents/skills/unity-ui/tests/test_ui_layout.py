@@ -792,7 +792,23 @@ class WindowOverlapTest(unittest.TestCase):
         statuses = {(ul.under_canvas(v["a"]), ul.under_canvas(v["b"])): v["status"] for v in self.found(census)}
         self.assertEqual(set(statuses.values()), {"not allowed"})
         self.assertIn(("GamePanels/BlueprintPanelChild", "GamePanels/MinimapParent"), statuses)
-        self.assertIn(("GamePanels/BuildInfoPanel", "GamePanels/InvAndCraft"), statuses)
+        self.assertIn(("GamePanels/BuildInfoPanel", "GamePanels/InvAndCraft/InventoryPanel"), statuses)
+
+    def test_the_inventory_and_crafting_windows_are_two_windows_not_their_bounding_box(self):
+        # w1911: GamePanels/InvAndCraft holds the Crafting window (UtilityPanel) and the Inventory window (InventoryPanel) side by
+        # side, and `InvAndCraft` as an opened-panel path made them ONE window, the union of both: Station Info standing in the
+        # gap between them (touching neither) was reported as covered ("InvAndCraft x Station Info", 3440x1440 and 1280x800
+        # censuses of master 3ae973117b, a Command Core selected, the Inventory key pressed).
+        census = screen(("InvAndCraft/UtilityPanel", [100, 100, 400, 400]), ("InvAndCraft/InventoryPanel", [600, 100, 900, 400]),
+                        (STATION_INFO, [450, 300, 550, 380]))
+        self.assertEqual(self.found(census), [])
+        # and the same Station Info standing under the Crafting window is reported, naming that window
+        census = screen(("InvAndCraft/UtilityPanel", [100, 100, 400, 400]), ("InvAndCraft/InventoryPanel", [600, 100, 900, 400]),
+                        (STATION_INFO, [350, 300, 450, 380]))
+        (v,) = self.found(census)
+        self.assertEqual(v["status"], "not allowed")
+        self.assertEqual({ul.under_canvas(v["a"]), ul.under_canvas(v["b"])},
+                         {"GamePanels/BuildInfoPanel", "GamePanels/InvAndCraft/UtilityPanel"})
 
     def test_a_building_panel_inside_the_docks_frame_is_hosted_not_an_overlap(self):
         # a docked census of #1444: the Station Core panel is the dock's tab, inside StructuredDock's frame
@@ -943,7 +959,8 @@ class RecordedWindowTest(unittest.TestCase):
         self.assertEqual(ul.moves(before, after)["moved"], [])
         self.assertEqual(ul.moved_units(before, after, SPEC), set())
         diff = ul.window_diff(before, after, SPEC)
-        self.assertEqual((len(diff["new"]), len(diff["kept"]), len(diff["standing"])), (0, 0, 3))
+        # w1911: four pairs, not three: the Crafting and Inventory windows are two windows now, each against the Station Grid
+        self.assertEqual((len(diff["new"]), len(diff["kept"]), len(diff["standing"])), (0, 0, 4))
 
 
 class RepeatedSiblingsTest(unittest.TestCase):
