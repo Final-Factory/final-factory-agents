@@ -342,6 +342,13 @@ gh run view <run id> -R Final-Factory/FinalFactory --json jobs -q '.jobs[] | "\(
   one "<app> uploaded to Steam … BuildID …" per app, main first (read with `ffdiscord read '#release-build-announce' --limit 10`, see
   the ff-discord `discord-cli` skill). A player with no GOOD/FAILED notice while its CI job shows
   success was never granted: see the "host did not answer" row below.
+- **With no steamcmd and no ffdiscord** (release-status.py says "Steam not readable"; on biscuit the downloaded
+  steamcmd's 32-bit binary will not even start: "required file not found"): read the branches from the public PICS
+  mirror, `curl -s https://api.steamcmd.net/v1/info/1383150`, at `data."1383150".depots.branches.development`
+  (`buildid`, `timeupdated`). A new BuildID whose `timeupdated` falls just after FFBox's "uploading master <v> main to
+  Steam" means it is live (w1978, Build 16: development went to 26189340 at 22:28:39 UTC; the upload began at 22:27:25).
+  A `GitHubError ... 503` in FFBox's journal after both uploads came from the regenerated-files PR step, which FFBox
+  retries on its next pass (ffbox `scripts/release_lane.py`, `_settle`). For 1.0.0.16 that PR, #2490, merged 14 min later.
 - **On the ffbox host:** the ledger `~/ffbox-state/builds/<branch>/<version>/release.json` holds every
   state: `workers`, the CI `run` whose tests gate the upload, `uploads.main` / `uploads.demo` with
   their BuildIDs, and the regenerated-files PR.
