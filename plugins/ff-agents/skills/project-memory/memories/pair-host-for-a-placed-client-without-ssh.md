@@ -1,6 +1,6 @@
 ---
 name: pair-host-for-a-placed-client-without-ssh
-description: "Hosting a two-machine determinism pair for a client another worker places later (w1761, 2026-10-23, host lothdesktop, client BEAST, no ssh): match 'status host-peers-connected:' not 'host-peers-connected' (the waiting line contains it), relaunch the host every 900 s, a unique -ffAutomationLabel per attempt or the audit report is refused, devunlock fills the inventory so trash before a grab, a PostReadyCommand splits on every ';', and a flow-control-too-slow drop is retried, not judged."
+description: "Hosting a two-machine determinism pair for a client another worker places later (w1761, 2026-10-23, host lothdesktop, client BEAST, no ssh): match 'status host-peers-connected:' not 'host-peers-connected' (the waiting line contains it), relaunch the host every 900 s, a unique -ffAutomationLabel per attempt or the audit report is refused, devunlock fills the inventory so trash before a grab, a PostReadyCommand splits on every ';', a flow-control-too-slow drop is retried, not judged, and the host states its exact IP:port in every report marked for the client (w1940: a silent move to 7891 cost 80 minutes)."
 ---
 
 # A pair host for a client placed later, without ssh (w1761, 2026-10-23)
@@ -39,6 +39,17 @@ Six traps cost three host runs first:
    steady (160 heartbeats per 10 s, frame p99 18 ms). The same client arguments joined clean 40 minutes later.
    Check `desync.stats` shows the client in step before driving the scenario, or the commands run on the host
    alone.
+
+7. **The host states its exact address and port in every report marked for the client** (w1940, 2026-10-24,
+   client biscuit, host lothdesktop for w1898's PR #2323). The host moved from port 7890 to 7891 between runs
+   and said so only in a still-open line; the client kept joining 100.74.97.12:7890 for 80 minutes (21
+   attempts, each `status error: join-timeout ... after 150s`, the log showing `Failed to connect to server`
+   and `[MaxConnectionAttempts] Connection closed`), while the host waited for it. With 7891 the client was
+   `client-ready` in 12 s and ran to heartbeat 587. Host: put `<IP>:<port>`, the head and the start time in
+   the `For <client request>:` line, again on every relaunch that changes any of them. Client: the netcode is
+   UDP, so a ping that answers with two join-timeouts in a row means the wrong port or a firewall, not a slow
+   host: stop retrying, read the host's latest ledger report (`read_work <host request>`) for a new port, and
+   if there is none ask with `blocked_on` reports naming the address and port you tried.
 
 The scripts: a host loop that launches through `player_slots.py`, waits for `status host-peers-connected:`
 and relaunches on a timeout; a driver that waits for the same line, reads `desync.stats`, then sends the
