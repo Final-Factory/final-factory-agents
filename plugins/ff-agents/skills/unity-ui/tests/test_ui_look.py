@@ -110,6 +110,33 @@ class LoudFillTest(unittest.TestCase):
         self.assertEqual(uk.loud_fills(still(img), [(0, 0, 640, 360)]), [])
 
 
+class StandingTest(unittest.TestCase):
+    def test_a_graph_whose_peaks_moved_is_standing_and_a_new_button_is_not(self):
+        # w1908: Production Statistics' teal graph drew its peaks in other places on the after run; each peak overlapped
+        # no before peak by half, so all 11 read as new loud fills.
+        teal = (0x21, 0xA6, 0x9F)
+        def f(x0, y0, x1, y1, colour=teal):
+            return {"rect": [x0, y0, x1, y1], "colour": colour, "L": 62, "C": 36}
+        before = {"loud": [f(360, 530, 420, 578), f(570, 502, 660, 551), f(820, 545, 880, 591)], "bleed": [], "fails": []}
+        after = {"loud": [f(400, 547, 484, 595), f(700, 557, 890, 604), f(100, 100, 200, 140, (0x2F, 0xB7, 0xE8)),
+                          f(1200, 540, 1300, 590)], "bleed": [], "fails": []}
+        out = uk.split_standing(after, before)
+        self.assertEqual(len(out["standing"]["loud"]), 2, out)
+        self.assertEqual([g["rect"][0] for g in out["loud"]], [100, 1200])
+
+    def test_one_before_peak_takes_ragged_peaks_in_its_band_and_not_a_solid_box(self):
+        # w1908: the 2560x1080 before drew one teal peak where the after drew five in the same band.
+        teal = (0x21, 0xA6, 0x9F)
+        def f(x0, y0, x1, y1, fill):
+            return {"rect": [x0, y0, x1, y1], "colour": teal, "L": 62, "C": 36, "area": fill * (x1 - x0) * (y1 - y0)}
+        before = {"loud": [f(1200, 688, 1310, 750, 0.46)], "bleed": [], "fails": []}
+        after = {"loud": [f(1380, 678, 1490, 736, 0.55), f(900, 660, 1000, 720, 0.95), f(1380, 300, 1490, 360, 0.5)],
+                 "bleed": [], "fails": []}
+        out = uk.split_standing(after, before)
+        self.assertEqual([g["rect"][0] for g in out["standing"]["loud"]], [1380])
+        self.assertEqual(sorted(g["rect"][1] for g in out["loud"]), [300, 660])
+
+
 class BleedTest(unittest.TestCase):
     def test_see_through_chips_in_the_active_row_take_its_colour(self):
         s, census = stop_list(chip_alpha=0.09)
