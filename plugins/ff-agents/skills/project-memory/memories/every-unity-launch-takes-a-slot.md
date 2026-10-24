@@ -23,3 +23,10 @@ that's running?"
   ask for everything at once.
 - Never kill another run's Unity to make room.
 - Details: FF Factory `docs/unity-lifecycle.md`, "Unity slots"; editor-ops, "Unity slots".
+- **A Windows-form PATH hides `unity-slot`; never build raw then** (w1986, BEAST, 2026-10-24). The
+  Bash tool there handed commands a PATH in Windows form (`C:\...;C:\...`), so `python`, `git`,
+  `unity-slot` and coreutils were not found, and a player build started without them ran with no
+  slot and no bench ticket; the harness stopped it for another worker's timed run. Before a build,
+  convert it: `case "$PATH" in *';'*|*'\'*) export PATH="/usr/bin:/mingw64/bin:$(/usr/bin/cygpath -u -p "$PATH")";; esac`
+  (put it in `$TMPDIR/env.sh` and source it in every command). A missing `unity-slot` is a broken
+  shell to fix, not a reason to run the build without it.
