@@ -32,3 +32,12 @@
    through on the first retry (0 `error CS`). So a silent log with idle CPU after about 8 minutes is a retry, not a code
    problem. Watch the log's mtime in the wait loop:
    `[ $(( $(date +%s) - $(stat -c %Y unity.log) )) -gt 480 ]`.
+4. **`Editor.BuildCommand2.BuildWindows` cannot be an `-executeMethod`** (w1475, BEAST slot1, 2026-10-23, master
+   8fe8bfc2ab): the batch run ended at once with `executeMethod method Editor.BuildCommand2.BuildWindows has 1 arguments.
+   Only methods with 0 arguments are supported`, because `BuildCommand2.cs` also has a private
+   `BuildWindows(FFVersion)` (`BuildCommand2.cs:607` beside the public one at `:795`; `BuildLinux` was renamed for the
+   same reason by w1169). For a release (non-Development) Windows player in batch, use
+   `-executeMethod Editor.ShaderBenchBuild.BuildWindowsRelease -ffBenchBuildOutput "<dir>/finalfactory.exe"`. In a
+   running editor, `unity-bridge.py eval_file` with a snippet that calls `BuildCommand2.RebuildAddressablesForCurrentPlatform`
+   and `GetDefaultPlayerOptions` by reflection, sets `locationPathName` and `BuildOptions.None`, and calls
+   `BuildPipeline.BuildPlayer`, built one in 4 min.
