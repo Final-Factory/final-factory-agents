@@ -10,7 +10,6 @@
     "howToAdd": "Add a path (components joined with /, fnmatch globs, matched against a run of components anywhere in the element's path, '(Clone)' ignored) only for something the player opens on purpose and can close again. Never for something always showing, and never to make a check pass: a HUD piece in the way of another HUD piece is a defect.",
     "paths": [
       "QuckControls/OptionsPanels/*",
-      "InvAndCraft",
       "MiniInventory",
       "InventoryPanel",
       "UtilityPanel",
