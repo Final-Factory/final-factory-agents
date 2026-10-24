@@ -1,0 +1,13 @@
+# Mac UI proof: record_clip needs the player's own pid, an editor census at a fixed Game view is off in y, and `--quick` plays the multiplayer lane
+
+**Learned:** 2026-10-23, w1904 (FinalFactory PR #2364, connector filter list), m5.
+
+Three traps that each cost a retry while taking the UI stills, the census and the clip of one window in a built player on a Mac.
+
+- **`record_clip --player` found "no window for pid"** (the recorder stopped before its first frame). It leased the launcher's pid (23293 against the player's 23297). Take the pid from the runner's own log line `solo ready (pid N)` and pass `--pid N`. Start it right after that line: `ffnightly.py run ... &`, `until grep -q "solo ready"`, then `record_clip --pid N --seconds <scenario length + 15> --lead 0`. The window is 1920x1108 (title bar 28 px on top): crop `crop=1920:1080:0:28` for stills. The player quits with the scenario, so the clip ends then (40 s of a 60 s ask).
+- **The agent chip "Agent control ON" draws over a window's title in every player still.** `-ffAgentControlVisible false` hides it (scenario `peerArgs`: `{"solo": ["-ffAgentControlVisible", "false"]}`). Hand-held `FF_NIGHTLY_WINDOW=1920x1080` sets the player's size.
+- **The census snippet (`unity-ui/layout-census.md`) in the EDITOR with a fixed 1920x1080 Game view** reads `Screen.width/height` of the window (1728x917) but the rects come out in 1920x1080 space, so every y is off by `1080 - 917`. Add that to every y (`rect`, `visible`, `textRect`) and set `screen` to 1920x1080; checked by looking at a crop of the still against the shifted rects (`Filter Options` text at y 177-192 against rect 175-197). `execute_code` cannot keep the snippet between calls, but a `System.Func<string,string>` stored with `AppDomain.CurrentDomain.SetData` does survive until the next play-mode exit.
+- **`ffnightly.py run --quick` is not the single-player quick set.** On a Mac it ran 27 scenarios, 18 of them multiplayer ending `env` (a Mac cannot host a pair), and held `lab.lock` for 12 minutes against the scenario I actually wanted: `--scenario <id>` for each one, and `kill` the runner's pid (`lab.lock` names it) to free the lab.
+- A Cargo Hold feeding a filtered connector pushes its HIGHEST inventory slot that passes the filter every heartbeat (measured: a 3,000-item slot starved the one below for the whole run), so a scenario that wants two items to show gives the upper slot a small stack.
+
+**How to apply:** put the pid and crop in the clip script, hide the chip in the scenario, correct the census y before `ui_layout.py` and `ui_look.py`, run scenarios by id.
