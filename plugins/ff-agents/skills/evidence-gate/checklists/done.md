@@ -61,6 +61,9 @@ holds, or the report says what is left instead of DONE.
    Not already answered: the request's notes and those of the other requests you hold have no answer from that person
    since you raised it, and one question for several requests is one declaration with no `request`
    ([never ask what they already answered](../lessons/a-person-wait-is-declared-not-polled.md#never-ask-a-person-what-they-already-answered-w1812), w1812).
+   Not already decided: you read every note of theirs on the request and its related requests from the start, and none
+   covers the question; a UI change whose content they decided, as plain text in an existing component, merges on green
+   ([a decided UI change gets no look OK](../lessons/a-person-wait-is-declared-not-polled.md#a-decided-ui-change-gets-no-look-ok-w2084), w2084).
    Every other wait left open is a harness timer (`wake_me`, `blocked_on`, `set_timer`), never a background shell
    loop, `nohup`, `&` or Monitor left to finish it ([a wait is a harness timer](../lessons/a-person-wait-is-declared-not-polled.md#a-wait-on-a-machine-is-a-harness-timer-never-a-background-loop-w1106), w1106).
    No `still open:` line waits on the orchestrator or the dispatcher for your own work: a two-machine or pair check, a

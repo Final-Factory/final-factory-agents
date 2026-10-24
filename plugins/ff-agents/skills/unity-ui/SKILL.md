@@ -287,7 +287,9 @@ python scripts/deck_audit/ui_check.py shots <tour> --words words.txt     # write
 Then the evidence-gate's [UI checklist](../evidence-gate/checklists/ui.md) and, in the PR, the
 `Content:`, `Full content:`, `Style:`, `Shots:` lines and a flicker result (`pr_evidence.py`
 fails a UI change without them). Publish the stills, clips and the sheet with `publish_review`, and
-put the stills of every screen in front of the person who asked for the look.
+put the stills of every screen in front of the person who asked for the look, unless they already decided its content:
+their wording or behaviour as plain text in an existing component, nothing else moved, merges on green with their words
+quoted (evidence-gate checklists/ui.md, w2084).
 
 ## 5a. Judge the design before anyone sees it (w1399)
 
