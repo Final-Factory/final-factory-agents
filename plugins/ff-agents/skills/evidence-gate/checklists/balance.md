@@ -31,6 +31,14 @@ base's parked player meets no camp at all, and its edge is where the Build 108 r
    band's stages and one neighbour on each side, and says which; anything that touches late raids runs
    `BAL-end-justplay`, the save the runaway was reported on.
 
+   Pass `--budget-min 300` on a hand run: the default budget skipped BAL-end-justplay after the other stages (w2039,
+   2026-10-24). To stop a run, end the `ffnightly.py` process itself by its command line, not only the background shell
+   that started it: `TaskStop` left the runner holding both player slots and `ff-leftovers list` did not show it
+   ([the trap](../../project-memory/memories/batch-player-build-traps-switch-branch-and-ilpp.md)). Since w2039 the lane
+   also judges attacks, camps and guards apart against `stages.<stage>.spread` (mean ± max(3 sd, 1), from three or
+   more runs: `balance_lane.py spread`), and flags awake-ship growth as a performance signal; a curve change re-measures
+   that spread too.
+
    **Where the saves are.** The `lab:` stages (BAL-end-justplay, BAL-late-lifesave, BAL-end-meltcpu: `w1440-*.zip`) need
    their lab fixtures, and BEAST has none (no `w1440-*.zip` anywhere under F:/ffw, checked 2026-10-20, w1243); the
    baselines were measured on lothdesktop. On another machine only the stages from repo or golden-fixture saves run as
