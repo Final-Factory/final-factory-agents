@@ -165,8 +165,9 @@ Right after the merge:
    back to the branch it left for `urgent/<v>` (w1856; Ben, after 1.0.0.12 left beast/slot1 on `urgent/1.0.0.12` and the
    next worker there committed on it). Its answer says `Hand-back (w1856): <sandbox> is back on <branch>`. The run
    already handed the rest back (its `hand-back:` line and the record's `handback` phase): the tree as committed,
-   `Library/Bee`, `ScriptAssemblies` and `ScriptMapper` cleared (the stale state whose next player builds failed in
-   `EntitiesILPostProcessors` on `Unity.Jobs.dll`), the project opened again on this computer's own build target. If
+   `Library/Bee`, `ScriptAssemblies` and `ScriptMapper` cleared (once blamed for player builds failing in
+   `EntitiesILPostProcessors` on `Unity.Jobs.dll`; that was a Bee race fixed at its cause by w1952, game repo
+   `Documentation/Player-Build-ILPP-Race.md`, so the clear now only costs the next build its script compile), the project opened again on this computer's own build target. If
    either says it could not (`STILL on the release branch`, `NOT cleared, held open`), stop the sandbox editor, run
    `python scripts/release/urgent_release.py handback --restore-tree` and `switch_branch` to the branch it names before
    your turn ends.
