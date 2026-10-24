@@ -383,7 +383,7 @@ def flat_fills(still: Still, rect, cell: int = 2) -> list[dict]:
     return regions
 
 
-def loud_fills(still: Still, rects, screen_px: float | None = None) -> list[dict]:
+def loud_fills(still: Still, rects, screen_px: float | None = None, min_share: float = LOUD_AREA) -> list[dict]:
     """Flat fills large, bright and saturated enough to outshout a dark panel. White and grey are left out: on this game's
     panels the big white shapes are icons, the logo and text (w1399 sweep of master's Esc menu), not fills."""
     screen_px = screen_px or float(still.width * still.height)
@@ -391,7 +391,7 @@ def loud_fills(still: Still, rects, screen_px: float | None = None) -> list[dict
     found = []
     for rect in rects:
         for region in flat_fills(still, rect, cell):
-            if region["area"] < LOUD_AREA * screen_px:
+            if region["area"] < min_share * screen_px:
                 continue
             L, C, h = lch(region["colour"])
             if L >= LOUD_L and C >= LOUD_C:
@@ -691,6 +691,9 @@ def judge(still: Still, census: dict | None, rects: list, label: str, same: list
         if not any(_iou(f["rect"], g["rect"]) >= 0.8 for g in unique):
             unique.append(f)
     loud = unique
+    # Every bright, saturated piece at any size: a before's gradient fill can break into pieces each under LOUD_AREA
+    # where the after's break into bigger ones (w1908: the same Production Statistics graph read 0 loud before, 3 after).
+    tinted = [dict(f, label=label) for f in loud_fills(still, rects, screen_px, 0.0)] if rects else []
     if not rects:
         measured["no_panel"] = True
     bleed = []
@@ -704,13 +707,43 @@ def judge(still: Still, census: dict | None, rects: list, label: str, same: list
     if census and rects:
         fails, weak = text_contrast(census, still, rects, label)
         measured["contrast"] = True
-    return {"label": label, "loud": loud, "bleed": bleed, "fails": fails, "weak": weak}
+    return {"label": label, "loud": loud, "tinted": tinted, "bleed": bleed, "fails": fails, "weak": weak}
 
 
 def _iou(a, b) -> float:
     i = ul.area(ul.inter(a, b)) if ul.inter(a, b) else 0.0
     u = ul.area(a) + ul.area(b) - i
     return i / u if u else 0.0
+
+
+RAGGED = 0.7   # a fill covering less than this share of its box is drawn from data, not a solid control
+
+
+def _ragged(f: dict) -> bool:
+    box = ul.area(f["rect"])
+    return bool(box) and "area" in f and f["area"] < RAGGED * box
+
+
+def _inside_drawn_area(f: dict, before_loud: list[dict]) -> bool:
+    """A fill drawn from data (a graph's area, w1908: Production Statistics' teal graph) breaks into peaks that sit in
+    other places on every run, so no before peak overlaps an after peak by half. It is standing when at least half of it
+    lies in the box the before's bright pieces of the same colour (delta E 5 or less, any size) span, and at least two such fills exist,
+    or when it and one such piece are both ragged and share a row band."""
+    lab_f = ul.lab(f["colour"])
+    same = [g for g in before_loud if math.dist(lab_f, ul.lab(g["colour"])) <= 5.0]
+    twins = [g["rect"] for g in same]
+    # A ragged fill (a graph's area fills about half its box, a button nearly all of it) in the row band of a ragged
+    # before piece of its colour (w1908: the 2560 still's before drew one peak where the after drew five, and the 1920
+    # after drew a peak right of every before piece).
+    r = f["rect"]
+    if _ragged(f) and any(_ragged(g) and min(r[3], g["rect"][3]) - max(r[1], g["rect"][1])
+                          >= 0.5 * min(r[3] - r[1], g["rect"][3] - g["rect"][1]) for g in same):
+        return True
+    if len(twins) < 2:
+        return False
+    box = [min(r[0] for r in twins), min(r[1] for r in twins), max(r[2] for r in twins), max(r[3] for r in twins)]
+    part = ul.inter(f["rect"], box)
+    return bool(part) and ul.area(part) >= 0.5 * ul.area(f["rect"])
 
 
 def split_standing(after: dict, before: dict) -> dict:
@@ -721,6 +754,7 @@ def split_standing(after: dict, before: dict) -> dict:
     keep = {"loud": [], "bleed": [], "fails": []}
     for f in after["loud"]:
         same = any(_iou(f["rect"], g["rect"]) >= 0.5 and g["L"] >= f["L"] - 3 and g["C"] >= f["C"] - 3 for g in before["loud"])
+        same = same or _inside_drawn_area(f, before.get("tinted") or before["loud"])
         (standing if same else keep)["loud"].append(f)
     for f in after["bleed"]:
         names = {c["path"] for c in f["controls"]}
