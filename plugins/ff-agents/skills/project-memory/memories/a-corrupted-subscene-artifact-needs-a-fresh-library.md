@@ -7,8 +7,9 @@ metadata:
 
 w1785 (2026-10-23, lothdesktop/slot3, batchmode `Editor.ShaderBenchBuild.BuildWindowsRelease` of master c44214bc15 merged
 with PR #2268): the first release build failed in the Entities IL post-processor (`NullReferenceException` in
-`EntitiesILPostProcessors.Initialize` on `Unity.Jobs.dll`). Every build of that tree after it, in the same Library, failed
-at subscene baking instead:
+`EntitiesILPostProcessors.Initialize` on `Unity.Jobs.dll`; that one was a Bee race, fixed at its cause by w1952, game
+repo `Documentation/Player-Build-ILPP-Race.md`). Every build of that tree after it, in the same Library, failed at
+subscene baking instead:
 
 `VirtualArtifacts/Extra/25/250cba3cd37eecbc3ad78b364d408fd8.0.asset is corrupted` at `EntitySceneBuildUtility.cs:228`.
 
