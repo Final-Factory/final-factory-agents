@@ -180,7 +180,7 @@ only: after `;` or on the next line of the same command the merge runs on a FAIL
 check's output before the `&&` (`| head`, `| tail`, `| grep`): a pipeline's exit status is its last command's, so
 `pr_evidence.py ... 2>&1 | head -2 && gh pr merge` merges on a FAIL (w888, #1393). To trim the output, redirect it to
 a file and test the exit (`pr_evidence.py ... > v.txt 2>&1 && gh pr merge ...`). `ff-pr merge` reads CI, not the
-verdict: gate it the same way (w1684, #2148: `... --comment 2>&1 | head -2; ...; ff-pr merge` merged on a FAIL). A
+verdict: gate it the same way (w1684, #2148: `... --comment 2>&1 | head -2; ...; ff-pr merge` merged on a FAIL; w2083, #2484: `pr_evidence.py ... 2>&1 | tail -3 && gh pr edit ... && ff-pr merge` merged on a stale-copy FAIL). A
 draft checked with `--body-file` needs the PR's files too (`--repo`, `--pr`; before 1.29.82 it ran with none, so the
 Balance and Used by rules never fired on the draft). `--comment` posts the verdict on the
 pull request, so there is a record, timestamped before the merge, of what the evidence was. Run it
