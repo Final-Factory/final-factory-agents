@@ -209,8 +209,8 @@ A change to text sizes (the w727 Deck floor raised about 300 texts from 14 to 15
 comparing every text's layout before and after, same save, same screens:
 
 ```sh
-python "<this skill's base directory>/text_diff.py" before.json after.json      # one pair
-python "<this skill's base directory>/text_diff.py" --dir <censuses> b- a-       # every b-<state>.json vs a-<state>.json
+python "$FF_SKILLS/unity-ui/text_diff.py" before.json after.json      # one pair
+python "$FF_SKILLS/unity-ui/text_diff.py" --dir <censuses> b- a-       # every b-<state>.json vs a-<state>.json
 ```
 
 It lists texts with the same string whose line count grew, that overflow or are cut (ellipsis) only after, or that
@@ -231,9 +231,9 @@ moving panels around that I don't ask you to move around". Overlap, drift and co
 nothing overlapping, so every move is listed, and the places he fixed are pinned:
 
 ```sh
-python "<this skill's base directory>/ui_layout.py" moves --pair b-1920.json a-1920.json \
+python "$FF_SKILLS/unity-ui/ui_layout.py" moves --pair b-1920.json a-1920.json \
     --pair b-1280.json a-1280.json --pair b-docked.json a-docked.json [--move-px 4]
-python "<this skill's base directory>/ui_layout.py" pins a-1920.json a-1280.json a-docked.json
+python "$FF_SKILLS/unity-ui/ui_layout.py" pins a-1920.json a-1280.json a-docked.json
 ```
 
 - Take six censuses with the same save and the same steps: 1920x1080 at UI 0.9, 1280x800 at UI 0.8, and 1280x800 docked,
@@ -351,7 +351,7 @@ and the card growing by the new row from the same top-left. Build the base with 
 ## Compare two
 
 ```sh
-python "<this skill's base directory>/ui_layout.py" check --before before.json --after after.json \
+python "$FF_SKILLS/unity-ui/ui_layout.py" check --before before.json --after after.json \
     [--closed closed.json] [--shot after.png --ref-shot before.png] [--ref "Inventory"] [--clusters clusters.json]
 ```
 

@@ -5,6 +5,8 @@ description: "Before any consequential action (spending money, publishing, a liv
 
 # Evidence gate: research the decision before acting
 
+**Scripts** (w2012): this skill's scripts are in `$FF_SKILLS/evidence-gate/` (`python "$FF_SKILLS/evidence-gate/pr_evidence.py"`; PowerShell `$env:FF_SKILLS`). FF Factory sets `FF_SKILLS` for its workers to the `skills` folder of the ff-agents plugin the session loaded; without it, the folder is the "Base directory for this skill" Claude Code printed above this text. Never search a disk for them: `find / -name ui_look.py` walked all of lothsahn's C: ("Stop messing with my c:"), and FF Factory's guard refuses a search of `/`, a drive or a home folder.
+
 One rule: **every choice or claim behind a consequential action carries a basis that fits it, and
 you do not act while one that affects the outcome is a guess.**
 
@@ -133,7 +135,7 @@ look first and relay only with the critic's report (FF Factory `read_rules ui`).
   commit) and open X, and say what you ran; from a grep, git ancestry or a past report it is a guess that names the
   build to run. Asked to investigate, a doubt your quick look leaves is settled by the run, and an orchestrator files
   it in the same turn. A player-facing fix's DONE names the Steam branch and build that carry it (`Ships in:`) and
-  whether pre-1.0 needs a cherry-pick (`pre-1.0:`); `python build_claim_check.py <report> [--done]` checks both
+  whether pre-1.0 needs a cherry-pick (`pre-1.0:`); `python "$FF_SKILLS/evidence-gate/build_claim_check.py" <report> [--done]` checks both
   (w1770: Ben, "so you're lying to me, or you didn't actually check").
 - **List environment variables by name, never their values** ([lesson](../project-memory/memories/list-env-by-name-never-values.md)).
   `env | cut -d= -f1 | grep -i <word>`, or `printenv NAME | wc -c` to see a value is set; never `env | grep` and a sed

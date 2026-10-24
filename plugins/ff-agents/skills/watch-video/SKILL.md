@@ -5,6 +5,8 @@ description: "Watch a video with its sound and judge it like a viewer (cuts, pac
 
 # watch-video: review a video the way a viewer would
 
+**Scripts** (w2012): this skill's scripts are in `$FF_SKILLS/watch-video/` (`python "$FF_SKILLS/watch-video/record_clip.py"`; PowerShell `$env:FF_SKILLS`). FF Factory sets `FF_SKILLS` for its workers to the `skills` folder of the ff-agents plugin the session loaded; without it, the folder is the "Base directory for this skill" Claude Code printed above this text. Never search a disk for them: `find / -name ui_look.py` walked all of lothsahn's C: ("Stop messing with my c:"), and FF Factory's guard refuses a search of `/`, a drive or a home folder.
+
 Frame grabs and shot lists miss what a viewer notices at once: a shot that sits after the player
 stops, a music chop, combat that is one clump of enemies, a camera that is too close. This skill
 measures those things with timestamps, gets a whole-video opinion WITH sound, and hands you the
@@ -185,7 +187,7 @@ watch_video <video> [--music ff] [--ref steam] [--brief brief.md] [--out <dir>]
 ```
 
 `watch_video` is on PATH after `registerAgents.sh` (Windows: `watch_video.cmd`). Without the
-launcher: `uv run --script <this skill's base directory>/watch_video.py ...`. Needs `uv` and
+launcher: `uv run --script $FF_SKILLS/watch-video/watch_video.py ...`. Needs `uv` and
 `ffmpeg`/`ffprobe`. The first run installs its Python packages (numpy, OpenCV, librosa,
 PySceneDetect, Pillow) into uv's cache, which takes about a minute. It runs on macOS (M5) and on
 Windows (BEAST). A 45 s cut takes ~25 s plus ~30 s for Gemini.

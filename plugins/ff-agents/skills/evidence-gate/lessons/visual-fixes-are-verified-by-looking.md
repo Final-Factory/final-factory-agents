@@ -144,7 +144,7 @@ three ways (read from PR #1921's round-4 Evidence; `tests/fixtures/pr-1921-round
 **How to apply.**
 
 1. Mark each transition sentence in the note. Find the frame before it starts and its stated end state (gone, in the
-   core) in the clip, and crop on the object (the w1567 close-up): `python3 transition_strip.py <clip> --from <s> --to
+   core) in the clip, and crop on the object (the w1567 close-up): `python3 "$FF_SKILLS/evidence-gate/transition_strip.py" <clip> --from <s> --to
    <s> --crop W:H:X:Y --claim <name> --object "<the Guardian>" --out <note folder>`. It writes
    `<name>-strip-<from>-<to>s-every1f.png`, every frame numbered, frames whose change from the one before is over 4x the
    window's median framed in red ("POP?"), and prints the `Close-ups:` entry and the critic's question.

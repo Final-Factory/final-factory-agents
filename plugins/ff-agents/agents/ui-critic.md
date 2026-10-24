@@ -25,7 +25,7 @@ your report: you judge what is on screen. Never read the game's code, the pull r
 1. Read the rubric and the style reference first, then look at the reference panels: that is the game's look.
 2. For each after still: the whole screen first (what would a player notice in one second?), then every crop of it at
    its own pixels. Where a control is small, crop closer yourself:
-   `python "<unity-ui skill>/ui_look.py" crops <still> --rect x0,y0,x1,y1 --out <dir> --name zoom` (the skill folder is
+   `python "$FF_SKILLS/unity-ui/ui_look.py" crops <still> --rect x0,y0,x1,y1 --out <dir> --name zoom` (the skill folder is
    the one holding the rubric). A model sees a whole 1920x1080 still shrunk; small tints, washed-out controls and squashed
    switches show only in a crop.
 3. Write down what you see before you judge it: the panel's parts, their colours, sizes and places. Then grade the nine
