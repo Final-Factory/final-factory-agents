@@ -614,6 +614,11 @@ launch [--detach] <exe|folder|.app> -- <player args>` mirrors it into an allowed
 it there (On a worker-root install (LothDesktop since w576) each sandbox slotK has its own two player folders, `players/slotK-0` and `slotK-1`: `launch` picks them from the sandbox it runs in, and `--peer 1` puts a same-build client in `slotK-1` (project-memory `feedback-built-players-run-from-the-slot-pool`).); bash scripts source `scripts/nightly/player_launch.sh` and use
 `"${FF_LAUNCH[@]}" "$PLAYER" -- …`. The audit, feel and bench scripts and `ffnightly.py` already
 do (project-memory `feedback-built-players-run-from-the-slot-pool`).
+Each slot path is allowed once per machine by the worker install's firewall step: `player_slots.py firewall` checks
+them, and a launch warns on a path no rule names. Any listener you start (w1742, lothsahn: "nodejs is triggering the
+windows firewall") binds 127.0.0.1, and node runs from PATH (the root's `tools\node`), never a copy unpacked into
+`$TMPDIR` ([lesson](../evidence-gate/lessons/clean-up-after-yourself.md#a-listener-binds-127001-or-runs-from-a-stable-path-never-from-tmpdir-w1742)).
+More: the game repo's `specs/075-nightly-e2e-regression/quickstart.md`.
 
 **Not beside another worker's timed run** (w1750, lothsahn: "Why is the game player running if the worker has an exclusive lock on beast?"): while another worker holds the machine's bench lock for a timed run, `player_slots.py launch` (every launch path), `record_clip` and FF Factory's shell guard refuse a player or a clip there, with `bench lock held by worker <id> (...), until HH:MMZ`. Move the work to another machine, or wait: `--bench-wait <s>` (or `FF_BENCH_WAIT_S`) waits up to that long and starts when the hold ends. Your own timed run's players pass. `python scripts/bench/bench_queue.py status` shows the queue; the game repo's `Documentation/Bench-Lock.md`, "No players or clips beside a timed run".
 
