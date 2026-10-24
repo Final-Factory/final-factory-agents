@@ -11,6 +11,16 @@ Mechanics: the game repo's `Documentation/Bench-Lock.md`.
       `bench_queue.py timed --what "<what>"` in the background across calls (`timed --release` after), `--bench
       exclusive` for a batch run. The report names the ticket beside its numbers; a number taken without one is a guess
       about a busy machine (w1892: an hour of editor micro-benchmarks on a LothDesktop at 100% CPU, none held).
+- [ ] **A whole-player A/B goes to a play-only timing machine when one is online** (w1946, lothsahn: "Can the portal do
+      builds on one machine and then use this other with an exclusive lock for benchmarks?"; ff-factory PR #599). Two or
+      more built Windows players timed on a save (probe_ab_win.sh's kind of run, numbers from `PerfSummary`): build them
+      where you are, then call the worker tool `timed_run` (builds `[{name, path, args?}]`, save, rounds, sample_s,
+      settle_s, res) instead of running the legs on your own busy machine. Your daemon sends only the pieces the portal
+      lacks; the play-only machine (list_machines shows it, and no sandbox) plays the interleaved legs under its own
+      exclusive bench ticket and sends back a `.tar.gz` in probe_ab_win.sh's layout with a mean ± SD table. End your
+      turn with the wake_me it names; the results arrive as a message. Trust its numbers only beside its noise on the
+      same build (two names for one build), measured. Editor micro-benchmarks still need an editor machine
+      (`unity-bridge.py --timed`); a play-only machine has no editor.
 - [ ] **Shortest run that answers the question.** The question and the smallest difference that would change the
       decision are written down. The legs, sample and settle are the shortest that can show it (a few percent: two
       rounds of 30 to 60 s on a quiet machine), and the round count is a cap.
