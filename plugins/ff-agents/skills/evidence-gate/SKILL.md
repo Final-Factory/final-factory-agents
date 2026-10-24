@@ -166,6 +166,11 @@ look first and relay only with the critic's report (FF Factory `read_rules ui`).
   notes and log and those of the other requests its worker holds: an answer given after the question was raised is the
   answer, so pass it on. One question on several requests is asked once (w1812; Ben: "i already answered this why are
   you asking me in the waiting on input for this still").
+- **A decided UI change gets no look OK** ([lesson](lessons/a-person-wait-is-declared-not-polled.md#a-decided-ui-change-gets-no-look-ok-w2084)).
+  Before any question for Ben, read every note of his on the request and its related requests, from the start. His
+  wording or behaviour added as plain text in an existing component, nothing else moved, merges on green with his words
+  quoted; new components, layout and art still need his OK on stills (w2084, #2395; Ben: "i already answered this. you
+  keep asking me questions i already answered").
 - **Say what every id is, every time** ([lesson](lessons/say-what-an-id-is.md)). Before you send
   anything a person reads, scan it for request ids (w293), PR numbers (#972), commits, worker or
   session ids and sandbox names: each one gets its plain-English words beside it, on every
@@ -481,6 +486,9 @@ One file each under `lessons/`: the rule, why (the incident, dated), how to appl
 - [Never ask a person what they already answered](lessons/a-person-wait-is-declared-not-polled.md#never-ask-a-person-what-they-already-answered-w1812):
   read the request's notes and its worker's other requests before you ask; one question on several requests is asked once
   (w1812: Ben answered c28c5061's questions on w1767 and was asked them again on w1768; w1182 re-asked an answered fog look).
+- [A decided UI change gets no look OK](lessons/a-person-wait-is-declared-not-polled.md#a-decided-ui-change-gets-no-look-ok-w2084):
+  read every note on the request and its related requests before asking; content the person decided, as plain text in an
+  existing component, merges on green (w2084: a fresh session asked Ben to OK the low-ore tooltip line he had written).
 - [Your own checks are yours](lessons/a-person-wait-is-declared-not-polled.md#your-own-checks-are-yours-never-wait-on-the-orchestrator-for-them-w1841):
   a two-machine or pair check, a build, a test run and your CI are yours to run; never end a turn waiting on the
   orchestrator for them (w1841: w1685's worker did, and the request sat Stalled; w1841 as filed for Ben: "pair checks are the worker's own").

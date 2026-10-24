@@ -95,6 +95,32 @@ answered: "i already said it looks good and asked for the fog to be a blueish no
   with the person's words (ff-factory `docs/orchestrators.md`, "Questions for a person"). A refusal from them is the
   answer: pass it on.
 
+## A decided UI change gets no look OK (w2084)
+
+**Rule.** Before you raise any question for Ben (or any person), read every note of theirs on the request and on its
+related requests, from the start, not only those after your last question. A new question whose answer follows from
+what they already decided is not asked. A UI change whose content they already decided (their wording or behaviour,
+added as plain text in an existing component, with nothing else moved) gets no separate look OK: run the UI checks,
+quote their decision in the PR, and merge on green. New visuals still need their OK on stills: a new component, a
+layout change, art (the [UI checklist](../checklists/ui.md) design gate).
+
+**Why.** 2026-10-24, w1958 (Discord bug sweep), game PR #2395 (the low-ore alert tooltip): Ben decided at 04:59 "Right-click
+dismisses for a while; shift+right-click silences for good". The PR added that one line to the existing tooltip. A
+fresh session (worker d57b4ea5, started by the "fresh session after a merge" pilot, w2043) took over at 15:52 and asked
+"can it merge as it looks?" anyway. Ben: "i already answered this. you keep asking me questions i already answered". The
+third time, after w1182 and w1768/w1812 above. The w1812 rule missed it: it reads for an answer given *after* a
+question was raised, and this was a new question; FF Factory's repeat check matches the same question, not a decision
+that covers a new one. The brief's "New player-visible UI or art needs Ben's OK on stills before merge" and unity-ui's
+"put the stills in front of the person who asked" were read as covering a text line he had written himself.
+
+**How to apply.**
+
+- A fresh session reads the request's whole notes and its related requests' notes (`read_work` each) before its first
+  `waiting_on_person`; the handover's "Latest" line is not the decisions.
+- For a UI question, name the note that decided the content. If it covers the change, the PR's `## Evidence` carries
+  `Decided (Ben, <date>): "<his words>"` and the change merges on green with no card.
+- Ask only for what the note does not cover, and say in the question what he already decided.
+
 ## A wait on a machine is a harness timer, never a background loop (w1106)
 
 **Rule.** When something must be checked again after your turn ends (a machine going idle, a build, an import, CI,

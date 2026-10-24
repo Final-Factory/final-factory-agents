@@ -18,6 +18,11 @@ mistakes constantly", after three screens their workers and their orchestrator h
 
 The orchestrator relaying the stills checks the same before Ben sees them (FF Factory `read_rules ui`).
 
+**No look OK for content the person decided** (w2084): before any question for Ben, read every note of his on the request
+and its related requests. His wording or behaviour, added as plain text in an existing component with nothing else moved,
+runs the checks above and merges on green with `Decided (Ben, <date>): "<his words>"` in `## Evidence`, no card. A new
+component, a layout change or art still goes to him on stills ([lesson](../lessons/a-person-wait-is-declared-not-polled.md#a-decided-ui-change-gets-no-look-ok-w2084)).
+
 Not a screen: a world-space mark drawn as a mesh or line (w1181, the station route arrow's chevron speed, game PR
 #1604: no canvas, panel or HUD element) keeps the [visual checklist](visual.md) and skips this one with a
 `Not UI: <what draws it, and that no canvas, panel or HUD element changes>` line in `## Evidence`. `pr_evidence.py`
