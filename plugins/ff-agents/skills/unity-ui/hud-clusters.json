@@ -21,6 +21,7 @@
       "TechnologySelectionPanel",
       "RespawnPanel",
       "FleetInfoPanel",
+      "FactoryInfoPanel",
       "AddMapMarkerPanel",
       "LogisticsSelectionPanel",
       "*EntityPanel",
