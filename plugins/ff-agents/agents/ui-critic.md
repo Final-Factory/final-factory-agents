@@ -64,6 +64,13 @@ your report: you judge what is on screen. Never read the game's code, the pull r
 7. Hunt for what should not be there: a fill brighter than everything else, a colour bleeding into the controls inside a
    selected row, a stretched or squashed control, an empty half of a window, a dense block of text, text you have to
    squint at, edges that do not line up, a control unlike its siblings.
+7b. **World art: is it in scale with its neighbours?** (w2204) Where a still shows a model in the game world (an item on
+   a connector or in an inserter hand, a structure, a ship, a projectile, a pickup) that the change adds or alters, name
+   the objects beside it and say whether its size matches theirs, or how many times bigger or smaller it looks. Visibly
+   out of scale is BROKEN (Ben, after the Repair Pack shipped far too big on connectors: "the repair pack connector item
+   is comically large. make sure you test these visually when you add new models to the game in the future"). A still
+   of the model on its own or in an editor preview cannot answer this: say so under Flaws and ask for one beside its
+   neighbours at gameplay zoom.
 8. If the pack has a `pairs/` folder, each `pair-N.png` is a before/after crop a person will be asked to OK. For each:
    find its area in the whole before and after stills, then say whether the red ring sits on what differs, whether
    anything differs outside the crop (a change the person would not be shown), and whether the crop is large enough to

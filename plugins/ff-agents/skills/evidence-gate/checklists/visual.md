@@ -117,7 +117,8 @@ in the built player (drive-game, "The mouse cursor in a built player"; w980).
    told apart at a glance, and would a player who did not read the name see "a bow", "a disc" or a recoloured copy of
    another weapon's effect? (3) **Detail level**: at the same zoom as the named best models, does it hold its own
    (panel lines, silhouette breaks, emissive accents)? (4) The concept stills were published before the build, and the
-   pick is the person's. Any "no" goes back before the clip.
+   pick is the person's. (5) **Scale**: is it in scale with its neighbours, in a built-game still beside them at
+   gameplay zoom (5k)? Any "no" goes back before the clip.
 5g. **Every "it's gone" and "it happens" is shown close up, against every surface, and asked as a question (w1567).**
    Each sentence in a review note, report or PR that says a visual defect is gone ("no z-fight", "the flicker is
    fixed", "no longer draws through") or that an effect happens ("ships spaghettify", "pulls in the boss", "the disc
@@ -166,6 +167,15 @@ in the built player (drive-game, "The mouse cursor in a built player"; w980).
    ([lesson](../lessons/visual-fixes-are-verified-by-looking.md#a-transition-keeps-its-place-and-its-colours-w1816); w1685, Ben: "and then also becomes that
    purple. it'd be cool if it more smoothly swirled into the black hole and used the objects actual colors with
    perhaps some heat glow effect").
+5k. **New or changed world model: built-game still of it beside its existing neighbours (items: on a connector and in
+   an inserter hand), at gameplay zoom; its size matches theirs (w2204).** An item, structure, ship, projectile or
+   pickup: the still names what is beside it and gives the size verdict (or the ratio and why). A still of the model on
+   its own, or an editor preview, does not count. The PR's Evidence carries `Scale: <still>: <model> beside <neighbours>
+   at gameplay zoom in the built player; its size matches theirs`, which `pr_evidence.py` fails the PR without when it
+   adds or changes a model file or mesh asset, or adds an item, structure or projectile prefab; the fresh critic is
+   asked "is it in scale with its neighbours?" ([lesson](../lessons/visual-fixes-are-verified-by-looking.md#new-models-are-checked-at-scale-in-the-game-beside-their-neighbours-w2204); Ben,
+   w2204, after #1596's Repair Pack: "the repair pack connector item is comically large. make sure you test these
+   visually when you add new models to the game in the future").
 6. **`watch_video` and the blind model review are a second opinion.** They have passed clips
    that did not contain the event, and agreed with a mistake the brief described as intended.
    Quote them, and say where the frames contradict them.

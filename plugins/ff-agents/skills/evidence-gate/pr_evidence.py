@@ -11,7 +11,9 @@ or material lists everything that uses it ("## Used by", from the game repo's sc
 with a basis for each, an enemy, combat or spawn change shows the game repo's balance stages before and after
 ("## Balance", checklists/balance.md, w1440), a new model or effect shows its 'Hero art:' line (concept stills and the pick,
 the detail comparison with our best, how it differs from the existing weapons' and effects', what makes it distinctive,
-the measured frame cost; checklists/visual.md 5e, w1497), a claim that a visual defect is gone or an effect happens names
+the measured frame cost; checklists/visual.md 5e, w1497), a new or changed world model (an item, structure, ship,
+projectile or pickup) names a built-player still of it beside its neighbours on its 'Scale:' line (checklists/visual.md
+5k, w2204), a claim that a visual defect is gone or an effect happens names
 its 1:1 crop or slowed segment on 'Close-ups:' and, for occlusion, every surface on 'Surfaces:' (checklists/visual.md 5g,
 w1567), and a Deck-facing change says 'Real Deck: verified ...' or 'not verified on a real Deck' (checklists/deck.md). It cannot tell whether anyone looked carefully. Standard library only; `gh` for everything that reads GitHub.
 
@@ -1129,6 +1131,118 @@ def hero_art_problems(section: str, hero_files: list[str], changes: dict | None 
     return problems, ([] if problems else [f"hero art: {text[:200]}"])
 
 
+# ---------------------------------------------------------------------------------------------
+# Scale (w2204): a new or changed world model is shown in a built game beside the objects it sits among.
+#
+# Ben, 2026-10-25, after #1596's Repair Pack shipped far too big on connectors: "the repair pack connector item is
+# comically large. make sure you test these visually when you add new models to the game in the future". #1596 added
+# no fbx (its mesh is Assets/Art/Content/RepairPack/RepairPack.asset), so the Hero art rule never saw it. The rule is
+# lessons/visual-fixes-are-verified-by-looking.md (w2204) and checklists/visual.md 5k; this is the part a script can check.
+#
+# What counts (calibrated on the game repo's 600 pull requests merged 2026-10-01..25, see ScaleTest):
+#  - a model file (HERO_MODEL) or a mesh asset under Assets/Art/{Content,Models,ItemArt}/, added or changed (a re-export
+#    can change its size; a re-tint says so on 'Scale: n/a (...)');
+#  - an added world prefab: an item on connectors (Resources/ConnectorEntities), a structure, ship or pickup
+#    (Resources/ItemEntities), a projectile (Prefabs/EffectsEntities/Projectiles). Edited prefabs are not counted:
+#    #1987 alone edited 70 for map icons, and a file list cannot tell a scale edit from those;
+#  - not counted: third-party packs, effects and VFX folders, UI, icons, sprites, textures, scripts and tests.
+SCALE_MESH_ASSET = re.compile(r"^Assets/Art/(Content|Models|ItemArt)/.*\.asset$", re.IGNORECASE)
+SCALE_PREFAB = re.compile(r"^Assets/(Resources/(ConnectorEntities|ItemEntities)|Prefabs/EffectsEntities/Projectiles)/"
+                          r"[^/]+\.prefab$", re.IGNORECASE)
+SCALE_NOT_WORLD = re.compile(r"/Effects?/|Vfx|/UI/|Icon|Sprite|Hologram|Font|/Fog|Outline", re.IGNORECASE)
+SCALE_ITEM = re.compile(r"/ConnectorEntities/|/ConnectorItems/|/ItemArt/|ConnectorItem", re.IGNORECASE)
+SCALE_BUILT = re.compile(r"\bbuilt\b|\bplayer build\b|\bbuild \d+", re.IGNORECASE)
+SCALE_BESIDE = re.compile(r"\b(beside|next to|among|alongside|between|side by side)\b", re.IGNORECASE)
+SCALE_VERDICT = re.compile(r"\b(match(es|ed)?|in scale|same (size|scale|height)|fits?|in proportion|proportionate|"
+                           r"consistent)\b|\d+(?:\.\d+)?\s*(x|%)(?!\w)", re.IGNORECASE)
+SCALE_NA_REASON = re.compile(r"\b(re-?tint\w*|re-?colou?r\w*|materials?|textures?|colou?rs?|unused|concepts?|renam\w+|moved?|"
+                             r"not (drawn|used|shown|placed|spawned|in the world)|same (size|bounds)|"
+                             r"(size|bounds|scale) (is )?unchanged|unchanged (size|bounds|scale))\b", re.IGNORECASE)
+SCALE_NA_NEW_OK = re.compile(r"\b(unused|concepts?|renam\w+|moved?|not (drawn|used|shown|placed|spawned|in the world))\b",
+                             re.IGNORECASE)
+SCALE_FORMAT = ("`Scale: <still.png>: <the model> beside <its neighbours: ordinary items on the same connector and in the "
+                "same inserter hand, or the structures, ships or projectiles around it> at gameplay zoom in a built "
+                "player; its size matches theirs (or: <ratio>)`")
+
+
+def scale_files(files: list[str] | None, changes: dict | None = None) -> list[str]:
+    """The changed files that put a new or resized model in the world (see the block comment above)."""
+    found = []
+    for f in files or []:
+        if not f.startswith("Assets/") or NOT_GAME_CODE.search(f) or THIRD_PARTY.search(f) or SCALE_NOT_WORLD.search(f):
+            continue
+        status = (changes or {}).get(f, ("?", 0))[0]
+        if status == "D":
+            continue
+        if HERO_MODEL.search(f) or SCALE_MESH_ASSET.search(f):
+            found.append(f)
+        elif SCALE_PREFAB.search(f) and status == "A":
+            found.append(f)
+    return found
+
+
+def scale_problems(section: str, model_files: list[str], changes: dict | None = None) -> tuple[list[str], list[str]]:
+    """w2204: a new or changed world model names a built-game still of it beside its neighbours at gameplay zoom, with a
+    size verdict; an item's still shows it on a connector and in an inserter hand. `Scale: n/a (<why>)` is a note."""
+    where = ", ".join(model_files[:3]) + (f" and {len(model_files) - 3} more" if len(model_files) > 3 else "")
+    item = any(SCALE_ITEM.search(f) for f in model_files)
+    found = field(section, "Scale")
+    if not found or not found[1]:
+        return ([f"a new or changed world model ({where}) and no 'Scale:' line (checklists/visual.md 5k; Ben, w2204: "
+                 f"\"the repair pack connector item is comically large. make sure you test these visually when you add "
+                 f"new models to the game in the future\"). Add {SCALE_FORMAT}"
+                 + ("; for an item, the still shows it on a connector and in an inserter hand next to ordinary items"
+                    if item else "")
+                 + ". A still of the model on its own, or an editor preview, does not count. Or 'Scale: n/a (<why: a "
+                   "re-tint, a material or texture only, size unchanged, not drawn in the world>)'"], [])
+    text = found[1]
+    if re.match(r"n/?a\b", text, re.IGNORECASE):
+        reason = text[3:].strip(" ():-")
+        added = [f for f in model_files if (changes or {}).get(f, ("?", 0))[0] == "A"]
+        if len(reason) < 25 or not SCALE_NA_REASON.search(reason):
+            return (["'Scale: n/a' has to say why in a sentence: a re-tint, a material or texture only, the size is "
+                     "unchanged, or the model is not drawn in the world"], [])
+        if added and not SCALE_NA_NEW_OK.search(reason):
+            return ([f"'Scale: n/a' for added files ({', '.join(added[:3])}): a new model in the world is checked beside "
+                     f"its neighbours; n/a fits only a model that is not drawn in the world, an unused concept, a rename "
+                     f"or a move"], [])
+        return ([], [f"SCALE SKIPPED for {where}: {reason[:200]}"])
+    problems = []
+    if HERO_PLACEHOLDER.search(text) or len(text) < 40:
+        problems.append(f"'Scale' is empty or a placeholder: {SCALE_FORMAT}")
+    if not STILL.search(text):
+        problems.append("'Scale' names no still (png, jpg, webp) of the model in the game beside its neighbours")
+    if not SCALE_BUILT.search(text):
+        problems.append("'Scale' does not say the still is from a built player: an editor preview or a prefab view "
+                        "shows no neighbours at the size the player sees them")
+    if not SCALE_BESIDE.search(text):
+        problems.append("'Scale' does not say what the model is beside: name the existing items, structures, ships or "
+                        "projectiles in the same still (a still of the model on its own does not count)")
+    if not re.search(r"\bzoom", text, re.IGNORECASE):
+        problems.append("'Scale' does not say the zoom: at gameplay zoom, as a player sees it")
+    if not SCALE_VERDICT.search(text):
+        problems.append("'Scale' gives no verdict on its size: 'its size matches theirs', or the ratio you measured")
+    if item:
+        for place, shown in (("connector", "on a connector"), ("inserter", "in an inserter hand")):
+            if not re.search(rf"\b{place}", text, re.IGNORECASE):
+                problems.append(f"'Scale' for an item does not show it {shown}: an item is checked on a connector "
+                                f"and in an inserter hand next to ordinary items (w2204, the Repair Pack)")
+    return problems, ([] if problems else [f"scale: {text[:200]}"])
+
+
+SCALE_NOTE = re.compile(r"^\s*Scale\s*:|\b(models?|meshe?s?|fbx|prefabs?)\b", re.IGNORECASE | re.MULTILINE)
+
+
+def scale_questions(note: str) -> list[str]:
+    """w2204: a review note about a model asks the fresh critic about its size beside its neighbours."""
+    if not SCALE_NOTE.search(note):
+        return []
+    return ["Is it in scale with its neighbours? In each still of the model in the game, name the objects beside it (the "
+            "ordinary items on the same connector and in the same inserter hand, the structures, ships or projectiles "
+            "around it) and say whether its size matches theirs, or how many times bigger or smaller it looks. A still "
+            "of the model on its own cannot answer this: say so."]
+
+
 def balance_problems(body: str, files: list[str] | None) -> list[str]:
     """Enemy, combat or spawn numbers changed: a '## Balance' section with the stages run, the before/after table, the
     lane's flags and what became of the baselines, or 'No curve change: <why>' (w1440, checklists/balance.md)."""
@@ -1253,6 +1367,12 @@ def check(body: str, files: list[str] | None = None, brief: str | None = None,
         hero_found, hero_notes = hero_art_problems(section, hero_files, changes)
         problems += hero_found
         notes += hero_notes
+
+    model_files = scale_files(files, changes)
+    if model_files:
+        scale_found, scale_notes = scale_problems(section, model_files, changes)
+        problems += scale_found
+        notes += scale_notes
 
     if ui:
         ui_found, ui_notes = ui_problems(section, brief if brief is not None else brief_in_body(body))
@@ -1387,6 +1507,19 @@ def changes_of(gh_files: list[dict]) -> dict:
             for f in gh_files}
 
 
+def every_file(repo: str, number, first: list[dict]) -> list[dict]:
+    """`gh pr view --json files` stops at 100 files (w2204: #1596 has 108, #1987 153), so a model past the 100th went
+    unseen. At 100, read them all from the REST API, in the same shape."""
+    if len(first) < 100:
+        return first
+    status = {"added": "ADDED", "removed": "DELETED", "renamed": "RENAMED", "copied": "COPIED"}
+    rows = gh("api", "--paginate", f"repos/{repo}/pulls/{number}/files", "--jq",
+              ".[] | {path: .filename, status: .status, additions: .additions, deletions: .deletions}")
+    found = [json.loads(line) for line in rows.splitlines() if line.strip()]
+    return [{"path": f["path"], "changeType": status.get(f["status"], "MODIFIED"), "additions": f["additions"],
+             "deletions": f["deletions"]} for f in found] or first
+
+
 def parse_files_file(text: str) -> tuple[list[str], dict]:
     """One path per line; optionally git's name-status form `A<TAB>path` or `M<TAB>path<TAB>lines changed`."""
     files, changes = [], {}
@@ -1426,6 +1559,7 @@ def main(argv=None) -> int:
         note = Path(args.note)
         problems, questions = closeup_problems(note.read_text(encoding="utf-8"), Path(args.note_dir) if args.note_dir
                                                else note.resolve().parent)
+        questions += scale_questions(note.read_text(encoding="utf-8"))
         if args.questions:
             Path(args.questions).write_text("".join(f"- {q}\n" for q in questions), encoding="utf-8")
         print(verdict_text(problems, [f"{len(questions)} claim(s) for the critic, as questions"
@@ -1457,15 +1591,17 @@ def main(argv=None) -> int:
             # w1684: a draft description checked against the PR's own files; with no file list the Balance and Used by
             # rules never ran, the draft passed, and the PR's posted verdict failed on a missing '## Balance'.
             pr = json.loads(gh("pr", "view", str(args.pr), "--repo", args.repo, "--json", "files"))
-            files, changes = [f["path"] for f in pr.get("files") or []], changes_of(pr.get("files") or [])
+            all_files = every_file(args.repo, args.pr, pr.get("files") or [])
+            files, changes = [f["path"] for f in all_files], changes_of(all_files)
         else:
             files, changes = None, None
             print("note: no file list (--files-file, or --repo and --pr): the rules that read the changed files "
                   "(Balance, Used by, Deck, UI paths) did not run", file=sys.stderr)
     elif args.repo and args.pr:
         pr = json.loads(gh("pr", "view", str(args.pr), "--repo", args.repo, "--json", "body,files"))
-        body, files = pr.get("body") or "", [f["path"] for f in pr.get("files") or []]
-        changes = changes_of(pr.get("files") or [])
+        all_files = every_file(args.repo, args.pr, pr.get("files") or [])
+        body, files = pr.get("body") or "", [f["path"] for f in all_files]
+        changes = changes_of(all_files)
         if not applies(files):
             print("PASS: no game code or assets changed, so no Evidence section is needed")
             return 0
