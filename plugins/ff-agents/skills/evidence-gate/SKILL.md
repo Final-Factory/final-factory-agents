@@ -507,7 +507,7 @@ One file each under `lessons/`: the rule, why (the incident, dated), how to appl
   after the turn goes to `wake_me`, `blocked_on`, `set_timer` or `waiting_on_person`, which the portal keeps across
   deploys and restarts. Never a backgrounded `sleep` loop, `nohup`, `&` or Monitor: the process ends at an idle reap, a
   sandbox release or a portal deploy, and the loop with it (w1106: w1070's idle poll died at the first deploy, unseen).
-- [A digest is blind to fields its fixtures never carry](lessons/a-digest-is-blind-to-fields-its-fixtures-never-carry.md): a
+- [A digest is blind to fields its fixtures never carry](lessons/look-early-by-breakdown.md#a-digest-is-blind-to-fields-its-fixtures-never-carry-w2124-2026-10-25): a
   re-pinned digest proves nothing about a field no fixture sets or the hash leaves out; assert each excluded field, write
   old-file fixtures with the old tree's own serializer and read them at HEAD with mutant arms, and turn the feature
   toggle on (w2124: no checked-in string carried a circuit, an Intermediates filter or a projector copy).
