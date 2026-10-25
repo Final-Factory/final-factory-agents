@@ -110,6 +110,9 @@ Not verified: the Bats' slot lag (simulation, follow-up PR)
   before the bump and says it ran green. With it, the bump merges without a person (a newer save
   refused by an older build is fine); without it, writing it is the work. Only a change that breaks
   loading existing saves goes to a person.
+- **A re-pinned digest or golden test says what its fixtures don't carry** ([lesson](../lessons/look-early-by-breakdown.md#a-digest-is-blind-to-fields-its-fixtures-never-carry-w2124-2026-10-25);
+  w2124): the Tests line names each field the digest excludes and the assertion that pins its value, any feature the
+  change touches that no fixture sets and the test that now sets it, and the mutant arm that went red.
 - **A new system has a test that runs it** ([lesson](../lessons/verify-simulation-at-a-slow-hosts-frame-rate.md#a-new-system-runs-in-a-test-before-the-first-in-game-run-w809-2026-10-09)): the PR's Tests line names
   the test that schedules each new `ISystem`/`SystemBase` in a world with a matching entity, presentation and animation
   systems included (w809: a job's aliasing error only showed when a golden fixture loaded in PlayMode).
