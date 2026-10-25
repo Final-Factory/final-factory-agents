@@ -27,7 +27,8 @@ look to choose from, never the model: the game's look is the low-poly Blender mo
   `core` 3, `structure` 5, `style` 5, `recolor` 5. The script books the table's price per call and writes it in
   `<name>.json`; on 2026-10-25 four calls booked 23 credits and the account balance fell by exactly 23 (measured).
   The balance lags a call by a minute or more, so read it (`concept_art.py balance`, free) after a set, not between calls.
-- Daily cap: `FF_CONCEPT_ART_DAILY_CAP_USD` (default in `concept_art.py` `DEFAULT_CAP_USD`), per computer, UTC days;
+- Daily cap: $3 per computer, UTC days (Ben, 2026-10-25, w2213: "$3 a day per computer is fine."): `concept_art.py`
+  `DEFAULT_CAP_USD`, overridden by `FF_CONCEPT_ART_DAILY_CAP_USD`;
   `concept_art.py tally` prints today's spend. The account's prepaid balance is the hard limit across machines.
 - Never raise the cap yourself. Over it, or a balance under $1: stop and ask the person (money is theirs).
 - Make what the request asks for (3 to 4 looks is the usual ask), a couple of rounds on the one picked, not twenty.
