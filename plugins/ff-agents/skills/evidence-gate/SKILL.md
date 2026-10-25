@@ -494,6 +494,11 @@ One file each under `lessons/`: the rule, why (the incident, dated), how to appl
   a two-machine or pair check, a build, a test run and your CI are yours to run; never end a turn waiting on the
   orchestrator for them (w1841: w1685's worker did, and the request sat Stalled; w1841 as filed for Ben: "pair checks are the worker's own").
   A check on two or more computers at once is `request_pair`: its legs start together and your sandbox is freed meanwhile (w1945).
+- [Capacity is never a question](lessons/capacity-is-never-a-question.md): never ask a person to bring a computer
+  online, wake one, pick one, allow one or run its installer; work no online computer fits waits Queued and starts by
+  itself on the first that fits. Only a blocker only they can clear (their login, password, a reboot) reaches them (w1958:
+  "bring desktop-coosego back online, or say which computer may time the shield frame-rate A/B"; w847; lothsahn: "Stop
+  asking to bring computers online").
 - [Research the route before you say "can't"](lessons/research-the-route-before-you-say-cant.md): before "I can't" or
   "you do it", research the route (docs, the machines and sessions already signed in, the tools), then try it or file
   it; only a concrete blocker with evidence and the smallest step only the person can take reach them (w935; w1287:

@@ -90,6 +90,10 @@ holds, or the report says what is left instead of DONE.
    the try or the filed request (its wNNN), and, for what is left, the blocker's evidence (the error, a screenshot) and
    the one smallest step only the person can take (their own login, password or 2FA code, an approval)
    ([research the route before you say can't](../lessons/research-the-route-before-you-say-cant.md), w935, w1287).
+   **Capacity is never a question** (w2147): no question, card or `still open:` line asks a person to bring a computer
+   online, wake or unpause one, say which computer may run the work, allow one, or run an installer; that work waits
+   Queued (`timed_run`, `timed_place`, `request_pair`, or `queued for <computer>`) and starts by itself on the first that
+   fits ([capacity is never a question](../lessons/capacity-is-never-a-question.md), w1958, w847).
 8a. **Where a player-facing fix ships, and every build claim run** (w1770). A fix players see names the Steam branch
    and build that carry it, or the bump that will, in a `Ships in:` line, and whether the pre-1.0 line needs a
    cherry-pick in a `pre-1.0:` line (`cherry-pick needed (<wNNN or PR>)`, `#<PR>` for one you opened, or `not needed:
