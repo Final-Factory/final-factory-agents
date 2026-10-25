@@ -58,6 +58,10 @@ or forgotten, so the person has to ask.
   after slot2 had been moved there at 19:04, and reset it to its own tip (`fd7ae757d`, tree clean,
   nothing pushed) once `Assets/Scripts/UI/HotbarRadial/` was missing. The reflog shows the move.
   Say in the report that you touched the other branch and that it is back.
+- **An FF Factory worker never runs `gh pr checks`** (w2015, 2026-10-24): its vault token is fine-grained and cannot read
+  checks, and the guard refuses `gh pr checks` and `--json statusCheckRollup` (21 refusals in 20 worker sessions in its
+  first 18.5 h, several at a session's 3rd to 5th call). Use `ff-pr status` / `ff-pr merge`, and `blocked_on` with
+  `ci:<repo>#<n>` to wait. The two items below are for a token that can read checks.
 - **Gate the merge on the check's result, not on "no longer pending".** `until ! gh pr checks N | grep
   -q pending; do sleep 10; done; gh pr merge N` merged a harness PR whose `validate` had failed in 6 s
   (a lesson count over the cap). Read `gh pr checks N` for `fail` before `gh pr merge`, in a script too.

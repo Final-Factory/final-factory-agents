@@ -254,8 +254,9 @@ Steam description is only the version: prefer the command line).
 from any FinalFactory clone, on any branch, with any uncommitted work. The script builds the commit
 on origin/master's tip without touching your checkout, pushes it on a branch `release/<version>`, opens
 a pull request into master and prints the merge command. Wait for that PR's checks (an FF Factory
-worker: `blocked_on` with `prs: ["ci:Final-Factory/FinalFactory#<n>"]`), then merge it with the printed
-`gh pr checks <n> && gh pr merge <n> --merge --match-head-commit <sha>`. **The merge commit on master is
+worker: `blocked_on` with `prs: ["ci:Final-Factory/FinalFactory#<n>"]`), then merge it: in an FF Factory worker
+`ff-pr merge <n>` (a vault token cannot read checks, and the guard refuses `gh pr checks`, w2015); with a token that
+can, the printed `gh pr checks <n> && gh pr merge <n> --merge --match-head-commit <sha>`. **The merge commit on master is
 the release** (it changes `FFVersion.cs` against its first parent), so the build starts when the PR
 merges, not when the branch is pushed.
 
