@@ -10,8 +10,8 @@ It records in REAL time, what the screen shows: the simulation runs on wall-cloc
 (HeartbeatSystem, Stopwatch) while the VFX clock runs on frame time, so a frame-by-frame offline
 recorder would put effects and motion out of step. Standard library only; needs ffmpeg.
 macOS: ScreenCaptureKit (mac/sckrec.swift, compiled once with swiftc) records the window even when
-it is covered. Windows: ffmpeg ddagrab (Desktop Duplication) of the window's client area; the
-window must be visible on a monitor.
+it is covered. Windows: ffmpeg gfxcapture (Windows Graphics Capture, ffmpeg 8+) of the window itself, which
+records it when covered too; else ddagrab (Desktop Duplication) of the window's client area, which must be visible.
 """
 from __future__ import annotations
 
@@ -247,8 +247,8 @@ def mac_recorder():
     return exe
 
 
-def win_client_rect(pid):
-    """Screen rect (x, y, w, h) of the pid's largest visible window's client area, in pixels."""
+def win_client_rect(pid, with_hwnd=False):
+    """Screen rect (x, y, w, h) of the pid's largest visible window's client area, in pixels (and its hwnd)."""
     from ctypes import wintypes
     try:
         ctypes.windll.shcore.SetProcessDpiAwareness(2)
@@ -266,13 +266,13 @@ def win_client_rect(pid):
             user32.GetClientRect(hwnd, ctypes.byref(r))
             pt = wintypes.POINT(0, 0)
             user32.ClientToScreen(hwnd, ctypes.byref(pt))
-            found.append((r.right * r.bottom, pt.x, pt.y, r.right, r.bottom))
+            found.append((r.right * r.bottom, pt.x, pt.y, r.right, r.bottom, int(hwnd or 0)))
         return True
     user32.EnumWindows(cb, 0)
     if not found:
         sys.exit(f"record_clip: no visible window for pid {pid}")
-    _, x, y, w, h = max(found)
-    return x, y, w, h
+    _, x, y, w, h, hwnd = max(found)
+    return (x, y, w, h, hwnd) if with_hwnd else (x, y, w, h)
 
 
 def win_monitors():
@@ -302,6 +302,23 @@ def ffmpeg_has(encoder):
     return f" {encoder} " in out
 
 
+def ffmpeg_has_filter(name):
+    out = subprocess.run(["ffmpeg", "-hide_banner", "-filters"], capture_output=True, text=True).stdout
+    return any(line.split()[1:2] == [name] for line in out.splitlines() if line.strip())
+
+
+def wait_first_frame(proc, raw, tries=16):
+    """True once the recorder wrote its first frame (the container header comes with it), False if it ended or
+    stalled for tries * 0.5 s."""
+    for _ in range(tries):
+        time.sleep(0.5)
+        if os.path.exists(raw) and os.path.getsize(raw) > 0:
+            return True
+        if proc.poll() is not None:
+            return False
+    return False
+
+
 def encoder_works(encoder):
     """Whether this machine can encode with `encoder`: ffmpeg lists NVENC whenever it was built with it, and on a PC
     without an NVIDIA GPU (lothdesktop's Intel Arc, w1065) the capture then hung instead of failing. Try one."""
@@ -316,7 +333,26 @@ def encoder_works(encoder):
 
 
 def start_windows(pid, raw, seconds, fps, monitor):
-    x, y, w, h = win_client_rect(pid)
+    x, y, w, h, hwnd = win_client_rect(pid, with_hwnd=True)
+    # Windows Graphics Capture of the window itself (ffmpeg 8+ gfxcapture) first: it records the game's own client
+    # area whatever covers it. On a desktop shared with other sandboxes, ddagrab and gdigrab record the screen
+    # (w1934, lothdesktop, 2026-10-25: ddagrab gave no frame, the gdigrab fallback recorded another sandbox's Unity
+    # splash window over the player, exit 0; gfxcapture on the player's hwnd gave the right picture in 3 of 3 clips).
+    grab_mode = os.environ.get("FF_CLIP_GRAB", "")
+    if grab_mode not in ("ddagrab", "gdigrab") and hwnd and ffmpeg_has_filter("gfxcapture"):
+        gfx = (f"gfxcapture=hwnd={hwnd}:max_framerate={fps}:capture_cursor=0,hwdownload,format=bgra,"
+               f"fps={fps},crop=trunc(iw/2)*2:trunc(ih/2)*2:0:0")
+        proc = subprocess.Popen(["ffmpeg", "-v", "error", "-y", "-init_hw_device", "d3d11va", "-filter_complex", gfx,
+                                 "-t", f"{seconds:.2f}", "-c:v", "libx264", "-preset", "ultrafast", "-crf", "16",
+                                 "-pix_fmt", "yuv420p", "-g", str(fps), raw])
+        if wait_first_frame(proc, raw):
+            print(f"  window {w}x{h} (hwnd {hwnd}), Windows Graphics Capture")
+            return proc
+        proc.kill()
+        proc.wait()
+        if os.path.exists(raw):
+            os.remove(raw)
+        print("  gfxcapture delivered no frame in 8 s: falling back to ddagrab (FF_CLIP_GRAB=ddagrab starts there)")
     mons = win_monitors()
     idx = monitor
     if idx is None:
@@ -336,7 +372,7 @@ def start_windows(pid, raw, seconds, fps, monitor):
         grab += ",hwdownload,format=bgra"
         enc = ["-c:v", "libx264", "-preset", "ultrafast", "-crf", "16"]
     print(f"  window {w}x{h} at ({x},{y}), monitor {idx}")
-    if os.environ.get("FF_CLIP_GRAB") != "gdigrab":
+    if grab_mode != "gdigrab":
         proc = subprocess.Popen(["ffmpeg", "-v", "error", "-y", "-init_hw_device", "d3d11va", "-filter_complex", grab,
                                  "-t", f"{seconds:.2f}", *enc, "-g", str(fps), raw])
         # ddagrab can deliver no frame at all (Desktop Duplication stalled; w1086: an empty raw file for 20 minutes

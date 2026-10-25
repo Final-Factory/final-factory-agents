@@ -91,7 +91,10 @@ Recording notes:
   (clean 24 s takes gave 0-2, the bad one dozens of 0.3-0.5 s freezes) and re-take. Give the player a
   quit timer longer than the whole recording leg (`-ffSoloQuitAfterSeconds`), and end only a hung
   `sckrec`/`record_clip.py` process, never the player or the editor.
-- **Windows**: `ddagrab` records the window's client area off the monitor, so keep it on top and
+- **Windows**: with ffmpeg 8+ (`gfxcapture`), `record_clip` records the game's own window by its handle (Windows
+  Graphics Capture), whatever covers it (w1934, lothdesktop: the screen fallbacks recorded another sandbox's Unity
+  splash over the player, exit 0); if it gives no frame in 8 s it falls back to `ddagrab` (`FF_CLIP_GRAB=ddagrab`
+  starts there). `ddagrab` records the window's client area off the monitor, so keep it on top and
   unobstructed (toasts and overlapping windows are recorded). If `ddagrab` delivers no frame (Desktop Duplication stalled; w1086)
   `record_clip` falls back to `gdigrab` after 8 s (`FF_CLIP_GRAB=gdigrab` starts there). A player launched
   by a script must be raised with `SetWindowPos` argtypes set (a 32-bit HWND_TOPMOST does nothing on 64-bit Windows),
