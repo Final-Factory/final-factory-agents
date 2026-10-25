@@ -772,6 +772,19 @@ class WindowOverlapTest(unittest.TestCase):
             ("GamePanels/BuildInfoPanel", "GamePanels/SelectionColumnStrip", "not allowed", "window x HUD"),
             ("GamePanels/CargoEntityPanel", "GamePanels/SelectionColumnStrip", "not allowed", "window x window")})
 
+    def test_a_structure_window_over_station_info_is_the_layer_order(self):
+        # w2150: a critic flagged the Station Grid and Cargo Hold over Station Info at 1280x800 (w1911/w1966) and a worker
+        # built a two-request fix; Ben: "Station UI is a higher layer than tutorial or station info"
+        for window in ("StationGridEntityPanel/MainPanel", "CargoEntityPanel/MainPanel", "StructuredDock/Frame"):
+            (v,) = self.found(screen((STATION_INFO, [489, 639, 773, 725]), (window, [400, 300, 700, 700])))
+            self.assertEqual(v["status"], "allowed", window)
+            self.assertIn("Think of it in layers", v["why"])
+
+    def test_the_layer_order_does_not_allow_two_windows_over_each_other(self):
+        census = screen(("CargoEntityPanel/MainPanel", [84, 176, 436, 382]), ("StationGridEntityPanel/MainPanel", [300, 300, 700, 600]))
+        (v,) = self.found(census)
+        self.assertEqual(v["status"], "not allowed")
+
     def test_two_windows_over_each_other_are_found_and_named(self):
         # 1920x1080 classic, the Player Inventory over a Station Grid panel (a census of #1444)
         census = screen((INVENTORY, [500, 500, 1000, 620]), ("StationGridEntityPanel/MainPanel", [924, 300, 1200, 600]))

@@ -266,7 +266,8 @@ screen; on desktop three labels stopped fitting, the two windows left their defa
     by hand and call it clean, and never accept "overlaps: 0" from the HUD-block count as covering windows**: w961's strip
     stood 11 px over the Player Inventory and w978's worker measured it by hand because `overlaps` said 0 for a window
     (Ben: "UI should be clean and flowy"). The allow-list is `hud-clusters.json` `windowOverlaps`, one entry per pair
-    the requester asked for, their words in it and the situation they set (Ben, w873: "yes put the station panel
+    the requester asked for, their words in it and the situation they set (a window over a lower layer, item 34, is
+    allow-listed by layer: a structure window over Station Info, any window over the Objectives card; Ben, w873: "yes put the station panel
     controls above station info and it should be over the player inventory" allows the strip over the Inventory only
     while the strip stands above Station Info); add one only in a harness PR with their words, never to pass a check.
     **A fix that clears one overlap runs `unity-ui/window_changes.py` on every before/after pair (w1911, 2026-10-24):** a NEW COVER
@@ -277,7 +278,11 @@ screen; on desktop three labels stopped fitting, the two windows left their defa
     the selected structure included: not an overlap defect, so do not flag it and do not move or resize a window to
     clear it (Ben, 2026-10-11, about w961's Station Core window over the selected core: "That's fine the ui elements
     that come from selecting structures can block the game world since they are closed and can be moved too"). Window
-    over window, window over a HUD block and window over the station controls still count (items 11 and 24).
+    over window, window over a HUD block and window over the station controls still count (items 11 and 24), except
+    where the layer order puts the window higher (item 34: Station Info, the Objectives card and the tutorial; Ben,
+    2026-10-24, w1911: "it doesnt matter if ui panels are overlapping structures in the game world. i never told you
+    that was a requirement. its fine as it is. the player is interacting with the UI. if they want to see the station
+    core they can move the window").
 26. **Text is covered by drawn bounds, not by box (w727).** `ui_layout.py check` prints a `Covered text:` line and
     `ui_layout.py covered-text <census.json>` lists, for one census, every text of an opened screen (a hub tab, a window)
     whose DRAWN glyphs (`textRect` in the census) lie under an opaque element drawn above it. A new one fails; one both
@@ -395,6 +400,17 @@ control, and a redesign goes out as 2 or 3 clearly different options built from 
     - One corner radius for the window's rows, buttons and fields; a shape inside a rounded one takes the parent's radius
       less the gap, or gets room around it; the header at the other windows' title size and weight, on one line, with
       the same room above; the same padding at each edge as the reference, nothing against the top or the bottom.
+34. **Name both layers before you call an overlap a defect (w2150).** "Before calling an overlap a defect, name both elements' layers; higher-over-lower is by design (Ben)". Layers, lowest first: the game
+    world; HUD info (Station Info, the Objectives card and the tutorial, its Skip button included); station and
+    structure UI windows and the panels the player opens. A higher layer over a lower one is not a finding and not a
+    fix (Ben, 2026-10-25, w1911/w1966: "It doest matter. Station UI panels can show over other stuff like tutorial.
+    Think of it in layers. Station UI is a higher layer than tutorial or station info. You don't need to fix this";
+    a worker had spent two requests on a fix, PR #2434, closed unmerged). Temporary chat lines may cover a window too
+    (Ben, w1432: "i'm ok with chat overlaying on the station controls, since its temporary"). Still findings: two
+    elements of one layer over each other, a lower layer over a higher one (a hover card or HUD piece over a window),
+    and text cut off. The Inventory/Crafting window and a structure's window are mutually exclusive (Ben,
+    2026-10-24): both open at once is a regression to report, and a forced-open still of them is not graded.
+    Lesson: [UI overlaps follow the layer order](../lessons/a-ui-change-leaves-the-rest-of-the-screen-as-it-was.md#ui-overlaps-follow-the-layer-order-higher-over-lower-is-by-design-w2150-2026-10-25).
 
 19. **The Deck tour is a stand-in (w770).** It forces its own window size and a scripted Deck, so it cannot show Steam's
     layout choice, the Proton first-frame resolution, the Steam client version or touch. A Deck UI change says "verified on

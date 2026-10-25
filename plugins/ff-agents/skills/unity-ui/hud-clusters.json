@@ -42,7 +42,7 @@
     ]
   },
   "windowOverlaps": {
-    "why": "No overlaps in the UI (Ben: \"UI should be clean and flowy\"). ui_layout.py lists every overlap that involves an open window (openedPanels above): window against window, and window against an always-on HUD block, each named with both elements and the overlap rect. An overlap passes only when it is listed under `allowed` with the requester's own words (and the condition they set), or is a window the dock hosts. Every other one is NOT ALLOWED: new or kept between windows the change moved fails ui_layout.py check and pr_evidence.py (w981: the Station strip stood 11 px over the Player Inventory in the Deck's classic layout and `overlaps` said 0).",
+    "why": "No overlaps in the UI (Ben: \"UI should be clean and flowy\"). ui_layout.py lists every overlap that involves an open window (openedPanels above): window against window, and window against an always-on HUD block, each named with both elements and the overlap rect. An overlap passes only when it is listed under `allowed` with the requester's own words (and the condition they set), or is a window the dock hosts. A window over a lower layer is by design (w2150, Ben 2026-10-25: \"Think of it in layers\"; layers lowest first: the game world, HUD info such as Station Info and the Objectives card, station and structure windows), so those pairs are listed by layer below. Every other one is NOT ALLOWED: new or kept between windows the change moved fails ui_layout.py check and pr_evidence.py (w981: the Station strip stood 11 px over the Player Inventory in the Deck's classic layout and `overlaps` said 0).",
     "howToAdd": "Only for an overlap the requester asked for, with their words word for word in `who` (the last entry is printed next to the overlap), the two sides as path patterns (components joined with /, fnmatch globs, '(Clone)' ignored, matched against a run of components anywhere in an element's path) and, when their words set a condition, `when`. Never to make a check pass, and never wider than the words: a quote about one pair allows that pair, in the situation they described. `when` supports aStandsAbove: the named element (a path tail), meaning the `a` window stands directly over it.",
     "names": {
       "MiniInventory": "Player Inventory",
@@ -83,6 +83,20 @@
         "who": [
           "Ben, w742, 2026-10-09: \"the blueprint panel showing over objectives is fine since its a temporarily opened panel\"",
           "Ben, w813, 2026-10-09: \"objectives are on their own layer and game Ui panels should just show over top of them\""
+        ]
+      },
+      {
+        "a": "*EntityPanel",
+        "b": "BuildInfoPanel",
+        "who": [
+          "Ben, 2026-10-25 (w1911/w1966, a critic had flagged the Station Grid and Cargo Hold over Station Info at 1280x800): \"It doest matter. Station UI panels can show over other stuff like tutorial. Think of it in layers. Station UI is a higher layer than tutorial or station info. You don't need to fix this\""
+        ]
+      },
+      {
+        "a": "StructuredDock",
+        "b": "BuildInfoPanel",
+        "who": [
+          "Ben, 2026-10-25 (w1911/w1966, a critic had flagged the Station Grid and Cargo Hold over Station Info at 1280x800): \"It doest matter. Station UI panels can show over other stuff like tutorial. Think of it in layers. Station UI is a higher layer than tutorial or station info. You don't need to fix this\""
         ]
       },
       {
