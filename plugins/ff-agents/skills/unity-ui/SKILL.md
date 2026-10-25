@@ -297,7 +297,10 @@ Then the evidence-gate's [UI checklist](../evidence-gate/checklists/ui.md) and, 
 fails a UI change without them). Publish the stills, clips and the sheet with `publish_review`, and
 put the stills of every screen in front of the person who asked for the look, unless they already decided its content:
 their wording or behaviour as plain text in an existing component, nothing else moved, merges on green with their words
-quoted (evidence-gate checklists/ui.md, w2084).
+quoted (evidence-gate checklists/ui.md, w2084). The ask that goes with them explains every change in its own section
+(Before step by step, After, Fixes, Code with file, method and old -> new value, Unchanged) with a before/after pair
+cropped to what differs and ringed: make the pairs with `python "$FF_SKILLS/evidence-gate/approval_ask.py" mark` and
+run its `check <ask.md>` before the `waiting_on_person` card (evidence-gate checklists/ui.md item 35).
 
 ## 5a. Judge the design before anyone sees it (w1399)
 

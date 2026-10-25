@@ -171,6 +171,11 @@ look first and relay only with the critic's report (FF Factory `read_rules ui`).
   wording or behaviour added as plain text in an existing component, nothing else moved, merges on green with his words
   quoted; new components, layout and art still need his OK on stills (w2084, #2395; Ben: "i already answered this. you
   keep asking me questions i already answered").
+- **An approval ask explains every change, with a cropped, marked pair** ([lesson](lessons/a-person-wait-is-declared-not-polled.md#an-approval-ask-explains-every-change-with-a-cropped-marked-pair)).
+  Before you ask anyone to OK a change (UI, behaviour or look), each change gets its own section: Before (the player's
+  steps and what they saw), After, Fixes, Code (file, method, old -> new value), Unchanged, and a before/after pair from
+  `approval_ask.py mark`, cropped to what differs and ringed. `approval_ask.py check <ask.md>` must pass before the
+  `waiting_on_person` card goes out (Ben: "youre not explaining in detail what youre changing. i dont get it").
 - **Say what every id is, every time** ([lesson](lessons/say-what-an-id-is.md)). Before you send
   anything a person reads, scan it for request ids (w293), PR numbers (#972), commits, worker or
   session ids and sandbox names: each one gets its plain-English words beside it, on every
@@ -485,6 +490,8 @@ One file each under `lessons/`: the rule, why (the incident, dated), how to appl
   person is needed: never hand a person a step you, the ops worker or ssh can do, an installer rerun included
   (w855: the dispatcher asked Ben to rerun biscuit's installer for w847) and Unity closed, opened or reopened, git
   commands and file copies (w935: a worker told Ben to close Unity on his m5 main clone; Ben: "You can close Unity").
+  An approval ask explains each change in six parts with a cropped, ringed before/after pair, checked by
+  `approval_ask.py check` ([section](lessons/a-person-wait-is-declared-not-polled.md#an-approval-ask-explains-every-change-with-a-cropped-marked-pair)).
 - [A ship-count gap is not a garrison change](lessons/look-early-by-breakdown.md#a-ship-count-gap-is-not-a-garrison-change-w1740): a `BAL-*`
   `enemyShipsMax` gap from a camp-building change can be trajectory; measure both arms' spawner mix, capacity and
   ships by type on a pinned editor timeline first (w1740: 95 against 134 on players, 104 against 100 pinned).

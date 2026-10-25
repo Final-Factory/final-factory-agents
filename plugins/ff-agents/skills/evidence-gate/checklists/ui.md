@@ -411,6 +411,13 @@ control, and a redesign goes out as 2 or 3 clearly different options built from 
     and text cut off. The Inventory/Crafting window and a structure's window are mutually exclusive (Ben,
     2026-10-24): both open at once is a regression to report, and a forced-open still of them is not graded.
     Lesson: [UI overlaps follow the layer order](../lessons/a-ui-change-leaves-the-rest-of-the-screen-as-it-was.md#ui-overlaps-follow-the-layer-order-higher-over-lower-is-by-design-w2150-2026-10-25).
+35. **An approval ask explains every change, with a cropped, marked pair.** Before you ask a person to OK a change, each
+    change has its own `## Change <n>` section, in plain words: Before (what the player did and saw, step by step), After
+    (what they see now), Fixes (the problem), Code (the file, the method, the value before and after), Unchanged (what
+    does not change), and Stills (the before/after pair from `approval_ask.py mark`, cropped to the area that differs
+    and ringed). `approval_ask.py check <ask.md>` passes before the `waiting_on_person` card goes out: a one-line
+    summary, or a full-screen or unmarked still, fails it. The fresh critic also gets each `pair.png` (item 30). Lesson:
+    [an approval ask explains every change](../lessons/a-person-wait-is-declared-not-polled.md#an-approval-ask-explains-every-change-with-a-cropped-marked-pair).
 
 19. **The Deck tour is a stand-in (w770).** It forces its own window size and a scripted Deck, so it cannot show Steam's
     layout choice, the Proton first-frame resolution, the Steam client version or touch. A Deck UI change says "verified on

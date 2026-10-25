@@ -45,6 +45,11 @@ brief's reasoning or the worker's notes, given only what a person would see.
      stills alone.
 
    It prints its id: the same stills give the same id, so a re-roll shows.
+
+   For an approval ask, copy each change's `pair.png` from `approval_ask.py mark` into `<pack>/pairs/` as
+   `pair-1.png`, `pair-2.png`, ... (no change names, no words): the critic checks that each ring sits on what differs
+   and that nothing outside the crop changed (evidence-gate checklists/ui.md item 35). The words of the ask are checked
+   by `approval_ask.py check`, not by the critic, which never reads the worker's notes.
 2. **A new critic.** Claude Code: `Agent` with `subagent_type: "ff-agents:ui-critic"` and the prompt "Read
    `<tmp>/pack-1/prompt.md` and follow it." A session started before ff-agents 1.28.0 has no such type yet: run a
    general-purpose `Agent` with `model: "opus"` and the prompt "Read `<plugin>/agents/ui-critic.md` as your role, then read
