@@ -178,3 +178,16 @@ at the top: hold the host near 20 fps whatever the OS).
 **How to apply.** Before you ask for the run, read the diff against the list in rule 2. None applies: ask for "two
 players, any free machines" and write "no cross-OS pair: <why>" in the Evidence row. One applies: ask for a Mac host
 and a Windows or Linux client, name the case, and say which machines you need and for how long.
+
+## A pair run is filed only on a commit that compiles (w2125, 2026-10-25)
+
+**Rule.** Before `request_pair` (a two-machine pair run), the commit its legs run must have compiled: a green
+`Test in editmode` CI run at that head, or a `refresh_unity` at that head in your own editor with no `error CS` in its
+log. With no editor free, wait for the PR's CI on that head (`blocked_on` with `ci:`) and file the pair run after it.
+
+**Why.** w2125 (the nightly check of #2489 and #2400) pushed a new EditMode test file while every Unity slot on
+lothdesktop was taken, so it was never compiled. The pair run, w2131, was filed on that head, f2e31d387c, straight
+away. The file lacked `using FFCore.Extensions;` (`CS0103: The name 'Ecs' does not exist`), and the PR's own CI run
+40185213438 on that commit was already red with the same error. The host leg's `build_player.sh` stopped in its prepare
+pass, the whole pair was spent, and a fresh pair run had to be filed after the fix. A test file reaches the player build
+too: `build_player.sh` compiles every assembly, test assemblies included.
