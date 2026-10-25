@@ -84,6 +84,12 @@ Not verified: the Bats' slot lag (simulation, follow-up PR)
   `Scale: <built-player still>: <model> beside <its neighbours> at gameplay zoom; its size matches theirs (or the
   ratio)`; an item's line names a connector and an inserter hand. `Scale: n/a (<why: a re-tint, a material only, size
   unchanged, not drawn in the world>)` shows in the verdict (visual.md 5k; w2204, the Repair Pack).
+- **A hide or visibility change** (a game script under `Assets/Scripts` named `…Visibility…`, `…Hide…`, `…Hidden…` or
+  `…Cull…`, added or changed; UI, the lobby, probes, audits and tests excepted) needs `Hidden census: <census log,
+  clip>: with <the thing> hidden in a built player, 0 renderers, particle systems and VFX still drawn inside its bounds;
+  it carries <its children, VFX, shields, engines, lights, trails, outlines, labels, icons, attached items>`.
+  `Hidden census: n/a (<why: a revert, selection or input only, who owns the setting, nothing drawn changes>)` shows in
+  the verdict (visual.md 5l; w2210, Hide Flying Stations).
 - **A defect gone or an effect shown** ("no z-fight", "no flicker", "no longer draws through", "ships spaghettify",
   "pulls in", anywhere in the description but the person's quoted words) needs `Close-ups: <claim>: <1:1 crop.png or
   slowed clip.mp4 and its seconds>; ...`, and an occlusion claim also `Surfaces: <every surface the effect overlaps>`

@@ -1047,6 +1047,80 @@ class ScaleTest(unittest.TestCase):
         self.assertEqual(pe.scale_questions("Close-ups: z-fight: edge.png"), [])
 
 
+CENSUS_LINE = ("Hidden census: shots/f7-census.json, clips/f7-hidden.mp4: with a flying station hidden (F7) in the built "
+               "player, 0 renderers, particle systems and VFX still drawn inside its bounds; it carries its children, the "
+               "hover field VFX, beams, shields, engine flames, lamp lights, belt items and its outline")
+
+
+class HiddenCensusTest(unittest.TestCase):
+    """w2210: Hide Flying Stations was fixed one leftover at a time (belt items, then the hover field, then shields and
+    engines; Ben: "and anything else, you keep missing stuff"). A hide change counts what is still drawn, in a built game."""
+
+    def fixture(self, name):
+        return pe.parse_files_file((HERE / "fixtures" / f"{name}.files").read_text(encoding="utf-8"))
+
+    def run_check(self, line, name="pr-2345-hover-field-hidden"):
+        files, changes = self.fixture(name)
+        body = GOOD if line is None else edit(GOOD, "Looked: yes", line + "\nLooked: yes")
+        found = pe.check(body, files, changes=changes)
+        return [p for p in found[0] if "Hidden census" in p or "hide or visibility" in p], found[1]
+
+    def test_the_hover_field_pr_is_a_hide_change(self):
+        files, changes = self.fixture("pr-2345-hover-field-hidden")
+        self.assertEqual(pe.hide_files(files, changes),
+                         ["Assets/Scripts/FFSystems/Presentation/FlyingStationVisibilitySystem.cs"])
+
+    def test_the_hover_field_pr_without_a_census_fails(self):
+        problems, _ = self.run_check(None)
+        self.assertEqual(len(problems), 1, problems)
+        self.assertIn("no 'Hidden census:' line", problems[0])
+        self.assertIn("FlyingStationVisibilitySystem.cs", problems[0])
+
+    def test_a_filled_census_passes_with_a_note(self):
+        problems, notes = self.run_check(CENSUS_LINE)
+        self.assertEqual(problems, [])
+        self.assertTrue([n for n in notes if n.startswith("hidden census:")], notes)
+
+    def test_each_part_is_needed(self):
+        for cut, expect, new in (
+                ("shots/f7-census.json, clips/f7-hidden.mp4: ", "names no clip", ""),
+                (" in the built player", "built player", ""),
+                (" inside its bounds", "where it counted", ""),
+                ("0 renderers, particle systems and VFX still drawn", "no count", "it all looks hidden"),
+                ("0 renderers", "counts 2 still drawn", "2 renderers"),
+                ("; it carries its children, the hover field VFX, beams, shields, engine flames, lamp lights, belt items "
+                 "and its outline", "what the thing carries", "")):
+            problems = self.run_check(CENSUS_LINE.replace(cut, new))[0]
+            self.assertTrue(any(expect in p for p in problems), (cut, problems))
+
+    def test_a_hand_list_or_placeholder_fails(self):
+        for line in ("Hidden census: hid the shields and the engines too", "Hidden census: TBD", "Hidden census: n/a"):
+            self.assertTrue(self.run_check(line)[0], line)
+
+    def test_n_a_with_a_reason_passes_for_a_selection_change(self):
+        problems, notes = self.run_check("Hidden census: n/a (selection and box drags only skip hidden stations; nothing "
+                                         "drawn changes)", "pr-1836-hidden-station-selection")
+        self.assertEqual(problems, [])
+        self.assertTrue([n for n in notes if n.startswith("HIDDEN CENSUS SKIPPED")], notes)
+
+    def test_ui_lobby_and_probe_hides_need_no_census(self):
+        files, changes = self.fixture("pr-2207-hud-hide-while-covered")
+        self.assertEqual(pe.hide_files(files, changes), [], "a HUD piece hiding under a window is not a world hide")
+        other = {"Assets/Scripts/UI/World/MapMarkerVisibility.cs": ("A", 9),
+                 "Assets/Scripts/FFNetcode/Lobby/LobbyVisibility.cs": ("M", 9),
+                 "Assets/Scripts/Diagnostics/FleetCullProbeSystem.cs": ("M", 9),
+                 "Assets/Scripts/FFSystems/Multiplayer/RemotePlayerProjectionVisibilityAuditSystems.cs": ("M", 9),
+                 "Assets/Tests/Presentation/HiddenFlyingStationTest.cs": ("M", 9),
+                 "Assets/Scripts/FFSystems/Presentation/PlayerShipHideSystem.cs": ("D", 9),
+                 "Assets/Scripts/FFSystems/Presentation/HoverFieldVfxPresentationSystem.cs": ("M", 9)}
+        self.assertEqual(pe.hide_files(list(other), other), [])
+
+    def test_the_note_asks_the_critic_what_is_still_drawn(self):
+        self.assertTrue(any("still drawn where the hidden thing was" in q
+                            for q in pe.census_questions("F7 hides the flying station: clips/f7.mp4")))
+        self.assertEqual(pe.census_questions("Close-ups: z-fight: edge.png"), [])
+
+
 class AuditTest(unittest.TestCase):
     def test_a_pass_counts_only_when_it_was_posted_before_the_merge(self):
         files = [{"path": "Assets/Scripts/FFSystems/Presentation/RiderSystem.cs"}]

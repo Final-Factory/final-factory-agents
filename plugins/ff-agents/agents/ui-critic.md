@@ -71,6 +71,12 @@ your report: you judge what is on screen. Never read the game's code, the pull r
    is comically large. make sure you test these visually when you add new models to the game in the future"). A still
    of the model on its own or in an editor preview cannot answer this: say so under Flaws and ask for one beside its
    neighbours at gameplay zoom.
+7c. **A hide: is anything still drawn where the hidden thing was?** (w2210) Where a still or clip frame shows a thing
+   hidden, culled or toggled off (a flying station or barge hidden, a fogged enemy, a stowed fleet), look at the place
+   it stood and name every glow, particle, shield, engine flame, light, trail, outline, label, icon, beam or item still
+   drawn there. Each is BROKEN (Ben, w2209, after the hover field, then shields and engine effects stayed on hidden
+   stations: "hiding mobile stations should hide any shielding they have and the rocket engine effects. and anything
+   else, you keep missing stuff"). A frame that does not show that place cannot answer this: say so under Flaws.
 8. If the pack has a `pairs/` folder, each `pair-N.png` is a before/after crop a person will be asked to OK. For each:
    find its area in the whole before and after stills, then say whether the red ring sits on what differs, whether
    anything differs outside the crop (a change the person would not be shown), and whether the crop is large enough to

@@ -176,6 +176,17 @@ in the built player (drive-game, "The mouse cursor in a built player"; w980).
    asked "is it in scale with its neighbours?" ([lesson](../lessons/visual-fixes-are-verified-by-looking.md#new-models-are-checked-at-scale-in-the-game-beside-their-neighbours-w2204); Ben,
    w2204, after #1596's Repair Pack: "the repair pack connector item is comically large. make sure you test these
    visually when you add new models to the game in the future").
+5l. **A hide, cull or visibility change: list every visual the thing carries, then count what is still drawn inside its
+   bounds in a built game; expect 0 (w2210).** Its children and the separate entities or GameObjects that follow it:
+   VFX, particles, shields, engines, lights, trails, outlines, labels, icons, attached items. Take the census with every
+   one of them live (shields up, engines firing) and film the hide. The PR's Evidence carries `Hidden census: <census
+   log, clip>: with <the thing> hidden in a built player, 0 renderers, particle systems and VFX still drawn inside its
+   bounds; it carries <every kind>`, which `pr_evidence.py` fails the PR without when it changes a game script named for
+   hiding, showing or culling; the fresh critic is asked "is anything still drawn where the hidden thing was?"
+   ([lesson](../lessons/check-every-kind-of-object-shared-presentation-draws.md#a-hide-hides-everything-the-thing-carries-proven-by-a-census-w2210);
+   Ben, w2209, after Hide Flying Stations left belt items, then the hover field, then shields and engine effects drawn:
+   "hiding mobile stations should hide any shielding they have and the rocket engine effects. and anything else, you
+   keep missing stuff").
 6. **`watch_video` and the blind model review are a second opinion.** They have passed clips
    that did not contain the event, and agreed with a mistake the brief described as intended.
    Quote them, and say where the frames contradict them.
