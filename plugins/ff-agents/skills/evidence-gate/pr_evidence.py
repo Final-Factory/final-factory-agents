@@ -1137,7 +1137,7 @@ def hero_art_problems(section: str, hero_files: list[str], changes: dict | None 
 # Ben, 2026-10-25, after #1596's Repair Pack shipped far too big on connectors: "the repair pack connector item is
 # comically large. make sure you test these visually when you add new models to the game in the future". #1596 added
 # no fbx (its mesh is Assets/Art/Content/RepairPack/RepairPack.asset), so the Hero art rule never saw it. The rule is
-# lessons/new-models-checked-at-scale-in-game.md and checklists/visual.md 5k; this is the part a script can check.
+# lessons/visual-fixes-are-verified-by-looking.md (w2204) and checklists/visual.md 5k; this is the part a script can check.
 #
 # What counts (calibrated on the game repo's 600 pull requests merged 2026-10-01..25, see ScaleTest):
 #  - a model file (HERO_MODEL) or a mesh asset under Assets/Art/{Content,Models,ItemArt}/, added or changed (a re-export

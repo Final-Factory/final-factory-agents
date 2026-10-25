@@ -173,7 +173,7 @@ in the built player (drive-game, "The mouse cursor in a built player"; w980).
    its own, or an editor preview, does not count. The PR's Evidence carries `Scale: <still>: <model> beside <neighbours>
    at gameplay zoom in the built player; its size matches theirs`, which `pr_evidence.py` fails the PR without when it
    adds or changes a model file or mesh asset, or adds an item, structure or projectile prefab; the fresh critic is
-   asked "is it in scale with its neighbours?" ([lesson](../lessons/new-models-checked-at-scale-in-game.md); Ben,
+   asked "is it in scale with its neighbours?" ([lesson](../lessons/visual-fixes-are-verified-by-looking.md#new-models-are-checked-at-scale-in-the-game-beside-their-neighbours-w2204); Ben,
    w2204, after #1596's Repair Pack: "the repair pack connector item is comically large. make sure you test these
    visually when you add new models to the game in the future").
 6. **`watch_video` and the blind model review are a second opinion.** They have passed clips

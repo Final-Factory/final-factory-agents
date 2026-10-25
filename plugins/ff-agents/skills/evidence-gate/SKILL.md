@@ -319,7 +319,7 @@ One file each under `lessons/`: the rule, why (the incident, dated), how to appl
   PR that adds a model or effect art without a filled `Hero art:` line (concepts and pick, detail comparison, how it
   differs, distinct, measured cost; merge checklist), and checklist 5f is the reviewer's read; publish the concepts
   before any build-quality clip (w1497).
-- [New models are checked at scale, in the game](lessons/new-models-checked-at-scale-in-game.md): a new or changed
+- [New models are checked at scale, in the game](lessons/visual-fixes-are-verified-by-looking.md#new-models-are-checked-at-scale-in-the-game-beside-their-neighbours-w2204): a new or changed
   in-world model (item, structure, ship, projectile, pickup) gets a built-game still beside its existing neighbours at
   gameplay zoom (an item on a connector and in an inserter hand), and its size matches theirs; a still of it alone or an
   editor preview does not count (Ben, w2204, after #1596's Repair Pack: "the repair pack connector item is comically
