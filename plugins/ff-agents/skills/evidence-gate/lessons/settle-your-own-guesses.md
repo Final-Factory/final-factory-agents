@@ -370,3 +370,23 @@ reopened it: "yea look into the driver isssue more since it was from 2026". He d
 **How to apply.** A crash triage that ends in "driver" carries the four lines above: driver date
 and position, CPU, the game step and its length, and the lever or why there is none. A reviewer who
 sees a NOT-A-BUG crash verdict without them sends it back.
+
+## "How it always worked": read today's handler before you change it (w2097, 2026-10-25)
+
+**The rule.** When a person describes a behaviour as how it has always worked ("always have been unless this regressed",
+"this is how it used to work"), read the code that handles it on master today, and the same code a year back
+(`git show <old sha>:<file>`), before you change anything. Change only the part the code does not already do, and quote
+the line of theirs that names it.
+
+**Why.** w2097 (stacked windows) asked about the E key and selecting a building. Ben: "selecting something has always
+closed the inventory/craft panel if it was open, and pressing E to open the inventory/craft panel would close any UI
+panels that were open". I read the second half as "one E press closes the windows and opens Inventory" and changed
+`UiController.HandleInventoryTogglePressed`. Ben's next answer: "Okay, this isn't quite right ... if windows are open of any
+kind, E will close them. If no windows are open, E will open the inventory and craft main panels." That is exactly
+master's `if (!CloseAllPanels()) { ... _playerMainPanel.SetActive(!IsInventoryPanelOpen); }`, unchanged since 2020. The
+change was reverted and the stills went round Ben once more. Only the first half (a selection closes Inventory) was
+missing from the code.
+
+**How to apply.** Per behaviour the person names: the handler's `file:line` on master, what it does in one line, and
+whether it already matches their words. Bring a person a question only where the code and their words differ, and
+show them the current behaviour first.
