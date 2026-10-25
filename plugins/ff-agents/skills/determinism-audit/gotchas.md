@@ -34,6 +34,7 @@ load-bearing for future runs even where the original defect is fixed.
 - [A big save: the full capture keeps the client out; the runtime detector and a capped host](#big-save-pair) (w780)
 - [Old against new in one pair: a PR's A/B switches on one peer](#ab-switch-one-peer) (w1115)
 - [Reading a pair's witness-compare.txt: pose distance is the verdict](#witness-pose-distance) (w1555)
+- [A Linux client leg on biscuit: build, headless launch, a scripted paste](#linux-client-leg) (w2133)
 
 ## Full-window rule: never diagnose from a partial window {#full-window-rule}
 
@@ -511,3 +512,28 @@ growth table's `max pose distance` after heartbeat 1. With the S1 fixed-point mo
 10,296 heartbeats; on master one pose was 19 units apart by heartbeat 709. Heartbeat 1's large distance on the
 player's own ship is the host's pose before the ship is placed: leave it out. Quote the windows and the largest
 distance per run, alongside the runtime detector's verdict.
+
+## A Linux client leg on biscuit: build, headless launch, a scripted paste {#linux-client-leg}
+
+w2133 (2026-10-25, the client of a LothDesktop-host pair for PR #2507) lost about 40 minutes to four traps:
+
+- **Build:** `scripts/nightly/build_player.sh` takes only `mac|win`. On Linux run
+  `FF_BUILD_DIR=$TMPDIR/<leg>/player FF_LOG_DIR=$TMPDIR/<leg>/logs bash scripts/audit/run_build_multiplayer_audit.sh --build-only`
+  (it takes its own Unity slot; one session with `-buildTarget StandaloneLinux64`).
+- **biscuit has 26 GB:** with another sandbox's editor and player up, the kernel OOM-killed the build's Unity during
+  Burst AOT (`journalctl -k`: "Out of memory: Killed process ... (Unity)"; the build log ends "BeeDriver connection
+  terminated" in GenerateNativePluginsForAssemblies). It leaves an orphan `bcl.exe +burstc` (7 GB; `ff-leftovers end`)
+  and a stale `Temp/UnityLockfile`, which makes the retry refuse at once as "the project is open in the editor". Check
+  that `lsof` shows no holder, move the lock file into `$TMPDIR`, then build again; the retry went ok.
+- **Launch headless:** a windowed player (`-screen-fullscreen 0`) quit twice on the fixed 30 s title-menu wait
+  (`LocalMultiplayerAutomationBootstrap.cs` `EnsureTitleMenuReadyAsync`, `timeoutMs = 30000`) while it uploaded
+  shaders to the GPU at ~1 s per variant. `-batchmode -nographics` joined at once.
+- **Pasting a copy from a headless client:** `movement.goto` and `camera.zoom` onto the area first (without them the
+  pointer projects off-screen), then `blueprint.copy|x1|z1|x2|z2`, `pointer.moveto|x|z`, `pointer.click`, and only a
+  few heartbeats later `blueprint.drop`: a drop in the same chain as the click cancels the paste. `blueprint.ghosts`
+  lists the IN-HAND blueprint's ghosts, not placed structures; `circuit.dump|x|z` at the tile shows a placed copy.
+- `desync.stats` is host-only ("only the host compares fingerprints"); the client's evidence is its Player.log and
+  `~/.config/unity3d/Never Games/finalfactory/desyncReports`.
+- A timed run's exclusive bench ticket stops the client player mid-run (5-minute warning). Tell the host, keep the
+  event under test (here: deconstructing B) until you rejoin, and relaunch once `bench_queue.py status` shows no
+  exclusive holder.
