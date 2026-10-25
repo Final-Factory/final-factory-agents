@@ -64,6 +64,11 @@ your report: you judge what is on screen. Never read the game's code, the pull r
 7. Hunt for what should not be there: a fill brighter than everything else, a colour bleeding into the controls inside a
    selected row, a stretched or squashed control, an empty half of a window, a dense block of text, text you have to
    squint at, edges that do not line up, a control unlike its siblings.
+8. If the pack has a `pairs/` folder, each `pair-N.png` is a before/after crop a person will be asked to OK. For each:
+   find its area in the whole before and after stills, then say whether the red ring sits on what differs, whether
+   anything differs outside the crop (a change the person would not be shown), and whether the crop is large enough to
+   tell where on screen it is. A ring on the wrong place or a difference left outside the crop is BROKEN for the ask;
+   list it under Flaws with the pair's name.
 
 ## What you write
 
