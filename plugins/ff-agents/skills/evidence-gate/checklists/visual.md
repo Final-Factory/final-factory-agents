@@ -170,6 +170,10 @@ in the built player (drive-game, "The mouse cursor in a built player"; w980).
    that did not contain the event, and agreed with a mistake the brief described as intended.
    Quote them, and say where the frames contradict them.
 7. **No merge before the review is finished.** "Pending" is not finished.
+7a. **An approval ask explains every change, with a cropped, marked pair.** Asking a person to OK a look or behaviour
+   change: one section per change with Before (step by step), After, Fixes, Code (file, method, old -> new value),
+   Unchanged, and a still pair from `approval_ask.py mark` (cropped to what differs, ringed); `approval_ask.py check`
+   passes first, as in the [UI checklist](ui.md) item 35. A clip still goes inline beside the pair.
 8. **Report what you saw.** Say which frames you looked at and what they show. If the person
    reported the bug or has caught it before, put the clip in your report so they can watch it.
 

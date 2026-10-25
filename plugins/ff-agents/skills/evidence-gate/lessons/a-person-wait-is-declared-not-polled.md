@@ -1,6 +1,6 @@
 ---
 name: a-person-wait-is-declared-not-polled
-description: "Never hand a person a machine step you or the harness's own tools can do: closing or opening Unity (a person's editor on a main clone included: close it cleanly, do the work, reopen it), git commands, copying files, an installer rerun or a daemon update (the ops worker). A person is asked only for what the rules reserve. A worker that needs a person to act (reboot, log in, decide, approve, hand over a secret) declares it with FF Factory's waiting_on_person tool, names who and what in its report and its 'wNNN: still open:' line, and ends its turn. It never polls for a person with wake_me: a pending check-in makes the ledger show the request Working. A wait on a machine or a job that must outlive the turn is a harness timer (wake_me, blocked_on, set_timer), never a background shell loop, sleep loop, nohup, & or Monitor: the process ends at an idle reap, a sandbox release or a portal deploy, and the loop with it (w1106)."
+description: "Never hand a person a machine step you or the harness's own tools can do: closing or opening Unity (a person's editor on a main clone included: close it cleanly, do the work, reopen it), git commands, copying files, an installer rerun or a daemon update (the ops worker). A person is asked only for what the rules reserve. A worker that needs a person to act (reboot, log in, decide, approve, hand over a secret) declares it with FF Factory's waiting_on_person tool, names who and what in its report and its 'wNNN: still open:' line, and ends its turn. It never polls for a person with wake_me: a pending check-in makes the ledger show the request Working. A wait on a machine or a job that must outlive the turn is a harness timer (wake_me, blocked_on, set_timer), never a background shell loop, sleep loop, nohup, & or Monitor: the process ends at an idle reap, a sandbox release or a portal deploy, and the loop with it (w1106). An approval ask gives each change its own section (before step by step, after, the problem, the file, method and old and new value, what does not change) and a before/after pair cropped to the difference and ringed, checked by approval_ask.py check."
 date: 2026-10-10
 ---
 
@@ -120,6 +120,37 @@ that covers a new one. The brief's "New player-visible UI or art needs Ben's OK 
 - For a UI question, name the note that decided the content. If it covers the change, the PR's `## Evidence` carries
   `Decided (Ben, <date>): "<his words>"` and the change merges on green with no card.
 - Ask only for what the note does not cover, and say in the question what he already decided.
+
+## An approval ask explains every change, with a cropped, marked pair
+
+**Rule.** When you ask a person to OK a change (UI, behaviour or look), give each change its own section, in plain
+words, with all six parts:
+
+1. **Before:** what the player did and saw, step by step.
+2. **After:** what they see now.
+3. **Fixes:** the problem it fixes.
+4. **Code:** the file, the method, and the value before and after.
+5. **Unchanged:** what does not change.
+6. **Stills:** a before/after pair cropped to the area that differs, with the difference ringed or arrowed.
+
+A one-line summary per change is not an explanation, and a full-screen still where the change is a small corner shows
+nothing.
+
+**Why.** On the stacked-windows change Ben had to send the ask back twice: "You need to explain this change to me
+more", then "youre not explaining in detail what youre changing. i dont get it, i've told you like 14 times to explain
+it to me better". Both asks gave one line per change and full-screen before/after stills.
+
+**How to apply.**
+
+- Make each pair with `approval_ask.py mark --before <b.png> --after <a.png> --out <dir>` (beside this skill's
+  `SKILL.md`): it crops to the pixels that differ (or your `--rect`) and rings them in red.
+- Write the ask as a file, one `## Change <n>: <title>` section per change, and run `approval_ask.py check <ask.md>`.
+  It fails a missing or one-line part, a Before with no numbered steps, a Code part with no file, method or old -> new
+  value, and any still that `mark` did not crop and ring.
+- Publish the ask with its pairs (`publish_review`, the ask as the note) and put it in your report. The
+  `waiting_on_person` card stays short: one plain question per decision, with the `pair.png` files as its previews.
+- A UI ask also gives the fresh ui-critic each `pair.png`: it checks that the ring sits on what differs and that
+  nothing outside the crop changed.
 
 ## A wait on a machine is a harness timer, never a background loop (w1106)
 
