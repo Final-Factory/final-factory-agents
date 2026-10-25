@@ -93,7 +93,7 @@ holds, or the report says what is left instead of DONE.
    **Capacity is never a question** (w2147): no question, card or `still open:` line asks a person to bring a computer
    online, wake or unpause one, say which computer may run the work, allow one, or run an installer; that work waits
    Queued (`timed_run`, `timed_place`, `request_pair`, or `queued for <computer>`) and starts by itself on the first that
-   fits ([capacity is never a question](../lessons/capacity-is-never-a-question.md), w1958, w847).
+   fits ([capacity is never a question](../lessons/a-person-wait-is-declared-not-polled.md#capacity-is-never-a-question-w2147-2026-10-25), w1958, w847).
 8a. **Where a player-facing fix ships, and every build claim run** (w1770). A fix players see names the Steam branch
    and build that carry it, or the bump that will, in a `Ships in:` line, and whether the pre-1.0 line needs a
    cherry-pick in a `pre-1.0:` line (`cherry-pick needed (<wNNN or PR>)`, `#<PR>` for one you opened, or `not needed:
