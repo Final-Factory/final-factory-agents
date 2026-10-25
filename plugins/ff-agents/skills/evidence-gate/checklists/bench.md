@@ -67,6 +67,12 @@ Mechanics: the game repo's `Documentation/Bench-Lock.md`.
       holder's own sandbox editor rides along by design, even another session's. A close can stall on Unity's "Save
       Scene" dialog (slot3's load editor sat on it about a minute until it was force-stopped), so a demo or report
       checks each closed editor's pid is gone, not only closed.json.
+- [ ] **Checking the turn's editor close on your own editor** (w2116, 2026-10-25). The holder's own sandbox rides along
+      (`e.id !== h.sandbox`, ff-factory machine/benchTurn.ts), so take the ticket with `FF_SANDBOX_ID=<another name>` and
+      `FF_SESSION_ID=` blank in the leg script: your editor closes like anyone's, and a sessionless holder leaves other
+      workers' players running. Expect to wait: the queue gives running editors their 5-minute warning, and a sessionless
+      ticket ranks "normal" behind them (16 min on BEAST). A `what` saying "no timing" is refused. Proof: the edit on disk,
+      the pid gone, a new editor pid after the release (w2116: saved by t+9 s, gone by t+34 s, back 96 s after release).
 - [ ] **A timed game run, not a harness test** (w1894, [lesson](../lessons/settle-your-own-guesses.md#hold-the-bench-lock-as-briefly-as-the-question-allows-w1628-2026-10-20)).
       Trying FF Factory's own bench, yield or priority code takes no real ticket: its unit tests or a queue under your
       `$TMPDIR`. An exclusive turn closes the machine's editors and ends other workers' batch builds.
