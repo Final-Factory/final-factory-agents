@@ -58,6 +58,15 @@ Mechanics: the game repo's `Documentation/Bench-Lock.md`.
       tests, takes `bench_lock --shared`. An exclusive ticket names its reason (`--reason`, `--bench-reason`); with
       none it is taken for timing and says so. A build takes no `bench_lock`, because its own `ff_unity_slot` ticket
       queues it.
+- [ ] **On a big computer, ask timed_place in this session before the ticket** (w1829, 2026-10-25). Its "here" verdict
+      is per session: after a compaction or a resume, ask again before `bench_lock --timing`, or the leg dies at once
+      with "w1995 ... Call timed_place" (it did, with the two load editors the demo had waited 9 hours for standing
+      ready). A leg that must show this machine's own behaviour (a lock demo) passes `same_machine` with why.
+- [ ] **Reading an exclusive turn's quiet machine** (w1829, 2026-10-25). The `Unity.exe -adb2 -batchMode -name
+      AssetImportWorker*` processes busy after a grant are the editors' import children and end with them; the
+      holder's own sandbox editor rides along by design, even another session's. A close can stall on Unity's "Save
+      Scene" dialog (slot3's load editor sat on it about a minute until it was force-stopped), so a demo or report
+      checks each closed editor's pid is gone, not only closed.json.
 - [ ] **A timed game run, not a harness test** (w1894, [lesson](../lessons/settle-your-own-guesses.md#hold-the-bench-lock-as-briefly-as-the-question-allows-w1628-2026-10-20)).
       Trying FF Factory's own bench, yield or priority code takes no real ticket: its unit tests or a queue under your
       `$TMPDIR`. An exclusive turn closes the machine's editors and ends other workers' batch builds.
