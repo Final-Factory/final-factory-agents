@@ -58,6 +58,17 @@ refused; the editor log says `[UnityMcpStdioAutoStart] UseHttpTransport pref is 
   display off (`gdbus call --session --dest org.gnome.ScreenSaver ... GetActive` → true, Mutter `PowerSaveMode` 3):
   a player on `:0` streamed its entity subscene in 180 s ("Streamed scene with 180060ms latency") at ~8 s of CPU, and
   the automation timed out at the title menu. Look at those two before trusting any frame time from `:0`.
+- **For a pair-run leg on a locked biscuit, use a private headless GNOME Shell** (w2176, 2026-10-25). On `:0` the client
+  timed out twice with "Timed out waiting for the title menu". `EnsureTitleMenuReadyAsync` waits a fixed 30 s, and
+  shader warm-up frames took about 990 ms each, so the client never joined. Instead, run
+  `unset DISPLAY WAYLAND_DISPLAY; dbus-run-session -- gnome-shell --headless --wayland --virtual-monitor 1920x1080@60 --wayland-display <name>`
+  in the background. Read its display (`:N`) and `-auth /run/user/1000/.mutter-Xwaylandauth.*` from its `Xwayland`
+  line in `ps`, then launch through `player_slots.py` with `DISPLAY=:N XAUTHORITY=<auth>` and `WAYLAND_DISPLAY`
+  unset. It comes with a window manager and renders on the GPU: frameMs p50 16.7, and the client joined over Relay.
+  - The window measures 1920x1011.
+  - Stills work through AgentControl `/v1/screenshot`, or an `XGetImage` of the window found by its `_NET_WM_PID`.
+  - On the throttled `:0`, the same screenshot route answered 500 "get_isPlaying can only be called from the main thread".
+  - `ff-leftovers end` stops the shell.
 - **GPU rendering on Xvfb:** `-force-vulkan` plus `MESA_VK_WSI_DEBUG=sw`. Vulkan still renders on RADV and Mesa copies
   the finished frame (presenting cost 3.4 % of a 70 ms frame on the Strange save; the subscene streamed in 1.0 s).
   Without the variable the player dies with "No DRI3 support detected - required for presentation". OpenGL on Xvfb
