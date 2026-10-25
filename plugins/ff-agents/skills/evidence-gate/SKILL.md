@@ -396,6 +396,11 @@ One file each under `lessons/`: the rule, why (the incident, dated), how to appl
   they draw, spinning and moving ones included, and a discriminating component is counted against
   every archetype that carries it (w586: w453 turned every `Placeable`'s box with its target, so
   comet fragments' boxes spun from 0.50.0.80).
+- [A hide hides everything the thing carries](lessons/check-every-kind-of-object-shared-presentation-draws.md#a-hide-hides-everything-the-thing-carries-proven-by-a-census-w2210):
+  a hide, cull or visibility change lists every visual the thing carries, its children and the entities that follow it,
+  and proves it with a built-game census of what is still drawn inside its bounds, expect 0, on a `Hidden census:` line
+  (Ben, w2209, after F7 left belt items, the hover field, then shields and engines: "and anything else, you keep missing
+  stuff").
 - [Judge every UI still by eye](lessons/verify-ui-with-full-content-like-a-player.md#judge-every-still-by-eye-before-the-person-sees-it-w1386-w1296-2026-10-16): before a still goes to a person, one line
   per still on whether anything looks broken or poor (stretched controls, mostly empty windows, overlapping labels, text
   dumps), apart from every before/after comparison; `ui_layout.py shape` measures the first two and walls of text; a

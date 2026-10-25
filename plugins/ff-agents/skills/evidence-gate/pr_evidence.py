@@ -13,7 +13,8 @@ with a basis for each, an enemy, combat or spawn change shows the game repo's ba
 the detail comparison with our best, how it differs from the existing weapons' and effects', what makes it distinctive,
 the measured frame cost; checklists/visual.md 5e, w1497), a new or changed world model (an item, structure, ship,
 projectile or pickup) names a built-player still of it beside its neighbours on its 'Scale:' line (checklists/visual.md
-5k, w2204), a claim that a visual defect is gone or an effect happens names
+5k, w2204), a change to hide or visibility code counts what is still drawn where the hidden thing was on its
+'Hidden census:' line (checklists/visual.md 5l, w2210), a claim that a visual defect is gone or an effect happens names
 its 1:1 crop or slowed segment on 'Close-ups:' and, for occlusion, every surface on 'Surfaces:' (checklists/visual.md 5g,
 w1567), and a Deck-facing change says 'Real Deck: verified ...' or 'not verified on a real Deck' (checklists/deck.md). It cannot tell whether anyone looked carefully. Standard library only; `gh` for everything that reads GitHub.
 
@@ -1243,6 +1244,100 @@ def scale_questions(note: str) -> list[str]:
             "of the model on its own cannot answer this: say so."]
 
 
+# ---------------------------------------------------------------------------------------------
+# Hidden census (w2210): a change to what hides, culls or shows a thing in the world proves, in a built game, that
+# nothing it carries is still drawn where the hidden thing was.
+#
+# Ben fixed Hide Flying Stations (F7, w1320 #1766, re-landed w1365 #1790) one leftover at a time: the belt items (w1435
+# #1861), the hover field and beams (w1909 #2345: "also the visual effect on floating stations, the hovering wispy
+# effect, doesnt disappear when you hide mobile stations, they should also disappear, it looks weird to show that wispy
+# outline and theres no ship there"), then w2209: "hiding mobile stations should hide any shielding they have and the
+# rocket engine effects. and anything else, you keep missing stuff". Each PR listed what it hid by hand; none counted
+# what was still drawn. The rule is lessons/check-every-kind-of-object-shared-presentation-draws.md (w2210) and
+# checklists/visual.md 5l; this is the part a script can check.
+#
+# What counts (calibrated on the game repo's 947 pull requests merged 2026-10-01..25, see HiddenCensusTest): a game
+# script under Assets/Scripts whose file name says it hides, shows or culls (…Visibility…, …Hide…, …Hidden…, …Cull…),
+# added or changed. Not counted: UI (a panel's hide), the lobby's visibility, diagnostics, probes and audits, tests.
+HIDE_CODE = re.compile(r"^Assets/Scripts/(?:.*/)?[^/]*(Visibility|Hide|Hidden|Cull)[^/]*\.cs$", re.IGNORECASE)
+HIDE_NOT_WORLD = re.compile(r"/(UI|Lobby|Diagnostics)/|Audit|Probe", re.IGNORECASE)
+CENSUS_EVIDENCE = re.compile(r"[^\s,;()]+\.(?:png|jpe?g|webp|mp4|webm|mov|json|log|txt|csv)\b|publish_review",
+                             re.IGNORECASE)
+CENSUS_PLACE = re.compile(r"\b(bounds|inside|within|around|where)\b", re.IGNORECASE)
+CENSUS_COUNT = re.compile(r"\b(\d+|zero|none|nothing)\b(?:\s+[\w-]+){0,5}?\s+(drawn|renderers?|left|remain\w*|visible|"
+                          r"showing|shown|enabled)\b", re.IGNORECASE)
+CENSUS_KINDS = re.compile(r"\b(child(?:ren)?|vfx|particles?|particle systems?|shields?|engines?|thrusters?|lights?|"
+                          r"trails?|outlines?|labels?|icons?|items?|beams?|fields?|glows?|effects?|decals?|markers?|"
+                          r"bars?|lines?|rings?|projectiles?|cargo|turrets?|lamps?)\b", re.IGNORECASE)
+CENSUS_NA_REASON = re.compile(r"\b(revert\w*|release|selection|select\w*|input|click\w*|hover card|drag|setting|own(s|er|"
+                              r"ership)?|per[- ]player|save\w*|join\w*|renam\w+|moved?|refactor\w*|comment\w*|doc\w*|"
+                              r"log\w*|tests? only|nothing (drawn|shown|visible) changes|no (drawn|visible|rendering) "
+                              r"change|draws? nothing|not (drawn|rendered|in the world))\b", re.IGNORECASE)
+CENSUS_FORMAT = ("`Hidden census: <clip, still or census log>: with <the thing> hidden in a built player, 0 renderers, "
+                 "particle systems and VFX still drawn inside its bounds; it carries <every visual it can carry: its "
+                 "children, VFX, particles, shields, engines, lights, trails, outlines, labels, icons, attached items>`")
+
+
+def hide_files(files: list[str] | None, changes: dict | None = None) -> list[str]:
+    """The changed game scripts that hide, show or cull a thing in the world (see the block comment above)."""
+    return [f for f in files or [] if HIDE_CODE.search(f) and not NOT_GAME_CODE.search(f)
+            and not HIDE_NOT_WORLD.search(f) and (changes or {}).get(f, ("?", 0))[0] != "D"]
+
+
+def census_problems(section: str, code_files: list[str]) -> tuple[list[str], list[str]]:
+    """w2210: a hide or visibility change counts, in a built game, what is still drawn inside the hidden thing's bounds
+    (expect 0) and lists every visual the thing carries. `Hidden census: n/a (<why>)` is a note."""
+    where = ", ".join(code_files[:3]) + (f" and {len(code_files) - 3} more" if len(code_files) > 3 else "")
+    found = field(section, "Hidden census")
+    if not found or not found[1]:
+        return ([f"a change to hide or visibility code ({where}) and no 'Hidden census:' line (checklists/visual.md 5l; "
+                 f"Ben, w2209: \"hiding mobile stations should hide any shielding they have and the rocket engine "
+                 f"effects. and anything else, you keep missing stuff\"). Add {CENSUS_FORMAT}. A list of what you hid "
+                 f"does not count: count what is still drawn. Or 'Hidden census: n/a (<why: a revert, selection or "
+                 f"input only, who owns the setting, nothing drawn changes>)'"], [])
+    text = found[1]
+    if re.match(r"n/?a\b", text, re.IGNORECASE):
+        reason = text[3:].strip(" ():-")
+        if len(reason) < 25 or not CENSUS_NA_REASON.search(reason):
+            return (["'Hidden census: n/a' has to say why in a sentence: a revert, a selection or input change only, "
+                     "who owns the setting, or nothing that is drawn changes"], [])
+        return ([], [f"HIDDEN CENSUS SKIPPED for {where}: {reason[:200]}"])
+    problems = []
+    if HERO_PLACEHOLDER.search(text) or len(text) < 40:
+        problems.append(f"'Hidden census' is empty or a placeholder: {CENSUS_FORMAT}")
+    if not CENSUS_EVIDENCE.search(text):
+        problems.append("'Hidden census' names no clip, still or census log of the hidden thing")
+    if not SCALE_BUILT.search(text):
+        problems.append("'Hidden census' does not say it was taken in a built player: a hide that works in the editor "
+                        "can leave a VFX graph or a GameObject drawn in the build")
+    if not CENSUS_PLACE.search(text):
+        problems.append("'Hidden census' does not say where it counted: inside the hidden thing's bounds")
+    counts = [m.group(1).lower() for m in CENSUS_COUNT.finditer(text)]
+    if not counts:
+        problems.append("'Hidden census' gives no count of what is still drawn there: '0 renderers, particle systems "
+                        "and VFX still drawn inside its bounds'")
+    elif not any(c in ("0", "zero", "none", "nothing") for c in counts):
+        problems.append(f"'Hidden census' counts {counts[0]} still drawn: hide each one, or name it and why it stays")
+    if len({k.lower().rstrip("s") for k in CENSUS_KINDS.findall(text)}) < 3:
+        problems.append("'Hidden census' does not list what the thing carries: its children and the separate entities "
+                        "and GameObjects that follow it (VFX, particles, shields, engines, lights, trails, outlines, "
+                        "labels, icons, attached items)")
+    return problems, ([] if problems else [f"hidden census: {text[:200]}"])
+
+
+HIDE_NOTE = re.compile(r"^\s*Hidden census\s*:|\b(hid(e|es|den|ing)|visibility|cull\w*|invisible)\b",
+                       re.IGNORECASE | re.MULTILINE)
+
+
+def census_questions(note: str) -> list[str]:
+    """w2210: a review note about a hide asks the fresh critic what is still drawn where the hidden thing was."""
+    if not HIDE_NOTE.search(note):
+        return []
+    return ["Is anything still drawn where the hidden thing was? In each frame after the hide, look where it stood: "
+            "name any glow, particle, shield, engine flame, light, trail, outline, label, icon, beam or item left there "
+            "(Ben, w2209: \"you keep missing stuff\"). A frame that does not show that place cannot answer this: say so."]
+
+
 def balance_problems(body: str, files: list[str] | None) -> list[str]:
     """Enemy, combat or spawn numbers changed: a '## Balance' section with the stages run, the before/after table, the
     lane's flags and what became of the baselines, or 'No curve change: <why>' (w1440, checklists/balance.md)."""
@@ -1373,6 +1468,12 @@ def check(body: str, files: list[str] | None = None, brief: str | None = None,
         scale_found, scale_notes = scale_problems(section, model_files, changes)
         problems += scale_found
         notes += scale_notes
+
+    hidden_code = hide_files(files, changes)
+    if hidden_code:
+        census_found, census_notes = census_problems(section, hidden_code)
+        problems += census_found
+        notes += census_notes
 
     if ui:
         ui_found, ui_notes = ui_problems(section, brief if brief is not None else brief_in_body(body))
@@ -1560,6 +1661,7 @@ def main(argv=None) -> int:
         problems, questions = closeup_problems(note.read_text(encoding="utf-8"), Path(args.note_dir) if args.note_dir
                                                else note.resolve().parent)
         questions += scale_questions(note.read_text(encoding="utf-8"))
+        questions += census_questions(note.read_text(encoding="utf-8"))
         if args.questions:
             Path(args.questions).write_text("".join(f"- {q}\n" for q in questions), encoding="utf-8")
         print(verdict_text(problems, [f"{len(questions)} claim(s) for the critic, as questions"
