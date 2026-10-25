@@ -78,6 +78,12 @@ Not verified: the Bats' slot lag (simulation, follow-up PR)
   `distinct:` (what makes it distinctive), `cost:` (measured ms or fps in a built player). `Hero art: n/a (<why: a bug
   fix, a re-tint, an icon, a re-export, a third-party import>)` shows in the verdict for the reviewer
   (visual.md 5e; w1470, w1466, w1475, w1497).
+- **A world model** (a model file or a mesh `.asset` under `Assets/Art/{Content,Models,ItemArt}/` added or changed, or
+  an item, structure, ship or projectile prefab added under `Assets/Resources/{ConnectorEntities,ItemEntities}/` or
+  `Assets/Prefabs/EffectsEntities/Projectiles/`; effects, icons, sprites, UI and third-party packs excepted) needs
+  `Scale: <built-player still>: <model> beside <its neighbours> at gameplay zoom; its size matches theirs (or the
+  ratio)`; an item's line names a connector and an inserter hand. `Scale: n/a (<why: a re-tint, a material only, size
+  unchanged, not drawn in the world>)` shows in the verdict (visual.md 5k; w2204, the Repair Pack).
 - **A defect gone or an effect shown** ("no z-fight", "no flicker", "no longer draws through", "ships spaghettify",
   "pulls in", anywhere in the description but the person's quoted words) needs `Close-ups: <claim>: <1:1 crop.png or
   slowed clip.mp4 and its seconds>; ...`, and an occlusion claim also `Surfaces: <every surface the effect overlaps>`

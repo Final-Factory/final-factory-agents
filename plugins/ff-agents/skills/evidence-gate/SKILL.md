@@ -319,6 +319,13 @@ One file each under `lessons/`: the rule, why (the incident, dated), how to appl
   PR that adds a model or effect art without a filled `Hero art:` line (concepts and pick, detail comparison, how it
   differs, distinct, measured cost; merge checklist), and checklist 5f is the reviewer's read; publish the concepts
   before any build-quality clip (w1497).
+- [New models are checked at scale, in the game](lessons/new-models-checked-at-scale-in-game.md): a new or changed
+  in-world model (item, structure, ship, projectile, pickup) gets a built-game still beside its existing neighbours at
+  gameplay zoom (an item on a connector and in an inserter hand), and its size matches theirs; a still of it alone or an
+  editor preview does not count (Ben, w2204, after #1596's Repair Pack: "the repair pack connector item is comically
+  large. make sure you test these visually when you add new models to the game in the future"). `pr_evidence.py` fails
+  a PR that adds or changes a model without a filled `Scale:` line (checklist 5k), and the critic asks "is it in scale
+  with its neighbours?".
 - [No merge before the review](lessons/no-merge-before-the-review.md): "pending" is not done.
 - [Merge your own pull request](lessons/merge-your-own-pr.md): verified and green means merge;
   hold only for exceptional risk or a timing reason, and say which and when. A save version bump with its old-save load test green is not a risk (Ben, 2026-10-23, w1826: backwards compatibility is the gate). mechanics: check `git branch --show-current` after a wait, gate `gh pr merge` on a passing check: in an FF Factory worker `ff-pr merge`, one call (w1478; its vault token cannot read checks and the guard refuses `gh pr checks`, w2015); elsewhere `gh pr checks N && gh pr merge N --match-head-commit <sha>` (exit 8 is pending; w864), post the verdict only from the newest ff-agents (w807); a red check that is not your change, and `not our ref` at checkout ([section](lessons/merge-your-own-pr.md#a-red-check-that-is-not-your-change-read-the-failing-test-then-the-cause-w1337-2026-10-15), w1337).

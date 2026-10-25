@@ -961,6 +961,92 @@ class HeroArtTest(unittest.TestCase):
         self.assertEqual(changes["Assets/a b/x.fbx"][0], "A")
 
 
+SCALE_LINE = ("Scale: shots/repair-pack-on-connector.png, shots/repair-pack-inserter-hand.png: the Repair Pack beside "
+              "Iron Plates and Circuits on the same connector and in the same inserter hand, at gameplay zoom in the "
+              "built player; its size matches theirs (0.9x an Iron Plate's width)")
+
+
+class ScaleTest(unittest.TestCase):
+    """w2204: #1596's Repair Pack shipped far too big on connectors (Ben: "the repair pack connector item is comically
+    large"). A pull request that adds or changes a world model names a built-game still of it beside its neighbours."""
+
+    def fixture(self, name):
+        return pe.parse_files_file((HERE / "fixtures" / f"{name}.files").read_text(encoding="utf-8"))
+
+    def run_check(self, line, name="pr-1596-repair-pack"):
+        files, changes = self.fixture(name)
+        body = GOOD if line is None else edit(GOOD, "Looked: yes", line + "\nLooked: yes")
+        found = pe.check(body, files, changes=changes)
+        return [p for p in found[0] if "Scale" in p or "world model" in p], found[1]
+
+    def test_the_repair_pack_pr_is_a_scale_change_and_its_icon_is_not(self):
+        files, changes = self.fixture("pr-1596-repair-pack")
+        self.assertEqual(pe.scale_files(files, changes), [
+            "Assets/Art/Content/RepairPack/RepairPack.asset",
+            "Assets/Resources/ConnectorEntities/RepairPackConnectorItem.prefab",
+            "Assets/Resources/ItemEntities/RepairPack.prefab"])
+
+    def test_the_repair_pack_pr_without_a_scale_line_fails(self):
+        problems, _ = self.run_check(None)
+        self.assertEqual(len(problems), 1, problems)
+        self.assertIn("no 'Scale:' line", problems[0])
+        self.assertIn("RepairPack.asset", problems[0])
+        self.assertIn("on a connector and in an inserter hand", problems[0])
+
+    def test_a_filled_line_passes_with_a_note(self):
+        problems, notes = self.run_check(SCALE_LINE)
+        self.assertEqual(problems, [])
+        self.assertTrue([n for n in notes if n.startswith("scale:")], notes)
+
+    def test_each_part_is_needed(self):
+        for cut, expect in (
+                ("shots/repair-pack-on-connector.png, shots/repair-pack-inserter-hand.png: ", "names no still"),
+                (" in the built player", "built player"),
+                ("beside Iron Plates and Circuits ", "what the model is beside"),
+                (" at gameplay zoom", "zoom"),
+                ("; its size matches theirs (0.9x an Iron Plate's width)", "no verdict"),
+                ((" and in the same inserter hand", ", shots/repair-pack-inserter-hand.png"), "in an inserter hand: an item")):
+            line = SCALE_LINE
+            for piece in (cut,) if isinstance(cut, str) else cut:
+                line = line.replace(piece, "")
+            problems = self.run_check(line)[0]
+            self.assertTrue(any(expect in p for p in problems), (cut, problems))
+
+    def test_a_still_on_its_own_or_in_the_editor_fails(self):
+        for line in ("Scale: shots/repair-pack.png, the model on its own in the prefab preview, looks right",
+                     "Scale: TBD", "Scale: checked"):
+            self.assertTrue(self.run_check(line)[0], line)
+
+    def test_a_structure_needs_no_connector_or_inserter(self):
+        changes = {"Assets/Art/Content/Warden/warden.fbx": ("A", 3)}
+        line = ("Scale: shots/warden-fleet.png: the Warden beside a Cargo Barge and two Fighters at gameplay zoom in the "
+                "built player; it reads 1.2x a Fighter, as designed")
+        body = edit(GOOD, "Looked: yes", line + "\nLooked: yes")
+        self.assertEqual([p for p in pe.check(body, list(changes), changes=changes)[0] if "Scale" in p], [])
+
+    def test_n_a_with_a_reason_passes_for_a_retint_and_fails_for_new_art(self):
+        problems, notes = self.run_check("Scale: n/a (a re-tint: only the body material's colour changed, size unchanged)",
+                                         "pr-2309-hyper-assembler-teal")
+        self.assertEqual(problems, [])
+        self.assertTrue([n for n in notes if n.startswith("SCALE SKIPPED")], notes)
+        self.assertTrue(self.run_check("Scale: n/a", "pr-2309-hyper-assembler-teal")[0])
+        added = self.run_check("Scale: n/a (a re-tint of the material, the size is unchanged)")[0]
+        self.assertIn("added files", "\n".join(added))
+
+    def test_what_is_not_a_world_model_needs_no_line(self):
+        files, changes = self.fixture("pr-1987-map-icons")
+        self.assertEqual(pe.scale_files(files, changes), [], "70 edited prefabs for map icons are not a new model")
+        other = {"Assets/Resources/Icons/RepairPack.png": ("A", 3), "Assets/Art/ItemArt/Icons/Foo.fbx": ("A", 3),
+                 "Assets/Art/Content/Effects/SmallEnergyBeam/beam.fbx": ("A", 3), "Assets/Art/Shaders/Vfx/X.asset": ("A", 9),
+                 "Assets/Resources/ItemConfig/RepairPack.asset": ("A", 1161), "Assets/ExternalAssets/Ship/ship.fbx": ("A", 0),
+                 "Assets/Resources/ItemEntities/Old.prefab": ("D", 300), "Assets/UI/Panels/Foo.prefab": ("A", 90)}
+        self.assertEqual(pe.scale_files(list(other), other), [])
+
+    def test_the_note_asks_the_critic_about_scale(self):
+        self.assertTrue(any("in scale with its neighbours" in q for q in pe.scale_questions(SCALE_LINE)))
+        self.assertEqual(pe.scale_questions("Close-ups: z-fight: edge.png"), [])
+
+
 class AuditTest(unittest.TestCase):
     def test_a_pass_counts_only_when_it_was_posted_before_the_merge(self):
         files = [{"path": "Assets/Scripts/FFSystems/Presentation/RiderSystem.cs"}]

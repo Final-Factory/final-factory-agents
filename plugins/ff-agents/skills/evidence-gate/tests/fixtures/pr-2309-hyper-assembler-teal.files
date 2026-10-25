@@ -1,0 +1,10 @@
+M	Assets/Art/Content/AssemblerW1066/HyperAssemblerBodyMaterial.mat	2
+M	Assets/Art/Content/AssemblerW1066/Icons/HyperAssembler.png	4
+M	Assets/Art/Content/AssemblerW1066/hyper-assembler-w1066.blend	4
+M	Assets/Art/Content/AssemblerW1066/hyper-assembler-w1066.fbx	4
+M	Assets/Editor/AssemblerArt.cs	9
+M	Documentation/Assembler-Art.md	11
+M	Documentation/Linux-Native-Build.md	9
+M	scripts/art/assembler/build_assembler_models.py	2
+A	scripts/feel/run_t3_assembler_colour_look.py	200
+A	scripts/nightly/blueprints/w1840-t3-assembler-colour.json	259
