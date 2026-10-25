@@ -119,6 +119,8 @@ look first and relay only with the critic's report (FF Factory `read_rules ui`).
   settles its own guesses.
 - When you pass on someone's report, keep its labels. A guess never becomes a recommendation on
   the way up.
+- **"How it always worked": read today's handler (and a year-old one) before changing it** ([lesson](lessons/settle-your-own-guesses.md#how-it-always-worked-read-todays-handler-before-you-change-it-w2097-2026-10-25)).
+  Change only what the code does not already do (w2097: the E key already did what Ben described; the "fix" was reverted).
 - **A crash inside a GPU driver is not "nothing to fix" yet** ([lesson](lessons/settle-your-own-guesses.md#a-crash-inside-a-gpu-driver-is-not-nothing-to-fix-until-four-checks-are-done-w956-2026-10-13)).
   Before a NOT-A-BUG verdict on a crash with only driver frames, give the driver's date and how far behind
   current it is (vendor release notes), the CPU from the dump (stream 7; Intel family 6 model 0xB7/0xBF is
