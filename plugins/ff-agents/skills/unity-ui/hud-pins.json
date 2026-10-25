@@ -18,14 +18,15 @@
     {
       "name": "building hover card",
       "element": "HoverDescription",
-      "names": ["hover panel", "hover card", "tooltip", "hover info"],
+      "names": ["hover panel", "hover card", "tooltip", "hover info", "item card"],
       "rule": "above",
       "anchor": "MinimapParent",
       "maxGap": 0.06,
       "region": {"minBottom": 0.6, "minRight": 0.8},
       "where": "just above the minimap, bottom right, on every screen and layout; never in the panel cluster",
       "who": [
-        "Ben, 2026-10-10 (w895): \"I also noticed that the actual normal hover panel is up, you put it up in the fucking, you know, array of panels up on the top left. Don't do that, put it back over the minimap, stop moving panels around that I don't ask you to move around. It's driving me crazy.\""
+        "Ben, 2026-10-10 (w895): \"I also noticed that the actual normal hover panel is up, you put it up in the fucking, you know, array of panels up on the top left. Don't do that, put it back over the minimap, stop moving panels around that I don't ask you to move around. It's driving me crazy.\"",
+        "Ben, 2026-10-25 (w2072, the circuit source picker at 1280x800, Ben's name for this card): \"Keep the build: the picker moves off the grid window and the item card hides behind it.\""
       ]
     },
     {
