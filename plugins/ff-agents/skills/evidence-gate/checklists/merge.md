@@ -131,6 +131,12 @@ Not verified: the Bats' slot lag (simulation, follow-up PR)
   green `Test in editmode` run, or your own editor's `refresh_unity` at that head logged no `error CS`; a red or
   unfinished CI run is not a go
   ([lesson](../lessons/verify-simulation-at-a-slow-hosts-frame-rate.md#a-pair-run-is-filed-only-on-a-commit-that-compiles-w2125-2026-10-25)).
+- **After merging `origin/master` in, look for tests it brought that pin what you changed** (w2095, 2026-10-25): grep
+  `Assets/Tests` for each constant or member you changed (`git diff origin/master...HEAD`), and run the selection
+  again (`scripts/test_select.py`). A guard test merged meanwhile pins the old value: w2129's
+  `W2129UiFixGuardTests.DockedTabPillsAreInset16SideAnd10Top` pinned `StructuredDock.TabInsetTop` at 10 while
+  w2095 moved it to 18 at Ben's pick, and `Test in editmode` went red only after `ff-pr push` merged master in. Update
+  the guard in your PR, quoting the words that asked for the new value.
 - **A changed shader, shader graph, subgraph, include or material** needs a `## Used by` section
   beside `## Evidence`: the output of the game repo's `python3 scripts/asset_usage.py --changed
   origin/master --markdown`, with the tool's table whole and a basis on every row (`TARGET:`,
