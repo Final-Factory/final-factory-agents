@@ -127,6 +127,10 @@ Not verified: the Bats' slot lag (simulation, follow-up PR)
   Burst or IL2CPP codegen-sensitive code, platform APIs or file paths, the desync hash or its capture, or a desync
   reported only across OSes; the Evidence row says which applied, or "no cross-OS pair: <why>"
   ([any two free machines](../lessons/verify-simulation-at-a-slow-hosts-frame-rate.md#a-determinism-pair-is-any-two-free-machines-a-cross-os-pair-only-when-the-change-can-differ-by-platform-w1692-2026-10-21)).
+- **A pair run is filed only on a commit that compiles** (w2125): before `request_pair`, the head the legs run has a
+  green `Test in editmode` run, or your own editor's `refresh_unity` at that head logged no `error CS`; a red or
+  unfinished CI run is not a go
+  ([lesson](../lessons/verify-simulation-at-a-slow-hosts-frame-rate.md#a-pair-run-is-filed-only-on-a-commit-that-compiles-w2125-2026-10-25)).
 - **A changed shader, shader graph, subgraph, include or material** needs a `## Used by` section
   beside `## Evidence`: the output of the game repo's `python3 scripts/asset_usage.py --changed
   origin/master --markdown`, with the tool's table whole and a basis on every row (`TARGET:`,
