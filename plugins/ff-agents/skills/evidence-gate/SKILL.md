@@ -424,6 +424,10 @@ One file each under `lessons/`: the rule, why (the incident, dated), how to appl
   22 to 45 px on develop with w978) read 0 and a worker measured rects by hand (w981); now every open window against the
   HUD and each other is the `Window overlaps:` line, allowed only by a quoted `hud-clusters.json` `windowOverlaps` entry,
   and `pr_evidence.py` fails a new or kept one ([UI checklist](checklists/ui.md), item 24).
+- [UI overlaps follow the layer order](lessons/a-ui-change-leaves-the-rest-of-the-screen-as-it-was.md#ui-overlaps-follow-the-layer-order-higher-over-lower-is-by-design-w2150-2026-10-25): "Before calling an overlap a defect, name both elements' layers; higher-over-lower is by design (Ben)". The game world, then HUD info
+  (Station Info, the Objectives card and the tutorial), then station and structure windows; higher over lower is not a
+  finding (Ben's third correction of the kind, 2026-10-25, w1911/w1966: "Think of it in layers. Station UI is a higher
+  layer than tutorial or station info. You don't need to fix this"; PR #2434's two-request fix closed unmerged).
 - [Text is covered by its drawn bounds, not its box](lessons/a-ui-change-leaves-the-rest-of-the-screen-as-it-was.md#text-is-covered-by-its-drawn-bounds-not-its-box-w727-2026-10-11): the Technology tab's "Excess Research 0.0" label ran half under the hub's tab bar and every census check read 0, because the census held RectTransform boxes only (w727, #1291); now the census records `textRect` and `ui_layout.py covered-text` flags a text of an opened screen under an opaque element (checklist item 26).
 - [Measure against what the player sees](lessons/measure-against-what-the-player-sees.md): a
   placement metric is checked against the drawn surface or outline, computed independently of the

@@ -288,6 +288,9 @@ offered as an option.
 
 ## Window overlaps are measured by the tool, not by eye (w981, 2026-10-11)
 
+A window over a lower layer (Station Info, the Objectives card, the game world) is by design, not one of these
+(w2150, [UI overlaps follow the layer order](#ui-overlaps-follow-the-layer-order-higher-over-lower-is-by-design-w2150-2026-10-25)).
+
 **Rule.** Every open window (the Player Inventory, a Cargo Hold, Station Core or Station Grid panel, the Station
 strip, a slide-out) against the other windows and the HUD is `ui_layout.py`'s `Window overlaps:` line
 (`check`) or its listing (`ui_layout.py overlaps <census.json>`): both elements named, the overlap rect, and
@@ -349,3 +352,61 @@ fork put to the person with a still of each way, not an "inherent" line in a rep
 <before census> <after census> ...` lists NEW COVER, RESIZED and moved windows pair by pair (fixture: `tests/test_window_changes.py`);
 a gate FAIL on `Window overlaps:` or `Covered text:` after such a fix is a regression until proven otherwise.
 
+## UI overlaps follow the layer order: higher over lower is by design (w2150, 2026-10-25)
+
+**The rule.** Final Factory's screen is drawn in layers. Before you call an overlap a defect, name both elements'
+layers. A higher layer covering a lower one is by design: not a finding, not a fix, not a question for Ben.
+
+Layers, lowest first:
+
+1. **The game world**: structures, the selected building, the station core, ships.
+2. **HUD info**: Station Info, the Objectives card and the tutorial, its Skip button included.
+3. **Station and structure UI windows**: the windows selecting a structure opens (Station Grid, Station Core, Cargo
+   Hold, a building's window, the dock), and the panels the player opens on purpose (Blueprints, Inventory, the
+   slide-out flyouts).
+
+Temporary chat lines may draw over a window too (Ben, w1432: "i'm ok with chat overlaying on the station controls,
+since its temporary").
+
+**Still a finding:**
+
+- Two elements of the same layer over each other: two windows, or two always-on HUD blocks (hotbar and minimap
+  buttons, Objectives and minimap).
+- A lower layer drawn over a higher one: a HUD piece or a hover card over a window.
+- Text cut off, by the screen edge or by whatever covers it inside its own layer.
+- A combination a player cannot reach is no layout at all. The Inventory/Crafting window and a structure's window are
+  mutually exclusive (Ben, 2026-10-24): both open at once is a regression to report, not a layout to judge or fix.
+  Don't grade a forced-open still.
+
+**The checklist line** (UI checklist item 34, the ui-critic's "How to look", unity-ui "Windows count too"):
+"Before calling an overlap a defect, name both elements' layers; higher-over-lower is by design (Ben)".
+
+### Why: three corrections of the same kind
+
+- **2026-10-09, w813.** Ben: "objectives are on their own layer and game Ui panels should just show over top of them".
+  This went into `hud-clusters.json` `windowOverlaps` as the `*` over `ObjectivesPanel` entry.
+- **2026-10-24, w1911.** Ben: "it doesnt matter if ui panels are overlapping structures in the game world. i never told
+  you that was a requirement. its fine as it is. the player is interacting with the UI. if they want to see the station
+  core they can move the window". UI checklist item 25 had said the same since 2026-10-11 (w961).
+- **2026-10-25, w1911/w1966.** A critic flagged the Station Grid and Cargo Hold covering the tutorial's Skip button and
+  Station Info at 1280x800. A worker spent two requests on a fix (FinalFactory PR #2434, closed unmerged). Ben: "It
+  doest matter. Station UI panels can show over other stuff like tutorial. Think of it in layers. Station UI is a
+  higher layer than tutorial or station info. You don't need to fix this".
+
+The rules said "no overlaps" (Ben's "UI should be clean and flowy", w981) and listed the exceptions pair by pair. Each
+new pair read as a defect until Ben allowed it by name. A third correction of one kind is a harness bug (CLAUDE.md,
+"Before every DONE"), so the exceptions became one layer order.
+
+### How to apply
+
+- **Critic**: for every overlap you see, write both elements and their layers first ("Station Grid (window) over
+  Station Info (HUD info)"). Higher over lower: leave it out of Flaws. Same layer or lower over higher: grade it as
+  usual.
+- **Worker**: `ui_layout.py` allows a structure window (`*EntityPanel`, the dock) over Station Info and any window
+  over the Objectives card, quoting Ben's words (`hud-clusters.json` `windowOverlaps`). A `NOT ALLOWED` pair the
+  layer order allows still deserves a look at what it is before you move anything: add it to `windowOverlaps` with
+  Ben's words in a harness PR, don't fix the game.
+- **Not the hard rule's opposite**: a window you add or move still must not land on another window that was clear
+  (same layer; lesson
+  the w1911 section above), and
+  it must still draw on top of the HUD (checklist item 11).

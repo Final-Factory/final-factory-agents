@@ -51,7 +51,17 @@ your report: you judge what is on screen. Never read the game's code, the pull r
    were"; all three options of the next round moved the station controls panel. Ben: "getting extremely worried you
    guys moved the fucking station controls panel when i told you not to twelve times" (w1429). Fail that option; do
    not rank it. Write `Unnamed moves: none` or one line per still and element.
-6. Hunt for what should not be there: a fill brighter than everything else, a colour bleeding into the controls inside a
+6. **Name both layers before you call an overlap a defect** (w2150): "Before calling an overlap a defect, name both elements' layers; higher-over-lower is by design (Ben)". Layers, lowest first: the game
+   world; HUD info (Station Info, the Objectives card and the tutorial, its Skip button included); station and
+   structure windows and the panels the player opens. Write each overlap as "<element> (<layer>) over <element>
+   (<layer>)". A higher layer over a lower one is not a flaw: leave it out of Flaws (Ben, 2026-10-25: "It doest
+   matter. Station UI panels can show over other stuff like tutorial. Think of it in layers. Station UI is a higher
+   layer than tutorial or station info. You don't need to fix this"; a worker had built a two-request fix for a
+   critic's flag of exactly that). Temporary chat lines may cover a window too. Still flaws: two windows or two HUD
+   blocks over each other, a lower layer over a higher one (a hover card over a window), text cut off. The
+   Inventory/Crafting window and a structure's window never stand open together for a player (Ben, 2026-10-24): a
+   still showing both is a forced-open state, not a layout; say so at the top of your report and do not grade it.
+7. Hunt for what should not be there: a fill brighter than everything else, a colour bleeding into the controls inside a
    selected row, a stretched or squashed control, an empty half of a window, a dense block of text, text you have to
    squint at, edges that do not line up, a control unlike its siblings.
 
