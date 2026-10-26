@@ -36,6 +36,7 @@ load-bearing for future runs even where the original defect is fixed.
 - [Reading a pair's witness-compare.txt: pose distance is the verdict](#witness-pose-distance) (w1555)
 - [A live-driven built pair: reopen panels after a resync, overlap the report windows](#live-driven-pair) (w2238)
 - [A Linux client leg on biscuit: build, headless launch, a scripted paste](#linux-client-leg) (w2133)
+- [A Linux host leg on biscuit: console commands and detector counts from a headless host](#linux-host-leg) (w2281)
 
 ## Full-window rule: never diagnose from a partial window {#full-window-rule}
 
@@ -538,6 +539,28 @@ w2133 (2026-10-25, the client of a LothDesktop-host pair for PR #2507) lost abou
 - A timed run's exclusive bench ticket stops the client player mid-run (5-minute warning). Tell the host, keep the
   event under test (here: deconstructing B) until you rejoin, and relaunch once `bench_queue.py status` shows no
   exclusive holder.
+
+## A Linux host leg on biscuit: console commands and detector counts from a headless host {#linux-host-leg}
+
+w2281 (2026-10-26, the host of a biscuit-host, LothDesktop-client pair for PR #2534) ran the host `-batchmode
+-nographics` from the slot pool, and four things settled what took the time:
+
+- **Console commands before the join** go in the launch:
+  `-ffAutomationPreConnectCommand 'ffauto:console.run|learnTech "Railguns";ffauto:console.run|forceAttack 12;ffauto:wait|30'`
+  (`;` separates commands, `wait|<seconds>`). `console.run` works headless, and `forceAttack`/`learnTech` are not
+  refused on a listening host before a client joins (its log shows `[QuantumConsole] > forceAttack 12` and the next
+  `[EnemyRaid]` line).
+- **Sample counts from a headless host:** nobody can type `desync.stats` there, so chain it after the join:
+  `-ffAutomationPostReadyCommand 'ffauto:wait|120;ffauto:desync.stats;ffauto:wait|120;ffauto:desync.stats;...'`. Each
+  result is a log line `Executed post-ready-command 'ffauto:desync.stats' => {..."compared":N,"matched":N,"diverged":0,
+  "firstHeartbeat":8,"lastHeartbeat":H...}`. The detector compares one heartbeat in 8 (measured: 3,596 samples over
+  heartbeats 8..28,768), so 3,500 samples take about 28,000 heartbeats, about 29 minutes at 16 UPS.
+- **Lab fixtures** (`lab:w1440-lifesave-0.50.0.105.zip` and the other `lab:` saves) are only in LothDesktop's nightly
+  `fixtures/` folder; biscuit has none. Ask the other leg to `publish_attachment` it and `fetch_attachment` it here.
+- **A build waits out another sandbox's timed run:** `run_build_multiplayer_audit.sh --build-only` gave up twice with no
+  build log while slot3's exclusive bench ticket held biscuit. Loop on `bench_queue.py status` until no exclusive
+  holder shows, then build (the third try built in about 6 minutes). A bench warning that your player's ticket ends did
+  not stop the running host that time, but the client leg had already quit on it: restart both fresh.
 
 ## A live-driven built pair: reopen panels after a resync, overlap the report windows {#live-driven-pair}
 
