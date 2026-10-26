@@ -164,7 +164,10 @@ Design and code: ffbox repo `design/ffbuild_release_design.txt`, `scripts/releas
   confirm that job ran and passed, with its counts from the check run "editmode Test Results:
   success <N> passed" (`gh run view <id> --json jobs`: conclusion `success`, several minutes long;
   0.50.0.45's ran 5541, 5520 passed, 0 failed). If it failed, report the failing tests; do not
-  fall back to anything.
+  fall back to anything. **With a vault token (FF Factory workers) the check runs and the job log answer 403**;
+  read the counts from the run's artifact instead (w2312, 1.0.0.20: 17002 total, 16836 passed, 0 failed, 166 skipped):
+  `gh run download <run id> -R Final-Factory/FinalFactory -n "Test results for editmode" -D "$TMPDIR/art-<time>"`,
+  then the `<test-run>` element's `total`, `passed`, `failed` and `skipped` in its XML.
 - **That push run is the bump's one full run** (w1661, lothsahn: "when we make a version bump branch,
   it runs test on the branch. Then when we merge to master, it re-runs those tests again"). The bump
   pull request's required `Test in editmode` starts no editor and passes in about a minute when every
