@@ -418,6 +418,14 @@ control, and a redesign goes out as 2 or 3 clearly different options built from 
     and ringed). `approval_ask.py check <ask.md>` passes before the `waiting_on_person` card goes out: a one-line
     summary, or a full-screen or unmarked still, fails it. The fresh critic also gets each `pair.png` (item 30). Lesson:
     [an approval ask explains every change](../lessons/a-person-wait-is-declared-not-polled.md#an-approval-ask-explains-every-change-with-a-cropped-marked-pair).
+36. **Open every still you cite at full size, and name what in it shows the claim (w2162).** That applies to a DONE, a
+    PR or a report, and to another worker's still too. Its file name, its caption, a census line or a tool verdict is not
+    a look. Write one line per still: what it proves, which pixels show it, and that nothing covers them (no hover card,
+    banner or window in front). lothsahn reopened w2162 on 2026-10-25: "The w2174 still c-built-assembler.png ... does
+    not prove the recipe survives construction. Its Assembler panel reads "Current Production / Click to change", which
+    looks like the empty state, and the Atomic Printer hover card covers the panel." The Assembler panel's Current
+    Production text is static: its recipe shows only as the icon beside it and in the Outputs slot (census: the
+    `ProductionIcon` sprite), so crop and ring those.
 
 19. **The Deck tour is a stand-in (w770).** It forces its own window size and a scripted Deck, so it cannot show Steam's
     layout choice, the Proton first-frame resolution, the Steam client version or touch. A Deck UI change says "verified on
