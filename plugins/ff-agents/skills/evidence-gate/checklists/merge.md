@@ -139,6 +139,11 @@ Not verified: the Bats' slot lag (simulation, follow-up PR)
   Burst or IL2CPP codegen-sensitive code, platform APIs or file paths, the desync hash or its capture, or a desync
   reported only across OSes; the Evidence row says which applied, or "no cross-OS pair: <why>"
   ([any two free machines](../lessons/verify-simulation-at-a-slow-hosts-frame-rate.md#a-determinism-pair-is-any-two-free-machines-a-cross-os-pair-only-when-the-change-can-differ-by-platform-w1692-2026-10-21)).
+- **Each client leg proves it reaches the host before it builds or joins** (w2259): `python scripts/nightly/reach.py
+  @<host machine>` run on the client's own machine ends `PICKED <ip>`, and the leg joins that IP; `UNREACHABLE` stops
+  the leg at once with the addresses tried. A host address is a machine name (`@m3`, `lab_hosts.json`), never a copied
+  LAN IP: w2252's LothDesktop client lost every ping to the m3's 10.0.0.110 and waited out a 150 s join timeout
+  ([lesson](../lessons/verify-simulation-at-a-slow-hosts-frame-rate.md#a-client-leg-reaches-the-host-from-its-own-machine-first-w2259-2026-10-26)).
 - **A pair run is filed only on a commit that compiles** (w2125): before `request_pair`, the head the legs run has a
   green `Test in editmode` run, or your own editor's `refresh_unity` at that head logged no `error CS`; a red or
   unfinished CI run is not a go

@@ -541,6 +541,10 @@ One file each under `lessons/`: the rule, why (the incident, dated), how to appl
   after the turn goes to `wake_me`, `blocked_on`, `set_timer` or `waiting_on_person`, which the portal keeps across
   deploys and restarts. Never a backgrounded `sleep` loop, `nohup`, `&` or Monitor: the process ends at an idle reap, a
   sandbox release or a portal deploy, and the loop with it (w1106: w1070's idle poll died at the first deploy, unseen).
+- [Reach the host from the client's machine before it joins](lessons/verify-simulation-at-a-slow-hosts-frame-rate.md#a-client-leg-reaches-the-host-from-its-own-machine-first-w2259-2026-10-26): a client leg
+  pings the host from its own machine (`scripts/nightly/reach.py @<machine>`) and joins the first address that answers,
+  Tailscale first, or stops naming each one tried; configs name the machine, never a LAN IP (w2252: LothDesktop could
+  not reach the m3's 10.0.0.110 and waited out a 150 s join timeout; 100.104.235.48 worked).
 - [A digest is blind to fields its fixtures never carry](lessons/look-early-by-breakdown.md#a-digest-is-blind-to-fields-its-fixtures-never-carry-w2124-2026-10-25): a
   re-pinned digest proves nothing about a field no fixture sets or the hash leaves out; assert each excluded field, write
   old-file fixtures with the old tree's own serializer and read them at HEAD with mutant arms, and turn the feature
