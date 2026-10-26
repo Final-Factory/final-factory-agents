@@ -36,5 +36,13 @@ classes has one in it.
 - The MCP bridge's `run_tests` with `test_names` (exact names, the fast path) does not have this cost: 4.0 s against
   16.6 s for one class by regex `group_names` (w546). An `-executeMethod` runner that builds a `Filter` with `testNames`
   is the way to get that on the command line.
-- The `cdp.cloud.unity3d.com` "Curl error 6" lines in a CI log are the editor's analytics heartbeat failing every
-  60 s on the fenced container; they block nothing.
+- The `cdp.cloud.unity3d.com` "Curl error 6" lines in a CI log are the editor's analytics heartbeat failing on the
+  fenced container. Usually harmless, but sometimes the editor goes silent for minutes and the silence ends on one
+  (w2236, 2026-10-26, run 40249280445 on ffghr-loth2400-3: no output 00:38:28 to 00:42:00 while
+  `CircuitSaveRoundTripTests.ACircuit_RidesTheSave_WithItsTargetRemapped`, 0.02-0.08 s in other runs, ran 209.8 s
+  and hit its 180 s timeout, and its sibling tests took 0.05 s; the same log had silent gaps of 235, 100 and 82 s, each
+  ending on that line). Whether the DNS lookup causes the stall or only logs first after it is not proven. So a lone
+  `Timeout value of 180000 ms was exceeded` on a fast test, with a long silent gap in the job log, is a runner stall:
+  check that test's duration in the base's and master's latest full runs, then `gh run rerun <id> --failed` (the
+  re-run passed) before touching code, and never raise the timeout. Find the gaps by diffing consecutive log
+  timestamps (a gap over 20 s).
