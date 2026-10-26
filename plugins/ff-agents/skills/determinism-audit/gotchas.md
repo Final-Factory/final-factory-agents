@@ -34,6 +34,7 @@ load-bearing for future runs even where the original defect is fixed.
 - [A big save: the full capture keeps the client out; the runtime detector and a capped host](#big-save-pair) (w780)
 - [Old against new in one pair: a PR's A/B switches on one peer](#ab-switch-one-peer) (w1115)
 - [Reading a pair's witness-compare.txt: pose distance is the verdict](#witness-pose-distance) (w1555)
+- [A live-driven built pair: reopen panels after a resync, overlap the report windows](#live-driven-pair) (w2238)
 - [A Linux client leg on biscuit: build, headless launch, a scripted paste](#linux-client-leg) (w2133)
 
 ## Full-window rule: never diagnose from a partial window {#full-window-rule}
@@ -537,3 +538,23 @@ w2133 (2026-10-25, the client of a LothDesktop-host pair for PR #2507) lost abou
 - A timed run's exclusive bench ticket stops the client player mid-run (5-minute warning). Tell the host, keep the
   event under test (here: deconstructing B) until you rejoin, and relaunch once `bench_queue.py status` shows no
   exclusive holder.
+
+## A live-driven built pair: reopen panels after a resync, overlap the report windows {#live-driven-pair}
+
+w2238 (2026-10-26, PR #2585's speed-cap slider, LothDesktop client against a BEAST host, driven with `peer.py ... cmd
+client "ffauto:..."`):
+
+- **A forced resync (any world reload) closes the client's UI panels.** The client's scheduled
+  `ffauto:ui.set|fleet|...|100` came back `panel 'fleet' is not open` and the cap change was lost until it was resent.
+  Send `ffauto:ui.open|<panel>` right before every `ui.set`; it is idempotent (`panel 'fleet' already open (no-op)`).
+- **A report holds only the last ~3000 heartbeats** (`NetworkDeterminismAudit.cs` `MaxRecentEvents`, as the host leg
+  read it). Run 1's host wrote its report 5 minutes after the client's, so the two reports shared only 314 heartbeats,
+  short of the 1000 the brief asked for. Have both peers write within a minute of each other: matching
+  `PostConnectDelayMs` end times, or `ffauto:audit.write|<label>` checkpoints at the same UTC times on both.
+- **A client on a loaded machine can be dropped as too slow.** In run 2, LothDesktop was running 7 editors and two
+  other players. The client went from InStep to `CatchingUp` 14 s after a mid-run checkpoint write (17 MB), drifted to
+  5.1 s behind, and the host dropped it at heartbeat 3189 with `FlowControl:TooSlow` (`AutoQuit` then ended it). The
+  final report it wrote on the kick still counted: with the host's checkpoints it gave 2299 shared heartbeats. Read
+  `FlowControlDiag` in the client's Player.log for the drift; on a busy machine keep the shared run short.
+- `scripts/nightly/reach.py` is missing at PR heads older than w2259: run master's copy with
+  `git show origin/master:scripts/nightly/reach.py > "$TMPDIR/reach.py"`.
