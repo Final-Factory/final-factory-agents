@@ -34,6 +34,7 @@ load-bearing for future runs even where the original defect is fixed.
 - [A big save: the full capture keeps the client out; the runtime detector and a capped host](#big-save-pair) (w780)
 - [Old against new in one pair: a PR's A/B switches on one peer](#ab-switch-one-peer) (w1115)
 - [Reading a pair's witness-compare.txt: pose distance is the verdict](#witness-pose-distance) (w1555)
+- [A world-generation pair: drive the host post-join, compare lists, keep the client yours](#worldgen-pair) (w2271)
 - [A live-driven built pair: reopen panels after a resync, overlap the report windows](#live-driven-pair) (w2238)
 - [A Linux client leg on biscuit: build, headless launch, a scripted paste](#linux-client-leg) (w2133)
 - [A Linux host leg on biscuit: console commands and detector counts from a headless host](#linux-host-leg) (w2281)
@@ -581,3 +582,31 @@ client "ffauto:..."`):
   `FlowControlDiag` in the client's Player.log for the drift; on a busy machine keep the shared run short.
 - `scripts/nightly/reach.py` is missing at PR heads older than w2259: run master's copy with
   `git show origin/master:scripts/nightly/reach.py > "$TMPDIR/reach.py"`.
+
+## A world-generation pair: drive the host post-join, compare lists, keep the client yours {#worldgen-pair}
+
+w2271 (2026-10-26, the gas giant fix of PR #2604 for w2260) checked that both peers generate the same world objects while
+the host flies rings of 400 to 1600 tiles. What it took:
+
+- **`player.setposition` is refused once a client has joined** (`EnsureHostBeforeClientsJoin` in
+  `LocalMultiplayerAutomationCommandRunner.cs`). Fly with `ffauto:movement.goto|<worldX>|<worldZ>|tolerance=150|timeoutSeconds=300`
+  (world = tile x 10; measured about 10 tiles/s) and poll `GET /v1/snapshot/player` (`data.position.tile`) until the
+  player is within ~20 tiles. A fixed sleep per point cuts corners on the outer rings: a 1600-tile ring's chord takes
+  ~150 s. Chunks generate on both peers from the host's replicated simulation position.
+- **While a goto chain runs, every other `/v1/command` answers `"status":"accepted"`** with an empty result and queues
+  behind it. Read the answer at `GET /v1/chain/<chainId>`; don't treat "accepted" as success.
+- **`desync.stats` cannot prove the lists match.** Its census surface folds entity counts per archetype
+  (`DeterminismStateFingerprintJobs.cs`, the census hash at ~5148); it has no ItemIdentifier, and a world object's
+  GridTile is in no surface. Compare per-object lists on both peers: `ffauto:worldobjects.list|84,207` (item@x,y,z sorted,
+  count per id, FNV-1a hash), on branch `w2271-pair-instrument` (commit adb0ea0b) of the game repo, not yet on master.
+  Read each peer after the host parks, before it moves on.
+- **A client leg run by another worker can vanish mid-run.** w2271's client leg was moved to another machine three
+  times (LothDesktop 09:14Z, biscuit ~09:45Z, LothLaptop ~11:04Z), and each move left a client nobody could read. When the
+  check does not need two different machines, the host leg runs the client itself in its sandbox's second slot:
+  `player_slots.py launch --detach --peer 1 ... -ffAutomationRole Client -ffAutomationHost 127.0.0.1`, then reads both
+  peers. That pair flew all four rings (400 to 1600 tiles) in 55 minutes with lists equal after every ring.
+- **The `desyncReports` folder under LocalLow is shared by every sandbox on the machine.** Before claiming a report,
+  grep its `.player.log` for the slot path (`slot5-0` and so on) and match it to your own players.
+- A worker's `$TMPDIR` can be swept while it waits for a pair partner (twice in w2271, builds included). The slot pool
+  still holds the player: copy `players/slotK-N/player` back into `$TMPDIR/builds/<sha>-win/player` and launch that,
+  since `player_slots.py` refuses a path inside the pool.
