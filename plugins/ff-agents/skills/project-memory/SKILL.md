@@ -106,6 +106,7 @@ worktrees and apply to ALL branches.
 
 - [French percent = Arabic sign](memories/french-percent-arabic-sign.md) — Unity's Mono culture data gives fr `PercentSymbol` = U+066A ٪ (no font has the glyph); fixed by CultureSetup.cs, plus the Mono Clone()-shares-NumberFormatInfo gotcha
 - [TextLocalization duplicate gotcha](memories/textlocalization-duplicate-gotcha.md) — TextLocalization caches live TMP text as its key, so duplicating it on a label (Checkbox prefabs already have it) locks that label to one language; never put it on proper-noun labels
+- [CI batch editor has no selected locale](memories/ci-batch-editor-has-no-selected-locale.md) — CI's batch editor starts with `SelectedLocale` null, so a UI EditMode test passes locally and NREs in `LocalizationHelper.FontFor` in CI; select "en" when null and restore it (w2245)
 
 ## Modding
 
