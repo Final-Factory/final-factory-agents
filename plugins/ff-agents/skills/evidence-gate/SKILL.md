@@ -491,6 +491,7 @@ One file each under `lessons/`: the rule, why (the incident, dated), how to appl
   (w1374 deleted stopped worker a735f37c's builds and clips while its request w1332 was stalled; [the rule](lessons/clean-up-after-yourself.md#a-clean-up-never-takes-the-folders-of-a-request-that-has-not-closed-w1379)).
   And (w1387): a DELETE row is not a go for a folder holding a git clone with uncommitted, unpushed or stashed work: check its git state or
   the portal's clean-up log ("kept for a person") first (w1385 deleted two such clones the sweeps were keeping; [the rule](lessons/clean-up-after-yourself.md#a-delete-row-is-not-a-go-for-a-folder-that-holds-a-git-clone-with-work-w1387)).
+- A finished worker's folder stays for the 7-day reopen hold, but its rebuildable bulk (clean clones, Library copies, test output, caches) shows as DELETE rows inside it once idle; a clean-up short of its target reads what the holds protect (w2219 freed 0 GB of 60 with 55 GB in four finished folders; [the rule](lessons/clean-up-after-yourself.md#a-finished-workers-folder-is-held-by-the-reopen-window-its-rebuildable-bulk-is-not-w2223)).
   Same lesson, Unity slots: your own `-batchmode` builds end before DONE (`unity-slot status`); a start refused for a
   stuck batch holder gets `unity clear_batch`, not a multi-hour wait or a request to end it by hand (w791: two builds
   held slots for hours).

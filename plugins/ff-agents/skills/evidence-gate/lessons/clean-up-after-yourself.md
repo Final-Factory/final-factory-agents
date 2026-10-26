@@ -235,6 +235,31 @@ daemon updated after it shows these as KEEP; until a machine's daemon is, this c
 
 **How to apply.** The [delete checklist](../checklists/delete.md) item 2b is the line that would have caught it.
 
+## A finished worker's folder is held by the reopen window; its rebuildable bulk is not (w2223)
+
+**Rule.** The 7-day reopen hold (w1575) keeps a finished worker's `tmp/ffa-<session>` folder, not everything in it. A worker is
+finished when it is stopped, nothing running names its folder, and every request it was on has closed (`ff-leftovers folders`
+shows its folder as KEEP "closed within the last 7 days and may be reopened"). Since FF Factory PR #694, its rebuildable bulk shows as
+**DELETE rows inside that kept folder** (kind `session-bulk`), and the daemon's own sweep takes the same items. That bulk is clones and
+checkouts with nothing on no remote, Unity Library copies, test-output folders, loose non-evidence files of 1 MiB or more, and the
+caches. Rows appear once nothing in the folder was written for 24 h, or for 15 min while free space is below the soft threshold. Delete
+those rows and leave the folder. Evidence published nowhere else (images, clips, notes, zips), a repo with work on no remote, and an open
+request's or live worker's folder stay KEEP. When a clean-up frees far less than its target, read what the KEEP rows' holds protect before
+you report the shortfall: "kept by the hold" is a reason for the folder, not for every byte under it.
+
+**Why.** 2026-10-26 (w2223): w2219, LothDesktop's V: clean-up, freed 0 GB against a 60 GB target. The four biggest folders, about 55 GB,
+all belonged to finished work: w1909's before/after test folders (PR #2345 merged), a w2135 pair leg's copied Unity caches, a w2093 pair
+leg's checkout, and w1851's revert clone (PR #2302 merged). Every one was a KEEP row under the hold. The w1719 idle-cache rule had already
+taken their Libraries and players and recognised nothing else.
+
+**How to apply.**
+
+- On a daemon that predates PR #694 there are no `session-bulk` rows. Report the held folders with their sizes, delete none of them, and
+  name the update.
+- Evidence counts as published only when the daemon recorded the `publish_review` / `publish_attachment` call (`published.jsonl`, by path,
+  size and mtime). Publish what a report links before you end, or it stays for the full hold.
+- Full rule and why a day (minutes when low): FF Factory `docs/self-recovery.md`, "A finished worker's bulk goes too (w2223)".
+
 ## Unity batch builds and the slots they hold (w791)
 
 **Rule.** A `-batchmode` Unity build you start runs under `unity-slot run` (the game repo's build scripts
