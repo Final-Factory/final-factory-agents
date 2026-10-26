@@ -1,0 +1,116 @@
+{
+ "screen": [
+  1280.0,
+  800.0
+ ],
+ "elements": [
+  {
+   "path": "InGameScene/UI Canvas/GamePanels/StationGridEntityPanel/MainPanel/Content/GridData/Production/IconParentl/Icon",
+   "kind": "Image",
+   "rect": [
+    771.5,
+    103.4,
+    791.8,
+    123.7
+   ],
+   "visible": [
+    771.5,
+    103.4,
+    791.8,
+    123.7
+   ],
+   "color": "#00FF29FF",
+   "alpha": 1.0,
+   "sprite": "Tex_skill_63",
+   "raycast": true,
+   "selectable": false,
+   "maskOnly": false,
+   "canvasOrder": -10,
+   "depth": 304,
+   "spriteSize": [
+    256.0,
+    256.0
+   ],
+   "spriteBorder": [
+    0.0,
+    0.0,
+    0.0,
+    0.0
+   ],
+   "imageType": "Simple",
+   "preserveAspect": true
+  },
+  {
+   "path": "InGameScene/UI Canvas/GamePanels/StationGridEntityPanel/MainPanel/Content/GridData/Production/Help/Icon",
+   "kind": "Image",
+   "rect": [
+    1201.7,
+    106.8,
+    1215.2,
+    120.4
+   ],
+   "visible": [
+    1201.7,
+    106.8,
+    1215.2,
+    120.4
+   ],
+   "color": "#FFFFFFFF",
+   "alpha": 1.0,
+   "sprite": "helpIcon",
+   "raycast": true,
+   "selectable": false,
+   "maskOnly": false,
+   "canvasOrder": -10,
+   "depth": 310,
+   "spriteSize": [
+    256.0,
+    256.0
+   ],
+   "spriteBorder": [
+    0.0,
+    0.0,
+    0.0,
+    0.0
+   ],
+   "imageType": "Simple",
+   "preserveAspect": true
+  },
+  {
+   "path": "InGameScene/UI Canvas/GamePanels/StationGridEntityPanel/MainPanel/Content/GridData/Production/IconParentl/Icon",
+   "kind": "Image",
+   "rect": [
+    997.5,
+    103.4,
+    1017.9,
+    123.7
+   ],
+   "visible": [
+    997.5,
+    103.4,
+    1017.9,
+    123.7
+   ],
+   "color": "#00FFF7FF",
+   "alpha": 1.0,
+   "sprite": "Tex_skill_03",
+   "raycast": true,
+   "selectable": false,
+   "maskOnly": false,
+   "canvasOrder": -10,
+   "depth": 307,
+   "spriteSize": [
+    256.0,
+    256.0
+   ],
+   "spriteBorder": [
+    0.0,
+    0.0,
+    0.0,
+    0.0
+   ],
+   "imageType": "Simple",
+   "preserveAspect": true
+  }
+ ]
+}

@@ -1066,6 +1066,21 @@ class ShapeTest(unittest.TestCase):
         self.assertEqual([s["path"].split("/")[-1] for s in found], ["Switch"])
         self.assertGreater(found[0]["ratio"], 10)  # 225x150 drawn 485x23: 14x off its own aspect
 
+    # w2102 (Ben, 2026-10-26: "the overdriver bonus and production icons are stretched"): the docked Station Grid's square
+    # 256x256 bonus icons drawn 34x20 px, 1.67x off their aspect, which the 2x line passed. The after census draws them 20x20.
+    def test_small_icons_squashed_under_two_x_are_stretched(self):
+        found = ul.shape(self.fixture("w2102-docked-bonus-icons-before"), {})["stretched"]
+        self.assertEqual(sorted(s["sprite"] for s in found), ["Tex_skill_03", "Tex_skill_63"])
+        self.assertTrue(all(1.6 < s["ratio"] < ul.STRETCH_RATIO for s in found))
+        self.assertEqual(ul.shape(self.fixture("w2102-docked-bonus-icons-after"), {})["stretched"], [])
+
+    def test_a_big_image_off_by_the_same_ratio_is_not(self):
+        census = self.fixture("w2102-docked-bonus-icons-before")
+        for e in census["elements"]:
+            x0, y0, x1, y1 = e["rect"]
+            e["rect"] = e["visible"] = [x0, y0, x0 + (x1 - x0) * 4, y0 + (y1 - y0) * 4]  # 136x81: no longer an icon
+        self.assertEqual(ul.shape(census, {})["stretched"], [])
+
     def test_the_same_switch_at_its_own_shape_is_not(self):
         found = ul.shape(self.fixture("w1386-1920-lamp"), self.SPRITES)["stretched"]
         self.assertEqual(found, [])  # 36x24 at 1920x1080

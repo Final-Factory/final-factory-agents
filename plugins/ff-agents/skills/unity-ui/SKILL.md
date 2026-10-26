@@ -184,6 +184,14 @@ census (`<shot>.json`: small, clipped, off-screen and overlapping text, covered 
   ("no live enemy camp to stand as the raid's source"); for a load spike switch a Spawner Chest's power off
   (`ffauto:setting.spawnerpower|off|x|z`) so storage discharges. (4) A `record` step returns at once: follow it with a
   `wait` as long as the clip. Tour: the game repo's `specs/w2063-storage-power-rows/`.
+- **An icon's shape is measured, not judged by eye (w2102).** Ben caught "the overdriver bonus and production icons are
+  stretched" after a fresh critic and the Shape line had passed them: the docked Station Grid's square icons drew 34x20 px
+  (1.67x, under the old 2x line; `ui_layout.py shape` now judges an image of 48 px or less at 1.4x). Fix a layout-stretched
+  icon with a fixed square `LayoutElement` from its scene size plus `preserveAspect`, not its live width. Prove it by the
+  drawn pixels: crop each icon's census rect, take the bounding box of its colour, and compare it with the sprite's own
+  alpha box (Pillow on the PNG; Tex_skill_63 is 1.24 wide to 1 tall, not square). `scripts/nightly/build_player.sh` builds
+  only the sandbox's checked-out HEAD, and the harness sweeps old player builds, so take every before leg while its build
+  still exists.
 - **Four traps of a hover-card change (w2272, FinalFactory #2625, Mac development player).** (1) No docked 1280x800
   census shows all three hud-pins: selecting any station opens a dock window over the card's zone and
   `HoverCardFit.Covered` (w895) hides the card by design, and with nothing selected the `I` key opens the full-screen hub,
