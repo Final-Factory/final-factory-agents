@@ -24,6 +24,15 @@ Mechanics: the game repo's `Documentation/Bench-Lock.md`.
 - [ ] **Shortest run that answers the question.** The question and the smallest difference that would change the
       decision are written down. The legs, sample and settle are the shortest that can show it (a few percent: two
       rounds of 30 to 60 s on a quiet machine), and the round count is a cap.
+- [ ] **A system's own work apart from its wait on other jobs** (w2256, 2026-10-26, Final-Factory/FinalFactory PR #2628).
+      Timing a `SystemBase` whose `OnUpdate` calls `CompleteDependency()` (or any `JobHandle.Complete`), put a
+      `ProfilerMarker` around that call and report the wait and own work (total minus the wait) as separate rows. On the
+      Mall save on m3, 1.6 of LeechSystem's 4.8 ms per heartbeat in a raid was that wait for other systems' LocalTransform
+      jobs. A profiler capture showed it moves into the next main-thread system that needs them (LocalPlayerMotionSystem's
+      `JobHandle.Complete`) when the system no longer does it. So removing the wait does not speed up the frame, and an
+      "Nx faster" goal is met (or not) on own work, with the wait stated beside it. Insert a probe marker at a line
+      found by grepping its text (`grep -n "^      CompleteDependency();" | head -1`), never at a line number written down
+      before later edits: a sed at a stale number broke the compile, and that timing leg ran the old assembly.
 - [ ] **A before/after: 1 or 2 samples per side, each run 5 to 10 minutes** (w2229, [lesson](../lessons/settle-your-own-guesses.md#decide-a-before-after-on-one-or-two-samples-per-side-w2229-2026-10-25);
       lothsahn: "workers should avoid more than 2 tests on each before/after unless there's a strong reason to suspect
       it's wrong. And each test should be short: 5-10 minutes at most"). A fix against master (fps, frame times, bench
