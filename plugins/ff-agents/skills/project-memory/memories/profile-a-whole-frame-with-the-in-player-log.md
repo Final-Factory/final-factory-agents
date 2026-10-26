@@ -49,6 +49,17 @@ Traps:
   Record contention every 30 s (`Get-CimInstance Win32_Process` for finalfactory.exe and Unity.exe, plus a CPU delta
   per process). Repeat the comparable run and check that it matches the earlier one, rather than wait hours. w1204's
   run matched w1199 within 5% per system.
+- **A development player without the bench refuses `-ffBench`, and `capture_raw.sh` does not run on Windows** (w2163,
+  beast, 2026-10-25). `scripts/nightly/build_player.sh` builds no `FF_SHADER_BENCH`, so `-ffBenchProfile` is not
+  there. `capture_raw.sh`'s self-relaunch `bash` resolved to WSL's `System32\bash.exe`, and it hands POSIX paths to the
+  player. What worked: a solo run through `player_slots.py launch` inside `bench_lock --timing`, with
+  `-profiler-enable -profiler-log-file "$(cygpath -w $OUT/cap.raw)" -ffAutomationRole solo -ffAutomationSave <save>
+  -ffAutomationPostReadyCommand "ffauto:wait|2;ffauto:perf.sample|15|20;ffauto:wait|20" -ffAutomationAutoQuit true`.
+  Then digest it under `unity-slot run` in the rawreader project with `-batchmode -nographics -quit -executeMethod
+  HeartbeatTimeline.Batch -htLog <raw> -htOut <txt>`. Its per-heartbeat job table and whole-frame critical chain
+  named a serial worker job the frame waited for: `ExecuteShipSpawnCommandJob`, 28.9 ms mean and 113.7 ms p95 a
+  heartbeat on The Meanie's save. For the before/after, use `scripts/bench/probe_ab_win.sh` with `CHAIN=` set to the
+  same perf.sample.
 
 Related: [[profile-a-save-top-systems]], [[heartbeat-perf-a-removed-wait-moves-to-the-next-system]],
 [[beast-shared-machine-perf-ab-side-by-side]].
