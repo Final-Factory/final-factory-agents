@@ -208,7 +208,7 @@ look first and relay only with the critic's report (FF Factory `read_rules ui`).
 - **Time the added code when the bench cannot resolve 1%** ([lesson](lessons/settle-your-own-guesses.md#when-a-measurement-cannot-resolve-it-measure-closer-to-the-change-w824-2026-10-09)). A class 3
   desync PR whose before/after runs spread wider than 1% gets the added functions timed directly on the same save,
   with the triggering case present and absent (`checklists/ffbox-desync-pr.md`, w824).
-- **A before/after is decided on 1 or 2 samples per side, each run 5 to 10 minutes** ([lesson](lessons/decide-a-before-after-on-one-or-two-samples.md)).
+- **A before/after is decided on 1 or 2 samples per side, each run 5 to 10 minutes** ([lesson](lessons/settle-your-own-guesses.md#decide-a-before-after-on-one-or-two-samples-per-side-w2229-2026-10-25)).
   More only with a stated reason to suspect a result; one build per side, alternating A, B, A, B in one exclusive
   session with the same legs; re-time the baseline on any other computer (`checklists/bench.md`, w2229).
 - **A speed-up is one build, switched off and on, back to back** ([lesson](lessons/settle-your-own-guesses.md#a-speed-up-is-one-build-switched-off-and-on-back-to-back-w1069-2026-10-13)).

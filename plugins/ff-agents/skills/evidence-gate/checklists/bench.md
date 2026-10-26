@@ -24,7 +24,7 @@ Mechanics: the game repo's `Documentation/Bench-Lock.md`.
 - [ ] **Shortest run that answers the question.** The question and the smallest difference that would change the
       decision are written down. The legs, sample and settle are the shortest that can show it (a few percent: two
       rounds of 30 to 60 s on a quiet machine), and the round count is a cap.
-- [ ] **A before/after: 1 or 2 samples per side, each run 5 to 10 minutes** (w2229, [lesson](../lessons/decide-a-before-after-on-one-or-two-samples.md);
+- [ ] **A before/after: 1 or 2 samples per side, each run 5 to 10 minutes** (w2229, [lesson](../lessons/settle-your-own-guesses.md#decide-a-before-after-on-one-or-two-samples-per-side-w2229-2026-10-25);
       lothsahn: "workers should avoid more than 2 tests on each before/after unless there's a strong reason to suspect
       it's wrong. And each test should be short: 5-10 minutes at most"). A fix against master (fps, frame times, bench
       runs) is decided on 1 or 2 timing samples per side; a third needs a stated reason to suspect a result. Plan 1
