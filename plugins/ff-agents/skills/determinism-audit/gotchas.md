@@ -36,7 +36,7 @@ load-bearing for future runs even where the original defect is fixed.
 - [Reading a pair's witness-compare.txt: pose distance is the verdict](#witness-pose-distance) (w1555)
 - [A world-generation pair: drive the host post-join, compare lists, keep the client yours](#worldgen-pair) (w2271)
 - [A live-driven built pair: reopen panels after a resync, overlap the report windows](#live-driven-pair) (w2238)
-- [A Linux client leg on biscuit: build, headless launch, a scripted paste](#linux-client-leg) (w2133)
+- [A Linux client leg on biscuit: build, headless launch, a scripted paste](#linux-client-leg) (w2133, w2326)
 - [A Linux host leg on biscuit: console commands and detector counts from a headless host](#linux-host-leg) (w2281)
 
 ## Full-window rule: never diagnose from a partial window {#full-window-rule}
@@ -567,6 +567,15 @@ w2133 (2026-10-25, the client of a LothDesktop-host pair for PR #2507) lost abou
 - A timed run's exclusive bench ticket stops the client player mid-run (5-minute warning). Tell the host, keep the
   event under test (here: deconstructing B) until you rejoin, and relaunch once `bench_queue.py status` shows no
   exclusive holder.
+- **End the client the moment the host says it ended or quit** (w2326, 2026-10-26). A client launched with
+  `-ffAutomationRole Client` keeps its reconnect loop after the host goes (`[Reconnect] ReconnectAttempt(1..4)`,
+  backoff 4-8 s, about 40 s in all), so it joins the host's NEXT run on the same address and port before that run's
+  setup: twice in w2326 the LothDesktop host's restarted scenario then failed (`player.setposition` is refused once
+  a client is in; "2 peers are already connected"). Run `ff-leftovers end` on the host's word, and launch a fresh
+  client only on its "HOST WAITING".
+- **`flowcontrol.throttle` does not survive a desync recovery**: the recovery cancelled the chain holding it
+  (`"status": "cancelled"`), and the client ran uncapped (~90 fps against the asked 60) for the rest of the run.
+  Read the frame rate from `[MP pacing]` `frames=` per 10 s window, and re-issue the throttle after every epoch change.
 
 ## A Linux host leg on biscuit: console commands and detector counts from a headless host {#linux-host-leg}
 
