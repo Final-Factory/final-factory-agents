@@ -84,6 +84,15 @@ project path to: <project>` with no `[UnityMemory] Configuration Parameters` lin
 `Temp/__Backupscenes` and the `Assets/InitTestScene*.unity` (+ `.meta`) files the ended PlayMode run left into
 `$TMPDIR`, then start it: the editor was ready in 28 s.
 
+**A licensing alert can block an editor that already booted** (w2293, m5/slot1, 2026-10-26). The log said
+`Stdio MCP bridge is running` (or `started on attempt 2`), then every MCP call failed `Timeout receiving Unity
+response`, the log filled with `MCP-FOR-UNITY: Command TCS timed out (N consecutive)`, `scripts/unity-bridge.py status`
+said `bridge closed the connection`, the editor sat at 0.1 % CPU, and `screencapture` showed only black (no session
+on screen, so the alert is invisible). `sample <pid> 1 | grep -B3 GetDialogResponse` named it:
+`Licensing::Module::OnApplicationTick -> EnsureConnected -> GetDialogResponse -> [NSAlert runModal]`. One
+`mcp__machine__unity restart` with `force` cleared it; the next editor answered `pong` and ran tests. Any responsive-
+looking but silent editor at 0 % CPU: `sample` it for `runModal` and read the caller before restarting.
+
 **After a crash the bridge's port may belong to another editor (w719).** The crashed editor's
 `~/.unity-mcp/unity-mcp-status-<hash>.json` keeps its old port (e.g. 6401). If another sandbox's editor
 has bound that port since, `scripts/unity-bridge.py status --project-path <yours>` connects to it and
