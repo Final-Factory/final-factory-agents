@@ -24,7 +24,7 @@ load-bearing for future runs even where the original defect is fixed.
 - [`run_enemy_audit.sh` never builds; macOS needs Homebrew bash](#enemy-audit-build-and-bash) (055 R29)
 - [Wait for a running BEAST sweep before bundle-syncing](#beast-sweep-wait) (055)
 - [Never run the two editors' fast suites concurrently](#no-concurrent-fast-suites)
-- [Burst is OFF by design on paired automation runs](#burst-off-by-design)
+- [Burst is OFF by design on paired automation runs](#burst-off-by-design) (editor host with a built-player client: Burst, enemy gen, FlatMap drops, w2306)
 - [Built-player pair harness needs role-keyed identity, not per-copy keying](#built-pair-identity) (049 T028b)
 - [Silent-weakening audit class: assert the leg your docstring claims to prove](#silent-weakening) (049 T028b)
 - [Built-player sessions need an opt-in watcher to outlive a pair break](#outlive-pair-break) (049 T028)
@@ -352,6 +352,22 @@ expected, not a probe failure or something to "fix". This is separate from
 `editor-preflight.sh`'s check, which validates the PERSISTENT editor setting is enabled before
 automation starts (catching a stale prior-session disable) — the automation launcher's own
 runtime disable happens afterward and is intentional.
+
+**An editor host with a built-player client (w2306, 2026-10-26, m5 macOS editor host, LothDesktop Windows player):**
+
+- The handshake refuses the Burst player: "Jobs mismatch: host jobs=managed, client jobs=burst"
+  (`FFCore/Network/PeerCompatibilityToken.cs:286`, from `BurstSelfCheck.JobsRunManaged`). The launcher turned Burst off
+  (`Behaviours/Multiplayer/Editor/LocalMultiplayerAutomationLauncher.cs:266,289`). Before entering play mode, in one
+  `execute_code` call set `BurstCompiler.Options.EnableBurstCompilation` and `EnableBurstCompileSynchronously` to true and
+  reset `BurstSelfCheck._described` to null by reflection (`FFCore/Network/BurstSelfCheck.cs:31,36`: the cache keeps
+  "jobs=managed option=off" from an earlier play session). Confirm the log line `[Burst] self-check: jobs=burst option=on`.
+- `DisableEnemyGeneration` is per peer: the host's `.ff-local-automation.json` does not reach the client
+  (`LocalMultiplayerAutomationBootstrap.cs:1797-1799`). Pass the player `-ffAutomationDisableEnemyGen true` (`:75`,
+  applied on join at `:1032`). Without it a generated map desynced at the first fast flight into new chunks
+  (asteroids, camps, movers, census; host camps hash empty `88201FB960FF6465`, client nonzero), recovery re-diverged
+  twice and the client was kicked. Camps diverging while enemies are "off" means this.
+- `lagprobe.drops` ResearchDrops can never be collected on a FlatMap: `PickupableVacuumSystem.cs:329` returns early with
+  "Failed to get biome id for research drop". A drop or vacuum check needs a generated map (`FlatMap` false).
 
 ## Cross-machine: proven runs + known limits {#cross-machine}
 
