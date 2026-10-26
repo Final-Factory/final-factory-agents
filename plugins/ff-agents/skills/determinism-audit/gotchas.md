@@ -9,7 +9,7 @@ load-bearing for future runs even where the original defect is fixed.
 - [Inventory hash roles: retain the raw field, gate the contracted surfaces](#inventory-hash-roles)
 - [A built player pair is the proof instrument for presentation leaks](#built-pair-proof) (055 R25)
 - ["Missing report(s)" is NOT a stuck editor](#missing-reports) (045)
-- [`run_build_multiplayer_audit.sh` on Windows: `--graphics`, a fresh `--label` per attempt](#build-audit-windows) (perf pass C)
+- [`run_build_multiplayer_audit.sh` on Windows: `--graphics`, a fresh `--label` per attempt](#build-audit-windows) (perf pass C; a clean run poisons it too, and FlowControl:TooSlow, w2298)
 - [Divergence triage: check command TIMING first](#command-timing) (042)
 - [TestcaseFilter: targeted mode-3 investigation](#testcasefilter)
 - [Throttling the editor needs a holder](#fps-holder)
@@ -145,6 +145,17 @@ without any divergence:
 - **A failed run poisons its label.** It leaves `network-determinism-audit-legacy-<label>-<role>.partial`
   in `LocalLow/.../DeterminismAudit`; the next run with the SAME `--label` fails publication with
   `Audit artifact identity collision` (exit 3, that role's report missing). Use a fresh `--label`.
+  A run that went well poisons it too (w2298, 2026-10-26): a hand-launched pair-run client re-joined
+  with the same `-ffAutomationLabel` after a first try was kicked, ran a clean 11,558-heartbeat window,
+  and lost its report to the first try's `...-<label>-client.log`. So put the attempt in the label
+  (`w2298-client-2`) on every launch. If it happens anyway, the player's `-logFile` holds every
+  `[DeterminismAudit]` line: `grep -a 'DeterminismFingerprintSystem -> Fingerprint '` from it, under a
+  `# determinism-audit-report` header line, gives a file `compare_determinism_reports.sh` reads.
+- **A client the host kicks with `FlowControl:TooSlow`** (`PeerCatchUpTracker.JudgeDrop`, the
+  not-converging rule: 5 s behind, under 0.5 s gained in 20 s) ran too slowly under the full audit's
+  logging (w2298: about 6 heartbeats a second on a busy LothDesktop, kicked 22 s after joining). Relaunch
+  the host with `-ffFlowControlWaitForSlowPeers` (`HeartbeatSystem.cs`, host only): it holds the
+  heartbeat for the slow peer instead of dropping it, and the rerun caught up in 45 s and held 12.8 UPS.
 
 Any dev player works: `FF_BUILD_DIR=<dir holding finalfactory.exe> ... --skip-build` (e.g. an
 `Editor.ShaderBenchBuild` bench build), `--host-extra "-ffAutomationSave <name>"` runs it on a real save,
