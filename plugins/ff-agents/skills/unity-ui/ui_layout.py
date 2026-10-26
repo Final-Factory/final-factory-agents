@@ -1064,6 +1064,10 @@ def style(before: dict | None, after: dict, ref_fragment: str, shot=None, ref_sh
 # other check compares two censuses; these judge one, the way a player looks at it.
 
 STRETCH_RATIO = 2.0     # drawn aspect over the sprite's own aspect (or its inverse) at which a Simple image reads as stretched
+# A small icon reads as squashed well before 2x (Ben, 2026-10-26, w2102: "the overdriver bonus and production icons are
+# stretched": the docked Station Grid's square bonus icons drawn 34x20 px, 1.67x, which STRETCH_RATIO passed).
+ICON_STRETCH_RATIO = 1.4
+ICON_MAX_SIDE = 48      # screen px: an image whose longer side is at most this is judged as an icon
 # A window whose content covers under SPARSE_SHARE of it AND leaves one empty rectangle of HOLE_SHARE or more reads as mostly
 # empty, its content crammed into a corner. Coverage alone does not tell (w1396, the w1386 tour's 1920x1080 censuses: the Cargo
 # Hold, which looks fine, 24 % covered with a 25 % hole; the Light Structure 30 % with a 37 % hole; the broken stacked circuit
@@ -1242,7 +1246,7 @@ def shape(census: dict, sprites: dict | None = None, patterns: list[str] | None 
             continue
         ratio = (w / h) / (nat_w / nat_h)
         ratio = max(ratio, 1 / ratio)
-        if ratio >= STRETCH_RATIO:
+        if ratio >= (ICON_STRETCH_RATIO if max(w, h) <= ICON_MAX_SIDE else STRETCH_RATIO):
             out["stretched"].append({"path": e["path"], "rect": r, "sprite": name, "native": [nat_w, nat_h],
                                      "ratio": ratio, "type": e.get("imageType", "type not in census")})
 
@@ -1307,7 +1311,7 @@ def shape_lines(results: list[tuple[str, dict]]) -> tuple[list[str], int]:
     estimated = any(r["estimated"] for _, r in results)
     lines_measured = all(r["lines_measured"] for _, r in results)
     head = (f"Shape: {stretched} stretched, {sparse} mostly empty, {walls} wall(s) of text over {len(results)} census(es) "
-            f"(ui_layout.py shape: a sprite drawn {STRETCH_RATIO:g}x off its own aspect, a window under "
+            f"(ui_layout.py shape: a sprite drawn {STRETCH_RATIO:g}x off its own aspect, an icon {ICON_STRETCH_RATIO:g}x, a window under "
             f"{SPARSE_SHARE * 100:.0f} % covered with one empty rectangle of {HOLE_SHARE * 100:.0f} % or more, {WALL_LINES}+ lines under {WALL_WIDTH * 100:.0f} % of the screen wide)")
     notes = []
     if estimated:
