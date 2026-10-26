@@ -46,6 +46,13 @@ base's parked player meets no camp at all, and its edge is where the Build 108 r
    lothdesktop or get the fixtures handed over as attachments (`publish_attachment`, `fetch_attachment`), and say in
    `Baseline:` which late stages you did not run.
 
+   **A before player from your own sandbox** (w2183, 2026-10-26, BEAST): with your work pushed and the editor stopped,
+   `switch_branch` to a scratch branch with `create_from` = the master commit your branch last merged, run
+   `build_player.sh` there (about 10 minutes), and `switch_branch` back only after it prints `ok:` (switching while it
+   runs builds the other branch: `batch-player-build-traps-switch-branch-and-ilpp.md`). Its Library is warm, unlike a
+   fresh clone's. The three light stages then took 8.4 and 10.9 minutes a side with `--jobs 2`. Master can already flag
+   against a stage's spread (w2183: lifeastwo and trailer flagged on both sides); compare flag counts, not pass/fail.
+
    **No before build.** When a before player cannot be built (w1243: the sandbox was held by another agent, so the
    worktree could not be switched to the base) and the after numbers equal the stage baselines in
    `scripts/nightly/balance-curve.json`, the baselines can stand as the before column. Label it with the baseline's

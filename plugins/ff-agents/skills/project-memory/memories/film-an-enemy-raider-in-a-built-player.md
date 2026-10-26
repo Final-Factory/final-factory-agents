@@ -30,3 +30,23 @@ unit, locate, follow, dump) is the four bullets above in that order; its stills 
 
 Also on BEAST: an urgent release's bench-lock hold ran past its 30-minute turn (09:17Z to after 09:55Z), so
 `player_slots.py launch --bench-wait 1800` gave up; behind an urgent release wait 3600 (`Documentation/Bench-Lock.md`).
+
+## Filming a camp's ships (2026-10-26, w2183 Urso Suture and enemy self-heal, BEAST)
+
+Three legs went to empty or frozen frames before the clips held the hurt ships:
+
+- **`player.setposition` breaks the `camera.focus` hold.** `PlayerCamera.Cinematic` is applied only inside
+  `MoveCameraWithPlayer` (game repo `PlayerCamera.cs:199-217`), which `MoveAction.cs:89` calls every frame while the
+  player ship lives. After a teleport (probe: focus held before `setposition`, froze after) and while the player is
+  dead, the camera stays where it was. Fly instead: `camera.focus|off`, then `movement.goto|<x>|<z>|20|60` (the real
+  move input), then focus again.
+- **Camp guards kill the player, which freezes the camera too.** Send `player.devunlock` first (tougher ship, 325 u/s),
+  stand about 220 u (22 tiles) south of the camp, and if the goto reply says dead, `combat.respawn`, wait 5 s, retry.
+- **Fog hides enemy ships outside the local ship's sight** (about 317 u); a spawner already seen stays drawn, its ships
+  do not. Check what is drawn with `fog.enemies|<x>|<z>|<r>` before you record.
+- **`unit.damage|<Name>|<x>|<z>|<radius>|<amount>` is refused when no such ship is within the radius**: ships drift
+  during the flight. Re-read the targets after the flight and send each hit in its own call (radius 40 worked).
+- `run_w2183_suture_clips.py`'s caption step fails on Windows paths (the `subtitles=` filter); burn captions from
+  inside the output folder: `ffmpeg -i X-raw.mp4 -vf "subtitles=X.srt" ... X.mp4`.
+
+The working script: game repo `scripts/feel/run_w2183_suture_clips.py` (`fly_near`, `follow`).
