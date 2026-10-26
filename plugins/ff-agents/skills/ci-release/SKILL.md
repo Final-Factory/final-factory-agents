@@ -260,6 +260,12 @@ can, the printed `gh pr checks <n> && gh pr merge <n> --merge --match-head-commi
 the release** (it changes `FFVersion.cs` against its first parent), so the build starts when the PR
 merges, not when the branch is pushed.
 
+**A fresh clone in `$TMPDIR` needs a git identity first** (w2274, Build 19, biscuit): with none set, the script
+fails late with "Author identity unknown", then a misleading `fatal: invalid refspec '<old version>:refs/heads/release/'`,
+and pushes nothing. Before running it, `git config user.name "Final Factory"` and
+`git config user.email 481770+bryding@users.noreply.github.com` in that clone (the sandbox's own identity). On Linux
+workers the game repo's Python scripts run as `python3` (there is no `python`).
+
 **A or B first, on every release** (w1656; lothsahn, 2026-10-21: "A normal release should also provide the option of
 starting from the last fully green commit"). Unless the person already said which, run
 `python scripts/release/last_green.py` in the game repo and bring its two lines, with the real sha and count, as one
