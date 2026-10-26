@@ -46,7 +46,7 @@ Two complementary layers, plus the cross-machine harness:
    and a client on ANOTHER LAN machine (over SSH) and compares per-heartbeat fingerprints. This is
    the ONLY way to catch desyncs that only appear across genuinely different hardware (different CPU
    core counts / Job-System scheduling) — a single box can't. One command, no MCP:
-   `SCENARIO=movement|construction|save [SAVE=Wittlebase] [LINES=12 BOTS=8 DURATION_S=60] [MIN_HB=0] [CLIENT_HOST=10.0.0.110] ./scripts/audit/run_cross_machine_audit.sh`
+   `SCENARIO=movement|construction|save [SAVE=Wittlebase] [LINES=12 BOTS=8 DURATION_S=60] [MIN_HB=0] [CLIENT_HOST=m3] ./scripts/audit/run_cross_machine_audit.sh` (`m3` is the M3's Tailscale MagicDNS name; its LAN address 10.0.0.110 answers only on the home LAN, w2259)
    (exit 0 = NO DIVERGENCE). It pre-flights (SSH, same-sim-commit, free port, no stale state), writes
    both `.ff-local-automation.json` configs, waits for both reports, `scp`s the client's, compares
    with `compare_determinism_reports.sh`, and always cleans up (configs + play-mode `.mat` nulling on
@@ -59,6 +59,16 @@ Two complementary layers, plus the cross-machine harness:
    §Cross-machine.
 
 ## Built-player acceptance for multiplayer gameplay fixes
+
+**Before a client leg builds or joins, prove its machine reaches the host** (w2259, 2026-10-26): from the client's
+machine run `python scripts/nightly/reach.py @<host machine>` (a machine in the game repo's
+`scripts/nightly/lab_hosts.json`, e.g. `@m3`), or `reach.py <address> <address>` with the addresses the host leg posted.
+It pings each address, Tailscale first, prints `tailscale ping` for a tailnet address and ends `PICKED <ip>` (exit 0:
+join that IP) or `UNREACHABLE: ... tried ...` (exit 1: tell the other legs at once, never sit through the join's 150 s
+timeout). ffnightly runs the same pick before every remote join (`"hostAddress": "@m3"` in the lab config). In w2252
+LothDesktop lost every ping to the m3's LAN address 10.0.0.110 and its first join timed out after 150 s; the m3's
+Tailscale address 100.104.235.48 answered and worked
+([lesson](../evidence-gate/lessons/reach-the-host-from-the-client.md)).
 
 **A two-peer built-player run cannot happen on a Mac** (w1306, 2026-10-14): `scripts/nightly/player_slots.py` refuses
 to start a Mac multiplayer client (the w665 Metal GPU page fault hung or panicked the m3 seven times), so
