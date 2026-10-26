@@ -31,6 +31,8 @@ For any `rm`, `Remove-Item`, `del`, `rd`, `git clean`, `shutil.rmtree` or clean-
    folders whether or not its process runs ([the rule](../lessons/clean-up-after-yourself.md#a-clean-up-never-takes-the-folders-of-a-request-that-has-not-closed-w1379)).
    A list of "live" and "will resume" workers in a brief is not this check (w1374 deleted stopped worker a735f37c's builds and clips while its
    request w1332 was stalled, and the brief's list did not name it). The command says "no ledger facts" or is not found: delete no worker's folder.
+   A KEEP folder held only by the 7-day reopen hold can carry DELETE rows inside it (a finished worker's clean clones, Library copies, test output,
+   w2223): delete those rows, not the folder; short of the target, say what the holds protect.
 2b. **Does it hold a git clone with work?** (w1387) A DELETE row judges the ledger, not git. For every folder with a `.git` in it or a few
    levels below (a worker's clone, a `wt-*` worktree): `git -C <clone> status --porcelain`, `git -C <clone> log --oneline --branches --not --remotes`,
    `git -C <clone> stash list`, or the portal's clean-up log (`portal_logs` source `cleanup`, `machine`, `grep` the folder name: "kept for a
