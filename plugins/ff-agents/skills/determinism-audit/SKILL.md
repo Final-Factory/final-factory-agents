@@ -68,7 +68,7 @@ join that IP) or `UNREACHABLE: ... tried ...` (exit 1: tell the other legs at on
 timeout). ffnightly runs the same pick before every remote join (`"hostAddress": "@m3"` in the lab config). In w2252
 LothDesktop lost every ping to the m3's LAN address 10.0.0.110 and its first join timed out after 150 s; the m3's
 Tailscale address 100.104.235.48 answered and worked
-([lesson](../evidence-gate/lessons/reach-the-host-from-the-client.md)).
+([lesson](../evidence-gate/lessons/verify-simulation-at-a-slow-hosts-frame-rate.md#a-client-leg-reaches-the-host-from-its-own-machine-first-w2259-2026-10-26)).
 
 **A two-peer built-player run cannot happen on a Mac** (w1306, 2026-10-14): `scripts/nightly/player_slots.py` refuses
 to start a Mac multiplayer client (the w665 Metal GPU page fault hung or panicked the m3 seven times), so
