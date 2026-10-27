@@ -102,6 +102,12 @@ Mechanics: the game repo's `Documentation/Bench-Lock.md`.
 - [ ] **The machine is yours while you hold it, and only then** (w1750). Your own players and clips pass the lock (the same `FF_SESSION_ID`, or inside `bench_lock`); other workers' are refused until you give it back, so give it back between legs. Not covered: a player already running when you were granted (your `quiet` gate waits for its CPU).
 - [ ] **Nothing under the lock but the leg.** The Unity slot is taken before the ticket. Builds and digests run
       outside it, and the lock is given back between legs.
+- [ ] **A GPU leg at the display's refresh rate is capped, not measured** (w2421, 2026-10-27, lothdesktop). A
+      LightingBench/`zoom_run.sh` summary row at exactly the refresh rate (60.00 fps) with `present_wait_avg` near one
+      frame (about 14 ms) and GPU ms near 13 was held by the display: from 16:11 every windowed player sat there, master
+      and the fix alike, for over an hour, then it cleared by itself (310 fps, present_wait 1.07 ms at 16:58); cause
+      unconfirmed (DISPLAY2 had dropped off the desktop). Before a series, one 5 s probe leg reads `fps` and
+      `present_wait_avg`; during it, discard such a row and time only once present_wait is back near 1 to 2 ms.
 - [ ] **Lock time reported.** The result says how long the run held the lock (`bench_queue.py report`).
 - [ ] **At most two player builds of your own, and each leg checks its exe** (w1891, 2026-10-24). FF Factory's clean-up
   pass deletes a session's player builds beyond its newest 2 once they are untouched for 6 h (portal_logs, cleanup
