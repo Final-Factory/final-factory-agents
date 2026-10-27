@@ -64,3 +64,5 @@ For a chunk skip in `OverwriteJob`: the snapshot component's chunk change versio
 heartbeat, so at 2x speed 100% of chunks report it), and one moving entity marks its chunk: 52% of connector-item
 chunks changed while 6% of the items moved (measured, review w1739 `census-JustPlay1003.txt`); the per-entity
 bit-equal check (`AtRest`, `SameBits`) is what skips them.
+
+Seen again on JustPlay1003 (w2337, 2026-10-27, beast, development player at f3f76ac53b). The main thread waits 14.3 ms of a 27.6 ms heartbeat frame while 31 workers do about 10 ms of work each. The first site to complete the chain moves between captures: `LocalPlayerMotionSystem`'s `SystemAPI.GetComponent<LinearMotion>` paid 3.1 ms per heartbeat when idle, and `LeechSystem` paid 4.0 ms (with LocalPlayerMotion down to 0.25 ms) when flying. The total wait stayed the same.
