@@ -740,7 +740,8 @@ def moved_lines(results: list[dict], move_px: float, how: str) -> list[str]:
 
 
 def pin_check(census: dict, pin: dict) -> tuple[str, str]:
-    """('ok' | 'broken' | 'not shown', what was measured) for one pin of hud-pins.json in one census.
+    """('ok' | 'broken' | 'not shown' | 'covered', what was measured) for one pin of hud-pins.json in one census
+    ('covered': hidden by design, covered_by_window).
 
     above        the element's bottom edge at most maxGap x H above the anchor's top edge, not below it, and over it
                  (sharing some of its width). When the anchor is not on screen (the dock hides the ability row and the
@@ -750,6 +751,9 @@ def pin_check(census: dict, pin: dict) -> tuple[str, str]:
     w, h = census.get("screen") or [0, 0]
     r = find(census, pin["element"])
     if r is None:
+        hidden = covered_by_window(census, pin)
+        if hidden:
+            return "covered", hidden
         return "not shown", f"{pin['element']} is not on screen"
     at = f"{round(r[0])},{round(r[1])} {round(r[2] - r[0])}x{round(r[3] - r[1])}"
     if pin["rule"] == "offLeftEdge":
@@ -782,23 +786,48 @@ def pin_check(census: dict, pin: dict) -> tuple[str, str]:
     return "ok", f"{where} ({at})"
 
 
+def covered_by_window(census: dict, pin: dict) -> str | None:
+    """What hides a pin the game itself hides by design (hud-pins.json `coveredBy`), or None. w2185: in the docked layout
+    the building hover card is not drawn while a docked window overlaps its place (HoverCardFit.Covered), so a docked
+    census with a building selected never shows it; the pin counts as covered when the dock's window reaches into the
+    card's place (x from xMin x W, y down to yMax x H). It is measured where it shows: pinned_lines asks for another
+    census of the same run that measures it."""
+    rule = pin.get("coveredBy")
+    if not rule or layout_of(census) != rule["layout"]:
+        return None
+    w, h = census.get("screen") or [0, 0]
+    window = find(census, rule["window"])
+    if window is None or window[2] <= rule["xMin"] * w or window[1] >= rule["yMax"] * h:
+        return None
+    return (f"under the docked window at {round(window[0])},{round(window[1])} {round(window[2] - window[0])}x"
+            f"{round(window[3] - window[1])}, by design: {rule['why']}")
+
+
 def pinned_lines(censuses: list[tuple[str, dict]], spec: dict, how: str) -> tuple[list[str], int]:
     """The `Pinned:` line and one line per broken or missing pin, and the number broken."""
     pins = spec.get("pins", [])
     states = [f"{int((c.get('screen') or [0, 0])[0])}x{int((c.get('screen') or [0, 0])[1])} {layout_of(c)}" for _, c in censuses]
-    broken, missing, details = 0, 0, []
-    for (name, census), state in zip(censuses, states):
-        for pin in pins:
-            verdict, what = pin_check(census, pin)
+    broken, missing, covered, details = 0, 0, 0, []
+    verdicts = [[pin_check(census, pin) for pin in pins] for _, census in censuses]
+    measured = {pin["name"] for row in verdicts for pin, (v, _) in zip(pins, row) if v in ("ok", "broken")}
+    for (name, census), state, row in zip(censuses, states, verdicts):
+        for pin, (verdict, what) in zip(pins, row):
+            if verdict == "covered" and pin["name"] not in measured:
+                verdict, what = "not shown", f"{what}; and no other census measures it"
+            if verdict == "covered":
+                covered += 1
+                details.append(f"  COVERED {state} ({name}): {pin['name']}: {what}")
             if verdict == "broken":
                 broken += 1
                 details.append(f"  BROKEN {state} ({name}): {pin['name']} (GamePanels/{pin['element']}): {what}; it belongs "
                                f"{pin['where']}. {pin['who'][-1]}")
             elif verdict == "not shown":
                 missing += 1
-                details.append(f"  NOT SHOWN {state} ({name}): {pin['name']}: take the census with it up")
+                details.append(f"  NOT SHOWN {state} ({name}): {pin['name']}: take the census with it up"
+                               + (f" ({what})" if "no other census" in what else ""))
+    hidden = f", {covered} covered by a docked window by design" if covered else ""
     head = (f"Pinned: {len(pins)} pin(s) in {len(censuses)} census(es) ({', '.join(states)}): {broken} broken, {missing} "
-            f"not shown ({how}, hud-pins.json: {', '.join(p['name'] for p in pins)})")
+            f"not shown{hidden} ({how}, hud-pins.json: {', '.join(p['name'] for p in pins)})")
     return [head] + details, broken
 
 

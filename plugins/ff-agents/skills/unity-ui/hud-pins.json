@@ -1,5 +1,5 @@
 {
-  "about": "Where Ben placed HUD pieces himself (w894). ui_layout.py pins checks every census against these, whatever the pull request's parent looked like: a move an earlier PR made does not become the new normal. A pin changes only when the person asks, quoted in its 'who', through a harness PR. Rects are screen pixels from the top-left; fractions are of the screen's width (W) or height (H). A pin whose element is not on screen in a census is 'not shown' there: take the census with a station selected and the hover card up.",
+  "about": "Where Ben placed HUD pieces himself (w894). ui_layout.py pins checks every census against these, whatever the pull request's parent looked like: a move an earlier PR made does not become the new normal. A pin changes only when the person asks, quoted in its 'who', through a harness PR. Rects are screen pixels from the top-left; fractions are of the screen's width (W) or height (H). A pin whose element is not on screen in a census is 'not shown' there: take the census with a station selected and the hover card up. A pin with 'coveredBy' that the game hides by design under a docked window (the hover card, w2185) is 'covered' there, not 'not shown', when another census of the run measures it.",
   "pins": [
     {
       "name": "Station Info",
@@ -23,6 +23,7 @@
       "anchor": "MinimapParent",
       "maxGap": 0.06,
       "region": {"minBottom": 0.6, "minRight": 0.8},
+      "coveredBy": {"layout": "docked", "window": "StructuredDock", "xMin": 0.8, "yMax": 0.71, "why": "the game hides the card while a docked window overlaps its place (HoverCardFit.Covered, w1544/w2072), so a docked census with a building selected never shows it there (w2185)"},
       "where": "just above the minimap, bottom right, on every screen and layout; never in the panel cluster",
       "who": [
         "Ben, 2026-10-10 (w895): \"I also noticed that the actual normal hover panel is up, you put it up in the fucking, you know, array of panels up on the top left. Don't do that, put it back over the minimap, stop moving panels around that I don't ask you to move around. It's driving me crazy.\"",
