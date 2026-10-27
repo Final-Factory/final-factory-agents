@@ -515,6 +515,14 @@ w780, 2026-10-09, °Life°'s Build 91 save (177,779 entities, 577 haulers), m5, 
     serve). Pick a lighter save or a quiet client machine before blaming the change.
   - Turn the presentation monitors off on a big save (`invariantsOff` as BAL-end-justplay): run 2 ended on the
     `transform` invariant (a Dyson Bot drawn 4,013 u from its simulation position), not a desync.
+  - Second attempt (m5 host, BEAST client at `-ffJobWorkers 4`, 4dda4f981d): give `ffnightly.py run` a `--budget-min`
+    above the scenario's `timeLimitS` in minutes. `--budget-min 120` with `timeLimitS` 7200 ended at once, `not-run`,
+    `cut-off: budget` (`ffnightly.py` `over_time`, the `finish(... "cut-off: budget")` call); 200 ran it.
+  - **A reconnect restarts the count.** The client rejoins as a new clientId in a new epoch, and `desync.stats` then
+    counts only that epoch's compares. Client 1 was dropped `FlowControl:HardDrift` near epoch-1 heartbeat 3,500 (a
+    12.1 s `[HangWatchdog]` hang in `NtCreateFile` on a BEAST running another player and three editors); the rejoin
+    compared 420 of 420 over epoch-2 heartbeats 8..3360, and the scenario's `atLeast: 450` bar failed that clean pass.
+    Size the end bar to one epoch's heartbeats / 8, and report which epoch the count came from.
 
 ## Old against new in one pair: a PR's A/B switches on one peer {#ab-switch-one-peer}
 
