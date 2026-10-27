@@ -500,6 +500,21 @@ w780, 2026-10-09, °Life°'s Build 91 save (177,779 entities, 577 haulers), m5, 
   read its `[MP pacing] frames=` (about 185 per 10 s at 18.5 fps) before calling it a slow-host leg.
 - Both peers outlive their dwell with the audit off (the publish step fails: `The determinism audit is disabled`);
   stop them yourself at the end of the window.
+- **w2400, 2026-10-27 (an ffnightly host-only scenario, a remote client by address, m5 host + loaded LothDesktop client):**
+  - Read the detector's counts straight from the host: `ffauto:desync.stats` answers `compared`, `matched`,
+    `diverged`, `firstHeartbeat`, `lastHeartbeat` per client. updatedLifeSave, audit off: 722 compared, 722 matched,
+    heartbeats 8..5776, in 6 minutes of play.
+  - **A host-only scenario passes with no client in it.** Run 3 ended `pass` after the client was kicked
+    (`FlowControl:TooSlow`) and nothing had been compared. End the scenario with a `poll ffauto:desync.stats`
+    on `data.clients[0].compared` `atLeast` (heartbeats / 8, less a margin), so a dropped client fails it.
+  - The per-heartbeat audit (`-ffAutomationDeterminismAudit true`) on updatedLifeSave hung the m5 host 10 s at a time in
+    `DeterminismFingerprintSystem.RecordDetail`; on JustPlay1003 it hung the client 13.5 s and got it dropped. On
+    Wittlebase it ran, but a 4-worker client still fell behind after 200 heartbeats. Use the detector on those saves.
+  - JustPlay1003 with the audit off: a client on a LothDesktop already at 63% CPU from other sandboxes was kicked
+    `FlowControl:TooSlow` at `-ffJobWorkers 4` and at 8 (it never drained the ~450-heartbeat backlog after the world
+    serve). Pick a lighter save or a quiet client machine before blaming the change.
+  - Turn the presentation monitors off on a big save (`invariantsOff` as BAL-end-justplay): run 2 ended on the
+    `transform` invariant (a Dyson Bot drawn 4,013 u from its simulation position), not a desync.
 
 ## Old against new in one pair: a PR's A/B switches on one peer {#ab-switch-one-peer}
 
