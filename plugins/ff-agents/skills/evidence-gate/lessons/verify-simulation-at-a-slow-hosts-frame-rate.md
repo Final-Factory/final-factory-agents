@@ -217,3 +217,21 @@ built its player for 10 min before learning its own Tailscale was stuck.
 **How to apply.** The merge checklist's pair-run line asks for the probe's `PICKED` line from each client machine.
 ffnightly runs the same pick before every remote join (`ScenarioRun.host_address`, w2259), and
 `scripts/tests/test_nightly_reach.py` fails on a lab config that hardcodes a non-loopback address.
+
+## A pair leg's player dies to another worker's timed run, and an old client rejoins the next host (w2407, 2026-10-27)
+
+**Rule.** A pair-run leg launches its player with `player_slots.py launch --bench-wait <s>`, and reads
+`[QuitSave] ApplicationQuit: not saving (AutomationProcess)` in its player log, with no quit of its own, as "FF Factory
+closed it for another worker's timed run": that scenario is void, and the leg tells its partner at once with
+`message_pair`. When the computer keeps taking exclusive timed runs back to back, the redo goes to a leg on a computer
+that is not, rather than a second retry there. Between scenarios a client is ended as soon as its result is taken:
+a client whose host went away keeps reconnecting to the same address and joins the next scenario's fresh host.
+
+**Why.** w2407 (2026-10-27, the w2383 Connection Lost pair: m5 host, LothDesktop client, b293e240a9): the relay-suspend
+scenario's client was closed by the bench turn at 14:10Z for w2401's timed run, before the host was suspended at
+14:10:49Z, so the host lost a relay session with no client in it; the redo's client waited for the lock until 14:30Z,
+started, and was closed again before it joined, for w2355's timed run at 14:34Z. The scenario never got a live client
+on that computer. In the same run the transport-failure scenario's client showed "Connection lost — reconnecting (2/4)"
+and on its third attempt joined the host's next, fresh session (`[Reconnect] ReconnectRestored attempts=3`), polluting it.
+
+**How to apply.** The merge checklist's pair-run lines ask for it; a leg's report names any scenario voided this way.
