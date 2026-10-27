@@ -26,3 +26,11 @@ Split it into 600 MB byte ranges, each written as its own zip (`zipfile.writestr
 gave five parts of at most 117 MB, published four per call. Say in the note how to rebuild it: unzip every part,
 then `cat <name>.raw.part1 ... partN > <name>.raw`. Publish the text digests beside the parts, because a reviewer
 reads those first.
+
+**A new reader project needs `Assets/csc.rsp` with `-unsafe`** (w2392, 2026-10-27, beast). `StructuralChangeDigest.cs`
+uses unsafe code. In a project made with `-createProject` it fails with `error CS0227`, and every `-executeMethod`
+run aborts with "Scripts have compiler errors" and writes no output. Write `echo "-unsafe" > <project>/Assets/csc.rsp`
+when you copy the `.cs` files in.
+
+**`unity-bridge.py` can name a stale port** (w2392). Its status file in `~/.unity-mcp` said 6400, and the connection
+was refused, while the `mcp__UnityMCP__*` tools reached the same editor. When that happens, use the MCP tools.
