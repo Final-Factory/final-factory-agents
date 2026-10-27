@@ -152,6 +152,11 @@ Not verified: the Bats' slot lag (simulation, follow-up PR)
   the leg at once with the addresses tried. A host address is a machine name (`@m3`, `lab_hosts.json`), never a copied
   LAN IP: w2252's LothDesktop client lost every ping to the m3's 10.0.0.110 and waited out a 150 s join timeout
   ([lesson](../lessons/verify-simulation-at-a-slow-hosts-frame-rate.md#a-client-leg-reaches-the-host-from-its-own-machine-first-w2259-2026-10-26)).
+- **A pair leg's scenario survives the bench turn** (w2407): each player launches with `player_slots.py launch
+  --bench-wait`; a player log with `[QuitSave] ApplicationQuit: not saving (AutomationProcess)` and no quit of its own
+  makes that scenario void (say so to the partner and in the report), and each client is ended once its scenario's
+  result is taken, so its reconnect cannot join the next host
+  ([lesson](../lessons/verify-simulation-at-a-slow-hosts-frame-rate.md#a-pair-legs-player-dies-to-another-workers-timed-run-and-an-old-client-rejoins-the-next-host-w2407-2026-10-27)).
 - **A pair run is filed only on a commit that compiles** (w2125): before `request_pair`, the head the legs run has a
   green `Test in editmode` run, or your own editor's `refresh_unity` at that head logged no `error CS`; a red or
   unfinished CI run is not a go
