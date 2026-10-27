@@ -34,7 +34,7 @@ load-bearing for future runs even where the original defect is fixed.
 - [A big save: the full capture keeps the client out; the runtime detector and a capped host](#big-save-pair) (w780)
 - [Old against new in one pair: a PR's A/B switches on one peer](#ab-switch-one-peer) (w1115)
 - [Reading a pair's witness-compare.txt: pose distance is the verdict](#witness-pose-distance) (w1555)
-- [A world-generation pair: drive the host post-join, compare lists, keep the client yours](#worldgen-pair) (w2271)
+- [A world-generation pair: drive the host post-join, compare lists, keep the client yours](#worldgen-pair) (w2271; world objects from saves, ffnightly deletes local saves, w2386)
 - [A live-driven built pair: reopen panels after a resync, overlap the report windows](#live-driven-pair) (w2238)
 - [A Linux client leg on biscuit: build, headless launch, a scripted paste](#linux-client-leg) (w2133, w2326)
 - [A Linux host leg on biscuit: console commands and detector counts from a headless host](#linux-host-leg) (w2281)
@@ -646,3 +646,22 @@ the host flies rings of 400 to 1600 tiles. What it took:
 - A worker's `$TMPDIR` can be swept while it waits for a pair partner (twice in w2271, builds included). The slot pool
   still holds the player: copy `players/slotK-N/player` back into `$TMPDIR/builds/<sha>-win/player` and launch that,
   since `player_slots.py` refuses a path inside the pool.
+- **Comparing world objects from saves, on master builds** (w2386, 2026-10-27; m5 Mac host with a BEAST Windows client
+  through `ffnightly.py run`). `worldobjects.list` above is only on a branch. Instead, save on every peer at one heartbeat
+  (`ffauto:game.save|<name>_{peer}|atheartbeat={hb+80}` plus the `saveFingerprintsMatch` assert) and parse each save.
+  Its `AllEntitiesColumnar_Part*.dat` parts (magic `FFC1`, layout as in the game repo's `scripts/save_census.py`) hold a
+  68-byte `FFComponents.Core.Placeable` column. Each generated object has PlayerPlaced = 0 at byte 0. ItemIdentifier is
+  an int32 at byte 20. GridTile is int3 x,y,z at 48 (y is height). Direction is an int32 at 64. The
+  `Unity.Transforms.LocalTransform` rotation is bytes 16..32 of its 32-byte column. Map item ids to names through the
+  IdToNameMap in `SaveState2.dat`: an int32 count, then (int32 id, 7-bit-length string) pairs. Sort the lines
+  `name|x,y,z|d<dir>|<rotation hex>` per ring and hash them. Objects whose archetype holds RotationParameters (the
+  Comet Fragments) spin, so leave their rotation out. Seed 2381 gave 170/539/1383/2714 objects at 400/800/1200/1600
+  tiles, identical on both peers.
+- **ffnightly deletes the local peers' saves when the scenario ends.** `unstage_save` (`scripts/nightly/ffnightly.py`,
+  ~783) removes the names the scenario's `game.save` steps wrote from this machine's `UserData/saves`. A remote-win
+  peer's saves stay in `C:/Users/<user>/AppData/LocalLow/Never Games/finalfactory/UserData/saves`, for `scp`. Copy the
+  local ones out while the run goes: start a background loop that copies `UserData/saves/<name>*.zip` into `$TMPDIR`
+  once each file's size has held steady for 5 s.
+- **Size "N minutes after the join" in heartbeats at 16 UPS, not from goto timeouts.** `movement.goto` with
+  `devunlock` flies about 250 u/s and finishes well inside its timeout (1,700 tiles in ~70 s). So w2386's first run
+  ended 12.5 minutes after the join instead of 15. Its final hold of 6,400 heartbeats became 10,400.
