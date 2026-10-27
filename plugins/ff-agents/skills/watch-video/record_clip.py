@@ -11,7 +11,8 @@ It records in REAL time, what the screen shows: the simulation runs on wall-cloc
 recorder would put effects and motion out of step. Standard library only; needs ffmpeg.
 macOS: ScreenCaptureKit (mac/sckrec.swift, compiled once with swiftc) records the window even when
 it is covered. Windows: ffmpeg gfxcapture (Windows Graphics Capture, ffmpeg 8+) of the window itself, which
-records it when covered too; else ddagrab (Desktop Duplication) of the window's client area, which must be visible.
+records it when covered too; else ddagrab (Desktop Duplication) of the window's client area, with the player pinned
+topmost for the take and the window stack over it watched (a covered take is refused; w2408).
 """
 from __future__ import annotations
 
@@ -275,6 +276,83 @@ def win_client_rect(pid, with_hwnd=False):
     return (x, y, w, h, hwnd) if with_hwnd else (x, y, w, h)
 
 
+# A desktop grab (ddagrab, gdigrab) records the screen, so any window drawn over the player lands in the clip. On BEAST
+# (ffmpeg 2025-07, no gfxcapture) two takes of w2380 (2026-10-27) recorded a browser and another sandbox's Unity editor
+# over the player, exit 0; only watch_video's review noticed. So a desktop grab pins the player topmost for the take
+# (restored in main's finally, Ctrl-C and errors included) and watches the window stack while it records.
+_UNPIN = []
+_FOREIGN = []
+
+
+def win_pin_topmost(hwnd):
+    """Put hwnd above every non-topmost window without taking focus; restore it at unpin_all(). Refuses if it cannot."""
+    from ctypes import wintypes
+    user32 = ctypes.windll.user32
+    # argtypes matter: an untyped -1 goes over as a 32-bit int, which is not HWND_TOPMOST on 64-bit Windows
+    user32.SetWindowPos.argtypes = [wintypes.HWND, wintypes.HWND, ctypes.c_int, ctypes.c_int, ctypes.c_int,
+                                    ctypes.c_int, wintypes.UINT]
+    user32.SetWindowPos.restype = wintypes.BOOL
+    user32.GetWindowLongW.argtypes = [wintypes.HWND, ctypes.c_int]
+    user32.GetWindowLongW.restype = ctypes.c_long
+    was_topmost = bool(user32.GetWindowLongW(hwnd, -20) & 0x8)  # GWL_EXSTYLE, WS_EX_TOPMOST
+    flags = 0x0001 | 0x0002 | 0x0010  # SWP_NOSIZE NOMOVE NOACTIVATE
+    if not was_topmost:
+        _UNPIN.append(lambda: user32.SetWindowPos(hwnd, -2, 0, 0, 0, 0, flags))  # HWND_NOTOPMOST
+    ok = user32.SetWindowPos(hwnd, -1, 0, 0, 0, 0, flags)  # HWND_TOPMOST
+    if not ok or not user32.GetWindowLongW(hwnd, -20) & 0x8:
+        sys.exit(f"record_clip: could not pin the player window (hwnd {hwnd}) on top (SetWindowPos error "
+                 f"{ctypes.GetLastError()}; an elevated player refuses a normal process). A desktop grab records whatever "
+                 "covers the player, so it does not record. Put an ffmpeg 8+ with gfxcapture first on PATH (SKILL.md, "
+                 "the Windows note).")
+    print(f"  player window pinned on top for the take ({'already topmost' if was_topmost else 'restored after'})")
+
+
+def unpin_all():
+    while _UNPIN:
+        try:
+            _UNPIN.pop()()
+        except Exception:
+            pass
+
+
+def win_covering(hwnd, rect, grid=6):
+    """The windows (title, pid) that own any of grid x grid points of rect (x, y, w, h) instead of hwnd: what a screen
+    grab of rect would show over the player. WindowFromPoint skips hidden, disabled and click-through windows."""
+    from ctypes import wintypes
+    user32 = ctypes.windll.user32
+    user32.WindowFromPoint.restype = wintypes.HWND
+    user32.WindowFromPoint.argtypes = [wintypes.POINT]
+    user32.GetAncestor.argtypes = [wintypes.HWND, wintypes.UINT]
+    user32.GetAncestor.restype = wintypes.HWND
+    user32.GetWindowTextW.argtypes = [wintypes.HWND, wintypes.LPWSTR, ctypes.c_int]
+    user32.GetWindowThreadProcessId.argtypes = [wintypes.HWND, ctypes.POINTER(wintypes.DWORD)]
+    x, y, w, h = rect
+    seen = {}
+    for i in range(grid):
+        for j in range(grid):
+            pt = wintypes.POINT(x + (2 * i + 1) * w // (2 * grid), y + (2 * j + 1) * h // (2 * grid))
+            top = user32.GetAncestor(user32.WindowFromPoint(pt), 2)  # GA_ROOT
+            if top and int(top) != int(hwnd) and int(top) not in seen:
+                buf = ctypes.create_unicode_buffer(200)
+                user32.GetWindowTextW(top, buf, 200)
+                p = wintypes.DWORD()
+                user32.GetWindowThreadProcessId(top, ctypes.byref(p))
+                seen[int(top)] = (buf.value or "(untitled)", p.value)
+    return list(seen.values())
+
+
+def watch_covering(hwnd, rect, proc):
+    """While the desktop grab runs, note any window over the player (one that is topmost itself, or a new one)."""
+    def run():
+        while proc.poll() is None:
+            for c in win_covering(hwnd, rect):
+                if c not in _FOREIGN:
+                    _FOREIGN.append(c)
+                    print(f"  WARNING: a window covers the player during the take: {c[0]!r} (pid {c[1]})")
+            time.sleep(0.25)
+    threading.Thread(target=run, daemon=True).start()
+
+
 def win_monitors():
     """Monitors as (left, top, right, bottom, primary), primary first (the usual DXGI order)."""
     from ctypes import wintypes
@@ -364,6 +442,19 @@ def start_windows(pid, raw, seconds, fps, monitor):
                  f"({right - left}x{bottom - top} at ({left},{top})). Use a smaller window, or record the game's own "
                  "frames (-ffFeelFrames; project-memory beast-clip-capture-and-slot-launch-traps, items 1 and 12).")
     w, h = w & ~1, h & ~1
+    win_pin_topmost(hwnd)
+    covering = win_covering(hwnd, (x, y, w, h))
+    if covering:
+        # another topmost window (a pinned player, a tool's always-on-top window) stays above a pinned one
+        sys.exit("record_clip: the player is pinned on top but still covered by "
+                 + ", ".join(f"{t!r} (pid {p})" for t, p in covering)
+                 + ". A desktop grab would record it. Move or close it, or use an ffmpeg 8+ with gfxcapture.")
+    proc = start_desktop_grab(raw, seconds, fps, idx, x, y, w, h, left, top, grab_mode)
+    watch_covering(hwnd, (x, y, w, h), proc)
+    return proc
+
+
+def start_desktop_grab(raw, seconds, fps, idx, x, y, w, h, left, top, grab_mode):
     grab = (f"ddagrab=output_idx={idx}:framerate={fps}:draw_mouse=0:"
             f"offset_x={x - left}:offset_y={y - top}:video_size={w}x{h}")
     if encoder_works("h264_nvenc"):
@@ -411,6 +502,13 @@ def start_windows(pid, raw, seconds, fps, monitor):
 # ------------------------------------------------------------------------------------ main
 
 def main():
+    try:
+        record()
+    finally:
+        unpin_all()  # the player's topmost pin, on success, an error or Ctrl-C
+
+
+def record():
     ap = argparse.ArgumentParser(description="Record a short 60 fps clip of the running game while an effect plays.")
     tgt = ap.add_mutually_exclusive_group(required=True)
     tgt.add_argument("--player", action="store_true", help="the built player this worker launched (player_slots.py mine; w1856)")
@@ -492,6 +590,7 @@ def main():
         sys.exit("record_clip: the recorder got no frames in time (display asleep or locked?). Record the game's "
                  "own frames instead: -ffFeelFrames (project-memory beast-clip-capture-and-slot-launch-traps, items "
                  "1 and 12).")
+    unpin_all()
     if not os.path.exists(raw):
         sys.exit("record_clip: the recorder wrote nothing")
     # constant 60 fps H.264 (a frame the game did not redraw becomes a repeat: watch_video counts them)
@@ -505,6 +604,11 @@ def main():
                "seconds": seconds, "fired_by": "record_clip" if do else "caller, at about --lead"},
               open(final[:-4] + ".json", "w", encoding="utf-8"), indent=1)
     print(f"clip: {final} (effect fired at {fired:.2f} s)")
+    if _FOREIGN:
+        # the pin keeps ordinary windows below the player; a topmost one (or a window that popped up topmost mid-take)
+        # can still land in a desktop grab. Refuse the clip rather than let a review judge another window.
+        sys.exit("record_clip: the clip may show another window over the player: "
+                 + ", ".join(f"{t!r} (pid {p})" for t, p in _FOREIGN) + ". Look at its frames, or record again.")
     if args.review or args.brief or args.compare:
         brief = args.brief
         if args.review:

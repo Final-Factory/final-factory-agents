@@ -94,8 +94,16 @@ Recording notes:
 - **Windows**: with ffmpeg 8+ (`gfxcapture`), `record_clip` records the game's own window by its handle (Windows
   Graphics Capture), whatever covers it (w1934, lothdesktop: the screen fallbacks recorded another sandbox's Unity
   splash over the player, exit 0); if it gives no frame in 8 s it falls back to `ddagrab` (`FF_CLIP_GRAB=ddagrab`
-  starts there). `ddagrab` records the window's client area off the monitor, so keep it on top and
-  unobstructed (toasts and overlapping windows are recorded). If `ddagrab` delivers no frame (Desktop Duplication stalled; w1086)
+  starts there). `ddagrab` records the window's client area off the monitor, so whatever covers the player is
+  recorded: `record_clip` therefore pins the player topmost (`SetWindowPos HWND_TOPMOST`, no focus taken) for every
+  desktop grab and restores it after, on an error or Ctrl-C too; it refuses to record when the pin fails, or when a
+  window still covers the player once pinned. While it records, it samples the window stack over the player
+  (`WindowFromPoint` on a 6x6 grid, every 0.25 s); a window that raises itself over the player mid-take (another
+  worker's pin) is printed and the clip is refused with exit 1 (kept on disk for a look). W2408 (BEAST, 2026-10-27):
+  with a window over the player, the pinned clip showed only the player (0 of its pixels in 3 frames), a plain
+  `ddagrab` still showed the window, and a window that re-raised itself every 100 ms was caught. Before it (w2380), two
+  BEAST takes recorded a browser and another sandbox's editor over the player, exit 0. Toasts and click-through
+  overlays escape the check. If `ddagrab` delivers no frame (Desktop Duplication stalled; w1086)
   `record_clip` falls back to `gdigrab` after 8 s (`FF_CLIP_GRAB=gdigrab` starts there). A player launched
   by a script must be raised with `SetWindowPos` argtypes set (a 32-bit HWND_TOPMOST does nothing on 64-bit Windows),
   and the old nightly player may ignore `-screen-width`: `ffprobe` every clip's size before comparing two. It must run in the logged-in desktop
