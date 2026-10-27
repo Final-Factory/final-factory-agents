@@ -192,6 +192,21 @@ Recording notes:
   `sheet.jpg`, and adjust if the layout differs.
 - The editor throttles when it isn't focused, and a covered editor may render slowly. A built player
   from the slot pool gives the truest clip.
+- **A shader A/B clip on a Linux PC** (w2348, biscuit, 2026-10-27; `record_clip.py` covers only Windows and macOS, and
+  biscuit has no ffmpeg): record it in the editor with `UnityEditor.Media.MediaEncoder` (a VP8 `.webm` on Linux).
+  In one `execute_code` or `unity-bridge.py eval_file` call, render the game camera into a 1920x1080 RenderTexture at
+  fixed poses (frame i at `start + right * speed * i / 60`, rotation fixed), then `ReadPixels`, `enc.AddFrame(tex)`
+  and save every 10th frame as a PNG. 240 frames took about 16 s (measured). Base and fix then get the same poses,
+  frame for frame, and the PNGs can be pixel-diffed. **Isolate the feature under test.** Whole-scene frames differ
+  between runs because of film grain (random every frame), nebula time and asteroid motion: with an identical star
+  shader, about 50% of pixels differed by more than 2 levels at zoom 45. So for the run:
+  - call `SetActive(false)` on every other `ScriptableRendererFeature`, reached through the URP asset's private
+    `m_RendererDataList`;
+  - set `camera.cullingMask = 0` and `UniversalAdditionalCameraData.renderPostProcessing = false`;
+  - restore all of it afterwards.
+
+  Isolated this way, w2348's base and fix differed by at most 1 level of 255 across 48 frames (measured). The game
+  repo's PR #2709 (the StarfieldFeature GPU cut) carries the result; the review clips are in `w2348-starfield`.
 - **Sound**: `record_clip` records video only, and a player started with an automation role is muted.
   For a clip with sound, and on a desktop shared with other agents' windows, record the game's own frames
   and that one process's audio: project-memory `beast-clip-capture-and-slot-launch-traps`, items 1 and 11.
