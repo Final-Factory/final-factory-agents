@@ -38,6 +38,7 @@ load-bearing for future runs even where the original defect is fixed.
 - [A live-driven built pair: reopen panels after a resync, overlap the report windows](#live-driven-pair) (w2238)
 - [A Linux client leg on biscuit: build, headless launch, a scripted paste](#linux-client-leg) (w2133, w2326)
 - [A Linux host leg on biscuit: console commands and detector counts from a headless host](#linux-host-leg) (w2281)
+- [An editor pair with presentation checks: no Audit ids in the config, a healthy host, a client machine without bench rounds](#editor-pair-presentation) (w2399)
 
 ## Full-window rule: never diagnose from a partial window {#full-window-rule}
 
@@ -683,3 +684,35 @@ the host flies rings of 400 to 1600 tiles. What it took:
 - **Size "N minutes after the join" in heartbeats at 16 UPS, not from goto timeouts.** `movement.goto` with
   `devunlock` flies about 250 u/s and finishes well inside its timeout (1,700 tiles in ~70 s). So w2386's first run
   ended 12.5 minutes after the join instead of 15. Its final hold of 6,400 heartbeats became 10,400.
+
+## An editor pair with presentation checks: no Audit ids in the config, a healthy host, a client machine without bench rounds {#editor-pair-presentation}
+
+w2399 (2026-10-27) was a two-editor pair: an m5 host and a biscuit client checking the speed cap (#2585). Besides the
+fingerprints, it sampled the remote ship's presented `LocalTransform` every host frame to count snaps.
+
+- **Leave `AuditRunId`, `AuditLegId` and `AuditSourceRevision` out of `.ff-local-automation.json`.**
+  - The trap: setting them without a full audit save identity makes the editor bootstrap refuse the config with
+    `audit-config-invalid … Audit save identity is required`, so play mode never starts.
+  - Without them the run writes the legacy report, `DeterminismAudit/network-determinism-audit-legacy-<label>-<role>.log`.
+    It holds typed `# audit-record-v1` Fingerprint records, and you compare them per heartbeat and epoch.
+  - To start a new session, set a new `Label` and set `AutoStartInEditor` to true again. The bootstrap resets it to
+    false after each start.
+- **A snap count (jumps over `RemotePlayerPresentation`'s SnapThreshold of 25 u) means something only on a healthy
+  host.**
+  - Read the host's `[MP pacing]` lines for the flight window before judging snaps.
+  - The healthy session: the host applied 160 of 160 heartbeats per 10 s, with frames well under 100 ms. Uncapped
+    flight gave 0 snaps and a max per-frame jump of 2.46 u.
+  - The overloaded session: other game players were running on m5, at a load average of about 7.5. The host applied
+    130–158 of 160 heartbeats per 10 s, with frames up to 1.47 s. That gave 2–3 snaps of 26–31 u per 10 s flight,
+    capped and uncapped alike.
+  - Name the host load in the verdict, or rerun on an idle host.
+- **On a slow host, judge speed by `SimulationVelocity` and the per-heartbeat median, not by distance ÷ heartbeats.**
+  - The client's own ship moves in wall time and its position rides each heartbeat. With fewer heartbeats arriving,
+    each heartbeat carries more distance.
+  - The overloaded session measured 67.6 u/s at a cap of 60, about 160 ÷ 142 × 60.
+- **Put the client leg on a machine with no exclusive bench rounds.**
+  - On biscuit the bench queue closed the client editor mid-run for another request's exclusive timed run.
+  - Its shared turns between rounds were only about 5 minutes.
+- **A 5 s heartbeat gap right after the host loads a save trips the client's reconnect watchdog.**
+  - The client logged `[Reconnect] WatchdogTripped appliedAgeSeconds=5.0`, and the host logged `ClosedByRemote`.
+  - Let the host settle for about 20 s after it starts listening before the client joins.
