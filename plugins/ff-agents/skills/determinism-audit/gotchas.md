@@ -576,6 +576,24 @@ w2133 (2026-10-25, the client of a LothDesktop-host pair for PR #2507) lost abou
 - **`flowcontrol.throttle` does not survive a desync recovery**: the recovery cancelled the chain holding it
   (`"status": "cancelled"`), and the client ran uncapped (~90 fps against the asked 60) for the rest of the run.
   Read the frame rate from `[MP pacing]` `frames=` per 10 s window, and re-issue the throttle after every epoch change.
+- **An editor client leg against a remote host** (w2399, 2026-10-27, biscuit editor joining an m5 editor host over
+  Tailscale with `.ff-local-automation.json` `Role` `Client`, `Host` the host's address):
+  - **Read biscuit's bench queue before you start the session**: `~/ffw/tmp/bench.queue/log.txt`. A line `warned
+    ... running editor slotN ... its turn ends at HH:MMZ` means an exclusive timed round closes your editor within
+    5 minutes, play mode and session lost. w2399's session 1 was cut at 13:34Z before its capped flight, and its next
+    turn at 13:45Z was a 4-minute window. A line `granted ... running editor slotN: it joins the running shared group
+    with N min left before its deadline` is a usable window: session 3 ran its whole step list in a 58-minute one.
+  - **The bootstrap writes `AutoStartInEditor: false` into the config once it consumes it**
+    (`LocalMultiplayerAutomationBootstrap.cs` `sessionConfig.AutoStartInEditor = false`). A copy saved after the
+    first session never enters play mode again until you set it back to `true`.
+  - **Let a host that just loaded a save settle about 20-25 s before the client joins.** In w2399 session 2 the host
+    sent heartbeats 1-4 and then stalled for about 5 s after the load: the client logged `[MP pacing] ... maxGapMs=3960
+    rttMs=6191`, then `[Reconnect] WatchdogTripped appliedAgeSeconds=5.0`, and shut down (the host saw
+    `ClosedByRemote`); its reconnect attempts then timed out. Session 3 waited 25 s after the load and held.
+  - The UnityMCP server can fail to connect for a whole session; `scripts/unity-bridge.py eval` / `eval_file`
+    drives the same editor (state reads, `ffauto:` commands through `LocalMultiplayerAutomationCommandRunner.TryExecute`,
+    an `EditorApplication.update` per-heartbeat sampler installed after play mode starts, since entering play mode
+    reloads the domain and drops it).
 
 ## A Linux host leg on biscuit: console commands and detector counts from a headless host {#linux-host-leg}
 
