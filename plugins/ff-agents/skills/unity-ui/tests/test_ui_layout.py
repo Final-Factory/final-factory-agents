@@ -614,6 +614,22 @@ class PinTest(unittest.TestCase):
         self.assertIn("BROKEN 1280x800 docked (w894-develop-1280-docked.json): building hover card", text)
         self.assertEqual(ul.pin_check(hud(), self.SPEC["pins"][0])[0], "not shown")
 
+    def test_a_hover_card_under_the_docked_window_is_covered_when_another_census_measures_it(self):
+        """w2185: the docked layout hides the card while a docked window overlaps its place (HoverCardFit.Covered), so
+        a docked census with a building selected (the Player Inventory up) never shows it. MEASURED: the w2185 docked
+        1280x800 census, StructuredDock at 751,59 to 1270,322 and no HoverDescription."""
+        pin = next(p for p in self.SPEC["pins"] if p["name"] == "building hover card")
+        docked = {"screen": [1280, 800], "elements": [el("StructuredDock", [751, 59, 1270, 322])]}
+        self.assertEqual(ul.pin_check(docked, pin)[0], "covered")
+        low = {"screen": [1280, 800], "elements": [el("StructuredDock", [751, 600, 1270, 790])]}
+        self.assertEqual(ul.pin_check(low, pin)[0], "not shown")
+        self.assertEqual(ul.pin_check(hud(), pin)[0], "not shown")
+        alone, _ = ul.pinned_lines([("docked", docked)], {"pins": [pin]}, "t")
+        self.assertIn("0 broken, 1 not shown", alone[0])
+        classic = ul.load(HERE / "fixtures" / "w894-develop-1920-classic.json")
+        both, _ = ul.pinned_lines([("docked", docked), ("classic", classic)], {"pins": [pin]}, "t")
+        self.assertIn("0 broken, 0 not shown, 1 covered by a docked window by design", both[0])
+
     def test_moves_refuses_a_pair_of_different_layouts(self):
         with self.assertRaises(ValueError):
             ul.moves(ul.load(HERE / "fixtures" / "w894-develop-1280-classic.json"),
