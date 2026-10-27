@@ -32,6 +32,14 @@ Lance prefab's hand-placed `StationDisplay` map plane; removing it passed that c
 Lance's own `SingularityLanceConfigTest` threw a NullReferenceException reading `Find("StationDisplay")`, and the
 editor builder that makes the prefab still set the plane's scale. One CI cycle was lost.
 
+**A red test your diff cannot reach: read master's batch verdict before you rerun** (w2351, 2026-10-27, PR #2686): a
+PR's run tests the branch with master merged in, so a culprit already on master fails it too. Before `gh run rerun`,
+`gh run list --workflow master-batch.yml -L 10` and, for a red one, `gh run view <id> --log-failed | grep
+MASTER_BATCH_VERDICT`: if it names a pull request your branch holds, wait for (or find) its revert on master, merge
+`origin/master` in and push; a rerun of the same tree fails the same way. There, an Entities Graphics patch failed
+`BlueprintPasteBefore2334DigestTest` twice with the same hash; batch 40494217033 had named #2682 (w2375, three
+`ValidationScenarios` blueprint files), already reverted by #2695, and the rerun cost a 30-minute CI cycle.
+
 **After a removal merges, look for the removed names on master** (w1572, 2026-10-21, PR #2089): a PR that deletes or
 renames a type, member, package or asmdef reference is checked against the master it merged in, and so is every PR
 that merged minutes before it. Once yours merges, `git fetch origin && git grep -n -E '<removed names>' origin/master
