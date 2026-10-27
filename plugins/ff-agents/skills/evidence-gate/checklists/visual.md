@@ -67,7 +67,11 @@ in the built player (drive-game, "The mouse cursor in a built player"; w980).
 5b2. **No system dialog over the game (w1742).** Before a clip or still is published, open a frame of each (first,
    middle, last, or the contact sheet) and look for anything that is not the game: a Windows Firewall "allow access"
    prompt, UAC, a crash or "not responding" box. One there voids the capture: re-take it after the dialog is gone, and
-   for a firewall prompt over a slot player run `player_slots.py firewall` and report it
+   **A clip's frames show only the player window** (w2408): a desktop grab (`ddagrab`, `gdigrab`: every Windows clip
+   without `gfxcapture`) records any window drawn over the player, a browser or another sandbox's editor, exit 0
+   (w2380, BEAST); `record_clip` pins the player and refuses a covered take, so a hand-made `ffmpeg` grab needs the
+   same look.
+   For a firewall prompt over a slot player run `player_slots.py firewall` and report it
    ([lesson](../lessons/visual-fixes-are-verified-by-looking.md#a-clip-with-a-system-dialog-over-the-game-is-void-w1742); a slot2-0 prompt covered all 12 of w1722's clips).
 5c. **Art language: two solid main colours + one bright, bloomy HDR accent, and a highlight is the object's own
    material (w1066, w1241).** New models and materials are compared with an existing reference asset (the Railgun,
