@@ -121,7 +121,11 @@ Recording notes:
   so say so in the notes. Worked example: `/srv/fff/review/w1667/` (Final-Factory/FinalFactory#2118).
 - **BEAST's shared desktop (w1232, 2026-10-13): go straight to the game's own frames.** `record_clip --pid` on a
   built player: `ddagrab` delivered no frame, and the `gdigrab` fallback recorded the FF Factory dashboard window
-  covering the player (80 s of the wrong picture, exit 0). Its ffmpeg (2025-07 git) has no `gfxcapture`. The frame dump
+  covering the player (80 s of the wrong picture, exit 0). Its ffmpeg (2025-07 git) has no `gfxcapture`. Again in
+  w2195 (2026-10-26, other windows over the player); an ffmpeg 9 essentials build from gyan.dev unzipped in `$TMPDIR`
+  and put first on `PATH` gave `record_clip --player` a Windows Graphics Capture of the window, right in 2 of 2 clips.
+  `record_clip` now stops instead of falling back to `gdigrab` when ffmpeg has no `gfxcapture`
+  (`FF_CLIP_GRAB=gdigrab` still forces it). The frame dump
   below gave 59.8 fps at 1280x720 there: load a save with `-ffFeelLoad`, wait for `[FeelProbe] local player present`
   in the player log, then send the framing and the event (`ffauto:ui.hide|true`, `camera.zoom`, `ui.selecttile`, the
   trigger) over the agent channel (drive-game: wait for a session file newer than the launch). The Development build's

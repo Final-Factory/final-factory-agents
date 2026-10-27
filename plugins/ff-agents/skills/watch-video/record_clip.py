@@ -393,6 +393,14 @@ def start_windows(pid, raw, seconds, fps, monitor):
                          "-ffFeelProbe; SKILL.md, 'The game's own frames')." % proc.returncode)
         proc.kill()
         proc.wait()
+        # gdigrab copies the desktop, whatever covers the player: on BEAST it recorded the FF Factory dashboard (w1232)
+        # and other sandboxes' windows (w2195, 2026-10-26), exit 0 both times. Its ffmpeg (2025-07) has no gfxcapture;
+        # an ffmpeg 8+ first on PATH recorded the window itself. Fall back only when asked for.
+        if not ffmpeg_has_filter("gfxcapture"):
+            sys.exit("record_clip: ddagrab delivered no frame, and this ffmpeg has no gfxcapture (ffmpeg 8+), so the only "
+                     "fallback is gdigrab, a copy of the desktop that records whatever window covers the player. Put an "
+                     "ffmpeg 8+ first on PATH (e.g. https://www.gyan.dev/ffmpeg/builds/ffmpeg-release-essentials.zip "
+                     "unzipped in $TMPDIR) and run again, or set FF_CLIP_GRAB=gdigrab to accept a desktop grab.")
         print("  ddagrab delivered no frame in 8 s: falling back to gdigrab (set FF_CLIP_GRAB=gdigrab to start there)")
     return subprocess.Popen(["ffmpeg", "-v", "error", "-y", "-f", "gdigrab", "-framerate", str(fps), "-draw_mouse", "0",
                              "-offset_x", str(x), "-offset_y", str(y), "-video_size", f"{w}x{h}", "-i", "desktop",
