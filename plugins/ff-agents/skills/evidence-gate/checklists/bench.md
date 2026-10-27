@@ -33,6 +33,12 @@ Mechanics: the game repo's `Documentation/Bench-Lock.md`.
       "Nx faster" goal is met (or not) on own work, with the wait stated beside it. Insert a probe marker at a line
       found by grepping its text (`grep -n "^      CompleteDependency();" | head -1`), never at a line number written down
       before later edits: a sed at a stale number broke the compile, and that timing leg ran the old assembly.
+- [ ] **An editor leg times warm Burst code** (w2338, 2026-10-27, biscuit, Mall save, commit e947f566c4). A leg that
+      starts a minute after an editor start can time jobs Burst has not compiled yet. Measured on one commit: LeechSystem
+      0.623 / 3.317 ms per heartbeat at 6 / 20 Leeches one minute after a start, 0.158 / 0.193 ms in a warm pass. Both
+      had Burst on, and the cold pass made the fix look slower than master (0.196 / 1.669 ms). Before the first timed leg, the leg's state line
+      shows `BurstCompiler.Options.EnableBurstCompilation` true (a fresh editor once started with it off; turn it on and
+      re-enter play mode), and the editor has run the scenario for a few minutes or one discarded warm-up leg.
 - [ ] **A before/after: 1 or 2 samples per side, each run 5 to 10 minutes** (w2229, [lesson](../lessons/settle-your-own-guesses.md#decide-a-before-after-on-one-or-two-samples-per-side-w2229-2026-10-25);
       lothsahn: "workers should avoid more than 2 tests on each before/after unless there's a strong reason to suspect
       it's wrong. And each test should be short: 5-10 minutes at most"). A fix against master (fps, frame times, bench
