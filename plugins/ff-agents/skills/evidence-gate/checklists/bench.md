@@ -27,6 +27,10 @@ Mechanics: the game repo's `Documentation/Bench-Lock.md`.
       frames are heartbeat frames, so p95 and p99 are heartbeat-frame numbers there, and `probe_table.py`'s fixed/hb
       column is the steadiest row for a change to a fixed-group system (w2419: spreads 0.01 to 0.03 ms against 0.10 to
       0.13 ms for the frame average).
+- [ ] **A `timed_run` leg takes `-ff` switches only, not the automation channel's commands** (w2470, 2026-10-28): it
+      refused `-ffAutomationPreConnectCommand`. A leg that must open a window or press something before the sample needs
+      a switch the game reads at boot (w2470 used `-ffUiOpenBench`, which opens and closes the panels first). Check that
+      the build you time has that switch: a build from before it ignores it.
 - [ ] **Shortest run that answers the question.** The question and the smallest difference that would change the
       decision are written down. The legs, sample and settle are the shortest that can show it (a few percent: two
       rounds of 30 to 60 s on a quiet machine), and the round count is a cap.
