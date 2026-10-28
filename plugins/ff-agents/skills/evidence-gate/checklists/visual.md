@@ -191,6 +191,11 @@ in the built player (drive-game, "The mouse cursor in a built player"; w980).
    Ben, w2209, after Hide Flying Stations left belt items, then the hover field, then shields and engine effects drawn:
    "hiding mobile stations should hide any shielding they have and the rocket engine effects. and anything else, you
    keep missing stuff").
+5m. **A before-and-after of a view that moves with game time is shot at one game heartbeat in both legs (w2469).**
+   Fog, moving ships or belts change between seconds: wait in each leg for the same heartbeat (any `ffauto:` answer's
+   `heartbeat`), shoot, and write it beside the still; the noise floor is the same build twice, at the same heartbeats.
+   A launch poll that answered late shot one leg minutes of game time after the other, and two identical fog paths
+   differed by 46.7 against a floor of about 2 ([lesson](../lessons/visual-fixes-are-verified-by-looking.md#a-before-and-after-of-a-view-that-moves-with-game-time-is-shot-at-one-heartbeat-w2469)).
 6. **`watch_video` and the blind model review are a second opinion.** They have passed clips
    that did not contain the event, and agreed with a mistake the brief described as intended.
    Quote them, and say where the frames contradict them.

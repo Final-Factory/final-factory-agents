@@ -534,3 +534,22 @@ slot player also goes in the report with `player_slots.py firewall`'s output
 ([the listener rule](clean-up-after-yourself.md#a-listener-binds-127001-or-runs-from-a-stable-path-never-from-tmpdir-w1742)).
 On 2026-10-22 an "allow finalfactory.exe" prompt for BEAST's slot2-0 covered all 12 of w1722's review clips, and they
 were published that way.
+
+## A before-and-after of a view that moves with game time is shot at one heartbeat (w2469)
+
+**Rule.** Two legs compared still for still (HEAD against a revert, a flag on against off) are shot at the same game
+heartbeat, not at a wall time after launch, whenever the view changes with game time: fog that drifts, ships and
+belts that move, a day cycle. Read the heartbeat from any `ffauto:` command's answer (its `heartbeat` field), wait in
+each leg until it reaches a set number, then shoot; write the heartbeat beside each still. Set the noise floor the
+same way: the same build in two legs, at the same heartbeats.
+
+**Why.** On 2026-10-28 w2469 compared the fog shader's default path with `-ffFogFullPath` in the west view of a save.
+The legs started their shot list once a launch poll answered, and that poll hung to its 6-minute watchdog on some
+launches and not on others, so the two legs were shot minutes of game time apart: the dark fog had drifted over one
+and off the other, a mean absolute difference of 46.7 (0-255) that looked like a regression. Every leg whose poll
+answered early gave one sequence and every leg that waited gave the other, whatever its fog path. At the same
+heartbeats (6400, 6560, 6720) the two paths differed by 0.35 to 2.12, inside a 0.82 to 2.36 floor: no regression.
+
+**How.** A `waithb <n>` step in the shot list that polls a harmless verb (`ffauto:camera.distance`) until its answer's
+heartbeat reaches n; the same list in both legs. Two players launched from one player folder also share its autosave
+file and one falls behind on a sharing violation: launch the two legs from two folders.
