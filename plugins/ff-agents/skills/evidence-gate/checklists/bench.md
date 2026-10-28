@@ -21,6 +21,12 @@ Mechanics: the game repo's `Documentation/Bench-Lock.md`.
       turn with the wake_me it names; the results arrive as a message. Trust its numbers only beside its noise on the
       same build (two names for one build), measured. Editor micro-benchmarks still need an editor machine
       (`unity-bridge.py --timed`); a play-only machine has no editor.
+- [ ] **A `timed_run` compares at most two builds** (w2419, 2026-10-27, tr_5a4f27fcf5): it accepted three builds and
+      failed about two hours later with "more than 2 different builds". For three variants send two runs, base against
+      each. `PerfSummary` has no heartbeat/other split, only all-frame avg, p95, p99 and fps; on JustPlay about 31% of
+      frames are heartbeat frames, so p95 and p99 are heartbeat-frame numbers there, and `probe_table.py`'s fixed/hb
+      column is the steadiest row for a change to a fixed-group system (w2419: spreads 0.01 to 0.03 ms against 0.10 to
+      0.13 ms for the frame average).
 - [ ] **Shortest run that answers the question.** The question and the smallest difference that would change the
       decision are written down. The legs, sample and settle are the shortest that can show it (a few percent: two
       rounds of 30 to 60 s on a quiet machine), and the round count is a cap.
