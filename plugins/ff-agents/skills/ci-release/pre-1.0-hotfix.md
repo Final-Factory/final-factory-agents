@@ -28,10 +28,13 @@ beta for development branch we will want to bump the version to 1.0.0.0 too". Th
 5. **Follow it**: `python scripts/release-status.py 0.50.0.<R>` (or `--branch pre-1.0`). The verdict is BUILT with
    nothing set live; the BuildIDs are in FFBox's notice in #release-build-announce ("Release 0.50.0.R: main uploaded
    to Steam, nothing set live: BuildID N"; anonymous steamcmd cannot see a build that sits on no branch).
-6. **Ask Ben or Lothsahn to set the main app's BuildID live on default** (and pre-release, if they want it there), on
-   the partner site. Agents never do it. That ask is a `waiting_on_person` for an FF Factory worker.
-7. **Post the notes as Max once default carries it** (`release-status.py` shows default at that BuildID): the title
-   says **Build R**, the restart line names the default branch.
+6. **Report the main app's BuildID; the branch is theirs.** Ben or Lothsahn set it live on default (and pre-release, if
+   they want it there) on the partner site, in their own time. Agents never do it, never ask for it, and never send a
+   card about it: FF Factory's `waiting_on_person` refuses a Steam branch question (w2444).
+7. **Post the notes as Max once it is uploaded** (`release-status.py` says BUILT, main GOOD on Steam): this lane sets
+   nothing live, so the upload is its landing. Don't wait for default (w2444; lothsahn, 2026-10-28, on Build 113: "Add the
+   patch notes now. I'll update it later. Close the workitem"). The title says **Build R**, the restart line names the
+   default branch, where Ben or Lothsahn put it. The first check (crash, desync and hang signatures) counts from the upload.
 
 ## Protecting a new release branch is not a sandbox step
 

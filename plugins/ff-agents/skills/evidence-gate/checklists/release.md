@@ -66,7 +66,13 @@ adds what a release rests on and the first check after it.
 8. **Stop and report** when a save does not load, a platform is missing, or reports for the new
    version are clearly above the previous one's. Give the evidence and the previous BuildID.
    Rolling back or promoting a branch is the owner's call; never move a Steam branch by hand.
-9. **Patch notes are posted once it is confirmed live**, once, as Max in #dev-patch-notes
+9. **Patch notes are posted once it is confirmed live**, which means LANDED on the branch the lane sets,
+   `development` included (a pre-1.0 hotfix: BUILT, its upload), and the first check counts from that time. Before
+   any card or report that mentions `pre-release` or the default branch, ask: does it hold the notes or ask a person
+   which branch? Then it is wrong: post now and report where it landed. A branch move is the person's own act, never
+   a precondition for the notes or a question (lesson:
+   [the notes never wait on a Steam branch](../lessons/patch-notes-never-wait-on-a-steam-branch.md)). Posted
+   once, as Max in #dev-patch-notes
    (`ci-release` section 3, `post_as_max` from any machine), with the wording from step 2, linted (step 2b). The release is not done without the
    message link; a failed post is reported as an open step with FFBox's reason (lesson:
    [a release is done when its notes are posted](../lessons/a-release-is-done-when-its-notes-are-posted.md)).

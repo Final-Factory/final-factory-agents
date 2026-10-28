@@ -399,7 +399,13 @@ and never tell Ben a branch must be moved for the build to count**: report where
 build is complete and uploaded"). A release is **done only when both** are true:
 
 - [ ] **Live on its Steam branch**: `python scripts/release-status.py <version>` says LANDED, on
-  `development` (the one branch ffbox sets).
+  `development` (the one branch ffbox sets); a pre-1.0 hotfix, which ffbox sets live nowhere, once it says BUILT.
+- [ ] **The notes post at that landing, never later** (w2444): not when someone moves the build to `pre-release`
+  or the default branch, and never after a question about which branch. A person's branch choice is not a step of the
+  release: don't ask it, don't offer "leave it on development" as an answer that means no notes, and post even when
+  the brief says "once live on default" (lothsahn, 2026-10-28, on 1.0 Build 22: "It's a dev build but you still upload
+  the patch notes. Why did you suddenly decide not to update patch notes for development builds. We've done that for
+  ages"; on 0.50 Build 113: "Add the patch notes now. I'll update it later. Close the workitem").
 - [ ] **Notes posted once, as Max, in #dev-patch-notes** (channel `1072387196927094845`): the body of
   the release's `cicd/release-notes/<version>.md` (everything after its first two lines),
   player-facing, no internal ids, no branches, dev flow, CI, merge queue or agents (`release_notes_lint.py`
@@ -428,8 +434,10 @@ open step.
 
 ## 4. The first check, within an hour of live
 
-A release is not done at the upload notice (`evidence-gate`, `checklists/release.md`). Within an hour of
-the build going live: confirm the BuildID on the branch is the new one, then read, by version and by
+A release is not done at the upload notice (`evidence-gate`, `checklists/release.md`). "Live" is the landing
+on the branch the lane sets, `development` included (a pre-1.0 hotfix: its upload), and every window here, the
+signature comparison a brief asks for after 24 hours included, counts from that landing time, never from a later move
+to `pre-release` or the default branch (w2444). Within an hour of the build going live: confirm the BuildID on the branch is the new one, then read, by version and by
 platform, the crash and desync reports players' games uploaded for it and any new bug threads that name
 it. A save that does not load, a missing platform, or reports clearly above the previous build's: tell
 whoever asked for the release at once, with the evidence and the previous BuildID. Use `wake_me` so the

@@ -143,9 +143,10 @@ Restart Steam to pick up the update on the development branch.
 ```
 
 The title and restart line name the branch the build landed on: `development` for a master bump (the
-branch ffbox sets), the default branch for a pre-1.0 hotfix once Ben or Lothsahn have set it there (ffbox sets
-nothing for it; `pre-1.0-hotfix.md`). The 1.0 line's titles say **1.0 Build R**, a hotfix's **Build R**. If Ben or Lothsahn later move it to `pre-release` or the default branch, a post on
-that move names that branch. Omit a section that would be empty.
+branch ffbox sets), the default branch for a pre-1.0 hotfix, where Ben or Lothsahn put it (ffbox sets nothing for
+it, so its notes post once it is uploaded; `pre-1.0-hotfix.md`). The 1.0 line's titles say **1.0 Build R**, a hotfix's
+**Build R**. A later move to `pre-release` or the default branch is the person's own; it gets no second post and the
+first post never waits for it (w2444). Omit a section that would be empty.
 
 Before triggering, check the post's length, dashes, version names and internal terms:
 
@@ -165,8 +166,17 @@ you name the branch it landed on. Never wait for a branch ffbox does not set:
 
 - **A master bump:** ffbox sets main live on **`development`** (ffbox `release_lane.SETLIVE`). Post once it
   LANDED there; title and restart line name `development`.
-- **`pre-release` and the default branch** are moved by hand by Ben or Lothsahn (nothing sets them). A post
-  that says "pre-release" or "default branch" waits for one of them to say it is there.
+- **A pre-1.0 hotfix:** ffbox sets nothing live, so post once `release-status.py` says BUILT (uploaded, main GOOD);
+  title and restart line name the default branch (`pre-1.0-hotfix.md` step 7).
+- **`pre-release` and the default branch** are moved by hand by Ben or Lothsahn, whenever they choose. Their move is
+  never a precondition for the post and never a question: don't send a card asking which branch, don't offer
+  "leave it on development" as an answer that means no notes, and don't hold the post for an answer (w2444; lothsahn,
+  2026-10-28, on 1.0 Build 22: "It's a dev build but you still upload the patch notes. Why did you suddenly decide not
+  to update patch notes for development builds. We've done that for ages"; on 0.50 Build 113: "Add the patch notes now.
+  I'll update it later. Close the workitem"). FF Factory's `waiting_on_person` refuses such a card. A brief that says
+  "once live on default" is wrong on this point: post on LANDED and say so in the report.
+- The first check (crash, desync and hang signatures, `SKILL.md` section 4) counts from the landing time, not from a
+  later branch move.
 - Unposted earlier releases (the script's verdict for them is LANDED or SUPERSEDED, with no post in
   #dev-patch-notes) are folded into the next post, newest first.
 
