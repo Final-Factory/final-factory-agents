@@ -210,6 +210,17 @@ census (`<shot>.json`: small, clipped, off-screen and overlapping text, covered 
   verified". (2) A `click` in a crafting grid presses `right_trigger`, which is "craft 1", not "pick this recipe".
   (3) `player_slots.py launch` fails with "no free player slot" while other sandboxes' players hold the pool: retry the
   leg every 60 s, checking the leg's `launch.log` for that line (the game repo's `specs/w2290-shared-windows/`).
+- **Three traps of a title-menu panel (w2450, FinalFactory #2757, the Lobby Browser, Windows development player, BEAST).**
+  (1) A lobby-browser tour needs games in Steam's list: host them yourself from detached players on the same machine
+  (`player_slots.py launch --detach`, a host tour Multiplayer > Host new game). One Steam account hosts and also sees its
+  own lobby from a second player. A sandbox has two player slots, so give a browser leg of the same build the host's
+  `--sha`: it shares that slot (a different `--sha` is refused, "no free player slot", exit 3). (2) The w1064 station tour
+  (the Pinned census) stalls at "Generating map..." with `-ffAutomationRole solo` (added to stop the quit autosave); its
+  `waitFor` still passes and the census shows no pins. Leave the role off, drop `-ffDeckTourQuit`, launch `--detach`, wait
+  for `Deck tour done` in `tour.log`, then `ff-leftovers end`: no `_autosave_sp_before_quit` file is written. (3) A
+  title-menu panel has no pinned HUD, yet `pr_evidence.py` still wants `Pinned: ... 0 not shown`: run that station census
+  at 1920x1080, 1280x800 undocked and docked. Every `Style:` line must be the measured one (`ui_layout.py check --touched
+  <panel> --ref <panel> --shot/--ref-shot`); a prose `Style:` line anywhere fails the checker.
   (4) A `ui_look.py colour` check of a panel that already had flaws fails on them: pass each still's before with
   `--before <png>::<census>` in the same order, and old flaws count as standing. (5) The `Style:` line of a check of
   one window took the Inventory as its reference (delta E 19.8) until `ui_layout.py check --touched X --ref X
