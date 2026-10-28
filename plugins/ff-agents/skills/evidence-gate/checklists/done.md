@@ -111,7 +111,7 @@ holds, or the report says what is left instead of DONE.
    ([every bug thread has an owner](../lessons/a-fix-pr-names-its-reports.md#every-bug-thread-has-an-owner-w1783-2026-10-22), w1783).
 10. **Cause named under the reporter's conditions.** A report that names a bug's cause lists the reported save, mods,
    settings, machine/GPU and exact symptom beside the repro's, says which were matched, and either removed each
-   difference or showed the cause with and without it; otherwise it says "contributing factor", not "cause" ([lesson](../lessons/reproduce-under-reported-conditions.md), w844, w2448).
+   difference or showed the cause with and without it; otherwise it says "contributing factor", not "cause" ([lesson](../lessons/settle-your-own-guesses.md#name-a-cause-only-from-a-repro-under-the-reporters-conditions-w844-w2448-2026-10-28), w844, w2448).
 11. **Learned.** The report has `Learned: <file or PR>` or `Learned: nothing new`. A correction or a
    reopen gets the check that would have caught it ([lessons belong in the harness
    repo](../lessons/lessons-belong-in-the-harness-repo.md)).

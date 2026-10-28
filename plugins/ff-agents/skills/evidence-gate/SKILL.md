@@ -126,7 +126,7 @@ look first and relay only with the critic's report (FF Factory `read_rules ui`).
   current it is (vendor release notes), the CPU from the dump (stream 7; Intel family 6 model 0xB7/0xBF is
   Raptor Lake), the game step that fed the driver and how long it runs, and a lever that keeps that player
   booting or why there is none (w956: Ben reopened "driver, nothing to fix").
-- **A cause is named only from a repro under the reporter's conditions** ([lesson](lessons/reproduce-under-reported-conditions.md)).
+- **A cause is named only from a repro under the reporter's conditions** ([lesson](lessons/settle-your-own-guesses.md#name-a-cause-only-from-a-repro-under-the-reporters-conditions-w844-w2448-2026-10-28)).
   Before a report says "the cause", list the reported save, mods, settings, machine/GPU and exact symptom beside the
   repro's; remove each difference or show the cause with and without it, and say which conditions were matched.
   Otherwise it is a contributing factor (w844: "bats arrive too late" for "never flew out"; w2448: only with the mod loaded).
@@ -395,7 +395,7 @@ One file each under `lessons/`: the rule, why (the incident, dated), how to appl
 - [Name a decider only from the sender line](lessons/name-a-decider-only-from-the-sender-line.md):
   an approval, hold or decision gets the name on its message's `[from …]` line or the ledger's
   requester; none means "unconfirmed" and ask (w389: a bare message became "Release hold lifted (Ben)").
-- [Reproduce under the reporter's conditions](lessons/reproduce-under-reported-conditions.md): list the reported
+- [Reproduce under the reporter's conditions](lessons/settle-your-own-guesses.md#name-a-cause-only-from-a-repro-under-the-reporters-conditions-w844-w2448-2026-10-28): list the reported
   conditions beside the repro's before naming a cause; an unmatched one means "contributing factor" (w844: late
   versus never flew out; w2448: judder measured only with the mod loaded).
 - [Check the other system's live config](lessons/check-the-other-systems-live-config.md): a tool's
