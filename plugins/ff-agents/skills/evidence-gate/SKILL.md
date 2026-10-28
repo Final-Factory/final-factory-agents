@@ -163,6 +163,10 @@ look first and relay only with the critic's report (FF Factory `read_rules ui`).
   Input, screenshots and clips go to the pid your `player_slots.py launch --detach` printed, through that pid's own
   session file (`player_slots.py mine --one`), never the newest file in `AgentControl/` or the newest FinalFactory
   process: every worker's player writes there (w1856: a worker drove another worker's player on BEAST).
+- **A visual question shows its stills in the card** ([lesson](lessons/a-person-wait-is-declared-not-polled.md#a-visual-question-shows-its-stills-in-the-card-and-a-gate-reads-the-field-its-brief-names-w2478-2026-10-28)).
+  A question about a look, clip or layout inlines the still or clip in the question or its option as `![what](<path>)`;
+  FF Factory refuses one on a request with review media that shows none (w2478; Ben: "i need to see previews"). A gate
+  you build is tested with input written the way its brief says (w1602 read ids from words the brief kept them out of).
 - **Never ask a person what they already answered** ([lesson](lessons/a-person-wait-is-declared-not-polled.md#never-ask-a-person-what-they-already-answered-w1812)).
   Before you ask (`waiting_on_person`, `decide_work ask`, `ask_person`, a relayed `[needs you]`), read the request's
   notes and log and those of the other requests its worker holds: an answer given after the question was raised is the
