@@ -210,6 +210,21 @@ captures an occluded window fine, so a still of it is safe; input is not.
   (per-system main-thread ms) to the player log. Saves load by name from `<persistentDataPath>/UserData/saves/`
   (drive-game `recipes.md`), not the older `saves/` folder beside it.
 
+### What the agent channel cannot reach in a built player (w2470)
+
+Measured on lothdesktop, 2026-10-28, a built player of FinalFactory f7901a742d:
+- **`input.type` with no focused field types into the game.** It answers `typing '<text>' ... into no focused field`, and
+  each letter goes out as a hotkey ("Gatling" opened the Info tab). Focus the field first with `pointer.moveto` and
+  `pointer.click` (the click takes no coordinates). Before you trust what follows, check that the answer names the field.
+- **An injected Escape never reaches a focused TMP field.** `pointer.holdkey|Escape` goes through `InputHelper.InjectKey`,
+  which the game's key readers see but a TMP input field does not. The field stays focused, so InputHelper rightly
+  blocks game keys and later Escapes do nothing either. Whether Esc leaves a text field cannot be checked over the
+  channel; say so, and rest that case on `TextFieldOwnsInputTests` in the editor.
+- **`pointer.holdkey|W` does not move the ship**, because the Input System never sees it. Use
+  `movement.hold|<x>|<z>|<seconds>` (`play_normal_tutorial.py` does).
+- **`pointer.wheel` over the Technology window pans the tech tree, not the list's ScrollRect.** A check that the list's
+  scroll is kept needs another route: the code, or a list a wheel reaches.
+
 ### Testing the DEMO build (w1012)
 
 The release lane's demo edition is the main build with one flag flipped: `Editor.ReleaseBuild.Build -ffEdition demo` ->
