@@ -103,7 +103,7 @@ source/tree, build manifests and hashes, OS/transport/roles, scenario and action
 duration, lifecycle/desync/crash outcome, visual verdict, artifact paths, and gaps. Direct IP does
 not prove the Steam lobby, relay or invite path, even if Steam initialized in the players. A pair run
 that proves that path passes `request_pair` `steam: "<why>"`: its legs go only on computers signed in to Steam, one
-account each (w2459); a direct-IP pair needs none. The
+account each, each screen unlocked (w2459); a direct-IP pair needs none, and one that clicks menus passes `menus`. The
 durable checklist is in
 [project memory](../project-memory/memories/cross-machine-built-player-gameplay-acceptance.md).
 

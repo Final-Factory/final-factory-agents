@@ -162,6 +162,10 @@ Not verified: the Bats' slot lag (simulation, follow-up PR)
   go only on computers signed in to Steam, a different account on each leg; a direct-IP pair whose words name a lobby
   passes `steam: "none"`. w2458's client leg went on biscuit, which has no Steam client, and died at its Steam check. When
   too few computers are signed in, the run is Blocked on that and names each computer; it starts by itself once they are.
+  A leg that clicks the game's menus (every Steam pair, or one whose `what`/`brief` names a menu or a click; else pass
+  `menus: "<what it clicks>"`) goes only where the screen is unlocked: w2460's host leg went on m5, signed in to Steam
+  behind a locked screen, where a Mac's menus take no clicks. A running Steam that is not connected (BEAST, w2461: "Logged
+  In Elsewhere") counts as signed out.
 - **A pair run is filed only on a commit that compiles** (w2125): before `request_pair`, the head the legs run has a
   green `Test in editmode` run, or your own editor's `refresh_unity` at that head logged no `error CS`; a red or
   unfinished CI run is not a go
