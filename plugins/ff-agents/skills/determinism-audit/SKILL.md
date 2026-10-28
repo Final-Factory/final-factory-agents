@@ -60,6 +60,11 @@ Two complementary layers, plus the cross-machine harness:
 
 ## Built-player acceptance for multiplayer gameplay fixes
 
+**A client leg of a pair run reads `gotchas.md` §linux-client-leg before its first launch** (w2491, 2026-10-28): a
+client with `-ffAutomationAutoQuit true` and no `-ffAutomationPostConnectDelayMs` quits 1.5 s after it joins, and its
+reconnect loop rejoins the host's restarted run during that run's setup; both cost w2491 two host runs, and both were
+already written there (w2326, w2432).
+
 **Before a client leg builds or joins, prove its machine reaches the host** (w2259, 2026-10-26): from the client's
 machine run `python scripts/nightly/reach.py @<host machine>` (a machine in the game repo's
 `scripts/nightly/lab_hosts.json`, e.g. `@m3`), or `reach.py <address> <address>` with the addresses the host leg posted.
