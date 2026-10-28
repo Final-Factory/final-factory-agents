@@ -8,7 +8,7 @@ Every release carries its notes (Ben, 2026-09-28). They are written **before** t
    (cut to 200 characters; ffbox `scripts/release_lane.py` `steam_description`, ffbox PR #3). No
    file or no line: desc is the version alone, as 0.50.0.42's was. `mp-beta-deploy` builds the same
    string by hand for its vdf.
-2. **The #dev-patch-notes post.** Once the build is **confirmed live**, the rest of the file is
+2. **The #dev-patch-notes post.** Once the build is **confirmed live on development** (not pre-release or default: a dev build gets its post too, w2440), the rest of the file is
    posted as Max in #dev-patch-notes (channel `1072387196927094845`).
 
 It is part of the release, not an optional extra: a requested release is done only when it is live
