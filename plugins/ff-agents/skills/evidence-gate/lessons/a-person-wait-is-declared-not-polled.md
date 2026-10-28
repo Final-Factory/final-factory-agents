@@ -265,3 +265,24 @@ sometimes online and sometimes paused. Use and schedule resources based on what 
 - **Installers, daemon updates, reinstalls**: the ops worker (`ops_worker machine_update`) or ssh, never a person.
 - **Before you call `waiting_on_person`**, read each question: if its only ask is a computer's availability or choice,
   it is a capacity wait, not a card. The portal refuses it (`shared/machineAsk.ts`), and the refusal costs you a turn.
+
+## A visual question shows its stills in the card, and a gate reads the field its brief names (w2478, 2026-10-28)
+
+**Rule.** A question for a person about something they look at (a look, a clip, a layout, an effect) carries the
+stills or clips in the question or the option they belong to, as `![what it shows](<path>)` under the review folder.
+Media in the message above the card, or in a file the report names, is not in the card. A question about nothing
+visual on a request that has review media says why with `no_previews: "<why>"`, which is logged on the request.
+
+**Why.** Ben asked three times: 2026-10-19, w1465: "when you ask me about visual things you have to include the
+previews"; 2026-10-23, w1797/w1762: "You don't put the clip in this little intake waiting for input box, so I can't see
+it"; 2026-10-28, w2186: "i need to see previews. stop asking me questions in the intakes without showing my previews when
+applicable". The w1602 gate that should have stopped it read request ids only from the question's words, while the
+w1597 brief told orchestrators to keep ids out of the words and in `request`, so it never fired for a well-formed
+question. Its "send the same call again" bypass let any refused call through on a retry, and nothing logged it.
+
+**How to apply.**
+- FF Factory refuses the bare card now (ff-factory #754, `server/visualAsk.ts`) on `ask_person`, a worker's
+  `waiting_on_person` and the dispatcher's `decide_work` ask; the [needs you] relay lists the request's review files,
+  newest first. Inline the one that shows what is asked; never a whole folder's iterations.
+- When you build a gate: test it with an input written the way the brief tells callers to write it (ids in their field,
+  not the words). An escape hatch is an explicit, logged field with a reason, never "call again".
