@@ -417,3 +417,37 @@ missing from the code.
 **How to apply.** Per behaviour the person names: the handler's `file:line` on master, what it does in one line, and
 whether it already matches their words. Bring a person a question only where the code and their words differ, and
 show them the current behaviour first.
+
+## A judder or feel fix is designed from a trace on the machine that shows it (w2448, 2026-10-28)
+
+**Rule.** Before you write code for a smoothness, judder, stutter or input-feel report, take a per-frame trace and a
+profiler capture on the machine the person saw it on: its own screen (refresh rate, G-SYNC/FreeSync/VRR, fullscreen
+mode), its GPU, and what it loads (mods, an open project's content). A cause you model on another machine (another OS,
+another screen, no mods) is a guess. Settle it there first, or say in the brief and the PR that it is unsettled.
+
+**Why.** w2448, lothsahn: "Using wittlebase, movement is still jittery, even though I get 90-120 FPS. However, if I
+set the FPS limit to 60, then I get a solid 60 and movement is buttery smooth." The first worker could not reach the
+laptop. On biscuit (Linux, 60 Hz) it modelled a fixed-refresh cause: with vSync on, frames at 90–120 fps stay on a
+240 Hz screen for 2 or 3 refreshes at random. It built PR #2756 (adaptive vSync: step to a steady divisor of the
+refresh) with 10 tests and docs, and held it for hours waiting for a LothLaptop leg. When the leg ran (worker 17cae99a,
+PR #2759, merged c646cdee), the laptop measured otherwise:
+- the screen runs G-SYNC in borderless, with frame intervals off the refresh grid, so the 2-or-3-refresh model did not
+  apply;
+- a profiler capture showed the Cruiser mod's `CruiserDrydockPanelFilter.Update` taking about 6.3 ms on one frame in
+  ten. That work runs before the presentation clock, so the pacer's frame delta missed it.
+
+Pacing by the clock system's own interval took moving frames more than 25% off their speed from 21% to 0.2–0.4%. #2756
+was closed unmerged. With no mods, master was already at 2.5%, so a run on another machine without the person's mods
+could never have shown the cause.
+
+**How to apply.**
+- First leg, before any design: on the person's machine, as they play (their screen, fullscreen mode, GPU, mods and
+  settings), a FeelProbe trace (`-ffFeelProbe`) of the case that judders and of the case that is smooth, plus a Unity
+  profiler capture of the judder.
+- Read three things from it:
+  - whether frame intervals sit on the refresh grid (fixed refresh) or off it (VRR or vSync off): the share of intervals
+    within 0.2 of a whole number of refreshes;
+  - which frames run long, and in what (the capture);
+  - whether the same build with no mods still judders.
+- If you can't reach the machine yet, ask for that leg before designing (`timed_place` via leg, or the orchestrator),
+  and write any model you build meanwhile as a guess in the PR, held as a draft.

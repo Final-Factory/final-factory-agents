@@ -124,3 +124,7 @@ Mechanics: the game repo's `Documentation/Bench-Lock.md`.
   source, BEAST 2026-10-24T03:31Z: it removed devB and relB in the middle of a profiled A/B, and the whole A/B ran
   again). Delete the builds you no longer need as soon as you are done with them, rebuild instead of keeping a fourth,
   and have the leg script stop when a build's `finalfactory.exe` is missing, rather than time nothing.
+- [ ] **A judder or feel report is traced on the person's own machine before any fix is designed** (w2448, [lesson](../lessons/settle-your-own-guesses.md#a-judder-or-feel-fix-is-designed-from-a-trace-on-the-machine-that-shows-it-w2448-2026-10-28)).
+      Its screen, fullscreen mode, GPU and mods as the person plays: a FeelProbe trace of the bad and the good case and a
+      profiler capture of the bad one. Read on-grid against off-grid frame intervals (intervals within 0.2 of a whole number of refreshes), the
+      long frames' work, and a no-mods run. A model from another machine stays a guess until then.
