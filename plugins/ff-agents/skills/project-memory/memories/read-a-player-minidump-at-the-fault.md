@@ -33,4 +33,13 @@ Learned in w2141 (2026-10-25), checking FFBox's diagnosis of crash 20261025T1152
   (freed and reused, or a wrong load from a failing CPU). It does not say which. Report it as that, not as "random
   garbage".
 
+- **Before you count a second report as "another player", check whether it is the same machine.** The manifest has
+  no player id. Compare the Player.log lines `Connected to Steam as user <name>`, the `C:/Users/<profile>/` path,
+  `Renderer:`/`VRAM:`, and the dump's sysinfo (`ProcessorLevel`, `ProcessorRevision`, `NumberOfProcessors`,
+  `BuildNumber`). In w2477 the second report of the w2141 crash matched on all of them, so it could not separate
+  software from that machine's hardware. Search FFBox for the signature too (`list_ffbox_files what=reports`).
+- **A Unity crash-handler minidump holds no heap you can use.** It keeps about 64k fragments of 4 to 8 bytes
+  (about 475 KB). The cached chunk list, its buffer and anything near it were absent in both the w2141 and the w2477 dumps (measured).
+  Settling which structure owned the memory needs a full-memory dump or a development player with collection checks.
+
 Related: [[symbolicate-a-release-crash-with-its-own-symbols]].
