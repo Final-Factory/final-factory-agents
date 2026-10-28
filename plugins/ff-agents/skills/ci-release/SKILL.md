@@ -400,6 +400,9 @@ build is complete and uploaded"). A release is **done only when both** are true:
 
 - [ ] **Live on its Steam branch**: `python scripts/release-status.py <version>` says LANDED, on
   `development` (the one branch ffbox sets).
+  **Post the notes as soon as it LANDED on development; never wait for pre-release or default**, even when a brief
+  says "once live on default" (lothsahn, 2026-10-28, w2440: "It's a dev build but you still upload the patch notes.
+  Why did you suddenly decide not to update patch notes for development builds. We've done that for ages").
 - [ ] **Notes posted once, as Max, in #dev-patch-notes** (channel `1072387196927094845`): the body of
   the release's `cicd/release-notes/<version>.md` (everything after its first two lines),
   player-facing, no internal ids, no branches, dev flow, CI, merge queue or agents (`release_notes_lint.py`
