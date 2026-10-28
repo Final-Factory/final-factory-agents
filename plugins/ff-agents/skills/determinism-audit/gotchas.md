@@ -597,6 +597,16 @@ w2133 (2026-10-25, the client of a LothDesktop-host pair for PR #2507) lost abou
   setup: twice in w2326 the LothDesktop host's restarted scenario then failed (`player.setposition` is refused once
   a client is in; "2 peers are already connected"). Run `ff-leftovers end` on the host's word, and launch a fresh
   client only on its "HOST WAITING".
+  - Don't wait for the host's word (w2432, 2026-10-28): watch the client's log and end it at the first
+    `ClosedByRemote`. In w2432 run 2 it rejoined the host's relaunched session within seconds, and the client's
+    summed `[MP pacing] applied=` then counted two epochs as one run.
+  - `ff-leftovers end` ends EVERYTHING your session started, your own background `build_player.sh` too: in w2432
+    the watcher's `ff-leftovers end` killed the control build running beside it (`build-failed`, entityFiles 0).
+    While a build runs, end the client by its pid (the `pid` that `player_slots.py launch --detach` printed).
+- **A pair-run dwell needs both caps raised** (w2432): `-ffAutomationPostConnectDelayHeartbeats N` alone still ends
+  the dwell at `-ffAutomationPostConnectDelayMs`, 1500 ms by default (`dwell-started: durationMs=...` in the log
+  shows it). A host with only the heartbeat cap quit after 24 shared heartbeats; give both peers e.g.
+  `-ffAutomationPostConnectDelayHeartbeats 6000 -ffAutomationPostConnectDelayMs 720000`.
 - **`flowcontrol.throttle` does not survive a desync recovery**: the recovery cancelled the chain holding it
   (`"status": "cancelled"`), and the client ran uncapped (~90 fps against the asked 60) for the rest of the run.
   Read the frame rate from `[MP pacing]` `frames=` per 10 s window, and re-issue the throttle after every epoch change.
