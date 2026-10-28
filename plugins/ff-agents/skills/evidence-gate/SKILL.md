@@ -352,7 +352,7 @@ One file each under `lessons/`: the rule, why (the incident, dated), how to appl
   off for a release player: Build 104's "Mobile stations take their bots and barges with them", w1242):
   `release_notes_check.py <notes> --repo <game clone> --range <prev>..<release>` flags both kinds and runs
   before the bump and before `post_as_max` ([section](lessons/a-release-is-done-when-its-notes-are-posted.md#patch-notes-list-only-what-players-can-use-build-104-w1242)).
-- [The patch notes never wait on a Steam branch](lessons/patch-notes-never-wait-on-a-steam-branch.md): "live"
+- [The patch notes never wait on a Steam branch](lessons/a-release-is-done-when-its-notes-are-posted.md#the-notes-never-wait-on-a-steam-branch-w2431-w2440): "live"
   is LANDED on the branch the lane sets, `development` included (a pre-1.0 hotfix: BUILT); the notes post then, the
   first check counts from then, and a person's branch move is never a precondition or a question (lothsahn on w2440:
   "It's a dev build but you still upload the patch notes ... We've done that for ages"; on w2431: "Add the patch notes
