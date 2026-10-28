@@ -157,6 +157,11 @@ Not verified: the Bats' slot lag (simulation, follow-up PR)
   makes that scenario void (say so to the partner and in the report), and each client is ended once its scenario's
   result is taken, so its reconnect cannot join the next host
   ([lesson](../lessons/verify-simulation-at-a-slow-hosts-frame-rate.md#a-pair-legs-player-dies-to-another-workers-timed-run-and-an-old-client-rejoins-the-next-host-w2407-2026-10-27)).
+- **A pair run that needs Steam says so** (w2459, 2026-10-28): a check of lobbies, a Steam host, join or invite passes
+  `request_pair` `steam: "<why>"` (FF Factory also reads it from a lobby or a Steam join in `what` or `brief`), so its legs
+  go only on computers signed in to Steam, a different account on each leg; a direct-IP pair whose words name a lobby
+  passes `steam: "none"`. w2458's client leg went on biscuit, which has no Steam client, and died at its Steam check. When
+  too few computers are signed in, the run is Blocked on that and names each computer; it starts by itself once they are.
 - **A pair run is filed only on a commit that compiles** (w2125): before `request_pair`, the head the legs run has a
   green `Test in editmode` run, or your own editor's `refresh_unity` at that head logged no `error CS`; a red or
   unfinished CI run is not a go
