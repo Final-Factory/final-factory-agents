@@ -514,6 +514,14 @@ slots").
   local, both sandboxes' (`journalctl -k`, the "Out of memory" lines, anon-rss 6.6 to 12.9 GB). On a small machine, run
   such a leg as a `-batchmode -runTests -testPlatform playmode` launch under `unity-slot run`, with your own editor
   stopped, and clear what an ended run left first (references/recovery.md, the Linux hang).
+- **`main.unity` alone takes an editor to 9 to 13 GB** (w2472, biscuit, 2026-10-28). An EditMode test that opened
+  `Assets/Scenes/main.unity` additively (`EditorSceneManager.OpenScene`) grew the sandbox editor to 9.6 GB and the kernel
+  ended it (04:23:10); the restarted editor reopened `main.unity` by itself (`Library/LastSceneManagerSetup.txt` lists
+  it) and was ended at 13.4 GB (04:52:39) before any test ran. A test that needs one serialized value of the scene reads
+  it as YAML text (`File.ReadAllText`, follow the `fileID`: `Tests.UI.JoinSpinnerCanvasTest`) instead of opening it.
+  On a small machine run the EditMode classes as `unity-slot run -- <Unity> -batchmode -nographics -projectPath <worktree>
+  -runTests -testPlatform EditMode -assemblyNames FFEditorTests -testFilter "<A;B>" -testResults <xml> -logFile <log>`
+  with your own editor stopped: batchmode does not reopen the last scene (about 5 minutes a leg, measured).
 - **Every other launch waits for its slot.** Use `unity-slot run [--count N] [--label "<what>"] --
   <command>` (on the PATH of every agent an FF Factory daemon runs) or the game repo's `python
   scripts/unity_slot.py run [--count N] -- <command>`. Each waits in the machine's queue, runs the
