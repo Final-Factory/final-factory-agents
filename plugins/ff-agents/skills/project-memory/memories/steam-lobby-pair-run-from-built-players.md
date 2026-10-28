@@ -32,6 +32,19 @@ lobby in Game Settings ("w2056 slims host") so it is unique in the public list.
   is signed out (its window title is "Refresh Sign In"). Only a person can sign it back in: use
   `waiting_on_person`. Check the title first with
   `Get-Process steamwebhelper | ? MainWindowTitle`; it should read "Steam".
+- A signed-out client is not always a person's job. If the Steam install's `logs/connection_log.txt`
+  shows `RecvMsgClientLoggedOff('Logged In Elsewhere')` and then `not auto reconnecting due to Logged
+  In Elsewhere`, another machine signed in to the same account (BEAST and m5 share slims20). After
+  that, every line is `RecvMsgClientLogOnResponse() : 'Try another CM' / 'Failure', ignored since
+  we're not waiting for a logon response`. This is not a network or CM fault: the client connects but
+  never sends a logon. BEAST sat like this from 2026-10-25 to 2026-10-28 (w2461). When the saved login
+  is there (`config/loginusers.vdf` with `RememberPassword "1"` for the account, and HKCU
+  `Software\Valve\Steam` `AutoLoginUser`), a restart signs it straight back in: run
+  `steam.exe -shutdown`, wait for steam.exe to exit, then `explorer.exe "C:\Program Files
+  (x86)\Steam\steam.exe"`. Explorer becomes its parent, so FF Factory's reaper does not end it with
+  your session. A `[Logged On] ... 'OK'` followed in seconds (w2462). This takes the account from the
+  other machine, so first check nobody is using it there (m5: `ioreg -n Root -d1 -a` shows
+  `CGSSessionScreenIsLocked` true). A password or a Steam Guard prompt is still a person's job.
 
 ## Hitting the ghost-supersession race
 
