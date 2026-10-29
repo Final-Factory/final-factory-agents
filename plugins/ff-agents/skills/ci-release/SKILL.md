@@ -346,8 +346,16 @@ notes file counts as part of it once ffbox PR #3 is merged; until then it runs t
 opens a pull request against master; **merging that PR is what starts the release**, so say so in
 your reply with the version. Do not run `ffverify` for it.
 
-If the checkout you are in predates the script, run master's copy:
-`git show origin/master:scripts/trigger-ci-release.sh | bash -s -- master` (same arguments).
+If the checkout you are in predates the script, run master's copy, with the two helpers it finds beside itself
+(`"$(dirname "$0")/release_notes_lint.py"` and `$SCRIPTS_DIR/release/last_green.py`). Piped (`| bash -s`) or copied
+alone into `$TMPDIR`, it cannot find the lint and refuses clean notes with "the notes name internal process" (w2546,
+Build 25). Copy all three into one folder and run it from there:
+
+```sh
+D="$TMPDIR/trig-$(date +%H%M%S)"; mkdir -p "$D/release"
+for f in trigger-ci-release.sh release_notes_lint.py release/last_green.py; do git show origin/master:scripts/$f > "$D/$f"; done
+bash "$D/trigger-ci-release.sh" master --notes <file>    # same arguments
+```
 
 **Never use Build → Build and Upload All for this.** It builds and uploads on your machine and commits
 `cicd/depot_build_*.vdf`. The host treats that mark as "already uploaded by hand", so it builds that
