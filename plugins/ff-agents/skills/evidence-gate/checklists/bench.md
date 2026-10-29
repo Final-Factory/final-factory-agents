@@ -132,5 +132,8 @@ Mechanics: the game repo's `Documentation/Bench-Lock.md`.
       background Bash command that runs a script loop ended the wrapper but not the loop: it went on launching players
       beside the next session, two `finalfactory.exe` per PresentMon window, and six runs were void. After stopping a
       background script, `ps -ef | grep <script>` and `ff-leftovers list` show nothing before the next timed session;
-      before analysing, each run's presentmon.csv holds one ProcessID. A background Bash `timeout` is the run's limit
+      before analysing, each run's presentmon.csv holds one ProcessID. w2507 again: TaskStop ended only the outer
+      shell; the inner loops went on, restored settings and released the bench ticket mid-session, so stop the inner
+      script pids too. A display, VRR or judder leg brings the game to the foreground and records the foreground
+      process (G-SYNC is off for an unfocused game, measured w2507; the memory below has the recipe). A background Bash `timeout` is the run's limit
       (600000 = 10 min): give a multi-run session its whole length. PresentMon traps: [memory](../../project-memory/memories/presentmon-unelevated-timing-legs.md).
