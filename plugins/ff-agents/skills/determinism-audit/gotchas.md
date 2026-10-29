@@ -40,6 +40,7 @@ load-bearing for future runs even where the original defect is fixed.
 - [A Linux host leg on biscuit: console commands and detector counts from a headless host](#linux-host-leg) (w2281)
 - [An editor pair with presentation checks: no Audit ids in the config, a healthy host, a client machine without bench rounds](#editor-pair-presentation) (w2399)
 - [An Oracle shop pair: host buys first, `near` is tier 1, price is derived](#oracle-shop-pair) (w2518)
+- [A save-and-reload pair: checkpoints are rolling windows, the client rejoins by itself](#save-reload-pair) (w2558)
 
 ## Full-window rule: never diagnose from a partial window {#full-window-rule}
 
@@ -788,3 +789,37 @@ commit 66dcc01. It checked that each Oracle reveal costs 3 more orbs and stays i
     showed 100. After the 3-orb buy the host had 97 and the client 100.
 - **Write checkpoints at one agreed UTC second on both peers** (`ffauto:audit.write|<label>-cp1`).
   - This gave 2541 shared heartbeats with no divergence, in a run whose dwell still had 15 minutes left.
+
+## A save-and-reload pair: checkpoints are rolling windows, the client rejoins by itself {#save-reload-pair}
+
+From w2558 (2026-10-29), a built-player pair of the Ship Yard "Take ships from assemblers" switch (PR #2821): host on beast
+(Windows), client on biscuit (Linux), with a save and reload on the host.
+
+- **`ffauto:audit.write|<label>` writes a rolling window of about 2,400 heartbeats, not the whole run.**
+  - w2558's step checkpoints each compared 1,607 to 2,547 shared heartbeats.
+  - For the full-window verdict, run `scripts/audit/compare_determinism_reports.sh <host.log> <client Player.log>` on
+    the two players' whole logs. It reads their `[DeterminismAudit]` Fingerprint lines. w2558: run 1 compared 8,121
+    heartbeats (hb 1..8121), run 2 compared 5,194, and none diverged.
+  - When one client process served two host runs, split its log at the first `ReconnectAttempt` line. Both runs use
+    epoch 1, so their heartbeat numbers collide.
+- **A save-and-reload on the host needs no client relaunch.**
+  - Save with `ffauto:game.save|ffa-<session>-<name>` and end the host (`ff-leftovers end`). Relaunch it with
+    `-ffAutomationSave ffa-<session>-<name> -ffAutomationFlatMap false`.
+  - A client still in its dwell (AutoQuit plus a long `-ffAutomationPostConnectDelayMs`) rejoins the reloaded host by
+    itself: `ReconnectAttempt(1)` times out, attempt 2 is approved, then `RejoinWorldApplied` and `ReconnectRestored`
+    at epoch 1, hb 2.
+  - This proves the rejoin path, not a fresh-launch join. Say so in the report. A killed host writes no
+    `report-written` line, so neither peer gets a final report: take an `audit.write` on both peers before the kill.
+  - There is no ffauto quit command (`session.stop` only ends a playtest session).
+- **Powering a Ship Yard in a FlatMap test** (yard at origin (17,-5) facing Up, 12x7, center (20,0)):
+  - The working chain is a Solar Panel (Direct) at (13,0) rotated with `rotate.abs|13|0|1`, which put it at (12,1).
+  - Then a Ship Assembler at (14,0), then a Strut at (16,0) facing 1 (Right), on whitelisted yard slot 21 (left side).
+  - A Strut at (16,-5) (slot 0) or one facing Up left the yard unpowered.
+  - Read the yard roster from the `FleetsDetail` fingerprint lines: `consumer=(20,0,0) fleet=N/60 ... ships[N]=[...]`,
+    where 134 is a Miner Bot and 24 a Bat.
+  - A held finished ship shows as the assembler's `craftProgress` above 1 with recipe set (`observe.state|nearby|x|z|r`).
+- **Frames more than about 20 tiles from the player never build.**
+  - The player's actionRange is 200 world units, 10 per tile.
+  - A frame out of range stays `frame` with "no free construction bot". Move with `movement.goto|<x*10>|<z*10>|tolerance=10`
+    first.
+
