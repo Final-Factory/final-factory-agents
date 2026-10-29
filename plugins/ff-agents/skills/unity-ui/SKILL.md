@@ -146,6 +146,10 @@ census (`<shot>.json`: small, clipped, off-screen and overlapping text, covered 
 - **Clips at real rate.** `{"record": "<name>", "seconds": 4}` saves every frame as JPGs in
   `clip-<name>/` (with `frames.txt` for ffmpeg). Record each screen idle and while hovering and
   selecting. Never stitch the stills into a 1 fps "clip".
+  **`record` runs beside the steps after it** (the game repo's `DeckTour.cs`, the `record` branch: "Runs beside the
+  steps that follow it"), so follow it with `{"wait": <seconds + 1>}`, or the next step lands in the clip (w2505: a
+  `ui.close|inventory` right after a 4 s `record` made all six clips show the bare world, and every clip leg ran again).
+  Look at one frame of each clip before you encode the set.
   The frames come out **upside down** (w819: every `clip-*/NNNNN.jpg` is flipped vertically; the
   `shot` PNGs are not), so crop and `ui_check.py flicker --rect` in flipped coordinates, and make
   the video with `cd clip-<name> && ffmpeg -f concat -safe 0 -i frames.txt -vf vflip -c:v libx264
