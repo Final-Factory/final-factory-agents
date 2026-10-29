@@ -600,6 +600,13 @@ w2133 (2026-10-25, the client of a LothDesktop-host pair for PR #2507) lost abou
   - Don't wait for the host's word (w2432, 2026-10-28): watch the client's log and end it at the first
     `ClosedByRemote`. In w2432 run 2 it rejoined the host's relaunched session within seconds, and the client's
     summed `[MP pacing] applied=` then counted two epochs as one run.
+  - But end it at its log's `status report-written` line, a second or so after `status session-ended`, not at the
+    first `WatchdogTripped` or `Disconnect Event` line (w2512, 2026-10-29): run 3 killed the client the moment the
+    watchdog tripped, before `session-ended`, and it never wrote its fingerprint report; run 1 waited for
+    `session-ended` and got it. Loop: `until grep -q 'report-written\|session-ended' "$LOG"; ...`, then a few seconds.
+- **Where a structure's ships are:** `fleet.stationships` is a count of structure-owned ships with no location, and
+  `fleet.dumpstate|wardens` lists only players' fleets, so neither shows a ship AT a given structure (w2512: the yard to
+  Defense Platform flight was proven only by the host's `fleettransfer.take` from the platform).
   - `ff-leftovers end` ends EVERYTHING your session started, your own background `build_player.sh` too: in w2432
     the watcher's `ff-leftovers end` killed the control build running beside it (`build-failed`, entityFiles 0).
     While a build runs, end the client by its pid (the `pid` that `player_slots.py launch --detach` printed).
