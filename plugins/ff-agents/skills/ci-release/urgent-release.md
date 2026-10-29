@@ -192,6 +192,33 @@ notes as Max (`SKILL.md` section 3: post_as_max, channel dev_patch_notes, key th
 filed, the bytes and the rate), and FFBox's decline (each Release job's build step
 `skipped` in the run; `gh run view <run> --json jobs`).
 
+### See the fix in the Steam build (w2488, 1.0.0.23, planets gone on Medium and Ultra)
+
+When the brief says "run the Steam build and see it", run the installed Steam player and look at the thing that was
+broken. On a Windows worker (measured on BEAST):
+
+- **Steam must restart to pick up the new BuildID.** BEAST's client kept the old build installed after LANDED:
+  `steam.exe -shutdown`, wait for it to exit, `steam.exe -silent`, then wait for the update to finish
+  before you launch; the player log's version line must name the new version.
+- **Launch the installed exe yourself**, with an end of its own: `timeout -s TERM 230 ".../FinalFactory/finalfactory.exe"
+  -ffSoloNewGame <seed> -ffSoloQuitAfterSeconds 200 -ffFeelQuality <0 Low|1 Medium|2 High|3 Ultra>
+  -ffFeelProbe <csv> -ffAgentControl true -ffAgentControlDev true -ffAutomationLabel <label> -logFile <log>`.
+  `-ffSoloNewGame` needs a seed value: bare, the player sits on the title menu. A release player has no `-ffBench`.
+  Wait for `solo-ready` in the log.
+- **Put a planet (or the broken thing) on screen** over the agent channel, loading the game repo's
+  `scripts/agent/peer.py` helpers (`peers(label)["client"]`: a solo player's role is client; peer.py calls `main()`
+  at import, so exec its source up to the last `main()` rather than importing it):
+  - find it: `GET /v1/snapshot/nearby?x=&z=&r=64` returns `planets` with `item` and `center`. Coordinates are tiles
+    (1 tile = 10 world units) and the radius is clamped to 64, so scan a ring grid at a 128-tile step outward from 0,0;
+    the endpoint allows about 10 calls a second (sleep 0.15 s, retry once after 1.2 s);
+  - fog of war draws an unexplored planet black, which looks like the bug: in the throwaway game run
+    `ffauto:cheats.enable`, `ffauto:console.run|ExploreFogOfWar`, then `ffauto:console.close` (an open console
+    blocks the camera);
+  - `ffauto:camera.focus|<worldX>|<worldZ>|<distance>` (1500 and 700 for a world, 3000 and 1500 for a gas giant), wait
+    5 s, then `peer.py <label> shot client <png>`.
+- Do it at each quality the bug was on. A small grey disc can be an asteroid: check the snapshot says a planet is at
+  the focus point before you call it seen. Mac needs a Mac worker; BEAST cannot check it, so say so.
+
 ## When it fails
 
 - **Refused before building** (exit 2): it says why. Unclaimed or claimed for another computer means FFBox (or that
