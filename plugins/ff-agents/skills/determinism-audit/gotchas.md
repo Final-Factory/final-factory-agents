@@ -605,6 +605,17 @@ w2133 (2026-10-25, the client of a LothDesktop-host pair for PR #2507) lost abou
     first `WatchdogTripped` or `Disconnect Event` line (w2512, 2026-10-29): run 3 killed the client the moment the
     watchdog tripped, before `session-ended`, and it never wrote its fingerprint report; run 1 waited for
     `session-ended` and got it. Loop: `until grep -q 'report-written\|session-ended' "$LOG"; ...`, then a few seconds.
+- **Sending ffauto commands to a Linux client** (w2558, 2026-10-29): `scripts/agent/peer.py` is Windows-only
+  (PowerShell, `AppData`). On Linux, `player_slots.py launch --detach` prints `agent_session`, a
+  `~/.config/unity3d/Never Games/finalfactory/AgentControl/session-<pid>.json` holding `port` and `token`; POST
+  `http://127.0.0.1:<port>/v1/command` `{"actor":"local-player","command":"ffauto:..."}` with `Authorization: Bearer
+  <token>`, retry on `rate_limited`, then poll `GET /v1/chain/<chainId>` until it leaves accepted/queued/running.
+  `setting.shipyardpull` and `audit.write|<label>` worked that way from a `-batchmode -nographics` client.
+- **A killed host relaunched on a save gets the same client back** (w2558): a client with
+  `-ffAutomationOutlivePairBreak true` whose host was killed (so no `report-written`) and relaunched on the same
+  address and port rejoined by itself in the same process and log (`ReconnectAttempt(2)` approved,
+  `PlayerJoinedAlreadyApplied`, epoch 1 heartbeat 0). The host can keep it as run 2, but the client then writes no
+  run-1 report: take `ffauto:audit.write|<label>` checkpoints on both peers at each step so every step has a pair.
 - **Where a structure's ships are:** `fleet.stationships` is a count of structure-owned ships with no location, and
   `fleet.dumpstate|wardens` lists only players' fleets, so neither shows a ship AT a given structure (w2512: the yard to
   Defense Platform flight was proven only by the host's `fleettransfer.take` from the platform).
