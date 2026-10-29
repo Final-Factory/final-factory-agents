@@ -285,7 +285,7 @@ requested to follow one or more work items ("release when w1 and w2 are done"), 
 request is blocked on those items (`blocked_on` with their pull requests), and once they have merged it bumps on
 master's tip (A). If one of those items closes without a merged change, the person is asked (`waiting_on_person`)
 before the release goes ahead. Every other release request keeps the A-or-B card as above (evidence-gate lesson
-`a-release-after-work-items-builds-on-the-tip.md`).
+`a-release-is-done-when-its-notes-are-posted.md`, "A release after work items has no A-or-B card").
 
 **B** is `scripts/trigger-ci-release.sh --from green --request wNNN --notes <file>` (no `--urgent`): the bump
 is made on the green commit, `cicd/release-lane.json` says `{"lane": "ffbox", "from": <sha>}`, FFBox grants it as any
