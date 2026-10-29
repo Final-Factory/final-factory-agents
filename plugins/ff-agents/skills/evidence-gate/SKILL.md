@@ -570,6 +570,8 @@ One file each under `lessons/`: the rule, why (the incident, dated), how to appl
 - [A pair leg's player dies to another worker's timed run](lessons/verify-simulation-at-a-slow-hosts-frame-rate.md#a-pair-legs-player-dies-to-another-workers-timed-run-and-an-old-client-rejoins-the-next-host-w2407-2026-10-27):
   launch with `--bench-wait`, call a scenario void on `[QuitSave] ApplicationQuit: not saving (AutomationProcess)`, redo it
   elsewhere when timed runs keep coming, and end each client after its scenario (w2407).
+- [Size a pair run to its slowest required event](lessons/verify-simulation-at-a-slow-hosts-frame-rate.md#a-pair-run-is-sized-to-its-slowest-required-event-not-the-briefs-minimum-w2570-2026-10-29):
+  compute when each required event lands from measured rates and run past the latest, with dumps along the way (w2570).
 - [Reach the host from the client's machine before it joins](lessons/verify-simulation-at-a-slow-hosts-frame-rate.md#a-client-leg-reaches-the-host-from-its-own-machine-first-w2259-2026-10-26): a client leg
   pings the host from its own machine (`scripts/nightly/reach.py @<machine>`) and joins the first address that answers,
   Tailscale first, or stops naming each one tried; configs name the machine, never a LAN IP (w2252: LothDesktop could

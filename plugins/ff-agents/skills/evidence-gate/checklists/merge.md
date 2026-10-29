@@ -166,6 +166,10 @@ Not verified: the Bats' slot lag (simulation, follow-up PR)
   `menus: "<what it clicks>"`) goes only where the screen is unlocked: w2460's host leg went on m5, signed in to Steam
   behind a locked screen, where a Mac's menus take no clicks. A running Steam that is not connected (BEAST, w2461: "Logged
   In Elsewhere") counts as signed out.
+- **A pair run is sized to its slowest required event** (w2570): the brief or scenario names, from measured rates, the
+  heartbeat each required event lands at (a latch flip, a crossing), and the leg after the join runs to the latest plus a
+  margin, not just the stated minimum; it dumps the checked state at intervals and on every leg at the end
+  ([lesson](../lessons/verify-simulation-at-a-slow-hosts-frame-rate.md#a-pair-run-is-sized-to-its-slowest-required-event-not-the-briefs-minimum-w2570-2026-10-29)).
 - **A pair run is filed only on a commit that compiles** (w2125): before `request_pair`, the head the legs run has a
   green `Test in editmode` run, or your own editor's `refresh_unity` at that head logged no `error CS`; a red or
   unfinished CI run is not a go
