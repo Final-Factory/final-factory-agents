@@ -356,6 +356,11 @@ One file each under `lessons/`: the rule, why (the incident, dated), how to appl
   content live on any Steam branch (1.0, a toggle on by default, an open beta) waits for the person's go for
   that moment, even on an agreed plan; a brief or PR that changes what a branch serves by default names that
   go (w1453: 1.0.0.0 reached `development` before Ben's Steam event; release checklist 1b).
+- [A release after work items builds on the tip](lessons/a-release-after-work-items-builds-on-the-tip.md): a release
+  asked for after work items has no A-or-B card; it is blocked on them and bumps on master's tip once they merged, and
+  asks the person only if one closes without a merged change (lothsahn, w2536: "If someone asks for a release after a
+  workitem or set of work items, always build off the tip when those work items merge."; "Because they need to have
+  those there."). Release checklist 0.
 - [A release is done when its notes are posted](lessons/a-release-is-done-when-its-notes-are-posted.md):
   live on its branch AND the patch notes posted as Max in #dev-patch-notes (`post_as_max`, any
   machine); a failed post stays an open step in the report, with FFBox's reason. The notes are for

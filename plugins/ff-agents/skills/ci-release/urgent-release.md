@@ -35,6 +35,14 @@ When the script says **B is not offered**, go with A and no card: master's tip i
 build), or the green commit is older than master's latest release (B would take that release's changes back out of
 players' hands). The game repo's `Documentation/Release-Lanes.md`, "A or B", has the design.
 
+**A release after work items has no card** (w2536; lothsahn, 2026-10-29: "If someone asks for a release after a
+workitem or set of work items, always build off the tip when those work items merge."; why: "Because they need to have
+those there.": an older green commit, B, can leave the requested work items out of the release). When a release is
+requested to follow one or more work items ("release when w1 and w2 are done"), there is no A-or-B card: the release
+request is blocked on those items (`blocked_on` with their pull requests), and once they have merged it bumps on
+master's tip (A, no `--from green`). If one of those items closes without a merged change, the person is asked
+(`waiting_on_person`) before the release goes ahead. Every other release request keeps the A-or-B card above.
+
 ## 1. The computer: BEAST, else LothDesktop when BEAST is offline
 
 `list_machines` says which is online. The request runs at priority **urgent** (its bench tickets go first). Your sandbox
