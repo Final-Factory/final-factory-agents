@@ -143,3 +143,8 @@ Mechanics: the game repo's `Documentation/Bench-Lock.md`.
       script pids too. A display, VRR or judder leg brings the game to the foreground and records the foreground
       process (G-SYNC is off for an unfocused game, measured w2507; the memory below has the recipe). A background Bash `timeout` is the run's limit
       (600000 = 10 min): give a multi-run session its whole length. PresentMon traps: [memory](../../project-memory/memories/presentmon-unelevated-timing-legs.md).
+      A locked screen keeps every window out of the front: on a locked LothLaptop (LogonUI running, LockApp the
+      foreground window) front.ps1 failed 6 tries and NVAPI read enabled=0 inVrrMode=0 (w2520, 2026-10-29, measured),
+      so before a display leg `tasklist | grep -i LogonUI` shows nothing, else ask the person to unlock
+      (`waiting_on_person`). `scripts/feel/vrr_trace.py record` writes about 3.3 GB per 6 s (trace.etl 674 MB,
+      events.csv 2.6 GB, measured w2520): in a multi-run session delete those two after each run's summary.
