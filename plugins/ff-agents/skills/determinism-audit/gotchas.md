@@ -538,6 +538,20 @@ w780, 2026-10-09, °Life°'s Build 91 save (177,779 entities, 577 haulers), m5, 
     (`granted ... joins the running shared group with N min left before its deadline`), not just after a `warned ...
     its turn ends at` line. Don't gate on "no exclusive waiting" either: normal-priority exclusives can wait behind a
     shared group for its whole hour (`kept ... only lower-priority work waits`), and such a gate never opens.
+- **w2578, 2026-10-29 (m5 host, BEAST headless client, PR #2829's shield change): run the host with
+  `-ffFlowControlWaitForSlowPeers` on Just Play 1.0.0.22.**
+  - A headless BEAST client (`-batchmode -nographics`) could not follow either: at 15 job workers and again at
+    `-ffJobWorkers 31` it applied 37-96 heartbeats per 10 s (frameMs p50 70-110) against a ~900-heartbeat backlog left
+    by a 136 s world serve, and was kicked `FlowControl:TooSlow`, with BEAST otherwise idle.
+  - The host restarted with `-ffFlowControlWaitForSlowPeers` (`HeartbeatSystem.cs:161`, the 018 rule: the host holds
+    production for its slowest peer) ran lockstep at the client's pace (~11 UPS): 1602 of 1602 compares over heartbeats
+    608..13416. Report the real rate beside the count.
+  - One client was evicted `FlowControl:HardDrift` by an 18.8 s main-thread hang in Backtrace's breadcrumb storage
+    (`BacktraceStorageLogManager.ClearOldLogs` -> `BreadcrumbFile.GetIOStream`, a FileStream open in `NtCreateFile`)
+    while it logged ~82k `Internal: deleting an allocation that is older than its permitted lifetime of 4 frames` lines
+    in 3 minutes; likely the same `NtCreateFile` hang as w2400's. Not a desync: relaunch the client.
+  - `player_slots.py launch` refuses at once (exit 2) while an exclusive bench ticket holds the lock: pass
+    `--bench-wait 900` so the launch waits for it instead.
 
 ## Old against new in one pair: a PR's A/B switches on one peer {#ab-switch-one-peer}
 
