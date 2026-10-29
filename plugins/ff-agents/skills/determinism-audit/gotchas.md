@@ -638,6 +638,15 @@ w2133 (2026-10-25, the client of a LothDesktop-host pair for PR #2507) lost abou
   then `ff-leftovers list` to check that no launcher or player is left. A LothDesktop client also loses its turn to
   every exclusive timed run there: that day three in a row cut or blocked it, so offer the host a machine with no
   timed runs early.
+- **A host leg cannot wait out a client's outage; set its world up before any client can reach it** (w2570,
+  2026-10-29). A fresh built host quits when no client joins within 900 s (`HostPeerConnectTimeoutSeconds`,
+  `LocalMultiplayerAutomationBootstrap.cs:146`), and `-ffAutomationOutlivePairBreak true` keeps it only 300 s after a
+  client drops (`PairBreakOutliveCeilingSeconds`, `:212`). So a host started before its client is ready, or
+  one whose client is cut, ends by itself: launch it on the client's "ready", not before. Its setup through the agent
+  channel (`blueprint.place`, `player.setposition`) is refused once any client is in ("must run BEFORE clients join
+  (host PreConnectCommand)"). So either pass the setup in `-ffAutomationPreConnectCommandFile <file>` (`;`-chained
+  `ffauto:` lines; it runs before `WaitForHostPeersConnectedAsync`, `:722-729`), or start each relaunched host on a new
+  port that no earlier client is still retrying, set it up, then send GO with that port.
 - **Where a structure's ships are:** `fleet.stationships` is a count of structure-owned ships with no location, and
   `fleet.dumpstate|wardens` lists only players' fleets, so neither shows a ship AT a given structure (w2512: the yard to
   Defense Platform flight was proven only by the host's `fleettransfer.take` from the platform).
