@@ -14,7 +14,8 @@ description: "Cut a release through CI on the ffbox build server — write the r
 >   no FF Factory computer builds it, and an FF Factory worker takes no `build_plan` for it. After the merge, `wake_me` 40
 >   minutes and end the turn (FFBox lands 22 to 78 minutes after the bump, median 36), so no sandbox waits on FFBox.
 >   First the person picks **A or B** on the same card as an urgent release (w1656; lothsahn: "A normal release should
->   also provide the option of starting from the last fully green commit"): section 1, "A or B first".
+>   also provide the option of starting from the last fully green commit"): section 1, "A or B first". A release asked
+  for after work items has no card: it waits for them and bumps on master's tip (w2536; section 1).
 > - **"A quick release" / "an urgent release"** from Ben or Lothsahn: **`urgent-release.md`** beside this file. The bump
 >   carries `cicd/release-lane.json` (`trigger-ci-release.sh --urgent beast`), FFBox declines it, and BEAST (else
 >   LothDesktop when BEAST is offline) builds it with FFBox's own scripts after FF Factory clears it, uploads it and sets
@@ -275,7 +276,18 @@ starting from the last fully green commit"). Unless the person already said whic
 question (an FF Factory worker: `waiting_on_person`; B recommended): "Build now from the last fully green commit `<sha>`
 (B: skips the N merges since it)" or "Bump on master's tip (A: ships N merges that only had gate tests)". When it says B
 is not offered (master's tip is itself green, or the green commit is older than master's latest release), A goes with
-no card. **B** is `scripts/trigger-ci-release.sh --from green --request wNNN --notes <file>` (no `--urgent`): the bump
+no card.
+
+**A release after work items has no card** (w2536; lothsahn, 2026-10-29: "If someone asks for a release after a
+workitem or set of work items, always build off the tip when those work items merge."; why: "Because they need to have
+those there.": an older green commit, B, can leave the requested work items out of the release). When a release is
+requested to follow one or more work items ("release when w1 and w2 are done"), there is no A-or-B card: the release
+request is blocked on those items (`blocked_on` with their pull requests), and once they have merged it bumps on
+master's tip (A). If one of those items closes without a merged change, the person is asked (`waiting_on_person`)
+before the release goes ahead. Every other release request keeps the A-or-B card as above (evidence-gate lesson
+`a-release-is-done-when-its-notes-are-posted.md`, "A release after work items has no A-or-B card").
+
+**B** is `scripts/trigger-ci-release.sh --from green --request wNNN --notes <file>` (no `--urgent`): the bump
 is made on the green commit, `cicd/release-lane.json` says `{"lane": "ffbox", "from": <sha>}`, FFBox grants it as any
 bump, and main.yml's versionBump (`scripts/release/release_built.py`) makes the Release jobs build the merge's second
 parent, the green commit plus the bump, not master's tip. **Merge a B bump with `gh pr merge --merge`, as it is**: never

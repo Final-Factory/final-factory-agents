@@ -6,6 +6,13 @@ adds what a release rests on and the first check after it.
 
 ## Before the bump
 
+0. **A or B, or no card.** Before you bring the A-or-B card (`last_green.py`), read the request and its notes: does
+   the release follow work items ("release when w1 and w2 are done", "after", "once ... merged", "with the fix for")?
+   Then there is no card (lothsahn, 2026-10-29, w2536: "If someone asks for a release after a workitem or set of work
+   items, always build off the tip when those work items merge."; "Because they need to have those there."): name
+   each item and its merge on `origin/master`, `blocked_on` until they are merged, then bump on master's tip (A). One
+   closed without a merged change: ask the person first. A card asked on such a release is a miss (lesson:
+   [a release after work items builds on the tip](../lessons/a-release-is-done-when-its-notes-are-posted.md#a-release-after-work-items-has-no-a-or-b-card-w2536)).
 1. **What is in it.** `git log <previous release>..origin/master`, as for the notes.
 1b. **Major new content has its go-live moment from the person** (Ben, 2026-10-18, w1453: "You should have
    asked me I need to do a steam event and stuff", after 1.0.0.0 went live on `development` on a plan he had
