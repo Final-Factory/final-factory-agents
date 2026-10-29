@@ -1495,7 +1495,9 @@ def check(body: str, files: list[str] | None = None, brief: str | None = None,
             notes.append(f"determinism audit skipped: {audit[1]}")
             if len(audit[1]) < 30:
                 problems.append("'Determinism audit: not needed' has to say why")
-        elif not re.search(r"\d[\d,]*\s*(shared\s+)?heartbeats", audit[1], re.IGNORECASE):
+        # w2487: "1,596 of 1,596 compared heartbeats matched" names the count too: allow up to two words
+        # (compared, shared, matched) between the number and "heartbeats".
+        elif not re.search(r"\d[\d,]*\s*(?:[a-z-]+\s+){0,2}heartbeats", audit[1], re.IGNORECASE):
             problems.append("'Determinism audit' does not give the number of heartbeats compared")
         save = field(section, "Save compatibility")
         if not save or not save[1]:
