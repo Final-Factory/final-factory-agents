@@ -141,6 +141,14 @@ census (`<shot>.json`: small, clipped, off-screen and overlapping text, covered 
   the one you need, name the saves `ffa-<session>-<name>-<i>` (your `$TMPDIR` folder's name in front) so you can `rm -f` the rest from the saves folder with no approval, and load it with `-ffAutomationSave <name> -ffAutomationRole
   solo` for every before/after run (`specs/w819-craft-hint-border/make_tour.py --save-from`, `run_tour.sh` with `SAVE=`).
   A save made by skipping also shows what a player who skipped sees: the research steps leave their techs unlearned.
+- **`devunlock` turns the tutorial off for the rest of the game (w2525).** `ffauto:player.devunlock`
+  (`DeveloperUnlockNetworkOperation.cs:36`) and the console's `completeAllObjectives` (`QuantumCommandInterface.cs:1920`) call
+  `ObjectivesController.DisableObjectives()`, which latches `ObjectivesMode.Off` (`ObjectivesController.cs:710`), so no later
+  tutorial step ever shows: w2525's tours ran `learnTech "Mobile Stations"` after `devunlock` and never saw ManualMoveOrLand.
+  For a step a technology unlocks, start a tutorial game without cheats in the editor and call
+  `FFTechnology.ResearchController.LearnTechnology(new FixedString128Bytes("<tech _name>"))` (the asset's `_name`, e.g.
+  "Mobile Stations", not the file name), or use a save made before the step. A still taken in the first second of a new
+  objective card catches its open animation with the last line cut (w2525: a fresh ui-critic called it UGLY): wait for it to settle.
 - **Wait for content.** `{"waitFor": "text:<something only the filled screen shows>"}` before each
   `shot`, not a fixed `wait`.
 - **Clips at real rate.** `{"record": "<name>", "seconds": 4}` saves every frame as JPGs in
