@@ -51,6 +51,18 @@ Six traps cost three host runs first:
    host: stop retrying, read the host's latest ledger report (`read_work <host request>`) for a new port, and
    if there is none ask with `blocked_on` reports naming the address and port you tried.
 
+8. **A Mac host runs headless when the Mac's displays may sleep** (w2567, 2026-10-29, host m5, client BEAST, for
+   w2565's PR #2822). The host's player, launched with a window, sat at load at 0.2% CPU, stuck in
+   `GfxDeviceMetal::WaitForLastPresentationAndGetTimestamp`; `ioreg` showed "Display Asleep: Yes". A headless host
+   (no `"windowed"` in the ffnightly scenario) loaded at once. The camera-on-content part of the brief then rests
+   on the client's player, which has a window.
+9. **Read the host's `desync.stats` every ~200 heartbeats, not only at the end** (w2567). When the client
+   disconnects, the host's stats read `clients: []` and its counts are gone. Two w2567 runs were cut when FF
+   Factory stopped the BEAST client for other workers' exclusive bench tickets (`Documentation/Bench-Lock.md`):
+   161/161 and 38/38 matched, kept only because a scenario reads `desync.stats` as `w0..w9`, one every 200
+   heartbeats. Give the host's join poll room (w2567 used 120 min), and have the client launch only when its
+   machine has no exclusive ticket held or waiting. Then run 5 went through: 289/289 matched over heartbeats 8 to 2,312.
+
 The scripts: a host loop that launches through `player_slots.py`, waits for `status host-peers-connected:`
 and relaunches on a timeout; a driver that waits for the same line, reads `desync.stats`, then sends the
 scenario's host commands through `peer.py` and logs every answer. The host's live `desync.stats` compares
