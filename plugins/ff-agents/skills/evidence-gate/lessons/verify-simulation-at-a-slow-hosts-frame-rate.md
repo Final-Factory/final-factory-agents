@@ -235,3 +235,19 @@ on that computer. In the same run the transport-failure scenario's client showed
 and on its third attempt joined the host's next, fresh session (`[Reconnect] ReconnectRestored attempts=3`), polluting it.
 
 **How to apply.** The merge checklist's pair-run lines ask for it; a leg's report names any scenario voided this way.
+
+## A pair run is sized to its slowest required event, not the brief's minimum (w2570, 2026-10-29)
+
+**Rule.** Before a pair run starts, work out from the brief's measured rates the heartbeat at which each required event
+lands (each flip, each crossing, each state the pass criteria name), and run the leg after the join to the latest of
+them plus a margin, never only to the stated heartbeat minimum. Dump the state the criteria read at intervals (not only
+at the end), so a run that dies early still shows which events happened, and take the end-of-run dump on every leg.
+
+**Why.** w2570 run 4 (the w2551 range-circuit pair on PR #2825, eec773da; biscuit host, BEAST client) ran 8,997
+heartbeats after the join with 0 desyncs in 1,124 checks, past the brief's 8,000 minimum, and saw the battery latch go off
+at 80 %. It could not see the latch come back on at 60 %: the drain is about 20 % x 25 s x 16 UPS = 8,000 heartbeats
+after the off-flip, so the on-flip needed about 9,000 to 11,000. The host session then stopped on a usage limit and its
+player quit with it, so no end-of-run dump was taken on either side. The run had to be redone (w2582) at 14,400.
+
+**How to apply.** The merge checklist's pair-run lines ask for it: the brief or scenario states the heartbeat each
+required event is expected at and the run length chosen from it.
