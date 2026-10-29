@@ -39,6 +39,7 @@ load-bearing for future runs even where the original defect is fixed.
 - [A Linux client leg on biscuit: build, headless launch, a scripted paste](#linux-client-leg) (w2133, w2326)
 - [A Linux host leg on biscuit: console commands and detector counts from a headless host](#linux-host-leg) (w2281)
 - [An editor pair with presentation checks: no Audit ids in the config, a healthy host, a client machine without bench rounds](#editor-pair-presentation) (w2399)
+- [An Oracle shop pair: host buys first, `near` is tier 1, price is derived](#oracle-shop-pair) (w2518)
 
 ## Full-window rule: never diagnose from a partial window {#full-window-rule}
 
@@ -756,3 +757,34 @@ fingerprints, it sampled the remote ship's presented `LocalTransform` every host
 - **A 5 s heartbeat gap right after the host loads a save trips the client's reconnect watchdog.**
   - The client logged `[Reconnect] WatchdogTripped appliedAgeSeconds=5.0`, and the host logged `ClosedByRemote`.
   - Let the host settle for about 20 s after it starts listening before the client joins.
+
+## An Oracle shop pair: host buys first, `near` is tier 1, price is derived {#oracle-shop-pair}
+
+w2518 (2026-10-29) was a built-player pair run for w2510 (game PR #2792): a BEAST host and a LothDesktop client at
+commit 66dcc01. It checked that each Oracle reveal costs 3 more orbs and stays in sync across peers.
+
+- **`-ffAutomationTargetClients` counts the host itself.**
+  - With `1`, the host started its dwell at once (`host-peers-connected: connectedClients=1`). The client joined a
+    game that was already running.
+  - `-ffAutomationInvulnerablePlayers true` then covered only the host (`players-invulnerable-authored: players=1`).
+  - Use `2` for one client. Run 2 logged `players=2,target=2`.
+- **`player.setposition` works only on the host before the join.** The runner's help line says "host PRE-join only".
+  - Put the host's teleport in `-ffAutomationPreConnectCommand "ffauto:player.setposition|x|z"`.
+  - Fly the client with `ffauto:movement.goto|<tileX*10>|<tileZ*10>|tolerance=100|timeoutSeconds=300`.
+- **A client that flies to a hidden Oracle uncovers it by fog.**
+  - A later host "Reveal Nearest Oracle" was refused `NoHiddenOracle` (run 1, hb 11589).
+  - Keep the client still until the host's buy lands.
+- **`oracle.buy|<label>|1|near` means tier 1: the first tier-1 Oracle, not the one the player stands at.**
+  - The client's buy at 65:-294 named -79:98 and was refused `SoldHere`.
+  - Use `tier2` or `far` for the tier-2 Oracle.
+- **The buy needs no activation.**
+  - `OracleTransactionClientRequest` checks only that the player can pay, that a hidden Oracle exists, and the tile.
+  - `mining.startnearestactivation|80|oracle` never logged `[Activation] landed` in 2 to 7 minutes in these built
+    players. The cause was not checked.
+  - On the client, range 80 found nothing at 69:-294. Range 200 did, at distance 105.
+- **No ffauto command prints the reveal price. Derive it.**
+  - Read `sold=` from `oracle.list`; the price is 3 x (sold + 1) (`OracleRevealItem.CurrentCost`).
+  - `oracle.state` gives each player's orbs. Each player's balance took both players' `AddLumenOrbs 50`, so both
+    showed 100. After the 3-orb buy the host had 97 and the client 100.
+- **Write checkpoints at one agreed UTC second on both peers** (`ffauto:audit.write|<label>-cp1`).
+  - This gave 2541 shared heartbeats with no divergence, in a run whose dwell still had 15 minutes left.
