@@ -128,3 +128,9 @@ Mechanics: the game repo's `Documentation/Bench-Lock.md`.
       Its screen, fullscreen mode, GPU and mods as the person plays: a FeelProbe trace of the bad and the good case and a
       profiler capture of the bad one. Read on-grid against off-grid frame intervals (intervals within 0.2 of a whole number of refreshes), the
       long frames' work, and a no-mods run. A model from another machine stays a guess until then.
+- [ ] **One player per timed run, and a stopped loop is really gone** (w2496, 2026-10-29, LothLaptop). TaskStop on a
+      background Bash command that runs a script loop ended the wrapper but not the loop: it went on launching players
+      beside the next session, two `finalfactory.exe` per PresentMon window, and six runs were void. After stopping a
+      background script, `ps -ef | grep <script>` and `ff-leftovers list` show nothing before the next timed session;
+      before analysing, each run's presentmon.csv holds one ProcessID. A background Bash `timeout` is the run's limit
+      (600000 = 10 min): give a multi-run session its whole length. PresentMon traps: [memory](../../project-memory/memories/presentmon-unelevated-timing-legs.md).
