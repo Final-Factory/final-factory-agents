@@ -630,6 +630,14 @@ w2133 (2026-10-25, the client of a LothDesktop-host pair for PR #2507) lost abou
   address and port rejoined by itself in the same process and log (`ReconnectAttempt(2)` approved,
   `PlayerJoinedAlreadyApplied`, epoch 1 heartbeat 0). The host can keep it as run 2, but the client then writes no
   run-1 report: take `ffauto:audit.write|<label>` checkpoints on both peers at each step so every step has a pair.
+- **Cancel a queued client launch with `ff-leftovers end`, never by stopping its shell task** (w2570, 2026-10-29). A
+  `player_slots.py launch --bench-wait` started from a background bash task waits in a python process of its own:
+  TaskStop on the bash leaves it waiting, and it starts the client the moment the bench lock frees. In w2570 the
+  host had told the LothDesktop client to hold; the stray client joined the host's fresh run at heartbeat 8, before
+  setup (the host refuses `blueprint.place` once a client is in), and the host had to start over. Run `ff-leftovers end`,
+  then `ff-leftovers list` to check that no launcher or player is left. A LothDesktop client also loses its turn to
+  every exclusive timed run there: that day three in a row cut or blocked it, so offer the host a machine with no
+  timed runs early.
 - **Where a structure's ships are:** `fleet.stationships` is a count of structure-owned ships with no location, and
   `fleet.dumpstate|wardens` lists only players' fleets, so neither shows a ship AT a given structure (w2512: the yard to
   Defense Platform flight was proven only by the host's `fleettransfer.take` from the platform).
