@@ -521,7 +521,10 @@ slots").
   it as YAML text (`File.ReadAllText`, follow the `fileID`: `Tests.UI.JoinSpinnerCanvasTest`) instead of opening it.
   On a small machine run the EditMode classes as `unity-slot run -- <Unity> -batchmode -nographics -projectPath <worktree>
   -runTests -testPlatform EditMode -assemblyNames FFEditorTests -testFilter "<A;B>" -testResults <xml> -logFile <log>`
-  with your own editor stopped: batchmode does not reopen the last scene (about 5 minutes a leg, measured).
+  with your own editor stopped: batchmode does not reopen the last scene (about 5 minutes a leg, measured). On Linux,
+  take `Tests.Objectives.ControlHighlightTests` out of the filter: under `-nographics` it reads a key's display name through
+  GDK and the editor dies in `gdk_x11_get_default_xdisplay` with no results XML (w2559: test_select.py's 532 classes;
+  the game repo's `Documentation/Linux-Native-Build.md`, "Batch EditMode tests on Linux"). CI runs it.
 - **Every other launch waits for its slot.** Use `unity-slot run [--count N] [--label "<what>"] --
   <command>` (on the PATH of every agent an FF Factory daemon runs) or the game repo's `python
   scripts/unity_slot.py run [--count N] -- <command>`. Each waits in the machine's queue, runs the
