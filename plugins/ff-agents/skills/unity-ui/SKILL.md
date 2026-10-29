@@ -474,6 +474,8 @@ Inventory off the left edge) in every census, whatever the parent looked like. M
 x -312, y -736 px at 1920x1080; on develop 9798f308c the docked layout breaks the Station Info and hover card pins, and
 the undocked layouts keep all three.
 
+**The before is the master your branch merged** (w2490). After `git merge origin/master` into a UI branch, build the before again from that same master (`git merge-base HEAD origin/master`): a before from the older master shows master's own UI changes as moves. w2490's after, with master merged in, against a before from the master the branch started on: every leg had one "`GamePanels/SelectionColumnStrip`: gone from the screen" (w2327's station controls column, merged in from master); the before rebuilt at the merged master had 0 moves in all 8 pairs.
+
 **Don't pad a window to keep its height.** When a change removes a row, an empty filler row that keeps the window's old height (so the panel stacked under it stays put) leaves a band of empty panel the critic flags and the person sees (w1530 round 11, the Railgun window: about 20 px under its Ammo slot). Ben, offered both, chose "OK, but shrink the Railgun window to drop the empty band first." (2026-10-21). So let the window shrink, and since the panel under it then moves, ask first: the recommended card answer names that move ("the Player Inventory under the window moves up about 20 px"), which then counts as the person naming it; quote that note in the `moves` mark, since `pr_evidence.py` wants a pinned element's name inside the quoted words.
 
 **The same holds for every option and mock you offer, before the person sees them** (w1429: on w1386 Ben asked only to
