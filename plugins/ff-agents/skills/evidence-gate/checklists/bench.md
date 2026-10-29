@@ -95,6 +95,12 @@ Mechanics: the game repo's `Documentation/Bench-Lock.md`.
       is per session: after a compaction or a resume, ask again before `bench_lock --timing`, or the leg dies at once
       with "w1995 ... Call timed_place" (it did, with the two load editors the demo had waited 9 hours for standing
       ready). A leg that must show this machine's own behaviour (a lock demo) passes `same_machine` with why.
+- [ ] **A leg that must run on one named computer passes `machine`, never `same_machine`** (w2521, 2026-10-29). LothLaptop's
+      G-SYNC panel, a GPU, an OS: `timed_place` with `machine: "lothlaptop"` (and why in `what`). It answers here only on
+      that computer and otherwise queues the leg on it alone, saying it waits there; it never falls back to an idle or big
+      one. `same_machine` means THIS computer: "Must run on LothLaptop" put there on biscuit heard "here" (w2448), and a
+      what with no machine on an idle BEAST heard "here" too (w2501). Write the pin in the request's constraints as
+      "Must run on <id> only" so start_agent, the queue and the room move keep it there (w2499 was moved to m3).
 - [ ] **Reading an exclusive turn's quiet machine** (w1829, 2026-10-25). The `Unity.exe -adb2 -batchMode -name
       AssetImportWorker*` processes busy after a grant are the editors' import children and end with them; the
       holder's own sandbox editor rides along by design, even another session's. A close can stall on Unity's "Save
