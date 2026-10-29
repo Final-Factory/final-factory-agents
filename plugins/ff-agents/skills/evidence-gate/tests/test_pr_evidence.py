@@ -120,6 +120,11 @@ class CheckTest(unittest.TestCase):
                          "no 'Determinism audit:' line")
         self.assertFails(edit(GOOD, "Determinism audit: 2354 shared heartbeats, no divergence", "Determinism audit: clean"),
                          "does not give the number of heartbeats compared")
+        # w2487: a pair run's own words put a word between the count and "heartbeats"; they still name the count
+        for said in ("1,596 of 1,596 compared heartbeats matched, no divergence",
+                     "passed, 1596 heartbeats compared, 0 diverged", "12,768 shared heartbeats, no divergence"):
+            body = edit(GOOD, "Determinism audit: 2354 shared heartbeats, no divergence", "Determinism audit: " + said)
+            self.assertEqual(self.problems(body), [], said)
         self.assertFails(edit(GOOD, "Tests: FFEditorTests 6494 run, 6479 passed, 0 failed\n", ""), "no 'Tests:' line")
         self.assertFails(edit(GOOD, "Save compatibility: none, no saved state is touched\n", ""),
                          "no 'Save compatibility:' line")
