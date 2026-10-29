@@ -31,7 +31,7 @@ load-bearing for future runs even where the original defect is fixed.
 - [Mute the real audio path — `-batchmode -nographics` does not touch FMOD](#automation-mute) (049)
 - [Fixture determinism can be CPU-load-dependent even with no cross-peer comparison — unverified](#fixture-load-dependence) (055 R35)
 - [Host-frame profiling: a probe, not a determinism gate](#perf-probe) (055 flag lane 3)
-- [A big save: the full capture keeps the client out; the runtime detector and a capped host](#big-save-pair) (w780)
+- [A big save: the full capture keeps the client out; the runtime detector and a capped host](#big-save-pair) (w780; bench stops and a too-heavy client, w2567)
 - [Old against new in one pair: a PR's A/B switches on one peer](#ab-switch-one-peer) (w1115)
 - [Reading a pair's witness-compare.txt: pose distance is the verdict](#witness-pose-distance) (w1555)
 - [A world-generation pair: drive the host post-join, compare lists, keep the client yours](#worldgen-pair) (w2271; world objects from saves, ffnightly deletes local saves, w2386)
@@ -525,6 +525,19 @@ w780, 2026-10-09, °Life°'s Build 91 save (177,779 entities, 577 haulers), m5, 
     12.1 s `[HangWatchdog]` hang in `NtCreateFile` on a BEAST running another player and three editors); the rejoin
     compared 420 of 420 over epoch-2 heartbeats 8..3360, and the scenario's `atLeast: 450` bar failed that clean pass.
     Size the end bar to one epoch's heartbeats / 8, and report which epoch the count came from.
+- **w2567, 2026-10-29 (m5 headless host, BEAST windowed client, PR #2822's rotator change):**
+  - Just Play 1.0.0.22 (468,003 entities, ~141k rotators) is too heavy for a windowed client with graphics on: the
+    BEAST client applied 74 then 125 heartbeats per 10 s (one per frame, p50 53-60 ms) against 160, its backlog grew
+    570 -> 611, and the host kicked it `FlowControl:TooSlow` a minute after the join. The golden fixture
+    `LifeAsTwoMegaWave-0.50.0.54` (5,932 entities, 29 Mass Drivers, Singularity and Dyson rotators; the client spawns
+    looking at a row of Mass Drivers) held 16 UPS at ~59 fps and passed 289 of 289 compares over heartbeats 8..2312.
+  - **A client player on a shared big computer is stopped by other workers' exclusive bench tickets** (w1829), and the
+    run is void. Two of w2567's runs died that way, one a minute after it started: it had slipped into a gap in which
+    an exclusive ticket was already warned. Before you launch, read `bench_queue.py status` and the tail of
+    `<worker root>/tmp/bench.queue/log.txt`: launch when a shared group runs with enough minutes before its deadline
+    (`granted ... joins the running shared group with N min left before its deadline`), not just after a `warned ...
+    its turn ends at` line. Don't gate on "no exclusive waiting" either: normal-priority exclusives can wait behind a
+    shared group for its whole hour (`kept ... only lower-priority work waits`), and such a gate never opens.
 
 ## Old against new in one pair: a PR's A/B switches on one peer {#ab-switch-one-peer}
 
