@@ -593,3 +593,28 @@ jargon and length).
   `[list][*][p]..[/p][/*][/list]`. Steam documents no body limit; the longest body it took from us is 11,924
   characters (THE MULTIPLAYER UPDATE, 2026-10-01). The banned and avoided words are ff-marketing's
   `brand/voice.json`, checked with its `scripts/mk/gate.py` `lint_text`.
+
+## Looking at a planet, gas giant or star in a built player (w2497, 2026-10-28)
+
+Measured on m5 (macOS) with the Steam 1.0.0.23 player over the agent channel (dev tier, `-ffAgentControlDev true`).
+
+- **Find the bodies with the nearby snapshot**: `GET /v1/snapshot/nearby?x=<tile>&z=<tile>&r=64` (r caps at 64 tiles,
+  `PlaytestStateSnapshot.MaxNearbyRadius`); sweep a grid with a 128-tile step. `planets[]` lists `Terra World` and
+  `Gas Giant` with their `center` tile. Stars carry no `Planet` tag, so they are NOT in `planets[]`: they come in
+  `structures[]` as `Main Sequence Star`, `Neutron Star` or `Red Giant Star`, with the corner tile (centre about
+  corner + 32).
+- **Chunks exist only where the player has been** (`MapGeneratorSystemV2`): a fresh solo game had 7 planets and no star
+  within 1,536 tiles. Stars showed up after `ffauto:player.setposition|x|z` over a ring 1,600 to 2,400 tiles out
+  (160-tile step, 0.6 s apart), then a second sweep. That ring is enemy space and the ship died on the way;
+  `ffauto:combat.respawn` brings it back to the origin.
+- **Fog draws unexplored space black**: a camera held on a body the ship never saw shows nothing. Park the ship about
+  45 tiles off the body (`player.setposition`), then `ffauto:camera.focus|<tileX*10>|<tileZ*10>|800` (1400 for a
+  star), wait ~4 s, take a nearby snapshot at the focus tile (r=40) to prove what sits there, then `GET /v1/screenshot`.
+  An earlier w2488 "planet" still was an asteroid; the snapshot is the proof, not the picture.
+- **Graphics quality** (0 Low, 1 Medium, 2 High, 3 Ultra) is `GraphicsQuality` in `LocalSettings/settings.json`,
+  applied at startup by `DisplaySettingsController.LoadFromPlayerPrefs`; the Esc Settings panel cannot be driven over
+  the channel. Set it before launch: the game repo's `scripts/game_data.py snapshot --name <leg>`, edit a copy,
+  `put --local <copy>`, launch, and `restore --name <leg>` after.
+- **A Steam install on macOS** launches through `player_slots.py launch --detach <...>/steamapps/common/FinalFactory/finalfactory.app`
+  (the harness refuses the Steam path itself). A `-logFile` into a folder that does not exist made the first launch
+  exit with nothing in the log: create the folder first.
