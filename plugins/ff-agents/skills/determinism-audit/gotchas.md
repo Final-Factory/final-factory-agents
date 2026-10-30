@@ -553,6 +553,24 @@ w780, 2026-10-09, °Life°'s Build 91 save (177,779 entities, 577 haulers), m5, 
     in 3 minutes; likely the same `NtCreateFile` hang as w2400's. Not a desync: relaunch the client.
   - `player_slots.py launch` refuses at once (exit 2) while an exclusive bench ticket holds the lock: pass
     `--bench-wait 900` so the launch waits for it instead.
+- **w2587, 2026-10-30 (BEAST host + LothDesktop client, Just Play 1.0.0.22, shields under fire):**
+  - **The host waits 900 s for its clients, and only that** (`HostPeerConnectTimeoutSeconds = 900`,
+    `LocalMultiplayerAutomationBootstrap.cs:146`). A client queued behind its own machine's bench lock misses it, and the
+    host writes `session-ended: host-peers-never-connected` and quits. Run the host in a relaunch loop that stops on
+    `status host-peers-connected`. Do not match `host-peers-connected:`, which also matches the
+    `waiting-host-peers-connected:` line.
+  - **A stopped wrapper leaves its launcher queued.** If you stop the bash around `player_slots.py launch --bench-wait`,
+    its python launcher still waits for the bench lock and starts a second client later. The result is a double join
+    (`connectedClients=3`), a void run, and a client-only `duplicate reservation keys in one named batch` exception from
+    `CombatIdentityAssignmentSystem.cs:117` that the clean single join never showed. Run `ff-leftovers end` before
+    relaunching a client.
+  - **To get shield hits on Just Play 1.0.0.22**, whose 109 camps all sit outside the activity gate (`enemy.pressure`
+    showed `inGate=0` and 134 shields stayed full), run `ffauto:enemy.frontier` on the host before the client joins.
+    At heartbeat 2 it answers `not moved` because the signal footprint is still empty. A few hundred heartbeats later it
+    moves the player, and 13 camps came into the gate.
+  - **`shield.state`'s `absorbed=` covers only the last heartbeat.** Sample every second or so and look for `charge`
+    below capacity: 508 samples over 8 minutes caught one grid at 14372/14400, recharging. Samples every 30 s missed
+    every hit.
 
 ## Old against new in one pair: a PR's A/B switches on one peer {#ab-switch-one-peer}
 
