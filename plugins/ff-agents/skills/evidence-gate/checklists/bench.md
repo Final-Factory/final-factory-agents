@@ -148,3 +148,8 @@ Mechanics: the game repo's `Documentation/Bench-Lock.md`.
       so before a display leg `tasklist | grep -i LogonUI` shows nothing, else ask the person to unlock
       (`waiting_on_person`). `scripts/feel/vrr_trace.py record` writes about 3.3 GB per 6 s (trace.etl 674 MB,
       events.csv 2.6 GB, measured w2520): in a multi-run session delete those two after each run's summary.
+- [ ] **Each arm of an A/B leg starts from the head's exact tree** (w2611, 2026-10-30, m3). `git checkout <commit> -- <path>`
+      writes the index as well as the file, so a later `git checkout -- Assets` "between arms" puts back the swapped
+      file, not the branch head, and the next arm silently times the wrong code. Reset every arm with
+      `git read-tree -u --reset <head>` (restores, deletes and re-adds to the head's tree; `git read-tree -u --reset HEAD`
+      at the end gives the sandbox back), and print each arm's `git diff --stat <head> -- Assets` into the run log.
