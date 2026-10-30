@@ -38,6 +38,7 @@ load-bearing for future runs even where the original defect is fixed.
 - [A live-driven built pair: reopen panels after a resync, overlap the report windows](#live-driven-pair) (w2238)
 - [A Linux client leg on biscuit: build, headless launch, a scripted paste](#linux-client-leg) (w2133, w2326)
 - [A Linux host leg on biscuit: console commands and detector counts from a headless host](#linux-host-leg) (w2281)
+- [A host-only scenario with a remote client: pause on join, tower spawns, flow control](#host-scenario-remote-client) (w2586)
 - [An editor pair with presentation checks: no Audit ids in the config, a healthy host, a client machine without bench rounds](#editor-pair-presentation) (w2399)
 - [An Oracle shop pair: host buys first, `near` is tier 1, price is derived](#oracle-shop-pair) (w2518)
 - [A save-and-reload pair: checkpoints are rolling windows, the client rejoins by itself](#save-reload-pair) (w2558)
@@ -714,6 +715,37 @@ w2281 (2026-10-26, the host of a biscuit-host, LothDesktop-client pair for PR #2
   build log while slot3's exclusive bench ticket held biscuit. Loop on `bench_queue.py status` until no exclusive
   holder shows, then build (the third try built in about 6 minutes). A bench warning that your player's ticket ends did
   not stop the running host that time, but the client leg had already quit on it: restart both fresh.
+
+## A host-only scenario with a remote client: pause on join, tower spawns, flow control {#host-scenario-remote-client}
+
+w2586 (2026-10-29: biscuit host, LothDesktop client, PR #2838 for w2575, an unpowered Construction Tower sends no
+bots). The host ran `ffnightly_linux.py` with a host-only scenario that waits for the remote client. Ten runs found
+the following:
+
+- **The host pauses while a client syncs in.** Run8 sent a command just after `desync.stats` first listed the client,
+  and got `state_not_playable: commands need a running game; the game is 'paused'`. The scenario failed, the host
+  quit, and the client lost the connection with ClosedByRemote. Poll `desync.stats` on path
+  `data.clients[0].compared`, atLeast 16, before the next command. A `heartbeats` wait does not cover the pause.
+- **`spawn.ships|<bot>|N|towers` drops silently for an unpowered tower.**
+  - Cause: `ExecuteShipSpawnCommandSystem.cs:2328-2334` rejects a tower at satisfaction <= 0 (`Unpowered`), and
+    `:1291` drops the command for good.
+  - Run9 ran with 0 tower bots: `fleet.stationships` count was 0, and every task was pending with "no free
+    construction bot". The PR looked broken in phase 2 and was not.
+  - For an unpowered-tower setup, power the tower for a moment. Place a panel, poll satisfaction >= 0.1, spawn the
+    bots, and poll `fleet.stationships` `data.count` >= N. Then remove the panel and poll the battery's `charge` <= 0.
+    Do all of this before the join.
+- **`flowcontrol.throttle|60|<s>` does not cap a built player's frame rate.** On the LothDesktop Windows client it
+  logged as applied, but measured about 200 fps headless and 143 to 240 fps windowed. Report the fps you measured.
+- **Tailscale path churn drops a client.** The client's rtt went from 29 to 280 ms as its path moved between the DERP
+  relay and a direct route. The host then dropped it with `FlowControl:TooSlow` (rule=not-converging, behind 5.0 s)
+  at hb 392, and once before at hb 2672. With `-ffFlowControlWaitForSlowPeers` in the lab host peer's `"args"`, the
+  pair held for 3,742 heartbeats.
+- **Units, chains and ports:**
+  - `movement.goto` takes world units, 10 per tile. `construction.placeitem`, `transfer.put` and
+    `observe.state|structure|x|z` take tiles.
+  - One `do` chain holds at most 64 segments, so split long ghost rows.
+  - A multi-command evidence `do` keeps only the last result, so use one command per evidence step.
+  - The client's reconnect loop rejoins a relaunched host on the same port, so give every relaunch a new lab port.
 
 ## A live-driven built pair: reopen panels after a resync, overlap the report windows {#live-driven-pair}
 
