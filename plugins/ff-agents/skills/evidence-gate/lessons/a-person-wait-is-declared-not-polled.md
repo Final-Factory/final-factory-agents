@@ -120,6 +120,14 @@ that covers a new one. The brief's "New player-visible UI or art needs Ben's OK 
 - For a UI question, name the note that decided the content. If it covers the change, the PR's `## Evidence` carries
   `Decided (Ben, <date>): "<his words>"` and the change merges on green with no card.
 - Ask only for what the note does not cover, and say in the question what he already decided.
+- **A note that says what to change in art or layout is not an OK of the new look** (w2617, 2026-10-31). Ben's note on
+  the No recipe tile (game PR #2870) was "Put no recipe in the first row and change the icon to empty/none icon"; the
+  round that did it moved the tile and drew a new icon. FF Factory's `waiting_on_person` refused the look-OK card as
+  "already decided", the worker took that, wrote `Decided (ben, ...)` into the PR and waited to merge on green, and the
+  orchestrator, for ben, corrected it: "Ben's note told you what to change, but it was not an OK of the new look. The
+  brief still holds: new UI that players see needs Ben's OK on stills". When the change adds art or moves layout, call
+  `waiting_on_person` again with `decided_override` naming the art or layout the note leaves open (the refusal itself
+  offers it), and keep the PR held; the `Decided` line is for plain text or behaviour in an existing component only.
 
 ## An approval ask explains every change, with a cropped, marked pair
 
