@@ -59,6 +59,8 @@ Options (alphabetical):
   --claude       Only touch Claude Code.
   --codex        Only touch Codex.
   --help         Show this message.
+  --marker-only  Only record this checkout in ~/.claude/final-factory-agents-checkout (the
+                 marker publish-skills reads), then stop: no registration, no install.
   --plugin NAME  Also install NAME, on top of the defaults, and remember it — later
                  bare runs keep it updated too. Repeatable, and accepts a
                  comma-separated list:
@@ -108,6 +110,7 @@ while [ $# -gt 0 ]; do
       shift ;;
     --plugin=*)
       EXTRA_PLUGINS="$EXTRA_PLUGINS $(printf '%s' "${1#--plugin=}" | tr ',' ' ')" ;;
+    --marker-only) MODE="marker-only" ;;
     --help|-h)    usage; exit 0 ;;
     *)            echo "ERROR: unknown option '$1'" >&2; echo >&2; usage >&2; exit 1 ;;
   esac
@@ -198,16 +201,53 @@ have() { command -v "$1" >/dev/null 2>&1; }
 # is tool-agnostic — the skill body is shared, so Codex sessions read the same file.
 SCRIPT_DIR=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
 
+# A clone under a temp folder ($TMPDIR, $TMP, $TEMP, /tmp, a .../tmp/... or .../Temp/... path) is
+# never recorded: its folder is swept when its session ends, and a marker naming it then sends every
+# later publish-skills run on the machine to a checkout that is gone (w2655: a worker on BEAST
+# cloned into its $TMPDIR because the person's checkout held someone's uncommitted edits, ran this
+# script there to install its new version, and the marker named that clone until its temp folder
+# was removed). The marker keeps naming the lasting checkout instead.
+lower() { printf '%s' "$1" | tr '[:upper:]' '[:lower:]'; }
+is_temp_dir() {  # $1 = posix path, $2 = native path
+  for _p in "$1" "$2"; do
+    case "$(lower "$_p")/" in
+      /tmp/*|*/tmp/*|*/temp/*|/var/folders/*|/private/var/folders/*) return 0 ;;
+    esac
+  done
+  for _v in "${TMPDIR:-}" "${TMP:-}" "${TEMP:-}"; do
+    [ -n "$_v" ] && [ -d "$_v" ] || continue
+    _tp=$(cd "$_v" 2>/dev/null && pwd) || continue
+    _tn=$(cd "$_v" 2>/dev/null && { pwd -W 2>/dev/null || pwd; })
+    for _p in "$1" "$2"; do
+      for _t in "$_tp" "$_tn"; do
+        case "$(lower "$_p")/" in "$(lower "$_t")"/*) return 0 ;; esac
+      done
+    done
+  done
+  return 1
+}
+
 record_checkout() {
-  if [ -f "$SCRIPT_DIR/.claude-plugin/marketplace.json" ]; then
-    # Prefer a native path (git-bash `pwd -W` yields D:/... which both shell and file tools accept)
-    NATIVE_DIR=$(cd "$SCRIPT_DIR" && { pwd -W 2>/dev/null || pwd; })
-    mkdir -p "$(dirname "$CHECKOUT_MARKER")"
-    printf '%s\n' "$NATIVE_DIR" > "$CHECKOUT_MARKER"
-    echo "recorded checkout location: $NATIVE_DIR"
-  else
+  if [ ! -f "$SCRIPT_DIR/.claude-plugin/marketplace.json" ]; then
     echo "note: not running from a final-factory-agents checkout — skipping checkout marker" >&2
+    return 0
   fi
+  # Prefer a native path (git-bash `pwd -W` yields D:/... which both shell and file tools accept)
+  NATIVE_DIR=$(cd "$SCRIPT_DIR" && { pwd -W 2>/dev/null || pwd; })
+  if is_temp_dir "$SCRIPT_DIR" "$NATIVE_DIR"; then
+    _old=$(head -n 1 "$CHECKOUT_MARKER" 2>/dev/null || true)
+    echo "note: $NATIVE_DIR is a temp folder — the checkout marker is not pointed at it" >&2
+    if [ -n "$_old" ] && [ -f "$_old/.claude-plugin/marketplace.json" ]; then
+      echo "checkout marker kept on: $_old" >&2
+    else
+      echo "WARNING: the checkout marker names '${_old:-(nothing)}', which is not a checkout:" >&2
+      echo "  run 'sh registerAgents.sh --marker-only' from a lasting final-factory-agents clone." >&2
+    fi
+    return 0
+  fi
+  mkdir -p "$(dirname "$CHECKOUT_MARKER")"
+  printf '%s\n' "$NATIVE_DIR" > "$CHECKOUT_MARKER"
+  echo "recorded checkout location: $NATIVE_DIR"
 }
 
 # --- uninstall leftovers -----------------------------------------------------------------------
@@ -439,6 +479,10 @@ register_codex() {
 }
 
 # --- drive ----------------------------------------------------------------------------------------
+if [ "$MODE" = "marker-only" ]; then
+  record_checkout
+  exit 0
+fi
 if [ "$MODE" != "remove" ]; then
   record_checkout
   save_plugin_state

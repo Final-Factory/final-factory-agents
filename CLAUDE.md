@@ -37,6 +37,8 @@ registerAgents.sh                   idempotent per-machine bootstrap for BOTH Cl
                                     also records this checkout's path to
                                     ~/.claude/final-factory-agents-checkout so publish-skills
                                     can find it on any machine, wherever it was cloned
+                                    (never a clone in a temp folder, w2655; --marker-only
+                                    records it and stops; test: scripts/test_register_agents.py)
 ```
 
 Plugins: `ff-agents` (core roles + skills, incl. `project-memory` and `watch-video`, whose

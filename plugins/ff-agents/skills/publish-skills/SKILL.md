@@ -36,7 +36,7 @@ It must hold one absolute path (native form, e.g. `D:/work/final-factory-agents`
 Report to the user, in plain language: which check failed, the exact value found in the
 marker (or that it was missing), and how to fix it —
 
-> Run `sh registerAgents.sh` from your final-factory-agents checkout to re-record the path.
+> Run `sh registerAgents.sh --marker-only` from your final-factory-agents checkout to re-record the path.
 > If there is no checkout on this machine, clone one first:
 > `git clone https://github.com/Final-Factory/final-factory-agents`
 
@@ -59,6 +59,11 @@ the edit unpublished but unreported is worse than not starting.
 
 `git -C <checkout> pull` before editing so you are not branching off stale content, then
 continue to step 2.
+
+If the checkout holds someone else's uncommitted edits, or `pull` cannot fast-forward, do not touch them: clone into
+your `$TMPDIR` and make the change there. Its `registerAgents.sh` in step 5 installs the new version and leaves the
+marker on the lasting checkout, since it never records a clone in a temp folder (w2655: the marker on BEAST named a
+swept `$TMPDIR` clone for two days before that rule).
 
 ## 2. Make the change
 
