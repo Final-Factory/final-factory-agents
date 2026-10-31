@@ -427,6 +427,16 @@ control, and a redesign goes out as 2 or 3 clearly different options built from 
     Production text is static: its recipe shows only as the icon beside it and in the Outputs slot (census: the
     `ProductionIcon` sprite), so crop and ring those.
 
+37. **Build the mock the person saw, named by its still (w2580, w2669).** A pick from a card of mocks is a letter and a
+    label until you name its still and what is visible in it (where on screen, which panel it sits against). Before
+    building, read the person's words against it: Ben picked "C, the Tiles" with "i'm worried it might get cut off by
+    the objectives panel", which pointed at the bottom-left card mock, not mock C's bottom-centre tiles; his C and D
+    stills had not rendered (w2664). Ben: "That's not the hover panel mock I chose. I wanted the tile on the left above
+    the controls panel". When the words and the still disagree, ask one question with both stills before building. The
+    brief's `Picked (<who>): still: ...; shows: ...; words: "..."; matches: ...` line passes `pr_evidence.py --pick`
+    before you start, and the PR's carries `beside:` a still of the build beside the picked mock
+    ([lesson](../lessons/research-the-decision-not-the-topic.md#build-the-pick-the-person-saw-its-still-checked-against-their-words-w1323-w2580-2026-10-31)).
+
 19. **The Deck tour is a stand-in (w770).** It forces its own window size and a scripted Deck, so it cannot show Steam's
     layout choice, the Proton first-frame resolution, the Steam client version or touch. A Deck UI change says "verified on
     a real Deck" or "not verified on a real Deck" ([deck.md](deck.md)). For a stored bad size use `-ffDeckTourSize none

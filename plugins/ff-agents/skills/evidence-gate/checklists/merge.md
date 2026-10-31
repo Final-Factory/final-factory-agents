@@ -86,6 +86,13 @@ Not verified: the Bats' slot lag (simulation, follow-up PR)
   `distinct:` (what makes it distinctive), `cost:` (measured ms or fps in a built player). `Hero art: n/a (<why: a bug
   fix, a re-tint, an icon, a re-export, a third-party import>)` shows in the verdict for the reviewer
   (visual.md 5e; w1470, w1466, w1475, w1497).
+- **A pick** (the brief or the evidence says someone picked or chose a design, "option C", "look A", or quotes a relayed
+  pick such as "C, the Tiles"; `pr_evidence.py` reads it) needs one `Picked (<who>):` line: `still:` (the file or link
+  of the option they picked, never only its letter or label), `shows:` (what is visible in it, in a sentence: where on
+  screen, its look, the prefab or toggle state), `words:` (their own words, quoted, found in the brief), `matches:`
+  (how those words fit that still), `beside:` (a still of the built result beside the picked still). `Picked: n/a
+  (<why>)` when what was chosen is no design (a number, a cut depth). Before building, `pr_evidence.py --pick <brief>`
+  checks the same line without `beside:` (w1323, w2580, w2669).
 - **A world model** (a model file or a mesh `.asset` under `Assets/Art/{Content,Models,ItemArt}/` added or changed, or
   an item, structure, ship or projectile prefab added under `Assets/Resources/{ConnectorEntities,ItemEntities}/` or
   `Assets/Prefabs/EffectsEntities/Projectiles/`; effects, icons, sprites, UI and third-party packs excepted) needs
