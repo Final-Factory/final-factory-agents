@@ -48,7 +48,11 @@ Mechanics: the game repo's `Documentation/Bench-Lock.md`.
       0.623 / 3.317 ms per heartbeat at 6 / 20 Leeches one minute after a start, 0.158 / 0.193 ms in a warm pass. Both
       had Burst on, and the cold pass made the fix look slower than master (0.196 / 1.669 ms). Before the first timed leg, the leg's state line
       shows `BurstCompiler.Options.EnableBurstCompilation` true (a fresh editor once started with it off; turn it on and
-      re-enter play mode), and the editor has run the scenario for a few minutes or one discarded warm-up leg.
+      re-enter play mode), and the editor has run the scenario for a few minutes or one discarded warm-up leg. w2622
+      (2026-10-31, m3 slot1): a sandbox editor had Burst compilation off, and an EditMode Performance test run right after a
+      compile timed the spawn system at 11.8 ms per heartbeat, against 175 us once Burst had compiled it. Read
+      `BurstCompiler.Options` before the ticket, and after every recompile (an A/B arm's code swap too) run one
+      discarded warm-up.
 - [ ] **A before/after: 1 or 2 samples per side, each run 5 to 10 minutes** (w2229, [lesson](../lessons/settle-your-own-guesses.md#decide-a-before-after-on-one-or-two-samples-per-side-w2229-2026-10-25);
       lothsahn: "workers should avoid more than 2 tests on each before/after unless there's a strong reason to suspect
       it's wrong. And each test should be short: 5-10 minutes at most"). A fix against master (fps, frame times, bench
