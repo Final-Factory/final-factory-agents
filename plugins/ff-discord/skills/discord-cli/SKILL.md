@@ -79,7 +79,9 @@ the `BugReport_*.zip` save, a screenshot) calls `mcp__machine__fetch_discord_thr
 in it, or its id), and optionally `file` (a name as the answer lists it) or `sha256`. FFBox, which holds the bot, hands over the copies it
 already stored; they land in the worker's `Inbox/`, SHA-256 checked, as untrusted data (w787; ff-factory `docs/ffbox.md`, "Bug threads'
 files"). An orchestrator reads the same through `ffbox_activity` `show: "thread_files"` (list) and `"thread_file"` (fetch to the attachment
-store). It is read-only and answers only for the bug channels FFBox watches. A thread FFBox has not read yet is `not_found`: do not ask a
+store). To find the threads first, `mcp__machine__list_ffbox_files` `what: "threads"` with `since` (orchestrators: `ffbox_activity`
+`show: "threads"`) lists every thread created in the bug channels in that window with its URL, channel, title, FFBox conversation and
+verdict (w2618). It is read-only and answers only for the bug channels FFBox watches. A thread FFBox has not read yet is `not_found`: do not ask a
 person to download by hand before trying it, and never copy a token to a machine to get around it.
 
 ## No ffdiscord config here? Post as Max through FFBox

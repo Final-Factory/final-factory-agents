@@ -32,7 +32,8 @@ back all the way". All of it is read-only; never post, vote or log in.
 - **Bluesky:** the public search API.
 - **Discord: text only from a machine with the ffdiscord config.** That is LothDesktop; biscuit has none
   (`~/.config/ffbox` is absent). FFBox's `fetch_discord_thread_files` returns only attachments from the bug channels,
-  and `ffbox_activity` is an orchestrator tool. A GET-only export of every channel and thread with reactions,
+  and `ffbox_activity` is an orchestrator tool; a worker lists the bug channels' threads of a window (URL, channel,
+  title, FFBox verdict) with `list_ffbox_files` `what: "threads"` (w2618), but not their message text. A GET-only export of every channel and thread with reactions,
   `discord_export.py`, was published as `att_bkx6t0735ow1` for a worker on such a machine. It wraps ffdiscord's own
   `Client`, so the token never leaves that machine.
 
