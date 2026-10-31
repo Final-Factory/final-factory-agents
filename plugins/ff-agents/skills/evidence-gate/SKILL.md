@@ -180,7 +180,9 @@ look first and relay only with the critic's report (FF Factory `read_rules ui`).
   Before any question for Ben, read every note of his on the request and its related requests, from the start. His
   wording or behaviour added as plain text in an existing component, nothing else moved, merges on green with his words
   quoted; new components, layout and art still need his OK on stills (w2084, #2395; Ben: "i already answered this. you
-  keep asking me questions i already answered").
+  keep asking me questions i already answered"). A note that says what to change in art or layout is not an OK of
+  the new look: when FF Factory refuses such a card as "already decided", call `waiting_on_person` again with
+  `decided_override` naming the new art or layout (w2617).
 - **An approval ask explains every change, with a cropped, marked pair** ([lesson](lessons/a-person-wait-is-declared-not-polled.md#an-approval-ask-explains-every-change-with-a-cropped-marked-pair)).
   Before you ask anyone to OK a change (UI, behaviour or look), each change gets its own section: Before (the player's
   steps and what they saw), After, Fixes, Code (file, method, old -> new value), Unchanged, and a before/after pair from
