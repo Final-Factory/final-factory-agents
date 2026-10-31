@@ -711,6 +711,20 @@ w2133 (2026-10-25, the client of a LothDesktop-host pair for PR #2507) lost abou
     drives the same editor (state reads, `ffauto:` commands through `LocalMultiplayerAutomationCommandRunner.TryExecute`,
     an `EditorApplication.update` per-heartbeat sampler installed after play mode starts, since entering play mode
     reloads the domain and drops it).
+- **A built client leg run several times: a fresh label per run, end it at `report-written`** (w2658, 2026-10-31, a
+  BEAST Windows client of an m3 host, PR #2898, three runs on ports 7931-7933):
+  - A client without `-ffAutomationAutoQuit` stays up after `status report-written`, and its reconnect loop keeps
+    retrying the host's address. Run 1's client was still up 4 minutes later. End it yourself: wait for that line,
+    then a few seconds, then kill its pid.
+  - A run with the same `-ffAutomationLabel` as an earlier run in the same data folder loses its final report:
+    `status report-error: System.IO.IOException: Audit artifact identity collision at
+    ...network-determinism-audit-legacy-<label>-client.partial`. Host and client both lost run 3's final report this
+    way. Give every run a fresh `-ffAutomationLabel`, and fresh `audit.write` labels too (`<label>-r3-<HHMM>`).
+  - `ffauto:audit.write|<label>-<HHMM>` checkpoints on both peers at every whole UTC minute saved the comparison:
+    the merged checkpoints compared 3938 shared heartbeats. Start the loop from the client's `status dwell-started`.
+  - `player_slots.py launch --detach` prints a `player slot ...` line before its JSON, so parse only the last line.
+  - Checkpoints plus Player.log were about 1.3 GB raw. A zip of them was 268 MB, over publish_attachment's 200 MB;
+    `XZ_OPT="-6 -T0" tar -cJf` made 7.5 MB.
 
 ## A Linux host leg on biscuit: console commands and detector counts from a headless host {#linux-host-leg}
 
