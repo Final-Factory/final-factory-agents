@@ -88,5 +88,8 @@ python "$FF_SKILLS/concept-art/concept_art.py" make --request w2183 --name sutur
   (`![look A: ...](<path it answers>)`) with its name, mode, prompt and cost, and the set's total, today's tally and
   the balance left.
 - For a pick, `waiting_on_person` with the images as previews, one answer per look.
+- The pick you carry into the build names its image, not only its letter: `Picked (<who>): still: <path>; shows: <what is
+  in it>; words: "<their words>"; matches: <how they fit>`, checked with `pr_evidence.py --pick` before you model it
+  (w1323, w2580; evidence-gate `checklists/merge.md`). Words that point at another look: ask once, with both images.
 - Rights: "we assign to you all of our right, title, and interest (if any) in the Outputs" (sourced, Stability's terms,
   https://stability.ai/2025-terms-of-service); a concept is still a reference for our own model, not a shipped asset.

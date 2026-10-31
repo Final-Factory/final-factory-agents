@@ -16,7 +16,9 @@ projectile or pickup) names a built-player still of it beside its neighbours on 
 5k, w2204), a change to hide or visibility code counts what is still drawn where the hidden thing was on its
 'Hidden census:' line (checklists/visual.md 5l, w2210), a claim that a visual defect is gone or an effect happens names
 its 1:1 crop or slowed segment on 'Close-ups:' and, for occlusion, every surface on 'Surfaces:' (checklists/visual.md 5g,
-w1567), and a Deck-facing change says 'Real Deck: verified ...' or 'not verified on a real Deck' (checklists/deck.md). It cannot tell whether anyone looked carefully. Standard library only; `gh` for everything that reads GitHub.
+w1567), a pick of a design, mock, model or asset named in the brief or the evidence carries its 'Picked:' line (the
+still the person picked, what it shows, their words, how they match, the build beside it; checklists/merge.md, w2669),
+and a Deck-facing change says 'Real Deck: verified ...' or 'not verified on a real Deck' (checklists/deck.md). It cannot tell whether anyone looked carefully. Standard library only; `gh` for everything that reads GitHub.
 
     pr_evidence.py --repo OWNER/NAME --pr N               check one pull request (exit 1 on FAIL)
     pr_evidence.py --repo OWNER/NAME --pr N --comment     the same, and post the verdict on it
@@ -24,6 +26,7 @@ w1567), and a Deck-facing change says 'Real Deck: verified ...' or 'not verified
                                                           `A<TAB>path` or `M<TAB>path<TAB>lines`, as git diff --name-status)
     pr_evidence.py --body-file F --repo R --pr N          a draft description against that PR's own changed files (w1684)
     ... [--brief B]                                       also: every 'Moved:' quote is in the request's brief (w826)
+    pr_evidence.py --pick F [--brief B]                   a pick before building: its 'Picked:' line (w2669)
     pr_evidence.py --note N [--note-dir D] [--questions Q] a review note before publish_review: its close-ups (w1567),
                                                           each file beside it, the claims as questions for the critic
     pr_evidence.py --repo OWNER/NAME --audit --since 2026-10-01 [--base master]
@@ -1338,6 +1341,125 @@ def census_questions(note: str) -> list[str]:
             "(Ben, w2209: \"you keep missing stuff\"). A frame that does not show that place cannot answer this: say so."]
 
 
+# ---------------------------------------------------------------------------------------------
+# Picked (w2669): a person's pick of a design, mock, model or asset is named by the still they saw and what it shows,
+# checked against their own words, and the PR shows the built result beside that still.
+#
+# w1323: Ben's screenshot showed the new assembler model; the brief and the worker assumed the classic one and changed
+# the classic prefabs. Ben: "what no, i was talking about updating the new assembler model, not the old one lol".
+# w2580: Ben picked "C, the Tiles" from a card whose C and D stills had not rendered for him (w2664); his words ("i'm
+# worried it might get cut off by the objectives panel") pointed at the bottom-left card mock, and the worker built the
+# bottom-centre tiles. Ben: "That's not the hover panel mock I chose. I wanted the tile on the left above the controls
+# panel". A letter or a label alone named the wrong picture both times.
+
+# A pick in the brief or the evidence: someone picked or chose ("Ben picked C", "the label Ben picked", "the cut Ben
+# chose", "picked by lothsahn"), or an option named by its letter ("option C", "look A", "C, the Tiles"). Measured on
+# the 197 game PRs with an Evidence section merged 2026-10-20..31: a bare "picked|chose|chosen" fired on 16, 9 of them
+# no design pick ("chosen tab", "picked up", "test_select.py picks", "lothsahn chose to merge"); this form fires on the 7
+# picks among them. A relayed pick in quotes ("C, the Tiles") counts; an unquoted "line B, the operator rows" does not.
+PICK_TEXT = re.compile(r"(?:\b(?-i:[A-Z])[a-z]+|\b(?:i|we|he|she|they|lothsahn|person|requester|reporter))\s+"
+                       r"(?:picked|chose|went with)\b(?!\s+(?:to|up)\b)|"
+                       r"(?<!cherry-)\b(?:picked|chosen)\s+by\b|"
+                       r"\b(?:options?|mocks?|mockups?|concepts?|looks?|designs?|variants?)\s+[\"'(]?(?-i:[A-F])\b|"
+                       r"[\"'“(](?-i:[A-F]),\s+the\s+\w", re.IGNORECASE | re.MULTILINE)
+PICK_LABELS = re.compile(r"\b(still|shows|words|matches|beside)\s*:", re.IGNORECASE)
+PICK_IMAGE = re.compile(r"[^\s,;()\"']+\.(?:png|jpe?g|webp|gif)\b|https?://[^\s,;()]+|!\[", re.IGNORECASE)
+PICK_FORMAT = ("`Picked (<who>): still: <the still file they picked from>; shows: <what is visible in it: where on "
+               "screen, its look, the prefab or toggle state>; words: \"<their own words about it>\"; matches: <how "
+               "those words fit what the still shows>; beside: <a still of the built result beside the picked one>`")
+PICK_MIN_WORDS = 6
+
+
+def pick_text(section: str) -> tuple[str, str] | None:
+    """The `Picked:` line plus the indented or bulleted lines under it -> (who, text)."""
+    found = field(section, "Picked")
+    if not found:
+        return None
+    lines = section.split("\n")
+    start = next(i for i, l in enumerate(lines) if re.match(r"^\s*Picked\s*(?:\([^)]*\))?\s*:", l, re.IGNORECASE))
+    text = [found[1]]
+    for later in lines[start + 1:]:
+        if later.strip() and (later.startswith((" ", "\t")) or re.match(r"^\s*[-*]\s", later)):
+            text.append(later.strip().lstrip("-* ").strip())
+        else:
+            break
+    return found[0], " ".join(t for t in text if t)
+
+
+def pick_parts(text: str) -> dict[str, str]:
+    marks = list(PICK_LABELS.finditer(text))
+    parts = {}
+    for i, m in enumerate(marks):
+        end = marks[i + 1].start() if i + 1 < len(marks) else len(text)
+        parts.setdefault(m.group(1).lower(), text[m.end():end].strip(" ;,.\n"))
+    return parts
+
+
+def names_a_pick(*texts: str | None) -> bool:
+    return any(t and PICK_TEXT.search(t) for t in texts)
+
+
+def pick_problems(section: str, brief: str | None = None, built: bool = True,
+                  required: bool = False) -> tuple[list[str], list[str]]:
+    """w2669: the `Picked:` line names the still, what it shows, the person's words, how they match, and (once built)
+    the built result beside it. `required`: the brief or the evidence names a pick, so the line must be there."""
+    found = pick_text(section)
+    if not found:
+        if required:
+            return ([f"a pick is named (picked, chose, option C, \"C, the Tiles\") and there is no 'Picked:' line: a "
+                     f"letter or a label alone named the wrong picture twice (w1323, w2580). Add {PICK_FORMAT}, or "
+                     f"'Picked: n/a (<why no person picked a design here>)'"], [])
+        return [], []
+    who, text = found
+    if re.match(r"^\s*n/?a\b", text, re.IGNORECASE):
+        reason = re.sub(r"^\s*n/?a\b[\s:(-]*", "", text, flags=re.IGNORECASE).strip(" )")
+        if len(reason.split()) < 4:
+            return (["'Picked: n/a' has to say why in a sentence: no person picked a design, mock, model or asset in "
+                     "this request"], [])
+        return [], [f"no pick (Picked: n/a): {reason[:160]}"]
+    problems, notes = [], []
+    if not who:
+        problems.append("'Picked' does not say who picked: Picked (Ben): ...")
+    parts = pick_parts(text)
+    needs = ("still", "shows", "words", "matches") + (("beside",) if built else ())
+    for need in needs:
+        if need not in parts:
+            problems.append(f"'Picked' has no '{need}:' part ({PICK_FORMAT})")
+        elif not parts[need] or HERO_PLACEHOLDER.search(parts[need]):
+            problems.append(f"'Picked' part '{need}' is empty or a placeholder ({PICK_FORMAT})")
+    still = parts.get("still", "")
+    if still and not PICK_IMAGE.search(still):
+        problems.append(f"'Picked' still: '{still[:60]}' is not a still file or link: name the picture the person saw "
+                        f"(the card's preview path), not only its letter or label")
+    shows = parts.get("shows", "")
+    if shows and len(shows.split()) < PICK_MIN_WORDS:
+        problems.append(f"'Picked' shows: say what is visible in the still in a sentence (where on screen, its look, "
+                        f"the prefab or toggle state), {PICK_MIN_WORDS} words or more: '{shows[:60]}' could name "
+                        f"another picture")
+    words = parts.get("words", "")
+    quotes = re.findall(r"\"([^\"]+)\"|“([^”]+)”", words)
+    quoted = [a or b for a, b in quotes]
+    if words and not quoted:
+        problems.append("'Picked' words: quote the person's own words about the pick, in quotation marks")
+    elif quoted and brief:
+        missing = [q for q in quoted if not in_brief(q, brief)]
+        if missing:
+            problems.append(f"'Picked' words: \"{missing[0][:60]}\" is not in the brief word for word: quote the "
+                            f"person, not a summary")
+    elif quoted:
+        notes.append("Picked words not checked against a brief (give --brief, or a 'Brief (who):' line)")
+    matches = parts.get("matches", "")
+    if matches and len(matches.split()) < PICK_MIN_WORDS:
+        problems.append(f"'Picked' matches: say in a sentence how their words fit what the still shows; when they "
+                        f"conflict, ask one question with the stills before building (w2580)")
+    if built:
+        beside = parts.get("beside", "")
+        if beside and not PICK_IMAGE.search(beside):
+            problems.append("'Picked' beside: name the still of the built result beside the picked still (one image, "
+                            "or two files)")
+    return problems, notes
+
+
 def balance_problems(body: str, files: list[str] | None) -> list[str]:
     """Enemy, combat or spawn numbers changed: a '## Balance' section with the stages run, the before/after table, the
     lane's flags and what became of the baselines, or 'No curve change: <why>' (w1440, checklists/balance.md)."""
@@ -1474,6 +1596,12 @@ def check(body: str, files: list[str] | None = None, brief: str | None = None,
         census_found, census_notes = census_problems(section, hidden_code)
         problems += census_found
         notes += census_notes
+
+    pick_brief = brief if brief is not None else brief_in_body(body)
+    if names_a_pick(pick_brief, section) or field(section, "Picked"):
+        pick_found, pick_notes = pick_problems(section, pick_brief, built=True, required=True)
+        problems += pick_found
+        notes += pick_notes
 
     if ui:
         ui_found, ui_notes = ui_problems(section, brief if brief is not None else brief_in_body(body))
@@ -1656,7 +1784,16 @@ def main(argv=None) -> int:
                                    "defect is gone or an effect happens names its close-up, and each file is beside it")
     ap.add_argument("--note-dir", help="--note: the folder its files are in (default: the note's own folder)")
     ap.add_argument("--questions", help="--note: write the claims as questions for the fresh critic to this file")
+    ap.add_argument("--pick", help="check a brief or first-step note before building (w2669): its 'Picked:' line names "
+                                   "the still, what it shows, the person's words and how they match (no 'beside:' yet)")
     args = ap.parse_args(argv)
+
+    if args.pick:
+        text = Path(args.pick).read_text(encoding="utf-8")
+        brief = Path(args.brief).read_text(encoding="utf-8") if args.brief else None
+        problems, notes = pick_problems(text, brief if brief is not None else text, built=False, required=True)
+        print(verdict_text(problems, notes))
+        return 1 if problems else 0
 
     if args.note:
         note = Path(args.note)

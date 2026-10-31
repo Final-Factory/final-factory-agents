@@ -196,6 +196,12 @@ in the built player (drive-game, "The mouse cursor in a built player"; w980).
    `heartbeat`), shoot, and write it beside the still; the noise floor is the same build twice, at the same heartbeats.
    A launch poll that answered late shot one leg minutes of game time after the other, and two identical fog paths
    differed by 46.7 against a floor of about 2 ([lesson](../lessons/visual-fixes-are-verified-by-looking.md#a-before-and-after-of-a-view-that-moves-with-game-time-is-shot-at-one-heartbeat-w2469)).
+5n. **The model or asset you change is the one in the person's still (w1323, w2669).** A screenshot or a picked concept
+   names a model by its picture, not by the brief's word for it: name what is visible in it (its shape, which prefab,
+   the `new-models` toggle state) and the asset path you matched it to, before changing anything. w1323 changed the
+   classic assembler prefabs when Ben's screenshot showed the new model ("what no, i was talking about updating the new
+   assembler model, not the old one lol"). The PR's `Picked:` line ([merge.md](merge.md)) carries the still, what it
+   shows and the built result beside it ([lesson](../lessons/research-the-decision-not-the-topic.md#build-the-pick-the-person-saw-its-still-checked-against-their-words-w1323-w2580-2026-10-31)).
 6. **`watch_video` and the blind model review are a second opinion.** They have passed clips
    that did not contain the event, and agreed with a mistake the brief described as intended.
    Quote them, and say where the frames contradict them.

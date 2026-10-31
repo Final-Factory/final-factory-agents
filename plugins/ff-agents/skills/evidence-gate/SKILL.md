@@ -319,6 +319,11 @@ One file each under `lessons/`: the rule, why (the incident, dated), how to appl
   and exclusive is only for exact timings or the whole machine.
 - [Research the decision, not the topic](lessons/research-the-decision-not-the-topic.md): the
   Reddit caps came from a topic survey; nobody asked what bid wins US auctions. Label every basis.
+- [Build the pick the person saw](lessons/research-the-decision-not-the-topic.md#build-the-pick-the-person-saw-its-still-checked-against-their-words-w1323-w2580-2026-10-31):
+  a pick is named by its still and what it shows, checked against the person's own words before building, and the
+  PR shows the build beside the picked still (`Picked:` line, `pr_evidence.py`; `--pick` before building). w1323
+  changed the classic assembler when Ben's screenshot showed the new one; w2580 built mock C's bottom-centre tiles
+  when Ben, whose C and D stills had not rendered, meant the bottom-left card his words described.
 - [Settle your own guesses](lessons/settle-your-own-guesses.md): Ben wants agents mostly
   autonomous; he confirms money, reserved actions and real forks, and is not a way out of research.
 - [Look early, by breakdown, against a written expectation](lessons/look-early-by-breakdown.md):
