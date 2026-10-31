@@ -104,6 +104,9 @@ jobs:
       - name: Descriptions reach the listing whole (w1479)
         run: python3 scripts/check_frontmatter.py && python3 -m unittest scripts/test_check_frontmatter.py -v
 
+      - name: registerAgents.sh checkout marker tests (w2655)
+        run: python3 -m unittest scripts/test_register_agents.py -v
+
       - name: Dead references
         run: |
           set -eu
