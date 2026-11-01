@@ -700,12 +700,25 @@ def reparent_target(block: str, old: dict, now: dict, same) -> str | None:
     return target
 
 
+TITLE_MENU = "PersistentObjects/Canvas/MainMenuPanel(Clone)/"
+
+
+def title_screen(census: dict) -> bool:
+    """w2799: every element is the title menu's (the Mods, Settings or New Game screen before a game): no game runs, so no
+    HUD is up and the structured dock does not exist, and the screen has one layout. A menu opened in a game lists the
+    HUD's elements beside it, so it is not taken for the title screen."""
+    elements = census["elements"]
+    return bool(elements) and all(e["path"].startswith(TITLE_MENU) for e in elements)
+
+
 def layout_of(census: dict) -> str:
     """'docked' when the structured layout's dock is on screen (w894: the Deck's default with a building selected, where
-    Station Info and the hover card were stacked top left and no check looked), else 'undocked'. A census may say it
-    itself with a "layout" key."""
+    Station Info and the hover card were stacked top left and no check looked), 'title' on the title screen (no game, no
+    dock, title_screen), else 'undocked'. A census may say it itself with a "layout" key."""
     if census.get("layout"):
         return str(census["layout"])
+    if title_screen(census):
+        return "title"
     docked = any("/StructuredDock/" in "/" + e["path"] + "/" or "/StructuredStation/" in "/" + e["path"] + "/"
                  for e in census["elements"])
     return "docked" if docked else "undocked"
@@ -809,6 +822,8 @@ def pin_check(census: dict, pin: dict) -> tuple[str, str]:
     clearOf      the element and the anchor overlap by at most 2 px either way (w2651: Crafting stops above Station
                  Info). The anchor not on screen: ok."""
     w, h = screen_size(census.get("screen"), [0, 0])
+    if title_screen(census):
+        return "title screen", "no game runs on the title screen, so no HUD element is up"
     skip = pin_applies(census, pin)
     if skip:
         return "not applied", skip
@@ -927,7 +942,7 @@ def pinned_lines(censuses: list[tuple[str, dict]], spec: dict, how: str) -> tupl
     """The `Pinned:` line and one line per broken or missing pin, and the number broken."""
     pins = spec.get("pins", [])
     states = [f"{int((c.get('screen') or [0, 0])[0])}x{int((c.get('screen') or [0, 0])[1])} {layout_of(c)}" for _, c in censuses]
-    broken, missing, covered, skipped, details = 0, 0, 0, 0, []
+    broken, missing, covered, skipped, title, details = 0, 0, 0, 0, 0, []
     verdicts = [[pin_check(census, pin) for pin in pins] for _, census in censuses]
     measured = {pin["name"] for row in verdicts for pin, (v, _) in zip(pins, row) if v in ("ok", "broken")}
     for (name, census), state, row in zip(censuses, states, verdicts):
@@ -936,6 +951,8 @@ def pinned_lines(censuses: list[tuple[str, dict]], spec: dict, how: str) -> tupl
                 verdict, what = "not shown", f"{what}; and no other census measures it"
             if verdict == "not applied":
                 skipped += 1
+            if verdict == "title screen":
+                title += 1
             if verdict == "covered":
                 covered += 1
                 details.append(f"  COVERED {state} ({name}): {pin['name']}: {what}")
@@ -952,6 +969,8 @@ def pinned_lines(censuses: list[tuple[str, dict]], spec: dict, how: str) -> tupl
     if skipped:
         hidden += (f", {skipped} not applied (their 'when': the layout, an element up or not, toggles on: "
                    f"{', '.join(toggles) or 'none'})")
+    if title:
+        hidden += f", {title} on the title screen (no game, so no HUD pin applies)"
     head = (f"Pinned: {len(pins)} pin(s) in {len(censuses)} census(es) ({', '.join(states)}): {broken} broken, {missing} "
             f"not shown{hidden} ({how}, hud-pins.json: {', '.join(p['name'] for p in pins)})")
     return [head] + details, broken

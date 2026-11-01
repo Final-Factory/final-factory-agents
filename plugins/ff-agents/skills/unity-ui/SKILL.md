@@ -128,6 +128,7 @@ census (`<shot>.json`: small, clipped, off-screen and overlapping text, covered 
 - **Every sub-view.** Per tab: select an item, hover one, open its preview or second page, scroll
   the list to the end (`at` + `press right_trigger`, `stick`). A tour that only presses R1 tests the
   tab strip.
+- **A title-screen window has no HUD and no dock (w2799).** A census whose elements are all the title menu's (`MainMenuPanel(Clone)`: Mods, Settings, New Game before a game) is layout `title`: `ui_layout.py pins` counts its pins "on the title screen", not "not shown", and `pr_evidence.py` takes `1280x800 title` for both 1280x800 layouts. Tour such a window at 1920x1080 / 0.9 and 1280x800 / 0.8; no station selection or docked leg applies.
 - **The pins census needs a building with storage selected (w1064).** `pr_evidence.py` has no way out of a `Pinned:` line that reads
   "not shown", and `ui_layout.py pins` shows the Player Inventory only when it is up. With the Atomic Printer selected, `ffauto:ui.open|inventory`
   failed ("toggle ran but the panel stayed closed"), the `I` key opened it in the docked layout only, and selecting a far Assembler selected

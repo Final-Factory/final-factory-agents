@@ -378,11 +378,11 @@ def opened_panel_problems(section: str, pairs: int) -> list[str]:
 
 
 # w826, w894: every element a UI change moved, as `ui_layout.py moves` lists it, asked for in the requester's words.
-MOVE_ENTRY = re.compile(r"^\s*[-*]\s+(\d{3,4}\s*x\s*\d{3,4})(?:\s+(undocked|docked))?\s+(.+?):\s", re.IGNORECASE)
+MOVE_ENTRY = re.compile(r"^\s*[-*]\s+(\d{3,4}\s*x\s*\d{3,4})(?:\s+(undocked|docked|title))?\s+(.+?):\s", re.IGNORECASE)
 ASKED = re.compile(r"\basked\s*\(([^)]+)\)\s*:\s*[\"“](.{8,}?)[\"”]", re.IGNORECASE)
 JUSTIFIED = re.compile(r"\bnot asked\s*:\s*justified\b", re.IGNORECASE)
 REVERTED = re.compile(r"\bnot asked\s*:\s*reverted\b", re.IGNORECASE)
-STATE = re.compile(r"\b(\d{3,4})\s*x\s*(\d{3,4})(?:\s+(undocked|docked))?", re.IGNORECASE)
+STATE = re.compile(r"\b(\d{3,4})\s*x\s*(\d{3,4})(?:\s+(undocked|docked|title))?", re.IGNORECASE)
 # The screens every layout change is censused on (w894: the Deck's docked layout is where Station Info and the hover card
 # were stacked top left, and no census looked at it).
 REQUIRED_STATES = ("1920x1080", "1280x800 undocked", "1280x800 docked")
@@ -426,8 +426,11 @@ def states_of(text: str) -> set[str]:
 
 
 def missing_states(text: str) -> list[str]:
+    """The standard screens a line does not cover. A title-screen census (ui_layout.py prints `WxH title`: no game, so no
+    HUD and no dock, w2799) covers both layouts of its size: the Mods screen opens only there."""
     found = states_of(text)
-    return [want for want in REQUIRED_STATES if not any(f == want or f.startswith(want + " ") for f in found)]
+    return [want for want in REQUIRED_STATES
+            if not any(f == want or f.startswith(want + " ") or f == want.split()[0] + " title" for f in found)]
 
 
 OUTER = re.compile(r"\(was (-?\d+),(-?\d+) (\d+)x(\d+), now (-?\d+),(-?\d+) (\d+)x(\d+)\)")
