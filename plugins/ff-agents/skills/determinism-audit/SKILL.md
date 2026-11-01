@@ -65,6 +65,8 @@ client with `-ffAutomationAutoQuit true` and no `-ffAutomationPostConnectDelayMs
 reconnect loop rejoins the host's restarted run during that run's setup; both cost w2491 two host runs, and both were
 already written there (w2326, w2432).
 
+**A pair run of a pull request reads the PR's head before it builds, and again when its run ends** (w2697, 2026-10-31). w2697's brief named eef79f3285 for PR #2917; while the host's first run went, the head moved to 764a9b753d, which added b1b9d0b3f4, a change to `CometMoverSystem.cs` (simulation). A run at the brief's commit cannot cover that, so a second pair was built and run at the new head (both passed, 221/221 and 222/222 compared). Before the build, `git fetch origin <branch>` and compare its head with the brief's sha; after the run, fetch again, and when `git diff --stat <built> <head>` names simulation files, run again at the new head and tell the other legs its full sha with `message_pair`. The report names both commits and which one the verdict covers.
+
 **Before a client leg builds or joins, prove its machine reaches the host** (w2259, 2026-10-26): from the client's
 machine run `python scripts/nightly/reach.py @<host machine>` (a machine in the game repo's
 `scripts/nightly/lab_hosts.json`, e.g. `@m3`), or `reach.py <address> <address>` with the addresses the host leg posted.
