@@ -11,6 +11,7 @@ load-bearing for future runs even where the original defect is fixed.
 - ["Missing report(s)" is NOT a stuck editor](#missing-reports) (045)
 - [`run_build_multiplayer_audit.sh` on Windows: `--graphics`, a fresh `--label` per attempt](#build-audit-windows) (perf pass C; a clean run poisons it too, and FlowControl:TooSlow, w2298)
 - [Divergence triage: check command TIMING first](#command-timing) (042)
+- [Every join forks within a few heartbeats: an upgrade step re-ran on the joiner](#join-upgrade-rerun) (w2767)
 - [TestcaseFilter: targeted mode-3 investigation](#testcasefilter)
 - [Throttling the editor needs a holder](#fps-holder)
 - [Clone setup: FMOD symlink + wrong-dir traps](#clone-setup)
@@ -186,6 +187,29 @@ an unmerged branch, and on any suspected regression of that ordering.
 **the heartbeat each command actually fired at**. Compare that against the testcase's pump
 schedule before hunting a simulation bug. Tell-tale signature: identical stream lengths, and the
 same fingerprint sequence phase-shifted rather than genuinely different values.
+
+## Every join forks within a few heartbeats: an upgrade step re-ran on the joiner {#join-upgrade-rerun}
+
+**Symptom** (w2767, 2026-11-01): every join of one save forked at the same early heartbeat (8), on one
+fingerprint (containers), and the resync never cleared it (RecoveryFailed). The cause was one structure
+type's slots off by one between host and client: on a Singularity Power Station, host
+`[0:105x75, 4:105x7]` against client `[0:105x74, 4:105x8]`. A pending command in the host's live dump
+(`JunctionChainDetail cmds=[...]`) looked like the cause and was not: `InventoryCommand` is not saved,
+and the dump was taken mid-heartbeat.
+
+**Cause**: an upgrade step versioned above the running build (`Step1_0_0_30PowerStationFuelSlots` on a
+1.0.0.29 build) is still pending for the join snapshot that build writes, because `UpgradeChain.Applicable`
+is strict on the version. With `PostLoadRunsOnRemoteSnapshot` true (it was the default), the joiner ran
+the step again on the host's already upgraded world. A step that is not idempotent then forks the joiner
+alone; a resync re-serves the same snapshot, the step runs again, and recovery fails every time.
+
+**Check first**: grep both peers' Player.log for upgrade-step lines (`Upgrade Step`, a step's own log
+prefix such as `[Step1_0_0_30PowerStationFuelSlots] Gave N`). A step line in the client's log after it
+joins is the cause (here the client logged `Gave 30`, the host `Gave 159` at its own load).
+
+**Fixed** in FinalFactory PR #2956: the default is now false, and `UpgradeStepRemoteSnapshotTest` fails
+on any step that opts in to running on a join snapshot. Seeing this again means a step overrides it to
+true, or a load path that skips `UpgradeChain.PostLoadSteps(..., isHost)`.
 
 ## TestcaseFilter: targeted mode-3 investigation {#testcasefilter}
 
