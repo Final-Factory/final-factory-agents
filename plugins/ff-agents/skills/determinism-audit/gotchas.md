@@ -40,6 +40,7 @@ load-bearing for future runs even where the original defect is fixed.
 - [A Linux client leg on biscuit: build, headless launch, a scripted paste](#linux-client-leg) (w2133, w2326)
 - [A Linux host leg on biscuit: console commands and detector counts from a headless host](#linux-host-leg) (w2281)
 - [A host-only scenario with a remote client: pause on join, tower spawns, flow control](#host-scenario-remote-client) (w2586)
+- [A hand-launched built host: TargetClients counts the host, and turn the audit on](#hand-launched-host) (w2797)
 - [An editor pair with presentation checks: no Audit ids in the config, a healthy host, a client machine without bench rounds](#editor-pair-presentation) (w2399)
 - [An Oracle shop pair: host buys first, `near` is tier 1, price is derived](#oracle-shop-pair) (w2518)
 - [A save-and-reload pair: checkpoints are rolling windows, the client rejoins by itself](#save-reload-pair) (w2558)
@@ -797,6 +798,21 @@ w2281 (2026-10-26, the host of a biscuit-host, LothDesktop-client pair for PR #2
   build log while slot3's exclusive bench ticket held biscuit. Loop on `bench_queue.py status` until no exclusive
   holder shows, then build (the third try built in about 6 minutes). A bench warning that your player's ticket ends did
   not stop the running host that time, but the client leg had already quit on it: restart both fresh.
+
+## A hand-launched built host: TargetClients counts the host, and turn the audit on {#hand-launched-host}
+
+w2797 (2026-11-01, an m5 Mac host of a BEAST Windows client, PR #2989) launched its host with `player_slots.py launch`
+(not ffnightly) and lost one run to each of these:
+
+- **`-ffAutomationTargetClients` counts the host itself.** The default, 2, means the host plus one client
+  (`LocalMultiplayerAutomationBootstrap.cs` `connected >= _options.TargetClientCount`; the host's own connection makes
+  `connectedClients=1`). With `-ffAutomationTargetClients 1` the host logged `host-peers-connected: connectedClients=1`
+  and began its dwell at once, before any client joined. Leave the flag out, or pass 2 for one client.
+- **The host needs `-ffAutomationDeterminismAudit true -ffAutomationWriteReport true`** as well as the client. Without
+  them the host ran the whole dwell and then ended `report-error: The determinism audit is disabled.`, and refused
+  every `audit.write` checkpoint ("the audit is disabled").
+- Post HOST WAITING only after the log shows `waiting-host-peers-connected: connectedClients=1,target=2` following the
+  last `pre-connect-command-complete`. Run 3, with both flags fixed, compared 2000 shared heartbeats.
 
 ## A host-only scenario with a remote client: pause on join, tower spawns, flow control {#host-scenario-remote-client}
 
