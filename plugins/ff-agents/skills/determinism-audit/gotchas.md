@@ -731,6 +731,14 @@ w2133 (2026-10-25, the client of a LothDesktop-host pair for PR #2507) lost abou
     (heartbeat, epoch).
   - Checkpoints plus Player.log were about 1.3 GB raw. A zip of them was 268 MB, over publish_attachment's 200 MB;
     `XZ_OPT="-6 -T0" tar -cJf` made 7.5 MB.
+  - **A client with the host's heartbeat target loses its final report when the host quits first** (w2763,
+    2026-11-01, a BEAST client of an m5 host, PR #2950). Both peers ran `-ffAutomationPostConnectDelayHeartbeats 12000`
+    with `-ffAutomationAutoQuit true -ffAutomationOutlivePairBreak true`. The host reached 12000 first, wrote its report
+    and quit at 05:54:26Z; the client, at its heartbeat 11439, logged `ClosedByRemote`, fell to the menu and never
+    wrote `session-ended` or `report-written`. The minute checkpoints saved the run: the next `audit.write` (05:55,
+    sent from the menu) still held fingerprints 0..11439, the whole run. Give the client a lower heartbeat target than
+    the host (or have the host wait for the client's `report-written` before it quits), and keep the checkpoint loop
+    going one minute past the host's quit.
 
 ## A Linux host leg on biscuit: console commands and detector counts from a headless host {#linux-host-leg}
 
