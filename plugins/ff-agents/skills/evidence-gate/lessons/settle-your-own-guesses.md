@@ -490,3 +490,22 @@ stayed.
   Do it before the report, not after the person asks.
 - Keep a real fix that you found on the way; label it a contributing factor and carry on looking for
   the reported symptom.
+
+## Mod code: fetch the source through app-gherik before Steam Workshop or steamcmd (w2755, 2026-11-01)
+
+**Rule.** When a question needs a mod's code (a crash, hang or desync report with mods loaded, a mod compatibility
+question), list the GitHub App app-gherik's repositories and clone the mod's from there first:
+`GH_REPO=Gherik1/TowBot gh api installation/repositories --jq '.repositories[].full_name'`, then
+`git clone https://github.com/Gherik1/<Mod>.git "$TMPDIR/<mod>"`. The run's gh shim and git credential helper use the
+app's installation token by themselves; never print it. Only a mod that is not in the list goes to a Workshop folder or
+steamcmd, and the report says so.
+
+**Why.** w2753 (reading TowBot and StabilityMultiplier for unsafe memory writes behind the 0.50.0.114 crashes) blocked
+on another machine's worker downloading the Workshop items, while TowBot's source sat in a repository the portal could
+already reach. lothsahn (2026-11-01): "You can get the towbot mod from its repo using gherikappaccessor. Please update
+your skills so you can do this".
+
+**How to apply.** The recipe, matching a commit to the Workshop item (ModVersion in the code, the item's update date and
+tag from GetPublishedFileDetails; the GameVersion is not in the repo) and what to do without the app:
+project-memory [mod-source-through-app-gherik.md](../../project-memory/memories/mod-source-through-app-gherik.md).
+Read-only: nothing is pushed, opened or commented in the author's repositories.
