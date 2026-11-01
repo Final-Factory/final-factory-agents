@@ -1,5 +1,5 @@
 {
-  "about": "Where Ben placed HUD pieces himself (w894). ui_layout.py pins checks every census against these, whatever the pull request's parent looked like: a move an earlier PR made does not become the new normal. A pin changes only when the person asks, quoted in its 'who', through a harness PR. Rects are screen pixels from the top-left; fractions are of the screen's width (W) or height (H). A pin whose element is not on screen in a census is 'not shown' there: take the census with a station selected and the hover card up. A pin with 'coveredBy' that the game hides by design under a docked window (the hover card, w2185) is 'covered' there, not 'not shown', when another census of the run measures it.",
+  "about": "Where Ben placed HUD pieces himself (w894). ui_layout.py pins checks every census against these, whatever the pull request's parent looked like: a move an earlier PR made does not become the new normal. A pin changes only when the person asks, quoted in its 'who', through a harness PR. Rects are screen pixels from the top-left; fractions are of the screen's width (W) or height (H). A pin whose element is not on screen in a census is 'not shown' there: take the census with a station selected and the hover card up. A pin with 'coveredBy' that the game hides by design under a docked window (the hover card, w2185) is 'covered' there, not 'not shown', when another census of the run measures it. A pin with 'when' applies only where one of its alternatives holds (featureOn / featureOff: a toggle id in the census's \"features\", which DeckTour writes; layout; shown / notShown: an element on screen or not), else it is 'not applied' there (w2651: the inventory rail, toggle inventory-rail, has its own places).",
   "pins": [
     {
       "name": "Station Info",
@@ -24,7 +24,8 @@
       "maxGap": 0.06,
       "region": {"minBottom": 0.6, "minRight": 0.8},
       "coveredBy": {"layout": "docked", "window": "StructuredDock", "xMin": 0.8, "yMax": 0.71, "why": "the game hides the card while a docked window overlaps its place (HoverCardFit.Covered, w1544/w2072), so a docked census with a building selected never shows it there (w2185)"},
-      "where": "just above the minimap, bottom right, on every screen and layout; never in the panel cluster",
+      "when": [{"featureOff": "inventory-rail"}, {"layout": "docked"}, {"notShown": "InvAndCraft/InventoryPanel"}],
+      "where": "just above the minimap, bottom right, on every screen and layout; never in the panel cluster (with inventory-rail on and the rail up in the classic layout: left of the rail, the pin \"building hover card beside the rail\")",
       "who": [
         "Ben, 2026-10-10 (w895): \"I also noticed that the actual normal hover panel is up, you put it up in the fucking, you know, array of panels up on the top left. Don't do that, put it back over the minimap, stop moving panels around that I don't ask you to move around. It's driving me crazy.\"",
         "Ben, 2026-10-25 (w2072, the circuit source picker at 1280x800, Ben's name for this card): \"Keep the build: the picker moves off the grid window and the item card hides behind it.\""
@@ -36,9 +37,63 @@
       "names": ["player inventory", "inventory"],
       "rule": "offLeftEdge",
       "minLeft": 0.02,
+      "when": [{"featureOff": "inventory-rail"}, {"layout": "docked"}],
       "where": "never against the left edge of the screen (2 % of the width at least: 38 px at 1920, 26 px at 1280)",
       "who": [
         "Ben, 2026-10-10 (w895): \"I don't like the player inventory all the way up against the edge of the left side of the screen. I sent you screenshots of where I had it, where I said I liked it, so just keep it there.\""
+      ]
+    },
+    {
+      "name": "Player Inventory rail",
+      "element": "InvAndCraft/InventoryPanel",
+      "names": ["player inventory", "inventory", "inventory rail", "rail"],
+      "rule": "rightRail",
+      "maxRight": 0.04,
+      "maxTop": 0.12,
+      "when": [{"featureOn": "inventory-rail", "layout": "undocked"}],
+      "where": "with inventory-rail on in the classic layout: a column on the right under the top bar, at one place and one size whether the E key or a building opened it; its right edge 0 to 4 % of the width in from the screen's (the rail keeps 2 %, InventoryRail.Margin), its top in the top 12 % of the screen; on the Deck it stays wide, every slot showing",
+      "who": [
+        "Ben's note on w2651, 2026-10-31 20:51 UTC, his words: \"Build D, the right rail: a column on the right that never moves.\" The note goes on: \"Build D for real as one merged inventory window, behind a feature toggle.\"",
+        "Ben's note on w2651, 2026-11-01 05:17 UTC (his words: \"didnt i already talk to you about this above?\"): \"update the HUD pin rules to match, quoting that note ... keep the Deck rail wide, since his hard goal is the whole inventory visible for drag and drop\""
+      ]
+    },
+    {
+      "name": "building hover card beside the rail",
+      "element": "HoverDescription",
+      "names": ["hover panel", "hover card", "tooltip", "hover info", "item card"],
+      "rule": "leftOf",
+      "anchor": "InvAndCraft/InventoryPanel",
+      "maxGap": 0.03,
+      "when": [{"featureOn": "inventory-rail", "layout": "undocked", "shown": "InvAndCraft/InventoryPanel"}],
+      "where": "with inventory-rail on in the classic layout and the rail up: just left of the rail (0 to 3 % of the width between them; InventoryRail.Gap is 12 units); with the rail closed it stays over the minimap",
+      "who": [
+        "Ben's note on w2651, 2026-10-31 20:51 UTC, after his words \"Build D, the right rail: a column on the right that never moves.\": \"Fix the costs your report named: move the hover card to the left of the rail\""
+      ]
+    },
+    {
+      "name": "Crafting beside the rail",
+      "element": "InvAndCraft/UtilityPanel",
+      "names": ["crafting", "crafting window", "craft panel"],
+      "rule": "leftOf",
+      "anchor": "InvAndCraft/InventoryPanel",
+      "maxGap": 0.03,
+      "when": [{"featureOn": "inventory-rail", "layout": "undocked", "shown": "InvAndCraft/UtilityPanel"}],
+      "where": "with inventory-rail on in the classic layout: Crafting opens just left of the rail (0 to 3 % of the width between them)",
+      "who": [
+        "Ben's note on w2651, 2026-10-31 20:51 UTC, his words: \"Build D, the right rail: a column on the right that never moves.\" The note goes on: \"Move no other panel.\""
+      ]
+    },
+    {
+      "name": "Crafting above Station Info",
+      "element": "InvAndCraft/UtilityPanel",
+      "names": ["crafting", "crafting window", "craft panel"],
+      "rule": "clearOf",
+      "anchor": "BuildInfoPanel",
+      "when": [{"featureOn": "inventory-rail", "layout": "undocked", "shown": "InvAndCraft/UtilityPanel"}],
+      "where": "with inventory-rail on in the classic layout: Crafting stops above Station Info, its recipe list cut to whole rows, never over it (1280x800 at UI scale 0.9 included, as built in FinalFactory #2946)",
+      "who": [
+        "Ben's note on w2651, 2026-10-31 20:51 UTC, after his words \"Build D, the right rail: a column on the right that never moves.\": \"make Crafting stop above Station Info instead of hiding it\"",
+        "Ben's note on w2651, 2026-11-01 05:17 UTC (his words: \"didnt i already talk to you about this above?\"): \"keep Crafting stopping above Station Info at 1280x800 at UI scale 0.9, as built\""
       ]
     }
   ]

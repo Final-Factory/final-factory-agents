@@ -45,7 +45,9 @@ alpha, sprite and drawing order) taken before and after a change, same save, siz
 
   Pinned     every place Ben fixed himself (hud-pins.json: Station Info over the abilities, the building hover card over
              the minimap, the Player Inventory off the left edge), checked in the after census whatever the before one
-             showed, so an earlier PR's move never becomes the new normal (w894). A broken pin: FAIL.
+             showed, so an earlier PR's move never becomes the new normal (w894). A broken pin: FAIL. A pin with a
+             'when' applies only where it holds (a feature toggle on or off from the census's "features", a layout, an
+             element shown or not): the inventory rail's own places with inventory-rail on (w2651).
 
 It prints the `Overlaps:`, `Window overlaps:`, `Opened panels:`, `Covered text:`, `Alignment:`, `Style:`, `Pinned:` and `Moved:` lines the
 pull request carries (pr_evidence.py reads them) and exits 1 when any of the first six fails, 2 on bad input.
@@ -739,16 +741,57 @@ def moved_lines(results: list[dict], move_px: float, how: str) -> list[str]:
 # pins (w894)
 
 
+PIN_CONDITIONS = ("featureOn", "featureOff", "layout", "shown", "notShown")
+
+
+def pin_applies(census: dict, pin: dict) -> str | None:
+    """None when the pin applies to this census, else why not. A pin's `when` is a list of alternatives, any of which
+    makes it apply; each is a dict whose conditions all hold: featureOn / featureOff (a feature toggle id in the census's
+    "features", the toggles DeckTour's census found on; a census without the key had every toggle off), layout
+    ("docked" or "undocked", layout_of), shown / notShown (an element on screen or not). w2651: the inventory rail
+    (toggle inventory-rail) has its own places, and the places Ben fixed before it still hold with it off."""
+    alternatives = pin.get("when")
+    if not alternatives:
+        return None
+    features = set(census.get("features") or [])
+    for alt in alternatives:
+        unknown = set(alt) - set(PIN_CONDITIONS)
+        if unknown:
+            raise ValueError(f"hud-pins.json: {pin['name']}: unknown condition(s) {', '.join(sorted(unknown))}")
+        if "featureOn" in alt and alt["featureOn"] not in features:
+            continue
+        if "featureOff" in alt and alt["featureOff"] in features:
+            continue
+        if "layout" in alt and layout_of(census) != alt["layout"]:
+            continue
+        if "shown" in alt and find(census, alt["shown"]) is None:
+            continue
+        if "notShown" in alt and find(census, alt["notShown"]) is not None:
+            continue
+        return None
+    on = ", ".join(sorted(features)) or "none"
+    return f"its 'when' does not hold here ({layout_of(census)}, toggles on: {on})"
+
+
 def pin_check(census: dict, pin: dict) -> tuple[str, str]:
-    """('ok' | 'broken' | 'not shown' | 'covered', what was measured) for one pin of hud-pins.json in one census
-    ('covered': hidden by design, covered_by_window).
+    """('ok' | 'broken' | 'not shown' | 'covered' | 'not applied', what was measured) for one pin of hud-pins.json in one
+    census ('covered': hidden by design, covered_by_window; 'not applied': its `when` does not hold, pin_applies).
 
     above        the element's bottom edge at most maxGap x H above the anchor's top edge, not below it, and over it
                  (sharing some of its width). When the anchor is not on screen (the dock hides the ability row and the
                  minimap), the element stands in the anchor's own region instead (region: minBottom x H for its bottom
                  edge, its centre between centerXMin and centerXMax x W, or its right edge past minRight x W).
-    offLeftEdge  the element's left edge at least minLeft x W from the screen's left edge."""
+    offLeftEdge  the element's left edge at least minLeft x W from the screen's left edge.
+    rightRail    a column on the right (w2651): the element's right edge 0 to maxRight x W in from the screen's right
+                 edge, its top edge at most maxTop x H from the screen's top.
+    leftOf       the element stands left of the anchor: its right edge no further right than the anchor's left edge
+                 (2 px of slack), at most maxGap x W from it. The anchor not on screen: 'not shown'.
+    clearOf      the element and the anchor overlap by at most 2 px either way (w2651: Crafting stops above Station
+                 Info). The anchor not on screen: ok."""
     w, h = census.get("screen") or [0, 0]
+    skip = pin_applies(census, pin)
+    if skip:
+        return "not applied", skip
     r = find(census, pin["element"])
     if r is None:
         hidden = covered_by_window(census, pin)
@@ -761,6 +804,32 @@ def pin_check(census: dict, pin: dict) -> tuple[str, str]:
         if r[0] < need:
             return "broken", f"left edge at {r[0]:.0f} px, less than {need:.0f} px from the screen's edge ({at})"
         return "ok", f"left edge at {r[0]:.0f} px ({at})"
+    if pin["rule"] == "rightRail":
+        inset, problems = w - r[2], []
+        if inset < -2 or inset > pin["maxRight"] * w:
+            problems.append(f"right edge {inset:.0f} px in from the screen's (0 to {pin['maxRight'] * w:.0f})")
+        if r[1] > pin["maxTop"] * h:
+            problems.append(f"top edge at {r[1]:.0f} px, below {pin['maxTop'] * h:.0f}")
+        if problems:
+            return "broken", f"{'; '.join(problems)} ({at})"
+        return "ok", f"right edge {inset:.0f} px in, top at {r[1]:.0f} px ({at})"
+    if pin["rule"] in ("leftOf", "clearOf"):
+        anchor = find(census, pin["anchor"])
+        name = pin["anchor"].split("/")[-1]
+        if anchor is None:
+            if pin["rule"] == "clearOf":
+                return "ok", f"{name} not on screen ({at})"
+            return "not shown", f"{pin['anchor']} is not on screen"
+        if pin["rule"] == "clearOf":
+            ox = min(r[2], anchor[2]) - max(r[0], anchor[0])
+            oy = min(r[3], anchor[3]) - max(r[1], anchor[1])
+            if ox > 2 and oy > 2:
+                return "broken", f"over {name} by {ox:.0f} x {oy:.0f} px ({at})"
+            return "ok", f"clear of {name} ({at})"
+        gap = anchor[0] - r[2]
+        if gap < -2 or gap > pin["maxGap"] * w:
+            return "broken", f"right edge {gap:.0f} px left of {name}'s left edge (0 to {pin['maxGap'] * w:.0f}) ({at})"
+        return "ok", f"{gap:.0f} px left of {name} ({at})"
     if pin["rule"] != "above":
         raise ValueError(f"hud-pins.json: unknown rule {pin['rule']!r}")
     anchor = find(census, pin["anchor"])
@@ -807,13 +876,15 @@ def pinned_lines(censuses: list[tuple[str, dict]], spec: dict, how: str) -> tupl
     """The `Pinned:` line and one line per broken or missing pin, and the number broken."""
     pins = spec.get("pins", [])
     states = [f"{int((c.get('screen') or [0, 0])[0])}x{int((c.get('screen') or [0, 0])[1])} {layout_of(c)}" for _, c in censuses]
-    broken, missing, covered, details = 0, 0, 0, []
+    broken, missing, covered, skipped, details = 0, 0, 0, 0, []
     verdicts = [[pin_check(census, pin) for pin in pins] for _, census in censuses]
     measured = {pin["name"] for row in verdicts for pin, (v, _) in zip(pins, row) if v in ("ok", "broken")}
     for (name, census), state, row in zip(censuses, states, verdicts):
         for pin, (verdict, what) in zip(pins, row):
             if verdict == "covered" and pin["name"] not in measured:
                 verdict, what = "not shown", f"{what}; and no other census measures it"
+            if verdict == "not applied":
+                skipped += 1
             if verdict == "covered":
                 covered += 1
                 details.append(f"  COVERED {state} ({name}): {pin['name']}: {what}")
@@ -826,6 +897,10 @@ def pinned_lines(censuses: list[tuple[str, dict]], spec: dict, how: str) -> tupl
                 details.append(f"  NOT SHOWN {state} ({name}): {pin['name']}: take the census with it up"
                                + (f" ({what})" if "no other census" in what else ""))
     hidden = f", {covered} covered by a docked window by design" if covered else ""
+    toggles = sorted({t for _, c in censuses for t in (c.get("features") or [])})
+    if skipped:
+        hidden += (f", {skipped} not applied (their 'when': the layout, an element up or not, toggles on: "
+                   f"{', '.join(toggles) or 'none'})")
     head = (f"Pinned: {len(pins)} pin(s) in {len(censuses)} census(es) ({', '.join(states)}): {broken} broken, {missing} "
             f"not shown{hidden} ({how}, hud-pins.json: {', '.join(p['name'] for p in pins)})")
     return [head] + details, broken
