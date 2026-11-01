@@ -723,6 +723,12 @@ w2133 (2026-10-25, the client of a LothDesktop-host pair for PR #2507) lost abou
   - `ffauto:audit.write|<label>-<HHMM>` checkpoints on both peers at every whole UTC minute saved the comparison:
     the merged checkpoints compared 3938 shared heartbeats. Start the loop from the client's `status dwell-started`.
   - `player_slots.py launch --detach` prints a `player slot ...` line before its JSON, so parse only the last line.
+  - Give a Windows client its own `-logFile "$TMPDIR/<leg>/client.log"` (w2724, 2026-11-01, a BEAST client of an m5
+    host). Without it the player writes the shared `AppData/LocalLow/Never Games/finalfactory/Player.log`, and other
+    sandboxes' players on BEAST (SoloAutomation runs) started and overwrote it twice within 10 minutes: the client's
+    join, dwell and `report-written` lines were gone, and an until-loop on `report-written` matched another player's
+    log. The live state was still readable with `python scripts/agent/peer.py <label> get client v1/snapshot/session`
+    (heartbeat, epoch).
   - Checkpoints plus Player.log were about 1.3 GB raw. A zip of them was 268 MB, over publish_attachment's 200 MB;
     `XZ_OPT="-6 -T0" tar -cJf` made 7.5 MB.
 
