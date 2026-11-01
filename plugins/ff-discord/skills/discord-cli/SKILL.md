@@ -64,7 +64,7 @@ straight out of the file. Only an unambiguous single match is remembered.
 | `edit`, `react` | Amend one of the bot's own messages; add a reaction, or take one back off with `react <channel> <id> 👀 --remove`. Removing one that is already gone is a no-op, not an error. |
 | `thread-create <channel> <message_id>` | Open a thread on an existing message. |
 | `rename <thread_id> <name>` | Rename a thread (trimmed to 100). Discord refuses any edit to an archived thread except unarchiving it, so an archived thread is renamed in the request that unarchives it and archived again straight after — it ends as open or as archived as it started. `--dry-run` shows the old and new names. The bot can rename threads it opened; anybody else's needs MANAGE_THREADS. |
-| `close <thread_id>` | (Never in FFBox's channels, for an agent: see below.) Archive a thread. The soft close: anybody who replies brings it straight back, which is why an agent is allowed to do it unattended. It never locks, so a reporter whose bug is still there reopens their own thread by answering. Archiving an already-archived thread is a no-op, not an error. Needs MANAGE_THREADS wherever the bot did not open the thread itself, which includes the bug_reports forum. |
+| `close <thread_id>` | (Never in FFBox's channels, for an agent: there a person's orchestrator asks FFBox, `close_bug_threads`; see below.) Archive a thread. The soft close: anybody who replies brings it straight back, which is why an agent is allowed to do it unattended. It never locks, so a reporter whose bug is still there reopens their own thread by answering. Archiving an already-archived thread is a no-op, not an error. Needs MANAGE_THREADS wherever the bot did not open the thread itself, which includes the bug_reports forum. |
 | `download <channel> <message_id> --dir <path>` | Pull a message's attachments. Bug reports carry a runtime log and a save zip. Needs the bot token, which lives only on FFBox and the machines that have the config (Ben, 2026-10-09: "no discord token on beast, max has to live in ffbox for security reasons"): on any other computer an FF Factory worker uses `mcp__machine__fetch_discord_thread_files` instead (below). |
 | `ask <target>` | Post a question to `ben`, `lothsahn`, or both in `#dev-chat`, attributed to this machine's operator. |
 | `unseen <channel> --key <k>` | New messages or threads since the stored cursor. The entry point for every loop. |
@@ -125,6 +125,12 @@ report back on the thread." So:
 - **A word to a reporter goes through FFBox** (w1640): asking for a save, an answer they wait
   for. Post it through FFBox when the work calls for it (lothsahn, 2026-10-20, w1640: "you or workers should be able to post direct to discord by asking ffbox to do it on your behalf through the tunnel, and it will post what you say"): `mcp__machine__post_as_max` with channel `conversation` and the thread (a worker or an orchestrator), or an orchestrator's `reply_to_ffbox`. FFBox keeps its secret scan and its ban on mentions, and refuses a
   "fixed" or "merged" text in a thread it already told. Never a "fixed" notice of your own.
+- **A close goes through FFBox too, and only from a person's orchestrator** (w2670; lothsahn, 2026-10-31: "I would
+  like to be able to ask you to scan all the open bug reports and close ones that are done, or to close specific ones
+  I ask for"). `open_bug_threads` lists the open threads judged against the ledger (done, not done, unclear);
+  `close_bug_threads` has FFBox archive the ones the person named or confirmed from that list, as Max, never a lock
+  and never before FFBox's own merge notice. A worker never closes one; it names the thread in its report. Test a close
+  only in agent_testing (`post_as_max` with `new_thread` makes a thread there), never on a player's thread.
 - **If you fixed a bug from a thread**, add one line per thread to your PR description, exactly
   `Discord: https://discord.com/channels/<guild id>/<thread id>`. The refusal prints the line.
 - **Work on an `ffbox/*` branch is FFBox's to announce**, in whichever channel it watches
