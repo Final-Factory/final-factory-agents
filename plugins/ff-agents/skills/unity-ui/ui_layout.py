@@ -872,11 +872,36 @@ def covered_by_window(census: dict, pin: dict) -> str | None:
     if not rule or layout_of(census) != rule["layout"]:
         return None
     w, h = census.get("screen") or [0, 0]
+    if rule.get("beside"):
+        return covered_beside(census, rule, w)
     window = find(census, rule["window"])
     if window is None or window[2] <= rule["xMin"] * w or window[1] >= rule["yMax"] * h:
         return None
     return (f"under the docked window at {round(window[0])},{round(window[1])} {round(window[2] - window[0])}x"
             f"{round(window[3] - window[1])}, by design: {rule['why']}")
+
+
+def covered_beside(census: dict, rule: dict, w: float) -> str | None:
+    """w2651, the classic layout with the inventory rail up: the card stands just left of the rail (`beside`), in a band
+    `width` x W wide, and the game hides it while an open window overlaps it (HoverCardFit.HideUnderAWindow, w1544), so
+    a census with Crafting or a building's window beside the rail does not show it. Covered when a window matching one
+    of `windows` (openedPanels-style globs, "*EntityPanel" for every structure panel) reaches into that band."""
+    rail = find(census, rule["beside"])
+    if rail is None:
+        return None
+    lo, hi = rail[0] - rule["width"] * w, rail[0]
+    groups: dict[str, list] = {}
+    for e in census["elements"]:
+        prefix = opened_prefix(e["path"], rule["windows"])
+        r = e.get("visible") or e["rect"]
+        if prefix and area(r) > 0:
+            groups.setdefault(prefix, []).append(r)
+    for prefix, rects in sorted(groups.items()):
+        r = union(rects)
+        if r[2] > lo + 2 and r[0] < hi - 2:
+            return (f"under {prefix.split('/')[-1]} at {round(r[0])},{round(r[1])} {round(r[2] - r[0])}x"
+                    f"{round(r[3] - r[1])}, beside {rule['beside'].split('/')[-1]}, by design: {rule['why']}")
+    return None
 
 
 def pinned_lines(censuses: list[tuple[str, dict]], spec: dict, how: str) -> tuple[list[str], int]:
@@ -903,7 +928,7 @@ def pinned_lines(censuses: list[tuple[str, dict]], spec: dict, how: str) -> tupl
                 missing += 1
                 details.append(f"  NOT SHOWN {state} ({name}): {pin['name']}: take the census with it up"
                                + (f" ({what})" if "no other census" in what else ""))
-    hidden = f", {covered} covered by a docked window by design" if covered else ""
+    hidden = f", {covered} covered by a window by design" if covered else ""
     toggles = sorted({t for _, c in censuses for t in (c.get("features") or [])})
     if skipped:
         hidden += (f", {skipped} not applied (their 'when': the layout, an element up or not, toggles on: "

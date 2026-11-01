@@ -66,6 +66,7 @@
       "rule": "leftOf",
       "anchor": "InvAndCraft/InventoryPanel",
       "maxGap": 0.03,
+      "coveredBy": {"layout": "undocked", "beside": "InvAndCraft/InventoryPanel", "width": 0.15, "windows": ["InvAndCraft/UtilityPanel", "*EntityPanel"], "why": "the game hides the card while an open window overlaps it (HoverCardFit.HideUnderAWindow, w1544), and Crafting and a building's window open beside the rail, over the card's columns; a short card stands under a building's window when it fits there (w2651)"},
       "when": [{"featureOn": "inventory-rail", "layout": "undocked", "shown": "InvAndCraft/InventoryPanel"}],
       "where": "with inventory-rail on in the classic layout and the rail up: just left of the rail (0 to 3 % of the width between them; InventoryRail.Gap is 12 units); with the rail closed it stays over the minimap",
       "who": [
