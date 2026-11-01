@@ -763,6 +763,18 @@ w2133 (2026-10-25, the client of a LothDesktop-host pair for PR #2507) lost abou
     sent from the menu) still held fingerprints 0..11439, the whole run. Give the client a lower heartbeat target than
     the host (or have the host wait for the client's `report-written` before it quits), and keep the checkpoint loop
     going one minute past the host's quit.
+  - **A Mac host for a desync pair runs headless, with `transform` off too** (w2793, 2026-11-01, an ffnightly host-only
+    scenario on m5 with a LothDesktop client, PR #2981):
+    - With `"windowed": true` the host hung at `waiting-title-menu` while the Mac's display slept. The HangWatchdog
+      report put the main thread in `GfxDeviceMetal::WaitForLastPresentationAndGetTimestamp`. Drop `windowed`.
+    - The headless host's `transform` presentation invariant ended a small FlatMap new game after about 1,500
+      heartbeats, not only a big save. The player was drawn 7.81 u from its simulation position at 0 u/s, against a
+      6 u bound. The client was dropped (`ClosedByRemote`). Put `"transform"` beside `"ups"` in `invariantsOff`.
+    - `compare_audit_records.py` prints `hit its sample cap` whenever a VerificationOverflow record exists. With
+      `omitted=0` nothing was dropped, so read `omitted` before you call the window short.
+    - The client's Player.log `[DeterminismAudit][Heartbeat N][Epoch E][client] DeterminismFingerprintSystem ->
+      Fingerprint ... details=` lines, paired with the host's `host.log` on (epoch, heartbeat), cover the tail past the
+      last checkpoint. Typed checkpoints compared 13,291 heartbeats and the text lines 13,344.
 
 ## A Linux host leg on biscuit: console commands and detector counts from a headless host {#linux-host-leg}
 
