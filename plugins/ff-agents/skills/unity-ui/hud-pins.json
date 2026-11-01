@@ -49,9 +49,11 @@
       "names": ["player inventory", "inventory", "inventory rail", "rail"],
       "rule": "rightRail",
       "maxRight": 0.04,
+      "under": "GamePanels/TopInfoPanel",
+      "maxBelow": 0.05,
       "maxTop": 0.12,
       "when": [{"featureOn": "inventory-rail", "layout": "undocked"}],
-      "where": "with inventory-rail on in the classic layout: a column on the right under the top bar, at one place and one size whether the E key or a building opened it; its right edge 0 to 4 % of the width in from the screen's (the rail keeps 2 %, InventoryRail.Margin), its top in the top 12 % of the screen; on the Deck it stays wide, every slot showing",
+      "where": "with inventory-rail on in the classic layout: a column on the right under the top bar, at one place and one size whether the E key or a building opened it; its right edge 0 to 4 % of the width in from the screen's (the rail keeps 2 %, InventoryRail.Margin), its top 0 to 5 % of the height under the top bar's bottom edge (InventoryRail.BelowTopBar is 16 units: 21 px at 1728x917, measured; with no top bar on screen, its top in the top 12 %); on the Deck it stays wide, every slot showing",
       "who": [
         "Ben's note on w2651, 2026-10-31 20:51 UTC, his words: \"Build D, the right rail: a column on the right that never moves.\" The note goes on: \"Build D for real as one merged inventory window, behind a feature toggle.\"",
         "Ben's note on w2651, 2026-11-01 05:17 UTC (his words: \"didnt i already talk to you about this above?\"): \"update the HUD pin rules to match, quoting that note ... keep the Deck rail wide, since his hard goal is the whole inventory visible for drag and drop\""

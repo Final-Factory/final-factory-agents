@@ -783,7 +783,8 @@ def pin_check(census: dict, pin: dict) -> tuple[str, str]:
                  edge, its centre between centerXMin and centerXMax x W, or its right edge past minRight x W).
     offLeftEdge  the element's left edge at least minLeft x W from the screen's left edge.
     rightRail    a column on the right (w2651): the element's right edge 0 to maxRight x W in from the screen's right
-                 edge, its top edge at most maxTop x H from the screen's top.
+                 edge, and its top edge under the bar `under` (the top bar): 0 to maxBelow x H below that bar's bottom
+                 edge. With no such bar on screen, its top edge at most maxTop x H from the screen's top.
     leftOf       the element stands left of the anchor: its right edge no further right than the anchor's left edge
                  (2 px of slack), at most maxGap x W from it. The anchor not on screen: 'not shown'.
     clearOf      the element and the anchor overlap by at most 2 px either way (w2651: Crafting stops above Station
@@ -808,7 +809,13 @@ def pin_check(census: dict, pin: dict) -> tuple[str, str]:
         inset, problems = w - r[2], []
         if inset < -2 or inset > pin["maxRight"] * w:
             problems.append(f"right edge {inset:.0f} px in from the screen's (0 to {pin['maxRight'] * w:.0f})")
-        if r[1] > pin["maxTop"] * h:
+        bar = find(census, pin["under"]) if pin.get("under") else None
+        if bar is not None:
+            below = r[1] - bar[3]
+            if below < -2 or below > pin["maxBelow"] * h:
+                problems.append(f"top edge {below:.0f} px below {pin['under'].split('/')[-1]}'s bottom edge "
+                                f"(0 to {pin['maxBelow'] * h:.0f})")
+        elif r[1] > pin["maxTop"] * h:
             problems.append(f"top edge at {r[1]:.0f} px, below {pin['maxTop'] * h:.0f}")
         if problems:
             return "broken", f"{'; '.join(problems)} ({at})"
