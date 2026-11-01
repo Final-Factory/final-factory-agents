@@ -44,6 +44,17 @@ reconnecting"). The desktop app goes offline, and a game running from it loses S
 Steam. Quitting the desktop app first no longer buys anything, so **do not quit it**; warn Ben if he is
 playing, and tell him to restart Steam afterwards.
 
+Restoring it yourself (w2754, m5, 2026-10-31, measured): read the state first from
+`~/Library/Application Support/Steam/logs/connection_log.txt` (online: `[Logged On ...] [U:1:<id>]
+RecvMsgClientLogOnResponse() : processing complete`; offline: `Logged Off ... StartAutoReconnect`), and
+after the steamcmd run restart the desktop app with a **clean environment**:
+`osascript -e 'quit app "Steam"'` (it prints "User canceled (-128)" yet quits), then
+`env -i HOME="$HOME" USER="$USER" LOGNAME="$USER" SHELL=/bin/zsh PATH=/usr/bin:/bin:/usr/sbin:/sbin LANG=en_US.UTF-8 /usr/bin/open -a Steam`.
+A plain `open -a Steam` from a worker's shell hands Steam the whole session env (FF_SESSION_ID, the
+messaging token, FF_GH_APP_FILE): `ff-leftovers list` then counts Steam as the worker's, and FF Factory
+ends it minutes after the worker stops. Check `ff-leftovers list` no longer shows it, `ps eww -o command= -p
+<steam_osx pid>` carries no `FF_`/`CLAUDE` vars, and the log shows a new `processing complete` logon.
+
 Rules: always `+login slims20` with **no password argument**. Never store the password in a file,
 script, env var or keychain. Only when steamcmd prints `Cached credentials not found` (token rejected
 or expired) does Ben type the password and approve Steam Guard, at steamcmd's own prompt.
