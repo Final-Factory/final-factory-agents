@@ -66,6 +66,12 @@ branch moves before you trigger, re-read the new commits and add them.
   restart lines name a branch, and only a Steam one. `scripts/release_notes_lint.py` (game repo) fails on these
   terms; sections 3 and 4 show when to run it. Fold
   developer diagnostics (desync-report detail and the like) into one short bullet at most.
+- **No "Fixed:" or "Added:" on a line; its heading already says it** (Ben, 2026-11-01, w2787, about 1.0 Build 30's
+  "* Fixed: ..." lines: "in the patch notes you dont have to write Fixed: for every fix. they are already in the fixes
+  category lol"). A line under **Fixes:**, **Improvements:**, **Features:** or **Balance:** starts with the thing
+  itself: "* A Comet Catcher on a station that took off never caught again", not "* Fixed: a Comet Catcher ...".
+  `scripts/release_notes_lint.py` (game repo, PR #2973) fails a bullet that starts with Fixed, Fix, Added, New,
+  Changed, Improved, Balance or Removed and a colon.
 - **Only what a release player can get** (Ben, 2026-10-13, w1242, about Build 104's draft line "Mobile stations
   take their bots and barges with them" (w243, PR #1666): "Isnt this behind a feature toggle?"). A release
   player of a 0.50 build (pre-1.0 hotfixes) has every feature toggle off; one of a 1.0 build (master from 1.0.0.0,
