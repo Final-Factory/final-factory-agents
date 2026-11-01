@@ -301,7 +301,7 @@ def window_rects(census: dict, patterns: list[str] | None = None) -> list[tuple[
     *Dialog*/*Modal*/*Popup*), the box around its drawn Images (a full-screen dimmer behind a dialog left out)."""
     if patterns is None:
         patterns = ul.opened_patterns(json.loads(ul.DEFAULT_CLUSTERS.read_text(encoding="utf-8")))
-    sw, sh = (census.get("screen") or [1920, 1080])[:2]
+    sw, sh = ul.screen_size(census.get("screen"), [1920, 1080])
     boxes: dict[str, list[float]] = {}
     for e in census.get("elements", []):
         if e.get("kind") not in ("Image", "RawImage") or e.get("maskOnly") or e.get("alpha", 1.0) < 0.2:
@@ -648,7 +648,7 @@ def parse_rect(text: str) -> list[float]:
 def panel_rects(census: dict) -> list[list[float]]:
     """With no opened window in a census: every drawn panel (an Image over 2 % of the screen, alpha 0.5 or more, under 60 %
     of it), so a full-screen menu is checked and the game world behind the HUD is not."""
-    sw, sh = (census.get("screen") or [1920, 1080])[:2]
+    sw, sh = ul.screen_size(census.get("screen"), [1920, 1080])
     out = []
     for e in census.get("elements", []):
         if e.get("kind") != "Image" or e.get("maskOnly") or e.get("alpha", 1.0) < 0.5 or any(i in e["path"] for i in ul.IGNORE):
@@ -681,7 +681,7 @@ def judge(still: Still, census: dict | None, rects: list, label: str, same: list
     if not rects and census is None:
         rects = [[0, 0, still.width, still.height]]
         measured["whole"] = True
-    screen = census.get("screen") if census else None
+    screen = ul.screen_size(census.get("screen")) if census else None
     screen_px = float(screen[0] * screen[1]) if screen else float(still.width * still.height)
     loud = [dict(f, label=label) for f in loud_fills(still, rects, screen_px)] if rects else []
     if census:
@@ -954,7 +954,7 @@ def _is_shape(e: dict) -> bool:
 def window_family(still: Still, census: dict, prefix: str) -> dict:
     """One window measured for the family check: its header (font size, lines, gap to the top), the gap from its content
     (texts and controls) to each edge, and the corner radius of every drawn shape in it, read off the pixels."""
-    sw, sh = (census.get("screen") or [still.width, still.height])[:2]
+    sw, sh = ul.screen_size(census.get("screen"), [still.width, still.height])
     members = [e for e in census.get("elements", [])
                if (e["path"] == prefix or e["path"].startswith(prefix + "/")) and not e.get("maskOnly")
                and e.get("alpha", 1.0) >= 0.2 and not any(i in e["path"] for i in ul.IGNORE)

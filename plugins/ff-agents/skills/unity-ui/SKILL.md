@@ -66,7 +66,9 @@ The game repo's Deck tour (`Assets/Scripts/Diagnostics/DeckTour.cs`; `docs/UI-Ar
 with a scripted Deck: `-ffDeckTour <steps.json> -ffDeckTourOut <dir> -ffDeckTourSize 1280x800
 [-ffDeckTourUiScale <s>] [-ffDeckTourQuit]`, launched from the slot pool
 (`python scripts/nightly/player_slots.py launch <build> -- <args>`). Each `shot` saves a PNG and a
-census (`<shot>.json`: small, clipped, off-screen and overlapping text, covered controls).
+census (`<shot>.json`: small, clipped, off-screen and overlapping text, covered controls). Its `"screen"` is a
+`"WxH"` string where the layout census has a `[w, h]` pair; the scripts read both through `ui_layout.screen_size` (w2799:
+`ui_look.py colour` and `pack` crashed on the string), so a new script reads `"screen"` through it too.
 
 **Not beside another worker's timed run** (w1750, lothsahn: "Why is the game player running if the worker has an exclusive lock on beast?"): while another worker holds the machine's bench lock for a timed run, `player_slots.py launch` (every launch path), `record_clip` and FF Factory's shell guard refuse a player or a clip there, with `bench lock held by worker <id> (...), until HH:MMZ`. Move the work to another machine, or wait: `--bench-wait <s>` (or `FF_BENCH_WAIT_S`) waits up to that long and starts when the hold ends. Your own timed run's players pass. `python scripts/bench/bench_queue.py status` shows the queue; the game repo's `Documentation/Bench-Lock.md`, "No players or clips beside a timed run".
 
