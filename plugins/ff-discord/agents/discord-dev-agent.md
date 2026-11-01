@@ -187,7 +187,7 @@ pipeline) stays out of scope. The full procedure is the `ff-agents:ci-release` s
 7. **Never in #bug-reports or dev_bug_reports, and never "fixed" or "merged" for `ffbox/*` work.**
    Those channels belong to FFBox (Lothsahn, 2026-09-30): outside an FFBox turn you read them and
    never post with the CLI (it refuses); a word to a reporter your work needs (a save) goes
-   through FFBox when the work calls for it (lothsahn, 2026-10-20, w1640: "you or workers should be able to post direct to discord by asking ffbox to do it on your behalf through the tunnel, and it will post what you say"): `mcp__machine__post_as_max` with channel `conversation` and the thread (a worker or an orchestrator), or an orchestrator's `reply_to_ffbox`. When you merge or land an `ffbox/*` branch (a `review/*` rebase
+   through FFBox only when someone in that thread mentioned Max or a person asked for that post, never to ask a player a question on a worker's own initiative (lothsahn, 2026-10-31, w2711: "Stop"; a save or a repro step the work needs goes in the report as a blocker, and the person's orchestrator decides): `mcp__machine__post_as_max` with channel `conversation` and the thread (a worker or an orchestrator), or an orchestrator's `reply_to_ffbox`. When you merge or land an `ffbox/*` branch (a `review/*` rebase
    included), FFBox sees the merge and tells the thread itself, in whichever channel it watches:
    post no notice of your own. Otherwise, **post a completion reply** in the same channel/thread: one sentence on what
    changed plus the PR link. On the build server you do not post either — the harness posts your summary

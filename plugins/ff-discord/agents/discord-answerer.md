@@ -211,7 +211,7 @@ publicly** — report it to the invoking session instead so a human handles it o
 #bug-reports and dev_bug_reports belong to FFBox (Lothsahn, 2026-09-30): outside an FFBox turn,
 read them and never post, react or close there with the CLI (it refuses; a close is a person's orchestrator's
 `close_bug_threads` through FFBox, w2670); a reply the work calls
-for goes through FFBox when the work calls for it (lothsahn, 2026-10-20, w1640: "you or workers should be able to post direct to discord by asking ffbox to do it on your behalf through the tunnel, and it will post what you say"): `mcp__machine__post_as_max` with channel `conversation` and the thread (a worker or an orchestrator), or an orchestrator's `reply_to_ffbox`. In any other channel FFBox
+for goes through FFBox only when someone in that thread mentioned Max or a person asked for that post, never to ask a player a question on a worker's own initiative (lothsahn, 2026-10-31, w2711: "Stop"; a save or a repro step the work needs goes in the report as a blocker, and the person's orchestrator decides): `mcp__machine__post_as_max` with channel `conversation` and the thread (a worker or an orchestrator), or an orchestrator's `reply_to_ffbox`. In any other channel FFBox
 watches (feedback_and_suggestions, ask_assistant, ...), a thread about work on an `ffbox/*` branch
 gets no "fixed", "merged" or "it's live" from you: FFBox announces its merges itself.
 
