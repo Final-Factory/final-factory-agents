@@ -133,6 +133,20 @@ To check the text signed out, open the link in a fresh Chrome profile with `--re
 `document.body.innerText` of the **iframe** target (`*.frame.claudeusercontent.com`): the page target holds only the
 82-character header with "Sign in". Script: `vchk2.py` in the w1295 review folder.
 
+**A locked screen blocks the republish; check it first (w2764, 2026-11-01, m5).** Before the Safari steps, run
+`ioreg -n Root -d1 -a | grep -A1 CGSSessionScreenIsLocked`. While it says `<true/>`, `orca computer get-app-state` on
+Safari answers `permission_denied` ("AX reads blocked") and the window captures blank, so retrying wastes calls. Declare
+`waiting_on_person` for Ben to unlock the m5 (or press Publish himself) instead. Once he had unlocked it, the route above
+worked in one pass with no reload needed: Share at the toolbar, the "Publish as artifact" row by coordinates (the click
+without `--restore-window` worked this time), "Publish to web" in the preview dialog, the toast, and the same link
+updated in place.
+
+**Check content in the iframe's outerHTML, not innerText (w2764).** A section inside a closed `<details>` is missing
+from `innerText`, so a check for its text reports "old copy" on a fresh one, or "new" never. Evaluate
+`document.documentElement.outerHTML` in the `*.frame.claudeusercontent.com` target and test for a string only the new
+revision has and one only the old has. And a report saying "overwritten in place, so the link shows the current
+revision" after a DesignSync write alone is wrong until such a check says so (w2667's link served the old text).
+
 **A first publish of a new doc, end to end (w1477, 2026-10-20, m5).**
 - `orca computer paste-text` into the Blank template's prompt box also attached whatever image sat on the clipboard
   (a `pasted-<n>.png` thumbnail beside the Design system button). Read the tree before Send and click its
