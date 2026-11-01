@@ -115,6 +115,10 @@ def load(path: str | Path) -> dict:
     text = p.read_text(encoding="utf-8", errors="replace")
     if text.lstrip().startswith("{"):
         data = json.loads(text)
+        if "elements" not in data and "cards" in data:
+            # w2691: the tour's <screen>.json check report gave a bare "too many values to unpack (expected 2)".
+            raise SystemExit(f"ui_layout: {p.name} is a tour check report, not a census: pass the "
+                             f"{p.stem}.layout.json beside it")
         data.setdefault("elements", [])
         return data
     elements, screen = [], None

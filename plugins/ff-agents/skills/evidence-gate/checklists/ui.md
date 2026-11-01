@@ -117,7 +117,8 @@ The census recipe and `ui_layout.py` are in the `unity-ui` skill, `layout-census
     flyouts, the Station panel, the hub. It is not an overlap failure, but the `Opened panels:` line
     must show it on top (0 under the HUD), clickable (0 not clickable: nothing under it catches the
     clicks), inside the screen (0 cut off) and the HUD back after closing (`--closed`, "HUD restored
-    on close: yes"). What still fails: overlaps between always-on HUD blocks (hotbar and minimap
+    on close: yes"). A tour census of the same screen with the panel shut serves as `--closed` (w2691: the `held` census
+    beside `heldstation`, with `--closed-before` the before tour's; say which census it was). What still fails: overlaps between always-on HUD blocks (hotbar and minimap
     buttons, ability row and hotbar, Objectives and minimap), a panel drawn under the HUD or cut off
     by the screen edge, drift (item 12) and colour (item 13). What counts as opened is
     `hud-clusters.json` `openedPanels`: add a window only when the player opens and closes it, never
@@ -143,6 +144,11 @@ The census recipe and `ui_layout.py` are in the `unity-ui` skill, `layout-census
     panel and art, read delta E 6.1 against itself on master at 1280x800 because the new switch's white label sits inside its
     rect. Mask the new control's strip and measure the rest (w1386: 0.0 to 0.2 with the strip masked, 0.9 to 1.1 whole, a
     plain mean Lab over the rect from the census `rect`), and paste both numbers with the cause.
+    **A text-only element** (a HUD banner line with no fill: `--touched` finds no panel, "no --touched panel is open"):
+    compare its census `color`, `alpha` and `fontSize` before and after, and against the banner it sits among, and write
+    them as delta E and alpha (w2691: `#FFD37CFF` both, delta E 0.0, alpha 1.00 vs 1.00). The on-screen sampler reads the
+    world behind such text, not the text. `ui_layout.py check` also misses text growing over other HUD text inside an
+    unchanged element rect (w2691: a second line reached into Station Info's header): look at the stills' glyphs there.
 14. **The released checks.** A session loads its plugins when it starts. Before you merge, run the
     released `pr_evidence.py`; its verdict names its version and fails when GitHub has a newer
     one. Re-register and restart when it does. Post its verdict on the PR (`--comment`) before
