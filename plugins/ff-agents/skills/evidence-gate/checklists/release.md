@@ -39,6 +39,8 @@ adds what a release rests on and the first check after it.
    `python scripts/release_notes_lint.py <notes>` (game repo) exits 0 before the bump and again before
    `post_as_max`; Build 101 told players "Dev builds now come from master" (lesson:
    [notes are for players](../lessons/a-release-is-done-when-its-notes-are-posted.md)).
+   No line under a heading repeats it: no "* Fixed:" or "* Added:" prefix (Ben, w2787: "they are already in the
+   fixes category lol"); the same lint fails one (PR #2973).
 2c. **Every line is something a release player gets** (Ben, 2026-10-13, w1242: "Mobile stations take their bots
    and barges with them / Isnt this behind a feature toggle?"). A release player has every feature toggle off,
    so a change behind a toggle still declared in `FeatureToggles.cs` at the release commit is not a note.
