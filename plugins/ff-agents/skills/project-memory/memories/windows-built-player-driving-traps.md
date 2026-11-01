@@ -41,3 +41,8 @@ Found while playing the whole Normal tutorial twice in a development player and 
 Related: [[two-built-players-on-one-machine-share-port-7777]], [[ui-pointer-input-needs-os-focus-and-ui-drag-bypasses-the-module]] (that one says never to drive the
 OS mouse on a shared desktop: w884 clicked the title menu through `SetCursorPos`/`mouse_event` on the player window, which needs
 no focus theft but does move the real cursor; ask for a hidden desktop next time).
+- **Wait out the opening story before you place anything** (w2691, 2026-11-01): on a fresh `-ffSoloNewGame` a station
+  click sent while the opening story still plays is swallowed with no error, and every still after it shows an empty map.
+  Poll `ffauto:wait.status` until it is playable, then wait for the story to end before the first placement. **Blueprint
+  ghost range rings show only while the blueprint is held near a station**; held in empty space they show none, so a
+  ring check needs a station built first.
