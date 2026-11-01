@@ -1,6 +1,6 @@
 ---
 name: a-fix-pr-names-its-reports
-description: "A PR that fixes a Discord report carries the report's own link before it merges, `Discord: https://discord.com/channels/<guild>/<thread>` for a thread or `.../<guild>/<channel>/<message>` for a message in a channel; FFBox tells the reporter from that line and from nothing else. A request closed as already fixed by another PR names it: `RESOLVED: already fixed by PR #N`. When a worker confirms which player crash or desync report its fix addresses, it records the link: a `Report: <report id>` line in the PR description, or the report id as a subject of its request (request_work / update_work `subjects`). A brief that only mentions a report claims nothing, and FFBox keeps showing the report open."
+description: "A PR that fixes a Discord report carries the report's own link before it merges, `Discord: https://discord.com/channels/<guild>/<thread>` for a thread or `.../<guild>/<channel>/<message>` for a message in a channel; FFBox tells the reporter from that line and from nothing else. A request closed as already fixed by another PR names it: `RESOLVED: already fixed by PR #N`. When a worker confirms which player crash or desync report its fix addresses, it records the link: a `Report: <report id>` line in the PR description, or the report id as a subject of its request (request_work / update_work `subjects`). A brief that only mentions a report claims nothing, and FFBox keeps showing the report open. A worker posts as Max in a bug thread only when someone there mentioned Max or a person asked for that post (w2711)."
 date: 2026-10-05
 ---
 
@@ -102,3 +102,22 @@ intelligent."
   question back to the reporter, "works as designed", "a feature request" and "already fixed in <build>" are not.
 - When you take a thread's work, make the thread a subject of your request (`request_work` / `update_work` `subjects`),
   so the check and FFBox's ledger check see it as owned.
+
+## Max speaks in a bug thread only when asked (w2711, 2026-10-31)
+
+**Rule.** A worker posts as Max (`post_as_max`) in a #bug-reports, dev_bug_reports or feedback thread only when someone
+in that thread mentioned Max, or when a person asked for that post. Never to ask a player a question on its own
+initiative. If a worker needs something from a reporter (a save, a repro step), it puts that in its report as a
+blocker, and the person's orchestrator decides.
+
+**Why.** Workers had been asking players questions in bug threads as Max under w1640's route ("you or workers should be
+able to post direct to discord by asking ffbox to do it on your behalf"), with nobody in the thread having spoken to
+Max. Asked whether they should keep doing it, lothsahn answered, 2026-10-31 (w2711): "Stop".
+
+**How to apply.**
+
+- Before any `post_as_max` with channel `conversation`: quote the message in that thread that mentions Max, or the
+  person's words (and request) asking for this post. Neither: do not post.
+- A save, a log or a repro step you need is a blocker in your report (what you need, from which thread, why), with a
+  `wNNN: still open:` line; the orchestrator decides whether anyone asks the reporter, and how.
+- FFBox's own turns (its replies to a player who wrote to it, its merge notices) are FFBox's, not a worker's post.

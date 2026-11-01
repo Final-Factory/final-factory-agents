@@ -499,6 +499,10 @@ One file each under `lessons/`: the rule, why (the incident, dated), how to appl
   owner ([section](lessons/a-fix-pr-names-its-reports.md#every-bug-thread-has-an-owner-w1783-2026-10-22), w1783): a
   sweep covers every thread in its window, not titles someone picked, and an owner's acknowledgement in any words is a
   filed request (FF Factory's coverage check and owner watch now do both).
+- [Max speaks in a bug thread only when asked](lessons/a-fix-pr-names-its-reports.md#max-speaks-in-a-bug-thread-only-when-asked-w2711-2026-10-31)
+  (lothsahn, w2711: "Stop"): a worker posts as Max in a #bug-reports, dev_bug_reports or feedback thread only when someone
+  there mentioned Max or a person asked for that post; a save or a repro step it needs goes in its report as a blocker
+  ([public copy](checklists/public-copy.md) step 0).
 - [A crash inside a GPU driver is not "nothing to fix"](lessons/settle-your-own-guesses.md#a-crash-inside-a-gpu-driver-is-not-nothing-to-fix-until-four-checks-are-done-w956-2026-10-13): date the
   driver, read the CPU from the dump, measure the game step that fed it, look for a guard (w956).
 - [Listeners start from a stable path or bind loopback; a clip is checked for system dialogs](lessons/clean-up-after-yourself.md#a-listener-binds-127001-or-runs-from-a-stable-path-never-from-tmpdir-w1742):

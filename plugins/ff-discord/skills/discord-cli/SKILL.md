@@ -94,7 +94,8 @@ included, named by `thread` (its id or URL) or `conversation` (FFBox's id); `tex
 `thread` of that channel; a `key` so the message posts once (required for patch notes: the release's version). It answers
 the message link. FFBox refuses a mention (`@` before a word, `<@..>`, `@everyone`), a secret, more than 2000 characters
 and more than 12 posts an hour, and says which. It is for posts a worker was asked to make (a release's notes, a note in
-#dev-chat); the replies, questions and threads of `ask-claude`, `ask-dev` and `discord-triage` still use this CLI, on
+#dev-chat; in a #bug-reports, dev_bug_reports or feedback thread only when someone there mentioned Max or a person
+asked for that post, w2711); the replies, questions and threads of `ask-claude`, `ask-dev` and `discord-triage` still use this CLI, on
 the machine that has the config. Release notes: `ci-release` `patch-notes.md` section 4.
 
 ## Lost the config? An old `~/.config/ffdiscord` is still on this machine
@@ -122,8 +123,8 @@ report back on the thread." So:
   in-process, `ffwatch`, is never taken for an agent); its container turns have no CLI
   at all and ask the harness to post. A person at a terminal is not refused either. Config
   `ffbox_owned` (aliases) replaces the default list, and `[]` turns the refusal off.
-- **A word to a reporter goes through FFBox** (w1640): asking for a save, an answer they wait
-  for. Post it through FFBox when the work calls for it (lothsahn, 2026-10-20, w1640: "you or workers should be able to post direct to discord by asking ffbox to do it on your behalf through the tunnel, and it will post what you say"): `mcp__machine__post_as_max` with channel `conversation` and the thread (a worker or an orchestrator), or an orchestrator's `reply_to_ffbox`. FFBox keeps its secret scan and its ban on mentions, and refuses a
+- **A word to a reporter goes through FFBox** (w1640), and **Max speaks in a bug thread only when asked** (w2711): an
+  answer they wait for. Post it through FFBox only when someone in that thread mentioned Max or a person asked for that post, never to ask a player a question on a worker's own initiative (lothsahn, 2026-10-31, w2711: "Stop"; a save or a repro step the work needs goes in the report as a blocker, and the person's orchestrator decides): `mcp__machine__post_as_max` with channel `conversation` and the thread (a worker or an orchestrator), or an orchestrator's `reply_to_ffbox`. FFBox keeps its secret scan and its ban on mentions, and refuses a
   "fixed" or "merged" text in a thread it already told. Never a "fixed" notice of your own.
 - **A close goes through FFBox too, and only from a person's orchestrator** (w2670; lothsahn, 2026-10-31: "I would
   like to be able to ask you to scan all the open bug reports and close ones that are done, or to close specific ones

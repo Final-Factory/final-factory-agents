@@ -9,6 +9,10 @@ plain, casual. No taglines or marketing words, no run of sentences or paragraphs
 length, and no lines explaining what the page is. Then a fresh critic reads only the copy and quotes every line that
 sounds machine-written. A clean word lint isn't a pass.
 
+0. **A bug thread: were you asked?** (w2711, lothsahn: "Stop") Before a `post_as_max` into a #bug-reports,
+   dev_bug_reports or feedback thread, quote the message in that thread that mentions Max, or the person's words asking
+   for this post. Neither, and above all a question to the player you thought of yourself (a save, a repro step): do not
+   post; put it in your report as a blocker, and the person's orchestrator decides.
 1. **Cut first.** Read each line and ask who'd miss it. A line that tells readers what the page
    is, how it's sorted or where else to look ("newest first", "Older updates are in Steam news")
    goes, unless a reader would really get lost without it. Then it's one short clause, not a

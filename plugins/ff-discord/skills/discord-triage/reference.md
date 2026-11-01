@@ -116,7 +116,7 @@ recorded come from git and the GitHub API response rather than from anything you
 
 **Outside an FFBox turn, the thread post below is not yours either.** #bug-reports and
 dev_bug_reports belong to FFBox (Lothsahn, 2026-09-30): the CLI refuses an agent's post there; a
-word the reporter needs goes through FFBox when the work calls for it (lothsahn, 2026-10-20, w1640: "you or workers should be able to post direct to discord by asking ffbox to do it on your behalf through the tunnel, and it will post what you say"): `mcp__machine__post_as_max` with channel `conversation` and the thread (a worker or an orchestrator), or an orchestrator's `reply_to_ffbox`.
+word the reporter needs goes through FFBox only when someone in that thread mentioned Max or a person asked for that post, never to ask a player a question on a worker's own initiative (lothsahn, 2026-10-31, w2711: "Stop"; a save or a repro step the work needs goes in the report as a blocker, and the person's orchestrator decides): `mcp__machine__post_as_max` with channel `conversation` and the thread (a worker or an orchestrator), or an orchestrator's `reply_to_ffbox`.
 Put `Discord: https://discord.com/channels/<guild id>/<thread id>` in the PR description instead
 (one line per thread); FFBox tells the thread when the PR merges. After an `ffbox/*` branch lands,
 nobody posts "fixed" or "merged": FFBox does.
