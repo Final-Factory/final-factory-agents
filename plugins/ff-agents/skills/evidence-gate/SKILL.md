@@ -422,6 +422,10 @@ One file each under `lessons/`: the rule, why (the incident, dated), how to appl
   shader or material for it, or a built-player before/after of every user; the PR's `## Used by`
   lists them and `pr_evidence.py` and CI fail without it (w410: one sprite-shader edit for the
   Alt-view icons darkened every range ring in Build 77).
+- [A discarded cache is a rebuild](lessons/a-discarded-cache-has-a-rebuild-cost.md): before a change deletes
+  build state (BurstCache, BuildCache, Library, CI caches, outputs) or adds a rebuild, prune only stale entries
+  (a wipe is a last resort), measure the rebuild's CPU and wall time, and state it in the PR; the build machines
+  have no spare CPU (w2275: a separate 25-minute cache build; w2752: the clean-up wiped Burst and build caches whole).
 - [Every timing measurement holds an exclusive ticket](lessons/settle-your-own-guesses.md#every-timing-measurement-holds-an-exclusive-ticket-w1923-2026-10-23): not only a
   bench script's leg but a snippet that reads a clock in the editor (`unity-bridge.py eval`, MCP `execute_code`), in-job
   counters, a local Performance test and a profiler capture; `unity-bridge.py --timed` for one call, `bench_queue.py

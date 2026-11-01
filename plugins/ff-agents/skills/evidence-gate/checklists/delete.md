@@ -50,3 +50,9 @@ For any `rm`, `Remove-Item`, `del`, `rd`, `git clean`, `shutil.rmtree` or clean-
    ordinary worker leaves them; a clean-up request removes them and reports the GB. Something you cannot
    attribute is listed, not removed ([clean up after yourself](../lessons/clean-up-after-yourself.md)).
 6. **The report says** what was removed (inside), what was kept and why (every KEEP row `ff-leftovers folders` showed: the request and its status), what was only measured (outside, with sizes), and the list from 4.
+7. **Does it throw away build state or add a rebuild?** (w2765) Unity `Library` caches (`BurstCache`, `BuildCache`,
+   `ScriptAssemblies`, `Bee`), CI caches, build outputs, or a separate cache-refresh build. Before it ships: prune only
+   stale entries (a whole wipe is a last resort, with the reason pruning cannot do it), measure the CPU and wall time of
+   the rebuild it causes (a cold Unity start, the build it adds), and put that measured cost in the PR. The build machines
+   have no spare CPU: LothDesktop is almost always full, and a cold Unity start is slow
+   ([lesson](../lessons/a-discarded-cache-has-a-rebuild-cost.md); lothsahn on w2752: "A cold unity station is quite slow so we should make sure to not do it often").
