@@ -431,3 +431,28 @@ on lothdesktop:
 - On BEAST the same day, a slot2-0 prompt covered all 12 of w1722's clips. On lothdesktop a slot player listened on
   0.0.0.0:55000 with no prompt, because its rule exists. Checking what a process holds:
   `Get-NetTCPConnection -State Listen -OwningProcess <pid>` and `Get-NetUDPEndpoint`.
+
+## A discarded cache is a rebuild: prune only stale entries, measure the cost, state it in the PR (w2765)
+
+**Rule.** A change or design that deletes build state (Unity `Library` caches: `BurstCache`, `BuildCache`,
+`ScriptAssemblies`, `Bee`; CI caches; build outputs) or adds a rebuild step measures, before it ships, the CPU and
+wall time of the rebuild it causes, and weighs that against what it saves.
+
+- **Prune only stale entries** (old, unreferenced, past a budget by age); a whole wipe is a last resort, and the design says
+  why pruning cannot do it.
+- **The PR states the rebuild cost, measured** (CPU-minutes and wall-minutes of a cold Unity start or of the build it
+  adds, on the machine class that pays), beside the saving. Not "should be quick".
+- **Count the siblings.** Wiping one cache usually forces the others to rebuild (asset import, script compile after
+  the Burst cache): measure the cold start, not one folder.
+- **The build and worker machines usually have no spare CPU.** LothDesktop is almost always at full CPU, and a cold Unity
+  start is slow, so each wipe is paid for by every other job there.
+- Prefer a way that rebuilds nothing extra: the build that already runs saves its own cache.
+
+**Why.** Lothsahn made this correction twice. w2275 (FFBox caches after a release): a separate post-release cache
+rebuild took about 25 minutes of build CPU. Lothsahn: "It's doing a separate build?  It shouldn't do that as that
+wastes CPU.  Also, every OS cache should get updated by its own release build" (#2611 saved each cache from its own
+release build). w2752 (the portal clean-up, ff-factory PR #791): it deleted a sandbox's `BurstCache` and `BuildCache`
+whole past 6 GB. Lothsahn: "Doesn't deleting the burst caches make the next startup really slow and use a lot of
+CPU?" and "Not just the burst cache, but all the caches.  A cold unity station is quite slow so we should make sure to
+not do it often.  LothDesktop is almost always at full CPU and doesn't have any to spare." The disk saving was weighed
+both times, the CPU cost not. Checklist: [delete](../checklists/delete.md) item 7.

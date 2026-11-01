@@ -422,7 +422,7 @@ One file each under `lessons/`: the rule, why (the incident, dated), how to appl
   shader or material for it, or a built-player before/after of every user; the PR's `## Used by`
   lists them and `pr_evidence.py` and CI fail without it (w410: one sprite-shader edit for the
   Alt-view icons darkened every range ring in Build 77).
-- [A discarded cache is a rebuild](lessons/a-discarded-cache-has-a-rebuild-cost.md): before a change deletes
+- [A discarded cache is a rebuild](lessons/clean-up-after-yourself.md#a-discarded-cache-is-a-rebuild-prune-only-stale-entries-measure-the-cost-state-it-in-the-pr-w2765): before a change deletes
   build state (BurstCache, BuildCache, Library, CI caches, outputs) or adds a rebuild, prune only stale entries
   (a wipe is a last resort), measure the rebuild's CPU and wall time, and state it in the PR; the build machines
   have no spare CPU (w2275: a separate 25-minute cache build; w2752: the clean-up wiped Burst and build caches whole).

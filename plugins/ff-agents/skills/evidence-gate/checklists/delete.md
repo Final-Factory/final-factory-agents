@@ -55,4 +55,4 @@ For any `rm`, `Remove-Item`, `del`, `rd`, `git clean`, `shutil.rmtree` or clean-
    stale entries (a whole wipe is a last resort, with the reason pruning cannot do it), measure the CPU and wall time of
    the rebuild it causes (a cold Unity start, the build it adds), and put that measured cost in the PR. The build machines
    have no spare CPU: LothDesktop is almost always full, and a cold Unity start is slow
-   ([lesson](../lessons/a-discarded-cache-has-a-rebuild-cost.md); lothsahn on w2752: "A cold unity station is quite slow so we should make sure to not do it often").
+   ([lesson](../lessons/clean-up-after-yourself.md#a-discarded-cache-is-a-rebuild-prune-only-stale-entries-measure-the-cost-state-it-in-the-pr-w2765); lothsahn on w2752: "A cold unity station is quite slow so we should make sure to not do it often").
