@@ -657,6 +657,20 @@ class PinTest(unittest.TestCase):
         self.assertEqual(got["building hover card"], "not applied", "over the minimap only while the rail is closed")
         self.assertEqual(got["Player Inventory"], "not applied", "the MiniInventory is merged into the rail")
 
+    def test_the_rail_top_is_measured_from_the_top_bar(self):
+        """w2651: the rail's top stands InventoryRail.BelowTopBar under the top bar, not at a share of the height. The
+        1728x917 census of FinalFactory #2946 (UI scale 0.9, MEASURED): the top bar's bottom at 96 px, the rail's top at
+        117 px, 12.8 % of the height, which a top-12 % rule broke."""
+        census = {"screen": [1728, 917], "features": ["inventory-rail"], "elements": [
+            el("GamePanels/TopInfoPanel/TechProgressBar", [7, 52, 236, 96]),
+            el("GamePanels/TopInfoPanel/PersonalDisplay", [243, 52, 648, 96]),
+            el("InvAndCraft/InventoryPanel/Frame", [1264, 117, 1693, 613])]}
+        self.assertEqual(self.pins(census)["Player Inventory rail"], "ok")
+        census["elements"][2] = el("InvAndCraft/InventoryPanel/Frame", [1264, 200, 1693, 613])
+        self.assertEqual(self.pins(census)["Player Inventory rail"], "broken", "far under the top bar")
+        census["elements"][2] = el("InvAndCraft/InventoryPanel/Frame", [1264, 60, 1693, 613])
+        self.assertEqual(self.pins(census)["Player Inventory rail"], "broken", "over the top bar")
+
     def test_the_rail_pins_break_where_the_rail_moves(self):
         self.assertEqual(self.pins(self.rail_census(rail=(700, 74, 1054, 600)))["Player Inventory rail"], "broken")
         self.assertEqual(self.pins(self.rail_census(rail=(900, 200, 1254, 600)))["Player Inventory rail"], "broken")

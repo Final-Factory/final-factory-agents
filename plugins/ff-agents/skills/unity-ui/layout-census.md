@@ -260,7 +260,8 @@ python "$FF_SKILLS/unity-ui/ui_layout.py" pins a-1920.json a-1280.json a-docked.
   left edge at least 2 % of the width from the screen's edge. A pin whose element is not on screen is "not shown" and
   fails too: take the census with it up. A pin changes only when Ben asks, in a harness PR with his words.
   With the `inventory-rail` toggle on (w2651, the census's `"features"`), the classic layout checks the rail's own
-  places instead: the rail a column on the right under the top bar, the hover card and Crafting just left of it,
+  places instead: the rail a column on the right under the top bar (its top measured from `TopInfoPanel`'s bottom
+  edge, not a share of the height: 117 px of 917 is 12.8 %), the hover card and Crafting just left of it,
   Crafting clear of Station Info; a pin whose `when` does not hold is "not applied" there, and passes.
   **Docked, all three up at once: dock a Cargo Hold and move the pointer off every structure** (`ffauto:pointer.moveto`
   to an empty tile), as `specs/w895-info-panels/make_tour.py` does: it has an inventory (the Player Inventory is up), and
