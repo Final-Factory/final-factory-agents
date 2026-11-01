@@ -118,6 +118,16 @@ Recording notes:
   (`ES_DISPLAY_REQUIRED` alone does not switch a sleeping display back on). The game repo's
   `scripts/narration/record_story_cinematic.py` and `specs/w884-one-tutorial/oswin.wake_display()` do both. Stop a
   window capture before its window closes: one closed under it never wrote the mp4 index.
+- **The build audit's players have no window** (w2790, lothdesktop, 2026-11-01): the game repo's
+  `scripts/audit/run_build_multiplayer_audit.sh` starts its host and client with `-batchmode`, `--graphics` too, so
+  `record_clip --pid` stops with "no visible window for pid". To film a scene in a built player, launch a windowed solo
+  player from the slot pool: `python scripts/nightly/player_slots.py launch --detach <exe> -- -ffSoloNewGame 1
+  -ffSoloFlatMap true -ffSoloQuitAfterSeconds 420 -ffAgentControl true -screen-fullscreen 0 -screen-width 1920
+  -screen-height 1080`. Drive it with `python scripts/feel/agent_chain.py ffSoloNewGame "ffauto:a;ffauto:b"`, which
+  retries until the game is playable (`blueprint.place`, `terrain.place`, `player.setposition` and `camera.focus` all
+  ran there). Then run `record_clip --pid <its pid>`. Place enemies last and record within a second or two: a Razor
+  Spawner killed the player in under 25 s, and the first take filmed only the death screen. That audit's default port
+  7777 is often held by another sandbox's audit (exit 2), so pass `--port`.
 - **`record_clip --unity` records whatever lies over the editor's window** (w1667, lothdesktop slot4, 2026-10-21): with
   other sandboxes' editors open, 90 s of "my" editor were another sandbox's editor on top of it (another save, another
   HUD), exit 0. Look at one frame of every desktop capture before you use it (`ffmpeg -ss 5 -i clip.mp4 -frames:v 1
