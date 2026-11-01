@@ -126,6 +126,9 @@ look first and relay only with the critic's report (FF Factory `read_rules ui`).
   current it is (vendor release notes), the CPU from the dump (stream 7; Intel family 6 model 0xB7/0xBF is
   Raptor Lake), the game step that fed the driver and how long it runs, and a lever that keeps that player
   booting or why there is none (w956: Ben reopened "driver, nothing to fix").
+- **Mod code: fetch the source through app-gherik before Steam Workshop or steamcmd** ([lesson](lessons/settle-your-own-guesses.md#mod-code-fetch-the-source-through-app-gherik-before-steam-workshop-or-steamcmd-w2755-2026-11-01)).
+  List the installation's repos (`GH_REPO=Gherik1/TowBot gh api installation/repositories`) and clone the mod from there; the
+  token is never printed; a mod not in the list goes to the Workshop or steamcmd, and the report says so (w2755).
 - **A cause is named only from a repro under the reporter's conditions** ([lesson](lessons/settle-your-own-guesses.md#name-a-cause-only-from-a-repro-under-the-reporters-conditions-w844-w2448-2026-10-28)).
   Before a report says "the cause", list the reported save, mods, settings, machine/GPU and exact symptom beside the
   repro's; remove each difference or show the cause with and without it, and say which conditions were matched.

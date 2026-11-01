@@ -20,6 +20,10 @@ is worked like a crash.
       and the harness-measured `Regression test ... Red on master ... green with the fix` line) is in
       [the desync PR checklist, section 0](ffbox-desync-pr.md#0-what-an-ffbox-fix-branch-carries-w1819-2026-10-23).
       It applies here too: rerun that test both ways yourself before you trust it.
+- [ ] Mods loaded in the report: get each mod's source through app-gherik before any Workshop or steamcmd
+      download (`GH_REPO=Gherik1/TowBot gh api installation/repositories`, then `git clone`; never print the token),
+      at the commit that matches the report's mod version
+      ([lesson](../lessons/settle-your-own-guesses.md#mod-code-fetch-the-source-through-app-gherik-before-steam-workshop-or-steamcmd-w2755-2026-11-01)).
 - [ ] Check `git log origin/master` for the crashing function: it may already be fixed. If so, end
       `RESOLVED: already fixed by PR #<n>` and close FFBox's PR with that reason (w1701 and w1702:
       FFBox's two Leech PRs, #2164 and #2165, were both fixed by #2162).

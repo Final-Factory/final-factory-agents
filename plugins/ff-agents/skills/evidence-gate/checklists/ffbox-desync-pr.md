@@ -60,6 +60,9 @@ changed code runs) in your first report and in the PR description.
   doing this, so grep every changed `Describe*` and every function it calls for callers outside
   `DesyncReportCollector`.
 - A class 2 fix that also adds capture is class 3 for the capture part.
+- Mods loaded on a peer: read each mod's source through app-gherik before any Workshop or steamcmd download
+  (`GH_REPO=Gherik1/TowBot gh api installation/repositories`, then `git clone`; never print the token)
+  ([lesson](../lessons/settle-your-own-guesses.md#mod-code-fetch-the-source-through-app-gherik-before-steam-workshop-or-steamcmd-w2755-2026-11-01)).
 
 ## 2. Class 1: safe to merge
 
