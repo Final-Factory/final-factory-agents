@@ -630,7 +630,7 @@ class PinTest(unittest.TestCase):
         self.assertIn("0 broken, 1 not shown", alone[0])
         classic = ul.load(HERE / "fixtures" / "w894-develop-1920-classic.json")
         both, _ = ul.pinned_lines([("docked", docked), ("classic", classic)], {"pins": [pin]}, "t")
-        self.assertIn("0 broken, 0 not shown, 1 covered by a docked window by design", both[0])
+        self.assertIn("0 broken, 0 not shown, 1 covered by a window by design", both[0])
 
     def rail_census(self, features=("inventory-rail",), crafting=True, hover=(645, 214, 890, 495), rail=(900, 74, 1254, 600),
                     station=(400, 500, 880, 690)):
@@ -670,6 +670,27 @@ class PinTest(unittest.TestCase):
         self.assertEqual(self.pins(census)["Player Inventory rail"], "broken", "far under the top bar")
         census["elements"][2] = el("InvAndCraft/InventoryPanel/Frame", [1264, 60, 1693, 613])
         self.assertEqual(self.pins(census)["Player Inventory rail"], "broken", "over the top bar")
+
+    def test_the_card_beside_the_rail_is_covered_under_a_window_beside_it(self):
+        """w2651: Crafting and a building's window open beside the rail, over the card's columns, and the game hides the
+        card under them (HoverCardFit.HideUnderAWindow). MEASURED, the 1728x917 censuses of FinalFactory #2946: the rail
+        at x 1264, Crafting at 619 to 1252, a Cargo Hold's window at 804 to 1189, and no HoverDescription in either."""
+        pin = next(p for p in self.SPEC["pins"] if p["name"] == "building hover card beside the rail")
+        def rail(*windows):
+            return {"screen": [1728, 917], "features": ["inventory-rail"], "elements": [
+                el("InvAndCraft/InventoryPanel/Frame", [1264, 117, 1693, 613]), *windows]}
+        crafting = rail(el("InvAndCraft/UtilityPanel/Frame", [619, 117, 1252, 583]))
+        cargo = rail(el("CargoEntityPanel/MainPanel", [804, 142, 1189, 367]))
+        self.assertEqual(ul.pin_check(crafting, pin)[0], "covered")
+        self.assertEqual(ul.pin_check(cargo, pin)[0], "covered")
+        far = rail(el("CargoEntityPanel/MainPanel", [100, 142, 500, 367]))
+        self.assertEqual(ul.pin_check(far, pin)[0], "not shown", "a window away from the rail hides nothing there")
+        self.assertEqual(ul.pin_check(rail(), pin)[0], "not shown")
+        alone, _ = ul.pinned_lines([("cargo", cargo)], {"pins": [pin]}, "t")
+        self.assertIn("0 broken, 1 not shown", alone[0])
+        shown = rail(el("CargoEntityPanel/MainPanel", [804, 142, 1189, 367]), el("HoverDescription/Card", [1007, 380, 1252, 600]))
+        both, _ = ul.pinned_lines([("cargo", cargo), ("shown", shown)], {"pins": [pin]}, "t")
+        self.assertIn("0 broken, 0 not shown, 1 covered by a window by design", both[0])
 
     def test_the_rail_pins_break_where_the_rail_moves(self):
         self.assertEqual(self.pins(self.rail_census(rail=(700, 74, 1054, 600)))["Player Inventory rail"], "broken")
