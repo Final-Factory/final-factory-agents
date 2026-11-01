@@ -609,6 +609,19 @@ class MovedTest(unittest.TestCase):
                                "save and screens before and after)")
         self.assertIn("'Moved:' does not cover 1280x800 undocked, 1280x800 docked", reasons)
 
+    def test_a_title_screen_census_covers_both_layouts_of_its_size(self):
+        """w2799: the title screen has no dock (ui_layout.py prints `WxH title`), so its census covers 1280x800 undocked
+        and docked; a game screen still needs the docked census."""
+        line = ("Moved: 0 element move(s) over 4 px at 1920x1080 title, 1280x800 title (ui_layout.py moves, the same save "
+                "and screens before and after)")
+        self.assertNotIn("does not cover", self.reasons(line))
+        pinned = ("Pinned: 7 pin(s) in 2 census(es) (1920x1080 title, 1280x800 title): 0 broken, 0 not shown, 14 on the "
+                  "title screen (no game, so no HUD pin applies) (ui_layout.py pins, hud-pins.json: Station Info)")
+        self.assertNotIn("Pinned", self.reasons(line, pinned=pinned))
+        reasons = self.reasons("Moved: 0 element move(s) over 4 px at 1920x1080 title, 1280x800 undocked (ui_layout.py "
+                               "moves, the same save and screens before and after)")
+        self.assertIn("'Moved:' does not cover 1280x800 docked", reasons)
+
     def test_an_unmarked_move_fails(self):
         reasons = self.reasons("\n".join([self.HEAD, self.BIG + "mark: ?", self.DECK + "mark: ?"]))
         self.assertIn("'Moved:' 1920x1080 undocked GamePanels/BuildInfoPanel is not marked", reasons)

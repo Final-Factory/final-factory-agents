@@ -616,6 +616,22 @@ class PinTest(unittest.TestCase):
         self.assertIn("BROKEN 1280x800 docked (w894-develop-1280-docked.json): building hover card", text)
         self.assertEqual(ul.pin_check(hud(), self.SPEC["pins"][0])[0], "not shown")
 
+    def test_a_title_screen_census_has_no_hud_pin_and_no_dock(self):
+        """w2799: the Mods screen opens only from the title screen (MainMenuPanel.cs:431), where no game runs, so no HUD
+        pin can be up and no dock exists: pins said "3 not shown" and the Moved line could never cover 1280x800 docked."""
+        import contextlib
+        import io
+        census = HERE / "fixtures" / "w2799-title-mods-1280.json"
+        out = io.StringIO()
+        with contextlib.redirect_stdout(out):
+            code = ul.main(["pins", str(census)])
+        self.assertEqual(code, 0)
+        self.assertIn("(1280x800 title): 0 broken, 0 not shown, 7 on the title screen", out.getvalue())
+        loaded = json.loads(census.read_text(encoding="utf-8"))
+        self.assertEqual(ul.layout_of(loaded), "title")
+        loaded["elements"].append(el("PersistentObjects/Canvas/GamePanels/TopInfoPanel", [0, 0, 1280, 40]))
+        self.assertEqual(ul.layout_of(loaded), "undocked", "a menu over a game lists the HUD too")
+
     def test_a_hover_card_under_the_docked_window_is_covered_when_another_census_measures_it(self):
         """w2185: the docked layout hides the card while a docked window overlaps its place (HoverCardFit.Covered), so
         a docked census with a building selected (the Player Inventory up) never shows it. MEASURED: the w2185 docked
