@@ -109,6 +109,19 @@ TOUR_RECT = re.compile(r"->\s+(?P<path>.+?)\s+active\s+(?P<active>\w+)\s+screen 
 # loading
 
 
+def screen_size(value, default=None):
+    """[w, h] from a census "screen": a [w, h] pair, or the "WxH" string the game's Deck tour census writes (w2799:
+    `"screen": "1920x1080"` crashed `ui_look.py colour` and `pack` with "can't multiply sequence by non-int of type
+    'str'"). Returns default (a copy) when the value is missing or unreadable."""
+    if isinstance(value, str):
+        m = re.match(r"\s*(\d+(?:\.\d+)?)\s*[xX×]\s*(\d+(?:\.\d+)?)", value)
+        if m:
+            return [int(float(g)) if float(g).is_integer() else float(g) for g in m.groups()]
+    elif isinstance(value, (list, tuple)) and len(value) >= 2:
+        return [value[0], value[1]]
+    return list(default) if default is not None else None
+
+
 def load(path: str | Path) -> dict:
     """A census JSON, or a Deck-tour log whose `rect:` lines become elements (cluster checks only)."""
     p = Path(path)
@@ -120,6 +133,8 @@ def load(path: str | Path) -> dict:
             raise SystemExit(f"ui_layout: {p.name} is a tour check report, not a census: pass the "
                              f"{p.stem}.layout.json beside it")
         data.setdefault("elements", [])
+        if "screen" in data:
+            data["screen"] = screen_size(data["screen"])
         return data
     elements, screen = [], None
     for m in TOUR_RECT.finditer(text):
@@ -312,7 +327,7 @@ def opened_over_hud(census: dict, patterns: list[str], depth: int = 2, min_px: f
             if not catchers:
                 out["blocked"].append(f"{short(hud_block, 1)}: {short(b['path'], 2)} takes clicks under {short(label, 2)}: "
                                       f"no raycast target of the panel covers it")
-    w, h = census.get("screen") or [0, 0]
+    w, h = screen_size(census.get("screen"), [0, 0])
     if w and h:
         for e, label in panel:
             r, v = e["rect"], e.get("visible") or e["rect"]
@@ -655,7 +670,7 @@ def moves(before: dict, after: dict, move_px: float = 4.0) -> dict:
             reparented.append((block, target))
             gone.remove(block)
             new.remove(target)
-    w, h = after.get("screen") or before.get("screen") or [0, 0]
+    w, h = screen_size(after.get("screen") or before.get("screen"), [0, 0])
     biggest = lambda b: -max(max(abs(d) for d in b["delta"]), max(abs(d) for d in b["parts"][0]["delta"]))
     layout = layout_of(after)
     if layout_of(before) != layout:
@@ -793,7 +808,7 @@ def pin_check(census: dict, pin: dict) -> tuple[str, str]:
                  (2 px of slack), at most maxGap x W from it. The anchor not on screen: 'not shown'.
     clearOf      the element and the anchor overlap by at most 2 px either way (w2651: Crafting stops above Station
                  Info). The anchor not on screen: ok."""
-    w, h = census.get("screen") or [0, 0]
+    w, h = screen_size(census.get("screen"), [0, 0])
     skip = pin_applies(census, pin)
     if skip:
         return "not applied", skip
@@ -875,7 +890,7 @@ def covered_by_window(census: dict, pin: dict) -> str | None:
     rule = pin.get("coveredBy")
     if not rule or layout_of(census) != rule["layout"]:
         return None
-    w, h = census.get("screen") or [0, 0]
+    w, h = screen_size(census.get("screen"), [0, 0])
     if rule.get("beside"):
         return covered_beside(census, rule, w)
     window = find(census, rule["window"])
@@ -1087,7 +1102,7 @@ def delta_e(a, b) -> float:
 
 
 def panels(census: dict, min_share: float = 0.02) -> dict:
-    w, h = census.get("screen") or [1, 1]
+    w, h = screen_size(census.get("screen"), [1, 1])
     out = {}
     for e in census["elements"]:
         if e.get("kind") not in ("Image", "RawImage") or e.get("alpha", 0) < 0.1 or e.get("maskOnly")                 or any(i in e["path"] for i in IGNORE):
@@ -1354,7 +1369,7 @@ def shape(census: dict, sprites: dict | None = None, patterns: list[str] | None 
     invisible = invisible or set()
     if patterns is None:
         patterns = opened_patterns(json.loads(DEFAULT_CLUSTERS.read_text(encoding="utf-8")))
-    sw, sh = (census.get("screen") or [1920, 1080])[:2]
+    sw, sh = screen_size(census.get("screen"), [1920, 1080])
     screen_px = float(sw) * float(sh)
     sprites = sprites or {}
     out = {"stretched": [], "sparse": [], "walls": [], "unknown_sprites": set(), "estimated": False}

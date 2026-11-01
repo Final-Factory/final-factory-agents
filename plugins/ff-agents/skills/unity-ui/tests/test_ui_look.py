@@ -404,5 +404,34 @@ class FamilyTest(unittest.TestCase):
         self.assertEqual(code, 2)
 
 
+class ScreenStringTest(unittest.TestCase):
+    """The game's Deck tour census writes "screen" as a "WxH" string, not a [w, h] pair (w2799, measured on beast
+    2026-11-01: `ui_look.py colour` and `pack` died with "TypeError: can't multiply sequence by non-int of type 'str'")."""
+
+    CENSUS = FIX / "w2799-deck-tour-screen-string.json"
+
+    def test_screen_size_reads_a_pair_and_a_string(self):
+        self.assertEqual(uk.ul.screen_size("1920x1080"), [1920, 1080])
+        self.assertEqual(uk.ul.screen_size([1280, 800]), [1280, 800])
+        self.assertEqual(uk.ul.screen_size(None, [1, 1]), [1, 1])
+        self.assertEqual(uk.ul.screen_size("junk", [1, 1]), [1, 1])
+
+    def test_judge_takes_a_raw_census_with_a_string_screen(self):
+        census = json.loads(self.CENSUS.read_text(encoding="utf-8"))
+        self.assertEqual(census["screen"], "1920x1080")
+        result = uk.judge(uk.read_png(RealCaseTest.R2), census, [[0, 0, 450, 310]], "r2", [], {})
+        self.assertEqual([uk.hex_of(f["colour"]) for f in result["loud"]], ["#57B2D0"])  # as with a [w, h] screen
+
+    def test_colour_and_pack_run_on_the_tour_census(self):
+        with redirect_stdout(io.StringIO()):
+            code = uk.main(["colour", f"{RealCaseTest.R2}::{self.CENSUS}"])
+        self.assertIn(code, (0, 1))  # a verdict, not a crash
+        with tempfile.TemporaryDirectory() as d:
+            with redirect_stdout(io.StringIO()):
+                code = uk.main(["pack", "--after", f"{RealCaseTest.R2}::{self.CENSUS}", "--ref", str(RealCaseTest.R1),
+                                "--out", str(Path(d) / "pack")])
+            self.assertEqual(code, 0)
+
+
 if __name__ == "__main__":
     unittest.main()

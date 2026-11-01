@@ -1,0 +1,7 @@
+{
+  "screen": "1920x1080",
+  "elements": [
+    {"path": "InGameScene/UI Canvas/GamePanels/HaulerEntityPanel/MainPanel", "kind": "Image",
+     "rect": [0, 0, 450, 310], "visible": [0, 0, 450, 310], "color": "#15374CFF", "alpha": 1.0}
+  ]
+}
