@@ -470,7 +470,8 @@ python "$FF_SKILLS/unity-ui/ui_layout.py" pins a-1920.json a-1280.json a-docked.
 screen and layout. Mark each `asked (Ben): "his words"` from inside the brief's quotation marks, naming that element on
 that screen, or put the element back; there is no "justified". `pins` checks the places Ben fixed himself
 ([hud-pins.json](hud-pins.json): Station Info just above the abilities, the hover card just above the minimap, the Player
-Inventory off the left edge) in every census, whatever the parent looked like. Measured (editor): #1282 moved Station Info
+Inventory off the left edge; with `inventory-rail` on, the rail on the right with the hover card and Crafting left of
+it, w2651) in every census, whatever the parent looked like. Measured (editor): #1282 moved Station Info
 x -312, y -736 px at 1920x1080; on develop 9798f308c the docked layout breaks the Station Info and hover card pins, and
 the undocked layouts keep all three.
 

@@ -575,7 +575,8 @@ class PinTest(unittest.TestCase):
 
     def verdicts(self, name):
         census = ul.load(HERE / "fixtures" / name)
-        return {pin["name"]: ul.pin_check(census, pin)[0] for pin in self.SPEC["pins"]}
+        # These censuses have no "features" (every toggle off), so the inventory rail's pins (w2651) are "not applied".
+        return {pin["name"]: v for pin in self.SPEC["pins"] for v in [ul.pin_check(census, pin)[0]] if v != "not applied"}
 
     def test_todays_docked_layout_breaks_station_info_and_the_hover_card(self):
         census = ul.load(HERE / "fixtures" / "w894-develop-1280-docked.json")
@@ -609,7 +610,8 @@ class PinTest(unittest.TestCase):
                             str(HERE / "fixtures" / "w894-develop-1280-docked.json")])
         text = out.getvalue()
         self.assertEqual(code, 1)
-        self.assertIn("Pinned: 3 pin(s) in 2 census(es) (1920x1080 undocked, 1280x800 docked): 2 broken, 0 not shown", text)
+        self.assertIn("Pinned: 7 pin(s) in 2 census(es) (1920x1080 undocked, 1280x800 docked): 2 broken, 0 not shown, "
+                      "8 not applied", text)
         self.assertIn("BROKEN 1280x800 docked (w894-develop-1280-docked.json): Station Info", text)
         self.assertIn("BROKEN 1280x800 docked (w894-develop-1280-docked.json): building hover card", text)
         self.assertEqual(ul.pin_check(hud(), self.SPEC["pins"][0])[0], "not shown")
@@ -629,6 +631,67 @@ class PinTest(unittest.TestCase):
         classic = ul.load(HERE / "fixtures" / "w894-develop-1920-classic.json")
         both, _ = ul.pinned_lines([("docked", docked), ("classic", classic)], {"pins": [pin]}, "t")
         self.assertIn("0 broken, 0 not shown, 1 covered by a docked window by design", both[0])
+
+    def rail_census(self, features=("inventory-rail",), crafting=True, hover=(645, 214, 890, 495), rail=(900, 74, 1254, 600),
+                    station=(400, 500, 880, 690)):
+        """w2651: the classic layout at 1280x800 with the inventory rail up, Crafting left of it and the hover card left
+        of it, Station Info under Crafting. Modelled on the 1280x800 UI scale 0.9 census of FinalFactory #2946 (the rail's
+        right edge at 1254 px, MEASURED there); the other rects are made up to the same shape."""
+        elements = [el("MinimapParent/Background", [996, 620, 1268, 792]), el("BuildInfoPanel/Box", list(station)),
+                    el("InvAndCraft/InventoryPanel/Frame", list(rail)), el("HoverDescription/Card", list(hover))]
+        if crafting:
+            elements.append(el("InvAndCraft/UtilityPanel/Frame", [53, 74, 888, 489]))
+        return {"screen": [1280, 800], "features": list(features), "elements": elements}
+
+    def pins(self, census):
+        return {pin["name"]: ul.pin_check(census, pin)[0] for pin in self.SPEC["pins"]}
+
+    def test_the_rail_has_its_own_places_with_its_toggle_on(self):
+        """Ben's note on w2651 (2026-10-31): "Build D, the right rail: a column on the right that never moves", the hover
+        card left of the rail and Crafting stopping above Station Info."""
+        got = self.pins(self.rail_census())
+        self.assertEqual(got["Player Inventory rail"], "ok")
+        self.assertEqual(got["building hover card beside the rail"], "ok")
+        self.assertEqual(got["Crafting beside the rail"], "ok")
+        self.assertEqual(got["Crafting above Station Info"], "ok")
+        self.assertEqual(got["building hover card"], "not applied", "over the minimap only while the rail is closed")
+        self.assertEqual(got["Player Inventory"], "not applied", "the MiniInventory is merged into the rail")
+
+    def test_the_rail_pins_break_where_the_rail_moves(self):
+        self.assertEqual(self.pins(self.rail_census(rail=(700, 74, 1054, 600)))["Player Inventory rail"], "broken")
+        self.assertEqual(self.pins(self.rail_census(rail=(900, 200, 1254, 600)))["Player Inventory rail"], "broken")
+        self.assertEqual(self.pins(self.rail_census(hover=(1000, 214, 1245, 495)))["building hover card beside the rail"],
+                         "broken", "the hover card over the rail")
+        self.assertEqual(self.pins(self.rail_census(station=(400, 420, 880, 690)))["Crafting above Station Info"], "broken")
+
+    def test_with_the_toggle_off_the_rail_pins_do_not_apply(self):
+        for features in ((), ("some-other-toggle",)):
+            got = self.pins(self.rail_census(features=features))
+            for name in ("Player Inventory rail", "building hover card beside the rail", "Crafting beside the rail",
+                         "Crafting above Station Info"):
+                self.assertEqual(got[name], "not applied", (features, name))
+        census = self.rail_census()
+        del census["features"]
+        self.assertEqual(self.pins(census)["Player Inventory rail"], "not applied", "a census without features: all off")
+
+    def test_with_the_rail_closed_the_hover_card_stays_over_the_minimap(self):
+        census = self.rail_census(crafting=False)
+        census["elements"] = [e for e in census["elements"] if "/InvAndCraft/" not in e["path"]]
+        census["elements"][-1].update(rect=[1030, 300, 1260, 610], visible=[1030, 300, 1260, 610])
+        got = self.pins(census)
+        self.assertEqual(got["building hover card"], "ok")
+        self.assertEqual(got["building hover card beside the rail"], "not applied")
+        self.assertEqual(got["Crafting above Station Info"], "not applied")
+        self.assertEqual(got["Player Inventory rail"], "not shown")
+        lines, broken = ul.pinned_lines([("rail", self.rail_census())], self.SPEC, "t")
+        self.assertEqual(broken, 0, lines)
+        self.assertIn("0 broken, 0 not shown, 2 not applied (their 'when': the layout, an element up or not, toggles on: "
+                      "inventory-rail)", lines[0])
+
+    def test_an_unknown_when_condition_is_refused(self):
+        with self.assertRaises(ValueError):
+            ul.pin_check(self.rail_census(), {"name": "x", "element": "HoverDescription", "rule": "offLeftEdge",
+                                              "minLeft": 0.02, "when": [{"featureIsOn": "inventory-rail"}]})
 
     def test_moves_refuses_a_pair_of_different_layouts(self):
         with self.assertRaises(ValueError):
