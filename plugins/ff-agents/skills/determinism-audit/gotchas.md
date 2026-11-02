@@ -852,6 +852,17 @@ w2797 (2026-11-01, an m5 Mac host of a BEAST Windows client, PR #2989) launched 
   every `audit.write` checkpoint ("the audit is disabled").
 - Post HOST WAITING only after the log shows `waiting-host-peers-connected: connectedClients=1,target=2` following the
   last `pre-connect-command-complete`. Run 3, with both flags fixed, compared 2000 shared heartbeats.
+- **A circuit with more than one condition cannot go in the pre-join file** (w2838, 2026-11-01, a LothDesktop host of
+  a biscuit client, PR #3006). `-ffAutomationPreConnectCommandFile` holds one chain, and the chain splits on every `;`
+  (`AutomationChainExecutor.Split`). `circuit.set` also joins its conditions with `;`, so in that file each condition
+  becomes a separate segment. After `waiting-host-peers-connected`, send the circuit as ONE
+  `POST /v1/command {"actor":"local-player","command":"ffauto:circuit.set|..."}` on the host's agent channel. A
+  single `command` is not split (`AgentRequestRouter.cs` ~400). The host's world is still pre-join at that point.
+  - A Battery cannot carry a circuit (`'circuit.set' found no structure a circuit can switch`). It can only be a
+    condition's target. Check what a building offers first: `circuit.dump|x|z` shows `hasCircuit` and `offeredKinds`.
+  - A client opens an agent channel only with both `-ffAgentControl true` and `-ffAgentControlDev true`. That channel
+    is what reads `circuit.dump` on the client. The w2838 client was relaunched twice to add the flags, and each
+    relaunch cost an epoch with no client report.
 
 ## A host-only scenario with a remote client: pause on join, tower spawns, flow control {#host-scenario-remote-client}
 
