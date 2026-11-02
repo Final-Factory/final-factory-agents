@@ -46,6 +46,7 @@ load-bearing for future runs even where the original defect is fixed.
 - [An Oracle shop pair: host buys first, `near` is tier 1, price is derived](#oracle-shop-pair) (w2518)
 - [A mod pair with raw entity dumps: Comet Fragments spin differently on every peer; fuel and host-wait traps](#mod-dump-pair) (w2831)
 - [A save-and-reload pair: checkpoints are rolling windows, the client rejoins by itself](#save-reload-pair) (w2558)
+- [A cross-OS mod desync hunt from a Linux client: cap its fps, script its rejoins, wait out the outlive window](#linux-client-mod-hunt) (w2826)
 
 ## Full-window rule: never diagnose from a partial window {#full-window-rule}
 
@@ -1097,3 +1098,28 @@ BEAST host and a LothDesktop client. It used a read-only test mod that writes th
     original tile while the station flies.
 - **Dump each epoch on its own.** A client's join resets the heartbeat counter, so the host's dump holds an epoch-0 run
   before the join. Compare only the blocks after the last reset, and only heartbeats both peers dumped.
+
+## A cross-OS mod desync hunt from a Linux client: cap its fps, script its rejoins, wait out the outlive window {#linux-client-mod-hunt}
+
+w2826, 2026-11-02, a biscuit (Linux) built-player client of a BEAST (Windows) host, Gherik's Cruiser mod (the cause was
+a shield-bubble prefab with an all-zero PostTransformMatrix, so KNN put new bubbles at the origin on the joiner;
+fixed in the mod at 15e2604). Measured on the client leg:
+
+- **A headless client's frame rate is the machine's `FpsTarget`**, read from `LocalSettings/settings.json`
+  (`DisplaySettingsController.cs:31`), not 60: biscuit's was 300. To match a vsync'd peer, `python
+  scripts/game_data.py snapshot --name <leg>`, `put --local <a copy with "FpsTarget": 60>`, launch, then `restore
+  --name <leg>`; the client's MP pacing lines then read `frameMs p50=16.7`. A joining client still runs uncapped while
+  it catches up (`CatchUpRenderGovernor`, `DisplaySettingsController.cs:883`, about 2 s here), so a fork at hb 8 is
+  inside that window; read a later one before you rule frame rate in or out.
+- **Rejoins in one process, scripted**: post `ffauto:net.rejoin|<host>|<port>|45|realmap` over agent control
+  (`v1/command`); each join is a new epoch whose heartbeat counter restarts (c21: epochs of 1825, 454 and 337 hb).
+  Count `Game started (join)` lines in the client log to know which epoch you are in.
+- **The report comes about 5 minutes after `ffauto:net.leave`**: a client launched with `-ffAutomationOutlivePairBreak
+  true` and a long `-ffAutomationPostConnectDelayMs` logs `pair-break-outlive-armed ... ceilingSeconds=300`, and only
+  then `session-ended` and `report-written` (`DeterminismAudit/network-determinism-audit-legacy-<label>-client.log`,
+  120 MB raw for a 2616-hb run; `tar -cJf` made 4.3 MB). Wait for the process to exit; do not kill it.
+- **A kick ends the leg early**: after `Desync:RecoveryFailed` the client quits under `-ffAutomationAutoQuit true`
+  (c16: 15 s after launch), so a leg's time limit cannot keep it in; the desync `.txt` files and a trace written by a
+  mod are complete at that point.
+- Desync report paths contain `Never Games` with a space: collect them with `grep -o 'report written to .*\.txt' |
+  sed 's/report written to //'` and a `while IFS= read -r` loop, never `cut -d' '`.
