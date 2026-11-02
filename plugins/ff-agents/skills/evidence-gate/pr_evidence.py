@@ -667,6 +667,12 @@ def shape_problems(section: str) -> tuple[list[str], list[str]]:
     return problems, notes
 
 
+def names_request(value: str) -> bool:
+    """A line names a filed request (wNNN) outside any path: w2878's Critic line passed on the w2878 of its review folder
+    (/srv/fff/review/w2878-deck-shift-hint/critic.md) while its finding was still "to be filed"."""
+    return bool(re.search(r"\bw\d{3,}\b", re.sub(r"\S*/\S*", " ", value)))
+
+
 def eye_problems(section: str) -> list[str]:
     """The person's eye, before the person's (w1396). Every still is looked at full size and judged as a player would see it:
     anything stretched or squashed, a large empty area, overlapping labels, a dense text dump, anything obviously broken or
@@ -683,7 +689,7 @@ def eye_problems(section: str) -> list[str]:
     if not stills or not poor:
         return ["'Eye:' says how many stills were looked at and how many look broken or poor: 'Eye: 12 stills looked at "
                 "full size, 0 look broken or poor (proofs/shots.md)'"]
-    if int(poor.group(1)) and not re.search(r"\bw\d{3,}\b", value):
+    if int(poor.group(1)) and not names_request(value):
         return [f"'Eye:' has {poor.group(1)} still(s) that look broken or poor: fix them before anyone sees them, or, when "
                 f"it is not this change's (standing on master), name the request it was filed as (wNNN) on the line"]
     return []
@@ -713,12 +719,12 @@ def critic_problems(section: str) -> list[str]:
         problems.append("'Critic:' says how many stills it graded, how many broken or ugly findings it made and how many are "
                         "still open: 'Critic: proofs/critic.md (pack 3f2a91ab, run 2): 8 stills, 3 broken or ugly found, "
                         "3 fixed, 0 open, 2 minor'")
-    elif int(still_open.group(1)) and not (re.search(r"\bw\d{3,}\b", value) or ANSWERED.search(value)):
+    elif int(still_open.group(1)) and not (names_request(value) or ANSWERED.search(value)):
         problems.append(f"'Critic:' has {still_open.group(1)} broken or ugly finding(s) open: fix each, file a standing one "
                         f"(wNNN on the line), or answer it with the person's words asking for exactly that "
                         f"(answered (who): \"...\"); the answer goes to the person with the stills")
     standing = re.search(r"(\d+)\s+standing", value, re.IGNORECASE)
-    if standing and int(standing.group(1)) and not re.search(r"\bw\d{3,}\b", value):
+    if standing and int(standing.group(1)) and not names_request(value):
         problems.append(f"'Critic:' lists {standing.group(1)} standing finding(s) (the before still shows them too): file "
                         f"them and name the request on the line (filed as wNNN); they are not this change's to fix")
     return problems
