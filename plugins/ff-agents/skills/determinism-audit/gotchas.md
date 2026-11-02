@@ -685,6 +685,11 @@ w2133 (2026-10-25, the client of a LothDesktop-host pair for PR #2507) lost abou
   `http://127.0.0.1:<port>/v1/command` `{"actor":"local-player","command":"ffauto:..."}` with `Authorization: Bearer
   <token>`, retry on `rate_limited`, then poll `GET /v1/chain/<chainId>` until it leaves accepted/queued/running.
   `setting.shipyardpull` and `audit.write|<label>` worked that way from a `-batchmode -nographics` client.
+  - **Launch it with BOTH `-ffAgentControl true -ffAgentControlDev true`** (w2838, 2026-11-01). `-ffAgentControlDev`
+    alone sets only the tier: `AgentChannelHost.ResolveEnabled` reads only `-ffAgentControl`
+    (`AgentChannelHost.cs:168-175`), so no channel opens. `launch --detach` still prints an `agent_session` path, but
+    the file never appears. w2838's client found out mid-run and relaunched twice, so the first two epochs had no
+    client report. Check that the session file exists right after the launch, before you send the host "joined".
 - **A killed host relaunched on a save gets the same client back** (w2558): a client with
   `-ffAutomationOutlivePairBreak true` whose host was killed (so no `report-written`) and relaunched on the same
   address and port rejoined by itself in the same process and log (`ReconnectAttempt(2)` approved,
