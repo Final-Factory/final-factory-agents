@@ -1,0 +1,99 @@
+---
+name: ffu-drive
+description: Run and look at Final Factory Universe (FFU), the Rust engine in Final-Factory/ffu - bounded headless runs, the `ffu` window, offscreen stills, clips and frame stats, the agent state API (`ffu-headless serve`, JSON-RPC - query, get, set as ops, step, watch, capture), the `ffu-mcp` sidecar that survives the engine's crash, and the hot-reload edit-to-running loop. Use when asked to run, inspect, screenshot or drive FFU, or to answer "why is this stalled" in an FFU sector; it replaces drive-game and playtest there.
+---
+
+# Driving FFU
+
+Every command here is an ffu binary or a cargo build in an ffu checkout (`/ff-agents:ffu-build-test` sets up the
+toolchain and `$CARGO_TARGET_DIR`). Build the tools once, then call the binaries directly; `cargo run` rebuilds on
+every call:
+
+```sh
+cargo build --release -p ffu-headless --features agent-api,fault-injection
+cargo build --release -p ffu-mcp
+cargo build --release -p ffu-client --features agent-api      # the `ffu` binary, with the agent API for captures
+B="$CARGO_TARGET_DIR/release"                                 # or target/release
+```
+
+A sector starts from `--start factory:N[:seed]` (a generated factory of about N buildings), `combat:N[:seed[:turrets]]`
+(Stingers flying at Gatling Turrets) or a `file.snap` a run saved. Every `ffu-headless` command ends with one JSON line
+on stdout: read that line, not stderr, unless it fails.
+
+## Headless: run, inspect, measure
+
+```sh
+$B/ffu-headless run --start factory:20000:1 --ticks 256 --timings t.csv      # mean/worst tick ms, final_hash
+$B/ffu-headless run --start factory:2000:1 --ticks 600 --save end.snap       # a snapshot to start from later
+$B/ffu-headless inspect --start factory:2000:1 --ticks 200 --stalled 3       # stalled buildings and why
+$B/ffu-headless inspect --start end.snap --at 64,2                            # one building
+$B/ffu-headless phases --start combat:400:1 --ticks 600                      # µs per tick phase
+```
+
+`--threads N` runs the parallel phases on N threads (no thread count changes a hash). `--rate-mode [--doze-at T0]
+[--redoze R]` and `--churn N` exercise rate mode. A timing you report needs the bench ticket
+(`/ff-agents:ffu-build-test`, "Timing claims").
+
+## The agent state API (JSON-RPC 2.0, one request per line)
+
+`$B/ffu-headless serve --start factory:2000:1` reads requests on stdin and answers on stdout; `--port N` serves
+127.0.0.1:N instead. Pipe a scripted session through it, one line each:
+
+```sh
+printf '%s\n' \
+  '{"jsonrpc":"2.0","id":1,"method":"stats"}' \
+  '{"jsonrpc":"2.0","id":2,"method":"query","params":{"stalled":true,"limit":5}}' \
+  '{"jsonrpc":"2.0","id":3,"method":"get","params":{"x":64,"y":2}}' \
+  '{"jsonrpc":"2.0","id":4,"method":"set","params":{"op":"remove","x":64,"y":2}}' \
+  '{"jsonrpc":"2.0","id":5,"method":"step","params":{"n":16}}' \
+  | $B/ffu-headless serve --start factory:2000:1
+```
+
+- Methods: `discover` (each method's params as JSON Schema; call it first), `schema`, `stats`, `get {x,y}`,
+  `query {kind?, stalled?, rect?, limit?}`, `set {op: place|remove|set_recipe, x, y, kind?, dir?, param?}`,
+  `watch {x,y}`, `unwatch {id}`, `step {n?}`, `save {path}`, `capture {path, width?, height?, view?}`, `ui_tree`.
+- "Why is this stalled": `query {"stalled": true}` gives `stall_reasons` counts and each building's `stalled` text;
+  `get` on one gives its `stalled` and the tile it `faces`, with the building there.
+- `set` never writes the sector: it submits an op for the next tick through `Sector::submit` and answers the op and
+  `would_apply`. `step` runs the tick that applies it; `get` then shows the result (measured, w2895: a `remove` at
+  (64, 2), then `step`, then `get` answers "no building at (64, 2)").
+- `capture` needs a renderer: serve from the client, `$B/ffu --headless serve --start ...`. Plain `ffu-headless serve`
+  answers -32002. `ui_tree` is an empty screen until M5 gives the engine a UI.
+
+## The MCP sidecar
+
+`$B/ffu-mcp --start factory:2000:1 --state-dir "$TMPDIR/ffu-state"` is an MCP server on stdio. Each method is a tool
+`ffu_<method>` (`ffu_query`, `ffu_get`, `ffu_set`, `ffu_step`, ...), plus `ffu_engine`: the engine's pid, restarts,
+snapshot tick and last crash. The engine is a child saved to `<state-dir>/last.snap` after every `set` and `step`; if
+it dies mid-call, that call answers `isError: true` with the exit status and the engine comes back from the snapshot
+(later ticks and all watches lost, submitted ops kept). `--engine $B/ffu` makes `ffu_capture` draw (measured, w2895: a
+640x360 PNG on lothdesktop's Arc B580). To give a Claude Code session these tools:
+`{"mcpServers":{"ffu":{"command":"<path>/ffu-mcp","args":["--start","factory:2000:1"]}}}` with `--mcp-config`.
+
+## Looking at it: window, stills, clips, frame stats
+
+```sh
+$B/ffu --start factory:20000:1 --seconds 30                                    # a window; ends by itself
+$B/ffu --start factory:20000:1 --warm 480 --still out.png [--view x,y,zoom]   # offscreen PNG, no window
+$B/ffu --start factory:20000:1 --warm 480 --clip out.mp4 --seconds 10         # needs ffmpeg
+$B/ffu --start factory:250000:1 --frames 600 --stats frames.json              # frame times
+```
+
+`--warm 480` first runs 480 ticks so smelters have output. In the window: WASD or arrows pan, wheel or +/- zoom, drag,
+space pauses, F12 saves a screenshot. Always give a window `--seconds N` so nothing you start outlives your work.
+`ffu --headless <cmd>` is `ffu-headless <cmd>`. Judge motion from a clip, not a still (`/ff-agents:watch-video`'s
+viewing rules hold; its recorder is for Unity players).
+
+## The edit-to-running loop (hot reload)
+
+```sh
+cargo run --release -p ffu-client --features hot-reload -- --start factory:20000:1
+# edit crates/ffu-sim, then in another shell:
+cargo build --release -p ffu-client --features hot-reload
+```
+
+When the rebuilt `ffu` has sat unchanged for 0.5 s, the window saves its sector and restarts as the new build from
+it, with the same camera and no warm-up. On Windows the window runs from a copy in `target/<profile>/hot-reload/`,
+since cargo cannot replace a running `ffu.exe`. An edit that changes the snapshot layout follows the snapshot rule
+(version bump, old decoder kept). `tools/measure_edit_loop.sh [ROUNDS] [OUT_DIR]` times the loop under a bench ticket
+and writes `rounds.csv`; it needs a display.
