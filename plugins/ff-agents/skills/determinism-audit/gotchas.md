@@ -46,6 +46,7 @@ load-bearing for future runs even where the original defect is fixed.
 - [An Oracle shop pair: host buys first, `near` is tier 1, price is derived](#oracle-shop-pair) (w2518)
 - [A mod pair with raw entity dumps: Comet Fragments spin differently on every peer; fuel and host-wait traps](#mod-dump-pair) (w2831)
 - [A save-and-reload pair: checkpoints are rolling windows, the client rejoins by itself](#save-reload-pair) (w2558)
+- [A census diff at heartbeat 8 after every join: an empty saved buffer; the client report holds both halves](#empty-buffer-join) (w2868)
 - [A cross-OS mod desync hunt from a Linux client: cap its fps, script its rejoins, wait out the outlive window](#linux-client-mod-hunt) (w2826)
 
 ## Full-window rule: never diagnose from a partial window {#full-window-rule}
@@ -1123,3 +1124,23 @@ fixed in the mod at 15e2604). Measured on the client leg:
   mod are complete at that point.
 - Desync report paths contain `Never Games` with a space: collect them with `grep -o 'report written to .*\.txt' |
   sed 's/report written to //'` and a `while IFS= read -r` loop, never `cut -d' '`.
+
+## A census diff at heartbeat 8 after every join: an empty saved buffer; the client report holds both halves {#empty-buffer-join}
+
+w2868 (2026-11-02, a BEAST host of a LothDesktop client, PR #3024 at 8b9353663): run 1 kicked the client at heartbeat 8
+of epochs 1, 2 and 3 (`toggles+census`, "the join save did not carry everything"), 13 s after it joined.
+
+- **Diff it yourself from the client's report.** A client's desync `.txt` carries the host's half appended after
+  `=== The host's half, received over the network`. Split both `CensusAtSample(hb 8 ...` lines on `|` and diff them
+  (`sed -n <line>p f | tr '|' '\n'`): it named the two archetypes at once, with no file trade between legs.
+- **The cause was an empty `[Save]` buffer.** `circuit.set` with no conditions adds an empty `CircuitCondition` buffer
+  on the host (`CircuitConfigApplier.cs:232-235` at 8b9353663). The join save did not carry it, so the client's
+  Assembler and Connector had the same archetypes minus `CircuitCondition`, and the toggles fold, which folds `Length`
+  only under `HasBuffer` (`DeterminismStateFingerprintJobs.cs:1298-1306`), hashed differently. A solo load of the
+  served e2 save lacked it too (the host leg checked). Any surface that folds presence of a buffer that can be empty
+  forks the same way after a join.
+- **Workaround for a pair brief:** give each circuit one always-true condition (run 2 used `and,!empty,58,58`, the
+  chest is not empty). Run 2 then compared 543/543 heartbeats (8..4344) with the Assembler switching recipe twice.
+- `circuit.dump` has no recipe field, and the client's `CrafterDetail` lines stop at heartbeat 16. The recipe is
+  still covered: `Crafter.CurrentRecipe` is in the fingerprint (`FoldCrafter`), so a clean compare through the end
+  proves both peers' recipes agreed.
