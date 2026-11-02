@@ -35,7 +35,7 @@ load-bearing for future runs even where the original defect is fixed.
 - [A big save: the full capture keeps the client out; the runtime detector and a capped host](#big-save-pair) (w780; bench stops and a too-heavy client, w2567)
 - [Old against new in one pair: a PR's A/B switches on one peer](#ab-switch-one-peer) (w1115)
 - [Reading a pair's witness-compare.txt: pose distance is the verdict](#witness-pose-distance) (w1555)
-- [A world-generation pair: drive the host post-join, compare lists, keep the client yours](#worldgen-pair) (w2271; world objects from saves, ffnightly deletes local saves, w2386)
+- [A world-generation pair: drive the host post-join, compare lists, keep the client yours](#worldgen-pair) (w2271; world objects from saves, ffnightly deletes local saves, w2386; a `nearby` probe grid, rich asteroids by ore amount, UTC checkpoints, w2889)
 - [A live-driven built pair: reopen panels after a resync, overlap the report windows](#live-driven-pair) (w2238)
 - [A Linux client leg on biscuit: build, headless launch, a scripted paste](#linux-client-leg) (w2133, w2326)
 - [A Linux host leg on biscuit: console commands and detector counts from a headless host](#linux-host-leg) (w2281)
@@ -973,6 +973,23 @@ the host flies rings of 400 to 1600 tiles. What it took:
 - **Size "N minutes after the join" in heartbeats at 16 UPS, not from goto timeouts.** `movement.goto` with
   `devunlock` flies about 250 u/s and finishes well inside its timeout (1,700 tiles in ~70 s). So w2386's first run
   ended 12.5 minutes after the join instead of 15. Its final hold of 6,400 heartbeats became 10,400.
+- **Lists on master builds without saves: a grid of `nearby` probes** (w2889, 2026-11-02, BEAST host with a
+  LothDesktop client, PR #3043's Deep Space rich asteroids and gas giants, PASS on 8,285 heartbeats). What it took:
+  - **A pre-join `ffauto:vfx.superenemies|invulnerable` covers only the players that exist then.** The joining client
+    was killed by 245% enemies at about hb 1900 on its way out. Run it on the host again right after the join.
+  - **`observe.state|nearby|x|z|r` caps r at 64 tiles**, so cover the area with a grid of probes 120 tiles apart.
+    Run one per probe on each peer, drop `data.visibility`, then hash `json.dumps(data, sort_keys=True)` and compare
+    probe by probe. w2889's two scan files came out byte-identical.
+  - **Scan only after BOTH peers have been over the area.** Chunks generate around every player. The first host scan
+    differed in 5 probes along the path the client flew later; a rescan matched.
+  - **`nearby` names an asteroid only by its ore** (`oreType`, `PlaytestStateSnapshot.cs` ~418), so it does not say
+    rich or normal. Tell them apart by ore amount (`AsteroidPlacementSystem.cs:107-112`, GlobalConfig coefficient 40,
+    MinOre 90000). Divide `oreRemaining` by `400 * ManhattanTiles(center) + 90000`: 0.7 to 1.3 is normal, 2.1 to 3.9
+    is rich (OreSpawnMultiplier 3).
+  - **Checkpoints at one agreed UTC second.** Both peers ran `ffauto:audit.write|<label>-<role>` at the same second.
+    Fly the host through new sectors in the minutes before, never across that second: a goto chain queues every other
+    command. `scripts/audit/compare_audit_records.py` then compared the whole run from hb 1 (8,285 heartbeats, 28
+    fields). The ~3,000-heartbeat cap applies only to the plain lines that `compare_determinism_reports.sh` reads.
 
 ## An editor pair with presentation checks: no Audit ids in the config, a healthy host, a client machine without bench rounds {#editor-pair-presentation}
 
