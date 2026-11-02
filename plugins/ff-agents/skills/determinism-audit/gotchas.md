@@ -44,6 +44,7 @@ load-bearing for future runs even where the original defect is fixed.
 - [An ffnightly Linux host for a remote client: its port, its audit, its station builds](#ffnightly-linux-host) (w2824)
 - [An editor pair with presentation checks: no Audit ids in the config, a healthy host, a client machine without bench rounds](#editor-pair-presentation) (w2399)
 - [An Oracle shop pair: host buys first, `near` is tier 1, price is derived](#oracle-shop-pair) (w2518)
+- [A mod pair with raw entity dumps: Comet Fragments spin differently on every peer; fuel and host-wait traps](#mod-dump-pair) (w2831)
 - [A save-and-reload pair: checkpoints are rolling windows, the client rejoins by itself](#save-reload-pair) (w2558)
 
 ## Full-window rule: never diagnose from a partial window {#full-window-rule}
@@ -1041,3 +1042,32 @@ From w2558 (2026-10-29), a built-player pair of the Ship Yard "Take ships from a
   - A frame out of range stays `frame` with "no free construction bot". Move with `movement.goto|<x*10>|<z*10>|tolerance=10`
     first.
 
+## A mod pair with raw entity dumps: Comet Fragments spin differently on every peer; fuel and host-wait traps {#mod-dump-pair}
+
+w2831 (2026-11-01, for w2827) checked Gherik's FinalFactoryMods20 mods (HybridFuelConsumers, AsteroidTow, Batnado) on a
+BEAST host and a LothDesktop client. It used a read-only test mod that writes the mods' components to a text dump every
+80 heartbeats on each peer, and diffed the dumps beside the fingerprint reports.
+
+- **Comet Fragment rotation differs on every peer; it is the base game's, not a mod's.**
+  - Comet Fragment roots (ItemIdentifier 41, PlaceableType MinableTerrain) had different `LocalTransform.Rotation`
+    float bits on host and client in every dump block of all three scenarios. Their positions and tiles matched.
+  - They spin in `AutoRotatorSystem` (`Assets/Scripts/FFSystems/Utils/AutoRotatorSystem.cs`, FFFixedPreTransformGroup,
+    write at :137). It draws each spin rate from a random seeded with the Entity handle (:112-118), and Entity handles
+    differ between peers.
+  - The fingerprint does not hash this rotation: 2777, 7285 and 4182 heartbeats compared clean. So strip `Rotation` on
+    those entities before you diff dumps, or a mod looks guilty.
+  - Its comment says no simulation system reads the rotation. A code read found that `FpCollisionWorldBuildSystem`
+    builds the fragment's Collider child pose from it (:347-352). That is an open base-game question, and it is
+    unproven as a desync.
+- **A built host waits only 900 s for its client** (`waiting-host-peers-connected` timeoutSeconds=900). Set up the
+  scenario well inside that, or have the client join first and drive the host after the join.
+- **Fuel scenarios:**
+  - Laser Turrets burn no fuel in this version (`LaserTurretConfig.asset` `ValidFuel: []`), whatever a mod's
+    description says.
+  - A Rocket Adapter burns Connectors only while its station flies (`RocketAdapterFuelConsumerSystem.cs:105`). Place
+    `ValidationScenarios/mobilestations/station-rocket.ffbp.txt` with `blueprint.place`, then load fuel with
+    `station.put|<core x>|<core z>|Rocket Adapter|Connector|10`. Keep the station moving with
+    `mobilestation.movenow|<core x>|<core z>|<dest x world>|<dest z world>` every 12 s. The ref stays the Command Core's
+    original tile while the station flies.
+- **Dump each epoch on its own.** A client's join resets the heartbeat counter, so the host's dump holds an epoch-0 run
+  before the join. Compare only the blocks after the last reset, and only heartbeats both peers dumped.
