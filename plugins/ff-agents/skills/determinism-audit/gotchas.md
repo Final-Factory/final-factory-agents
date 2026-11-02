@@ -40,7 +40,7 @@ load-bearing for future runs even where the original defect is fixed.
 - [A Linux client leg on biscuit: build, headless launch, a scripted paste](#linux-client-leg) (w2133, w2326)
 - [A Linux host leg on biscuit: console commands and detector counts from a headless host](#linux-host-leg) (w2281)
 - [A host-only scenario with a remote client: pause on join, tower spawns, flow control](#host-scenario-remote-client) (w2586)
-- [A hand-launched built host: TargetClients counts the host, and turn the audit on](#hand-launched-host) (w2797)
+- [A hand-launched built host: TargetClients counts the host, and turn the audit on](#hand-launched-host) (w2797; every post-ready segment needs `ffauto:`, a new label per relaunch, w2861)
 - [An ffnightly Linux host for a remote client: its port, its audit, its station builds](#ffnightly-linux-host) (w2824)
 - [An editor pair with presentation checks: no Audit ids in the config, a healthy host, a client machine without bench rounds](#editor-pair-presentation) (w2399)
 - [An Oracle shop pair: host buys first, `near` is tier 1, price is derived](#oracle-shop-pair) (w2518)
@@ -863,6 +863,16 @@ w2797 (2026-11-01, an m5 Mac host of a BEAST Windows client, PR #2989) launched 
   - A client opens an agent channel only with both `-ffAgentControl true` and `-ffAgentControlDev true`. That channel
     is what reads `circuit.dump` on the client. The w2838 client was relaunched twice to add the flags, and each
     relaunch cost an epoch with no client report.
+- **Every `-ffAutomationPostReadyCommand` segment needs the `ffauto:` prefix** (w2861, 2026-11-02, an m5 Mac host of a
+  biscuit Linux client, PR #3017). A brief wrote the chain as `cheats.enable;player.devunlock|8;wait|5;...`. A bare
+  segment is not an `ffauto:` command, so `AutomationChainExecutor.DispatchSegment` leaves it to the Quantum console
+  fallback (`LocalMultiplayerAutomationBootstrap.cs` `ExecuteChainedCommandsAsync`), which answered every step at once
+  with `Command 'wait|5' could not be found` (and split `Cargo Hold` at its space). The chain does not stop on an error:
+  it ran to the dwell in under a second, a void run. Prefix every segment yourself when a brief leaves it out (say so in the report), and read the first
+  `post-ready-command-` line once the client joins: `-error: ... could not be found` means the run is void.
+- **A relaunched host needs a new `-ffAutomationLabel`** (w2861): the report path is
+  `DeterminismAudit/network-determinism-audit-legacy-<label>-<role>.log`, so a relaunch with the same label
+  overwrites the last run's report. Tell the client leg to change its label too.
 
 ## A host-only scenario with a remote client: pause on join, tower spawns, flow control {#host-scenario-remote-client}
 
