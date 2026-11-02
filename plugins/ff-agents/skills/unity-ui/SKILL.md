@@ -115,6 +115,11 @@ census (`<shot>.json`: small, clipped, off-screen and overlapping text, covered 
   overwrites whichever slot came next, another run's included (w1413: two such slots at 08:28 and 08:31). After the legs,
   list `find <saves> -newermt <the run's start>` and remove only the files your legs made. That station script also passes
   no `-logFile`, so its Player.log goes to the shared default; add one when you need to prove what a leg wrote.
+  **You can no longer remove them (w2486):** FF Factory's guard refuses any delete in the game's data folder but your own
+  `ffa-<session>-*` save copy, so prevent them instead: give every leg `-ffAutomationRole solo` (with `-ffAutomationSave
+  <your copy>` or `-ffAutomationSeed <seed>` for a new game; `specs/w2486-map-filter/tour/run_filter_tour.sh:6`). w2486's
+  four such legs wrote no quit save; its three `-ffSoloNewGame` station legs wrote `_autosave_sp_before_quit_1..3` (their
+  Player.log: `[QuitSave] ApplicationQuit: saving the game as ...`). Grep each leg's Player.log for `[QuitSave]`.
 - **Development overlays are not the game.** The Debug Info counters, "Agent control ON" and Graphy
   draw in a development player and show up as overlaps and flicker; `ui_layout.py` ignores them,
   `ui_check.py` does not. Hold keys by `seconds`, not frames: a frame count is gone in a blink at

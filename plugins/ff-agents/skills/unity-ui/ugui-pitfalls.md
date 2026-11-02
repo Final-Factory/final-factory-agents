@@ -116,6 +116,14 @@ manual pages for these components are the source for the rules: "Auto Layout", "
 - **Columns follow the width.** With Flexible, a narrower pane means more rows, so a desktop grid
   that fit in 3 rows needs 5 on a Deck. Size the viewport from the content (a fitter on the grid
   inside a scroll view) and let the scroll view scroll, rather than fixing a height.
+- **A fixed `cellSize` clips beside a scroll bar (w2486).** The Map window's kind chips (three fixed columns) fit until the
+  list grew a scroll bar at 1280x800; then the right column ran under the viewport's edge (Storage and Hull 86-88 px
+  wide, square right corners) and a fresh critic called it UGLY. Size the cells every `LateUpdate` from the list content's
+  width minus its padding (`MapFilterWindow.FitChips`), not from the grid's own rect: with a fixed column count the grid's
+  minimum width equals its preferred width, so its rect never narrows.
+- **A list cut to whole rows never ends on a heading (w2486).** Cutting a scrolled list's height at the last row that fits
+  left a group heading ("LABELS AND OVERLAYS") as its last line with its switches below the fold; skip headings and rules
+  as cut points (`MapFilterWindow.WholeRows`).
 - **Visible rows** = the visible height of the grid (its rect clipped by every mask above it and by
   the screen) over (cell height + spacing). The rect audit reports it.
 
