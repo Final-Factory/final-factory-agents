@@ -151,6 +151,17 @@ class BackdropTest(unittest.TestCase):
     def test_without_the_classification_it_still_fails(self):
         self.assertTrue(ul.overlaps(self.census(650), 2, opened=OPENED))
 
+    def test_a_hover_card_over_an_unrelated_panel_is_not_an_overlap_but_two_hover_panels_are(self):
+        spec = json.loads(ul.DEFAULT_CLUSTERS.read_text(encoding="utf-8"))
+        tr = ul.transient_patterns(spec)
+        card = el("HoverDescription(Clone)/Card", [1000, 500, 1260, 600], alpha=0.9)
+        tip = el("Tooltip(Clone)/Text", [1100, 550, 1200, 650], alpha=0.9)
+        minimap = el("MinimapParent/Background", [996, 520, 1268, 792], alpha=0.71)
+        self.assertTrue(ul.overlaps({"elements": [minimap, card]}, 2, opened=OPENED))
+        self.assertEqual(ul.overlaps({"elements": [minimap, card]}, 2, opened=OPENED, transient=tr), {})
+        both = ul.overlaps({"elements": [card, tip]}, 2, opened=OPENED, transient=tr)
+        self.assertEqual(len(both), 1)
+
     def test_the_shipped_spec_lists_the_map_and_not_the_map_controls(self):
         patterns = ul.backdrop_patterns(json.loads(ul.DEFAULT_CLUSTERS.read_text(encoding="utf-8")))
         self.assertTrue(ul.opened_prefix(f"{GP}/Map/Image", patterns))

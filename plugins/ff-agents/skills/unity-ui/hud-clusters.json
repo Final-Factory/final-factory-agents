@@ -31,6 +31,12 @@
       "StructuredHub*"
     ]
   },
+  "transient": {
+    "why": "A hover card or tooltip (shown only while the pointer is on something) may cover a panel its own hover does not show, so census overlaps leave that pair out. Elements one hover shows (a hover card and its tooltip or side panel) must not overlap each other: that pair still counts.",
+    "who": ["lothsahn, 2026-11-02, w2885 (on w2849): \"A hover covering another panel that isn't also triggered from the same hover is fine. But hover panels shouldn't overlap each other or the user can't see them\""],
+    "howToAdd": "Only an element shown while the pointer is on something. Never a persistent HUD panel. Same path syntax as openedPanels.",
+    "paths": ["HoverDescription", "Tooltip"]
+  },
   "backdrops": {
     "why": "A full-screen view the HUD is drawn over is not an HUD block: what lies on it does not overlap it in any sense a player sees (w959: the Map Controls row always lies on the map view, and Map x MapControls failed every check that moved the controls, 110684 -> 43499 px2, exit 1 in all eight census pairs). The Esc and title menu's own backdrop (MenuParent/Mask, MenuParent/LeftScrim) fills the screen behind every menu panel: w1413's Load-panel change read '2 kept between blocks the change moved' for the Load panel lying on it (1006574 px2 before and after), and for the Mask against the development build's Agent Control strip and the version string, though the menu's outer rect never moved.",
     "who": ["Ben, w959, 2026-10-10: \"just move the buttons to the top next to the player panel\" (the controls belong to the map view)"],
