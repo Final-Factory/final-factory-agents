@@ -692,6 +692,13 @@ w2133 (2026-10-25, the client of a LothDesktop-host pair for PR #2507) lost abou
     (`AgentChannelHost.cs:168-175`), so no channel opens. `launch --detach` still prints an `agent_session` path, but
     the file never appears. w2838's client found out mid-run and relaunched twice, so the first two epochs had no
     client report. Check that the session file exists right after the launch, before you send the host "joined".
+- **The host's pre-join invulnerability does not cover a client that joins later** (w2889, 2026-11-02). Host-side
+  `ffauto:vfx.superenemies|invulnerable` (`CombatLifecycleDispatch.DispatchAutomationPlayerInvulnerable`, host-only: a
+  client is refused) grants the players present at that moment; the joining client stays `invuln=0` (its
+  `PlayerCombatDetail` audit line). In Deep Space at 245% enemy strength the w2889 client was dead about 1,900 heartbeats
+  after it joined, before the host re-granted. Host: run it again right after the client says "joined". Client: check
+  `observe.state|player` `health.invulnerable` is true before flying out; if defeated, `ffauto:combat.respawn`
+  (networked `PlayerRespawnRequest`, respawns at the origin) and fly again.
 - **A killed host relaunched on a save gets the same client back** (w2558): a client with
   `-ffAutomationOutlivePairBreak true` whose host was killed (so no `report-written`) and relaunched on the same
   address and port rejoined by itself in the same process and log (`ReconnectAttempt(2)` approved,
