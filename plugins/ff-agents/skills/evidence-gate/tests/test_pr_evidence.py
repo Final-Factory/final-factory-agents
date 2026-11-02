@@ -561,6 +561,22 @@ class ShapeAndEyeTest(unittest.TestCase):
         self.assertEqual(self.reasons(Eye="16 stills looked at full size, 1 look broken or poor (docked lamp: the switch "
                                           "drawn as a bar, standing on master, filed as w1397)"), "")
 
+    # MEASURED (w2878, PR #3030 in FinalFactory): its Critic line named the review folder
+    # /srv/fff/review/w2878-deck-shift-hint/critic.md and said a standing finding was "to be filed", and the check passed on
+    # the w2878 inside the path. A request id inside a path is not a filed request.
+    W2878_CRITIC = ("/srv/fff/review/w2878-deck-shift-hint/critic.md (pack eeece30b, run 1): 4 stills, 2 broken or ugly "
+                    "found, 0 fixed, 1 open, 1 standing, 2 minor: the shared stick-click art, to be filed as its own request")
+
+    def test_a_request_id_inside_a_path_is_not_a_filed_request(self):
+        reasons = self.reasons(Critic=self.W2878_CRITIC)
+        self.assertIn("1 broken or ugly finding(s) open", reasons)
+        self.assertIn("1 standing finding(s)", reasons)
+        self.assertEqual(self.reasons(Critic=self.W2878_CRITIC.replace("to be filed as its own request", "filed as w2890")),
+                         "")
+        eye = "9 stills looked at full size, 1 look broken or poor (proofs/w2878-shots/shots.md)"
+        self.assertIn("1 still(s) that look broken or poor", self.reasons(Eye=eye))
+        self.assertEqual(self.reasons(Eye=eye + ", filed as w2890"), "")
+
 
 class MovedTest(unittest.TestCase):
     """w826 and w894: a UI change lists every HUD element it moved, at 1920x1080 and at 1280x800 undocked and docked, and
