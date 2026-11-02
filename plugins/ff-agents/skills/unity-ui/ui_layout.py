@@ -230,6 +230,14 @@ def backdrop_patterns(spec: dict | None) -> list[str]:
     return list(((spec or {}).get("backdrops") or {}).get("paths", []))
 
 
+def transient_patterns(spec: dict | None) -> list[str]:
+    """hud-clusters.json `transient`: hover cards and tooltips, shown only while the pointer is on something. One may cover
+    a panel the same hover does not show (lothsahn, 2026-11-02, w2885: "The user can stop hovering to see the card"); two
+    transient elements overlapping each other stay an overlap ("hover panels shouldn't overlap each other or the user
+    can't see them")."""
+    return list(((spec or {}).get("transient") or {}).get("paths", []))
+
+
 def _pairs(census: dict, depth: int, min_px: float, same_block: bool):
     """Every two solid elements whose visible rects overlap enough to count: (a, block a, b, block b, px2, rect)."""
     items = [(e, block_of(e["path"], depth)) for e in census["elements"] if solid(e) and area(e.get("visible") or e["rect"]) >= 4]
@@ -251,7 +259,7 @@ def _pairs(census: dict, depth: int, min_px: float, same_block: bool):
 
 
 def overlaps(census: dict, depth: int = 2, min_px: float = 16.0, opened: list[str] | None = None,
-             backdrops: list[str] | None = None) -> dict:
+             backdrops: list[str] | None = None, transient: list[str] | None = None) -> dict:
     """{(blockA, blockB): {"px": area, "example": (pathA, pathB)}} for always-on HUD blocks whose solid elements overlap.
     With `opened` (the openedPanels patterns) an element of a panel the player opens does not count: it may cover the
     HUD (see opened_over_hud, which checks that it does so properly)."""
@@ -261,6 +269,8 @@ def overlaps(census: dict, depth: int = 2, min_px: float = 16.0, opened: list[st
             continue
         if backdrops and (opened_prefix(a["path"], backdrops) or opened_prefix(b["path"], backdrops)):
             continue
+        if transient and bool(opened_prefix(a["path"], transient)) != bool(opened_prefix(b["path"], transient)):
+            continue  # a hover card over a panel its hover does not show
         key = tuple(sorted((ba, bb)))
         entry = pairs.setdefault(key, {"px": 0.0, "example": (a["path"], b["path"])})
         entry["px"] += px
@@ -501,6 +511,7 @@ def window_overlaps(census: dict, spec: dict | None, depth: int = 2, min_px: flo
     ('hosting' | 'allowed' | 'not allowed'), "why" (the quote or source), "example"}. HUD x HUD pairs are `overlaps`';
     a window the dock hosts as a tab is not an overlap with the dock."""
     patterns, backdrops = opened_patterns(spec), backdrop_patterns(spec)
+    transient = transient_patterns(spec)
     items = []
     for e in census["elements"]:
         if not solid(e) or area(e.get("visible") or e["rect"]) < 4:
@@ -518,6 +529,8 @@ def window_overlaps(census: dict, spec: dict | None, depth: int = 2, min_px: flo
         ra = a.get("visible") or a["rect"]
         for j in range(i + 1, len(items)):
             b, kb, lb = items[j]
+            if transient and bool(opened_prefix(a["path"], transient)) != bool(opened_prefix(b["path"], transient)):
+                continue
             if (ka == "H" and kb == "H") or la == lb or la.startswith(lb + "/") or lb.startswith(la + "/"):
                 continue
             rb = b.get("visible") or b["rect"]
@@ -1556,8 +1569,9 @@ def run_check(args) -> int:
     backdrops = backdrop_patterns(spec)
     failed = False
 
-    ob = overlaps(before, args.block_depth, opened=patterns, backdrops=backdrops)
-    oa = overlaps(after, args.block_depth, opened=patterns, backdrops=backdrops)
+    transient = transient_patterns(spec)
+    ob = overlaps(before, args.block_depth, opened=patterns, backdrops=backdrops, transient=transient)
+    oa = overlaps(after, args.block_depth, opened=patterns, backdrops=backdrops, transient=transient)
     new = {k: v for k, v in oa.items() if k not in ob}
     moved = moved_blocks(before, after, args.block_depth, args.tolerance)
     kept = {k: v for k, v in oa.items() if k in ob and (k[0] in moved or k[1] in moved)}
@@ -1688,7 +1702,8 @@ def run_options(args) -> int:
 def run_overlaps(args) -> int:
     census = load(args.census)
     spec = json.loads(Path(args.clusters).read_text(encoding="utf-8"))
-    pairs = overlaps(census, args.block_depth, opened=opened_patterns(spec), backdrops=backdrop_patterns(spec))
+    pairs = overlaps(census, args.block_depth, opened=opened_patterns(spec), backdrops=backdrop_patterns(spec),
+                    transient=transient_patterns(spec))
     print(f"{len(pairs)} overlapping block pairs between always-on HUD blocks (block depth {args.block_depth})")
     for (a, b), v in sorted(pairs.items(), key=lambda kv: -kv[1]["px"]):
         print(f"  {short(a)}  x  {short(b)}: {v['px']:.0f} px2, e.g. {short(v['example'][0], 2)} / {short(v['example'][1], 2)}")

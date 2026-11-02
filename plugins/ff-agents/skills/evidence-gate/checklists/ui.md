@@ -443,6 +443,8 @@ control, and a redesign goes out as 2 or 3 clearly different options built from 
     before you start, and the PR's carries `beside:` a still of the build beside the picked mock
     ([lesson](../lessons/research-the-decision-not-the-topic.md#build-the-pick-the-person-saw-its-still-checked-against-their-words-w1323-w2580-2026-10-31)).
 
+38. **A hover card or tooltip may cover a panel its hover does not show (w2885).** A hover card or tooltip (shown only while the pointer is on something) covering a persistent panel is not an overlap defect, not a reason to hold a PR and not a question for a person; `ui_layout.py` leaves that pair out (hud-clusters.json `transient`). Panels one hover shows (a hover card and its own tooltip or side panel) must not overlap each other, and that still counts. Persistent HUD panels and every other non-hover element keep items 11, 24 and 34 as they are (lothsahn, 2026-11-02, w2849: "No need to stop the overlap between those cards. The user can stop hovering to see the card", then "A hover covering another panel that isn't also triggered from the same hover is fine. But hover panels shouldn't overlap each other or the user can't see them").
+
 19. **The Deck tour is a stand-in (w770).** It forces its own window size and a scripted Deck, so it cannot show Steam's
     layout choice, the Proton first-frame resolution, the Steam client version or touch. A Deck UI change says "verified on
     a real Deck" or "not verified on a real Deck" ([deck.md](deck.md)). For a stored bad size use `-ffDeckTourSize none
