@@ -63,6 +63,19 @@ Six traps cost three host runs first:
    heartbeats. Give the host's join poll room (w2567 used 120 min), and have the client launch only when its
    machine has no exclusive ticket held or waiting. Then run 5 went through: 289/289 matched over heartbeats 8 to 2,312.
 
+10. **Hosting a built-player pair for hand-sent ffauto steps** (w2852, 2026-11-01, m3 host, lothdesktop client).
+   `-ffAutomationTargetClients` counts the host: `NetworkManager.ConnectedClients` includes it
+   (`LocalMultiplayerAutomationBootstrap.cs` `GetConnectedClientCount`), so a host and one client is `2`, the
+   default. Passing `1` makes the host log `host-peers-connected: connectedClients=1` at once, run its 1.5 s dwell
+   alone and end. To hold the session open for commands, pass what `ffnightly.py`'s MP args pass:
+   `-ffAutomationPostConnectDelayMs <ms> -ffAutomationWriteReport false -ffAutomationOutlivePairBreak true`. Without
+   `WriteReport false` the session ends with "Determinism report publication failed: The determinism audit is
+   disabled". `/v1/command` refuses every `ffauto:` verb at the title menu (`state_not_playable`,
+   `AgentRequestRouter.cs` `ExecuteCommand`), so a title-screen click cannot be sent. For a still of the Load panel's
+   Autosaves tab, use the same panel in a running game: `ui.open|loadgame`, `ui.click|loadgame|AutosavesTab`,
+   then `GET /v1/screenshot`. lothdesktop could not reach m3's LAN address 10.0.0.110 (ping lost); it joined on m3's
+   Tailscale address. Give a Windows client both addresses.
+
 The scripts: a host loop that launches through `player_slots.py`, waits for `status host-peers-connected:`
 and relaunches on a timeout; a driver that waits for the same line, reads `desync.stats`, then sends the
 scenario's host commands through `peer.py` and logs every answer. The host's live `desync.stats` compares
