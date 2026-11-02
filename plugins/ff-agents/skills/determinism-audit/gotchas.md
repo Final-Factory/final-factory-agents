@@ -41,6 +41,7 @@ load-bearing for future runs even where the original defect is fixed.
 - [A Linux host leg on biscuit: console commands and detector counts from a headless host](#linux-host-leg) (w2281)
 - [A host-only scenario with a remote client: pause on join, tower spawns, flow control](#host-scenario-remote-client) (w2586)
 - [A hand-launched built host: TargetClients counts the host, and turn the audit on](#hand-launched-host) (w2797)
+- [An ffnightly Linux host for a remote client: its port, its audit, its station builds](#ffnightly-linux-host) (w2824)
 - [An editor pair with presentation checks: no Audit ids in the config, a healthy host, a client machine without bench rounds](#editor-pair-presentation) (w2399)
 - [An Oracle shop pair: host buys first, `near` is tier 1, price is derived](#oracle-shop-pair) (w2518)
 - [A save-and-reload pair: checkpoints are rolling windows, the client rejoins by itself](#save-reload-pair) (w2558)
@@ -798,6 +799,38 @@ w2281 (2026-10-26, the host of a biscuit-host, LothDesktop-client pair for PR #2
   build log while slot3's exclusive bench ticket held biscuit. Loop on `bench_queue.py status` until no exclusive
   holder shows, then build (the third try built in about 6 minutes). A bench warning that your player's ticket ends did
   not stop the running host that time, but the client leg had already quit on it: restart both fresh.
+
+## An ffnightly Linux host for a remote client: its port, its audit, its station builds {#ffnightly-linux-host}
+
+w2824 (2026-11-02, biscuit Linux host and a BEAST Windows client for PR #3002, circuit-module power) ran a host-only
+scenario through `ffnightly_linux.py run --lab <copy of lab.linux.json with its own port>`. It took six host launches
+to get two good runs. These were the causes:
+
+- **The host listens on the lab's port + 1.** With lab ports 7951 and 7953, the host listened on 7952 and 7954. Check
+  with `ss -uanp | grep "pid=<host pid>,"` before you post HOST WAITING.
+- **ffnightly turns the audit off** (`automation_args`: `-ffAutomationWriteReport false`, no
+  `-ffAutomationDeterminismAudit`). Then `audit.write` checkpoints are refused. Give the scenario
+  `"peerArgs": {"host": ["-ffAutomationDeterminismAudit", "true", "-ffFlowControlWaitForSlowPeers"]}`. Then
+  concatenate the host's `Checkpoints/*/...-<label>.log` files and the client's minute checkpoints, and compare them
+  with `compare_audit_records.py`. It keys on (epoch, heartbeat), so concatenated files merge. Here it compared 5602
+  heartbeats. `compare_determinism_reports.sh host.log client.log` covered the tail, 6304 heartbeats.
+- **Every rerun gets new `audit.write` labels**, not only a new client label. A rerun with the same host label
+  collides (w2658), so build the label from a run id (`w2824-host-r2-<step>`).
+- **A poll's `path` is resolved against the command's result.** `circuit.dump` has `name` at its top level, so
+  `data.name` works. On `observe.state|structure` the path `data.item` stayed None for 600 s, although the result
+  held `data.item` = "Cargo Hold". Poll with `circuit.dump`, or read the commands.jsonl line before you trust a path.
+- **A second Station Core 15 tiles away (25,10) stayed a frame** (`activeTask AddStation`) for 8 minutes, with the
+  player at its spawn and two construction bots. The cause was not proven. At 19,10, after
+  `movement.goto|<midpoint world x>|<world z>` between the stations, it was built within 50 s. Before you set a
+  circuit on a structure, poll `circuit.dump|x|z` `data.moduleOnStation` for it.
+- **`transfer.put` answers "requested ... via heartbeat queue" even when the host refuses it.** Run 1 never filled
+  its hold: the player had no Iron Ore left after `craft.queue|Construction Bot|2` (the cause is a guess), and every
+  transfer was refused. The refusal shows only in host.log: `[InventoryTransfer] Refused ... NothingInSource`. Grep for
+  it after the first cycle. Move an item that the setup does not spend (`inventory.add|Connector|60`), and record the
+  hold's `observe.state` inventory beside each `circuit.dump`.
+- Step overhead: each `do` step costs wall time. 8 put/grab cycles with 4 dumps each took 4.7 min, not the planned
+  2 min, so the host ran about 7 hb/s of wall time. Size the client's `PostConnectDelayHeartbeats` from heartbeats.
+  Run 1's ~5550 heartbeats ran in ~13 minutes.
 
 ## A hand-launched built host: TargetClients counts the host, and turn the audit on {#hand-launched-host}
 
