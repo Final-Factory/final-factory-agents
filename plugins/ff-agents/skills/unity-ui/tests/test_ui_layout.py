@@ -648,6 +648,25 @@ class PinTest(unittest.TestCase):
         both, _ = ul.pinned_lines([("docked", docked), ("classic", classic)], {"pins": [pin]}, "t")
         self.assertIn("0 broken, 0 not shown, 1 covered by a window by design", both[0])
 
+    def test_a_hover_card_under_a_building_window_in_the_classic_layout_is_covered(self):
+        """w2184: the classic layout hides the card too while an open window overlaps it (HoverCardFit.HideUnderAWindow),
+        and at 1280x800 a building's window reaches down over the minimap's columns. MEASURED, the w2184 1280x800
+        undocked censuses: the minimap at 996,520 to 1268,792, the Circuit tab's window at 721,70 to 1276,505 (master's
+        468 at the bottom) and no HoverDescription; at 1920x1080 the card stood at 1651,378 to 1908,805, 427 px tall."""
+        pin = next(p for p in self.SPEC["pins"] if p["name"] == "building hover card")
+        def classic(*windows):
+            return {"screen": [1280, 800], "elements": [el("GamePanels/MinimapParent/Content/Minimap/MapImage",
+                                                            [996, 520, 1268, 792]), *windows]}
+        circuit = classic(el("GamePanels/LogisticsNetworkEntityPanel/MainPanel", [721, 70, 1276, 505]))
+        self.assertEqual(ul.pin_check(circuit, pin)[0], "covered")
+        left = classic(el("GamePanels/LogisticsNetworkEntityPanel/MainPanel", [100, 70, 700, 505]))
+        self.assertEqual(ul.pin_check(left, pin)[0], "not shown", "a window left of the minimap's columns")
+        short = classic(el("GamePanels/LogisticsNetworkEntityPanel/MainPanel", [721, 70, 1276, 200]))
+        self.assertEqual(ul.pin_check(short, pin)[0], "not shown", "a window that ends above the card's least height")
+        self.assertEqual(ul.pin_check(classic(), pin)[0], "not shown")
+        alone, _ = ul.pinned_lines([("circuit", circuit)], {"pins": [pin]}, "t")
+        self.assertIn("0 broken, 1 not shown", alone[0])
+
     def rail_census(self, features=("inventory-rail",), crafting=True, hover=(645, 214, 890, 495), rail=(900, 74, 1254, 600),
                     station=(400, 500, 880, 690)):
         """w2651: the classic layout at 1280x800 with the inventory rail up, Crafting left of it and the hover card left

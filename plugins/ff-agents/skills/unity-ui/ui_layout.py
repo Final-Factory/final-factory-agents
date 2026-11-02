@@ -902,12 +902,21 @@ def covered_by_window(census: dict, pin: dict) -> str | None:
     census with a building selected never shows it; the pin counts as covered when the dock's window reaches into the
     card's place (x from xMin x W, y down to yMax x H). It is measured where it shows: pinned_lines asks for another
     census of the same run that measures it."""
-    rule = pin.get("coveredBy")
-    if not rule or layout_of(census) != rule["layout"]:
-        return None
+    rules = pin.get("coveredBy") or []
+    for rule in rules if isinstance(rules, list) else [rules]:
+        hidden = covered_by_rule(census, rule) if layout_of(census) == rule["layout"] else None
+        if hidden:
+            return hidden
+    return None
+
+
+def covered_by_rule(census: dict, rule: dict) -> str | None:
+    """One `coveredBy` rule of a pin (a pin may carry a list, one per layout: w2184)."""
     w, h = screen_size(census.get("screen"), [0, 0])
     if rule.get("beside"):
         return covered_beside(census, rule, w)
+    if rule.get("above"):
+        return covered_above(census, rule, h)
     window = find(census, rule["window"])
     if window is None or window[2] <= rule["xMin"] * w or window[1] >= rule["yMax"] * h:
         return None
@@ -935,6 +944,30 @@ def covered_beside(census: dict, rule: dict, w: float) -> str | None:
         if r[2] > lo + 2 and r[0] < hi - 2:
             return (f"under {prefix.split('/')[-1]} at {round(r[0])},{round(r[1])} {round(r[2] - r[0])}x"
                     f"{round(r[3] - r[1])}, beside {rule['beside'].split('/')[-1]}, by design: {rule['why']}")
+    return None
+
+
+def covered_above(census: dict, rule: dict, h: float) -> str | None:
+    """w2184, the classic layout with the rail closed: the card stands just above `above` (the minimap) and the game hides
+    it while an open window overlaps it (HoverCardFit.HideUnderAWindow, w1544), so a 1280x800 census with a building's
+    window open over the minimap's columns does not show it. Covered when a window matching one of `windows` reaches into
+    the anchor's columns and down into the band `reach` x H tall above the anchor's top, the least the card fills."""
+    anchor = find(census, rule["above"])
+    if anchor is None:
+        return None
+    top = anchor[1] - rule["reach"] * h
+    groups: dict[str, list] = {}
+    for e in census["elements"]:
+        prefix = opened_prefix(e["path"], rule["windows"])
+        r = e.get("visible") or e["rect"]
+        if prefix and area(r) > 0:
+            groups.setdefault(prefix, []).append(r)
+    for prefix, rects in sorted(groups.items()):
+        r = union(rects)
+        if r[2] > anchor[0] + 2 and r[0] < anchor[2] - 2 and r[3] > top + 2 and r[1] < anchor[1] - 2:
+            return (f"under {prefix.split('/')[-1]} at {round(r[0])},{round(r[1])} {round(r[2] - r[0])}x"
+                    f"{round(r[3] - r[1])}, over the card's place above {rule['above'].split('/')[-1]}, by design: "
+                    f"{rule['why']}")
     return None
 
 

@@ -23,7 +23,8 @@
       "anchor": "MinimapParent",
       "maxGap": 0.06,
       "region": {"minBottom": 0.6, "minRight": 0.8},
-      "coveredBy": {"layout": "docked", "window": "StructuredDock", "xMin": 0.8, "yMax": 0.71, "why": "the game hides the card while a docked window overlaps its place (HoverCardFit.Covered, w1544/w2072), so a docked census with a building selected never shows it there (w2185)"},
+      "coveredBy": [{"layout": "docked", "window": "StructuredDock", "xMin": 0.8, "yMax": 0.71, "why": "the game hides the card while a docked window overlaps its place (HoverCardFit.Covered, w1544/w2072), so a docked census with a building selected never shows it there (w2185)"},
+        {"layout": "undocked", "above": "MinimapParent", "reach": 0.3, "windows": ["InvAndCraft/UtilityPanel", "*EntityPanel"], "why": "the game hides the card while an open window overlaps it (HoverCardFit.HideUnderAWindow, w1544), and at 1280x800 a building's window reaches over the minimap's columns down into the card's place, so a census with it open does not show the card there (w2184)"}],
       "when": [{"featureOff": "inventory-rail"}, {"layout": "docked"}, {"notShown": "InvAndCraft/InventoryPanel"}],
       "where": "just above the minimap, bottom right, on every screen and layout; never in the panel cluster (with inventory-rail on and the rail up in the classic layout: left of the rail, the pin \"building hover card beside the rail\")",
       "who": [
