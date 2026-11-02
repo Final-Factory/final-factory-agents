@@ -1144,3 +1144,12 @@ of epochs 1, 2 and 3 (`toggles+census`, "the join save did not carry everything"
 - `circuit.dump` has no recipe field, and the client's `CrafterDetail` lines stop at heartbeat 16. The recipe is
   still covered: `Crafter.CurrentRecipe` is in the fingerprint (`FoldCrafter`), so a clean compare through the end
   proves both peers' recipes agreed.
+- **A recipe-switch scenario needs a Circuit Module on the crafter's station** (w2872, 2026-11-02, the pair run of
+  w2820's fix at 3b316330). `specs/w2818-circuit-menu-sources/tour/assembler-battery.bp` holds a Station Core,
+  Assembler, Battery, Solar Panel and Struts, no Circuit Module, so its Assembler's `recipefromset` never arms
+  (`CircuitRules.IsSetArmed` needs `stationHasModule`; `circuit.dump` shows `moduleOnStation:false`) and never switches
+  recipe, however the source chest changes: w2872 r2 compared 3001/3001 clean heartbeats that never ran the switch.
+  Place a one-item Circuit Module blueprint (`{"item":"Circuit Module","at":[0,0],"dir":3}`, make_blueprint.py) at the
+  core's east tile, 31,9 for that blueprint placed at 30,10, right after it; w2868 did the same. r3 then switched the
+  condition-less Assembler Connector → Solar Panel → Strut → Connector on both peers, 3001/3001 clean. Before a pair
+  run claims a recipe switch, check `armed:true` in the pre-join `circuit.dump`.
