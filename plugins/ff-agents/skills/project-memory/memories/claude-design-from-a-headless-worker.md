@@ -165,6 +165,16 @@ the authorize page showed an **Authorize** button (disabled for a moment after l
 `code#state` page. If the page renders blank in a background window, reload it in your own window. The code is single
 use; never echo it into a report.
 
+**Finding the project from an artifact link (w2832, 2026-11-01, m5).** A brief may give only the published
+`claude.ai/artifact/<id>` link. It does not carry the project id, and `list_projects` lists design systems only (it
+answered `[]`). Known pair: the FF2 engine study and the Final Factory Universe MMO design both live in project
+`f510ede3-267a-4789-8231-44f141299e0b`; the FFU doc's artifact is `CXo4z9VY5mBtBXMLfaZEGG`, its file
+`Final Factory Universe MMO design (w2667).html`. For another doc, grep `~/.claude/projects/*/*.jsonl` (fixed string,
+capped output) for the artifact id and read the DesignSync calls in that session. The whole route then worked first
+time: `list_files`, `get_file` and `cmp` against master's copy, `finalize_plan`, `write_files`, Safari Share (element
+index of the Share button) → "Publish as artifact" at (952,261) → "Publish to web" at (837,741) with
+`screenshot.scale` 0.967, and the Node CDP signed-out check. macOS has no `timeout` command; bound a script inside it.
+
 **Updating a doc in place and checking it without clicks (w1608, 2026-10-20, m5).**
 - **Diff without reading.** `get_file` on a big doc (130 KB) is saved to a tool-results `.txt` as JSON. Pull out its
   `content` with `python3 -I` (`json.load(f)["content"]`) and `cmp` it with your copy. Do that before the write, so you
