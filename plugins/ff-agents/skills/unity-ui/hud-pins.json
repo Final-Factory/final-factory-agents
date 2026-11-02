@@ -9,10 +9,25 @@
       "anchor": "ActionBarParent/Hotbars/AbilityHotbar",
       "maxGap": 0.06,
       "region": {"minBottom": 0.7, "centerXMin": 0.25, "centerXMax": 0.75},
-      "where": "just above the ability row, bottom centre, on every screen and layout; never in the panel cluster",
+      "when": [{"notShown": "GamePanels/StationControls"}],
+      "where": "just above the ability row, bottom centre, on every screen and layout; never in the panel cluster (a build before w2580's station controls; since then the pin \"Station Info above the station controls\")",
       "who": [
         "Ben, 2026-10-10 (w813): \"why is station info at the top left? i didnt tell you to move that\"",
         "Ben, 2026-10-10 (w894): \"the Station Info hover panel, it seems like you keep moving it to the top on the deck. I don't want that. I want it to just be in its normal position over the abilities, Which is now even better because we got rid of the hotbar on the deck. So just leave it. Don't put it in formation with the other panels. It's just a hover panel that shows above the abilities. Just leave it there on the desktop and the deck.\""
+      ]
+    },
+    {
+      "name": "Station Info above the station controls",
+      "element": "BuildInfoPanel",
+      "names": ["station info", "station info card"],
+      "rule": "above",
+      "anchor": "GamePanels/StationControls",
+      "maxGap": 0.06,
+      "when": [{"shown": "GamePanels/StationControls"}],
+      "where": "on the left, just above the station controls (Move, Land, Copy, Deconstruct, Hide panels), on every screen and layout; never in the panel cluster (since w2580, FinalFactory #2995, merged 2026-11-02)",
+      "who": [
+        "Ben, 2026-11-01 (w2580, FinalFactory #2995): \"That's not the hover panel mock I chose. I wanted the tile on the left above the controls panel\"",
+        "Ben, 2026-11-01 (w2580): \"looks good but make header say Station Info with less top padding to make it more compact\""
       ]
     },
     {

@@ -549,7 +549,7 @@ def pinned_problems(section: str) -> list[str]:
         return ["'Pinned:' does not say how many pins are broken and not shown: paste ui_layout.py pins' line"]
     if int(broken.group(1)):
         problems.append(f"'Pinned:' has {broken.group(1)} broken pin(s): an element Ben placed himself is not where he put "
-                        f"it (Station Info over the abilities, the hover card over the minimap, the Player Inventory off "
+                        f"it (Station Info above the station controls, the hover card over the minimap, the Player Inventory off "
                         f"the left edge). Put it back. {STOP}")
     if int(shown.group(1)):
         problems.append(f"'Pinned:' has {shown.group(1)} pin(s) not shown: take the censuses with a station selected and "
