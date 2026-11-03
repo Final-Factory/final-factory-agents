@@ -1235,7 +1235,7 @@ class HudBlockAllowanceTest(unittest.TestCase):
             with contextlib.redirect_stdout(out):
                 code = ul.main(["overlaps", str(path)])
         self.assertIn("1 overlapping block pairs between always-on HUD blocks (block depth 2), 1 allowed", out.getvalue())
-        self.assertIn(f"; ALLOWED: Ben, 2026-11-03", out.getvalue())
+        self.assertIn("; ALLOWED: Ben, w2984, 2026-11-03", out.getvalue())
         self.assertEqual(code, 0)
 
 
