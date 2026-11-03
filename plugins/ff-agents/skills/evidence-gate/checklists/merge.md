@@ -15,6 +15,16 @@ you open the PR. When w1137 retired `develop`, GitHub moved every open PR based 
 CLAUDE.md still said develop. `gh pr view <n> --json baseRefName`, and the rule from `git show origin/master:CLAUDE.md`,
 not from your branch's copy. A base you did not pick is a question to stop on, not a detail.
 
+**A fix is proven by the outcome, in every state, on the path it claims** (w2976, 2026-11-03: four regressions of one
+playtest passed the nightly and its merge review). The `## Evidence` names the outcome a player would see broken and
+shows it: a toggle or mode on and off in a built player, the PR's claimed path first (#3068's minimap Signal was checked
+only on the reverse path); combat by an enemy's health dropping or its kill, never a target acquired (w2950 proved #3080
+on the Targeter while platform drones never fired); a HUD change with chat lines and the map up at 1920x1080, 1280x800
+and 1280x720 (`UI-w2976-hud-with-chat`). A PR that makes a red check pass by changing the check (an invariant exempted,
+an assert loosened, a scenario moved; #2971 after #2923) shows the outcome measured with the gameplay change in and
+out before it merges
+([lesson](../lessons/a-check-proves-the-outcome-in-every-state.md)).
+
 **Compile the merged tree before you wait on CI** (w1555, 2026-10-20, PR #2068): after `git merge origin/master`, or
 `ff-pr push`, which merges it in again at push time, list what the merge brought (`git diff --name-only HEAD^1 HEAD --
 '*.cs'`). If any `.cs` changed, compile and run your touched tests on the merged head before you push or wait: an API
