@@ -243,6 +243,10 @@ python "$FF_SKILLS/unity-ui/ui_layout.py" pins a-1920.json a-1280.json a-docked.
   `UI.Structured.StructuredLayout.Forced = true` and select the building again (`ffauto:ui.selecttile|x|z`). In a built
   player, a Deck-tour `shot` writes `<name>.layout.json`, the same census, at `-ffDeckTourSize` and `-ffDeckTourUiScale`,
   with `{"layout": "docked"}` for the dock (one layout per launch: checklist item 23).
+- `pins` counts "not shown" per census file, and `pr_evidence.py` refuses a `Pinned:` line with any: pass it only the
+  censuses whose shot has the pinned panels up. In the Deck station tour that is `cargo-hold` and `defense-platform`
+  (w2938, measured: 8 pins, 0 broken, 0 not shown over 1920x1080, 1280x800 undocked and docked); `rest`,
+  `inventory-alone`, `command-core` and `assembler` each lack Station Info, the hover card or the Player Inventory.
 - `moves` compares each element's rect (the RectTransform's, not the clipped part), groups what moved into the highest
   object whose every element moved by the same amount, and prints one line per HUD block (`GamePanels/X`) with its screen
   and layout (`docked` when `StructuredDock` or `StructuredStation` is on screen, else `undocked`), its outer rect before
@@ -318,7 +322,10 @@ new rows on an item's hover card) two development players take it without `execu
 1. **The base build is a throwaway commit of the same tree.** `build_player.sh` wants HEAD at a clean 40-hex sha. Build your tip first,
    then `git checkout origin/master -- <the UI files you changed>` (scripts, the scene), commit it locally with a TEMP subject, build that,
    then `git reset --hard <your pushed tip>` (the commit was never pushed). The base build then differs from yours by exactly the UI
-   change, with no second checkout to import.
+   change, with no second checkout to import. Revert your new tests too (`git rm` the files you added under `Assets/Tests`,
+   `.meta` included): they call the new API, so a base with only the source reverted fails to compile (w2938). Merge
+   `origin/master` into your branch before the tip build: a tip built before a master PR that moved a pinned panel shows that
+   panel broken in `pins` (w2938: three Station Info pins until #3072, w2920, was merged in).
 2. **The same tour on both**, one after the other (the agent port is fixed), at `-ffDeckTourSize 1920x1080 -ffDeckTourUiScale 0.9` and
    `1280x800` at `0.8`: HUD at rest, each `flyout:<name>`, the hover card, your panel open and closed, and the *old* panel that shares
    code with yours (a Laser Turret for a Railgun) open and closed in both builds. Give `-ffDeckTour` and `-ffDeckTourOut` **absolute**
