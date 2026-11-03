@@ -1,6 +1,6 @@
 ---
 name: visual-fixes-are-verified-by-looking
-description: "A visual or feel fix is done only when someone looked at it, and the person looks at it inline: each still and clip as ![name](<absolute path>), never a bare path or folder (w1384) (new art also matches the art language, checked against a reference asset; a new or changed world model is shown in a built game beside its neighbours, w2204): a built player, a clip that contains the event, compared with the intended look in the person's own words. Measurements and watch_video support the look; they do not replace it."
+description: "A visual or feel fix is done only when someone looked at it, and the person looks at it inline: each still and clip as ![name](<absolute path>), never a bare path or folder (w1384) (new art also matches the art language, checked against a reference asset; a new or changed world model is shown in a built game beside its neighbours, w2204; recreated art, FFU's included, is graded against a capture of the reference in the built game and by the art language, never only its file, w2895): a built player, a clip that contains the event, compared with the intended look in the person's own words. Measurements and watch_video support the look; they do not replace it."
 date: 2026-10-11
 ---
 
@@ -428,6 +428,35 @@ reason naming a bug fix, tweak, re-tint, icon, re-export or third-party import, 
 SKIPPED"; for an added model or effect file only a rename, move, re-export or third-party import is accepted.
 A script cannot tell whether the concepts were different or the detail is enough: the reviewer reads the stills against
 [checklist 5f](../checklists/visual.md).
+
+## Recreated art is graded on the game's screen and by the art language, not by a file (w2895)
+
+**Rule.** Art that rebuilds or replaces something the game already shows (FFU's rebuild of FF1 content, a stand-in
+for a pack asset) is graded, by the worker and by its fresh critic:
+
+1. **Against a capture of the reference as the player sees it in the built game**: its lighting, bloom, camera and
+   placement, at gameplay zoom. Never only against its texture or model file, or the pack it came from. With no
+   capture, the critic says so and grades nothing as "close"; the worker takes one before the look goes to Ben. A
+   thing the built game never shows is no reference and no row.
+2. **By the art language first** (two solid main colours plus one bright, bloomy HDR accent, beside the game's own
+   structures in one still), and by closeness to the reference second. A measured near-match (mean RGB, luma) is not
+   a look.
+3. **When the same flaw comes back round after round, stop polishing.** Bring Ben 2 or 3 clearly different takes that
+   use the reference as inspiration, each beside the in-game capture, as for hero art's concepts above.
+
+**Why.** Ben turned down two w2895 pieces a fresh critic had passed, both on 2026-11-03.
+
+- **R.M2, the mining-station canister and docking hub (ffu #141).** The worker and the critic graded them against the
+  asset pack; FF1 never placed either model. Ben: "what even is this? i dont recognize this as any content we use ...
+  for the structures, they need to match my art style. and only bring over assets actually used in the game".
+- **R.T5, the Ancient Portal's nebula (ffu #177).** 15 critic rounds matched FF1's texture file by mean colour and
+  luma; nobody captured how FF1 draws the portal. Round 15 said ACCEPT-WITH-NITS, still naming the core's colour.
+  Ben: "it doenst look right, maybe just make a new one with this as an inspiration. it can be darker, more space,
+  less nebula if thats easier".
+
+**How to apply.** [Checklist 5o](../checklists/visual.md) holds the critic's brief. FFU's art PRs (an `art/` folder)
+carry `Reference capture:` and `Art language:` in `## Evidence`; `pr_evidence.py` fails one without them, where it
+used to pass it as "no game code or assets changed" (fixtures `tests/fixtures/ffu-141-*` and `ffu-177-*`).
 
 ## New models are checked at scale, in the game, beside their neighbours (w2204)
 

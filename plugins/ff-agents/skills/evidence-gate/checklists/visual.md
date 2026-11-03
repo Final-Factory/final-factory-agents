@@ -89,6 +89,7 @@ in the built player (drive-game, "The mouse cursor in a built player"; w980).
    object; Ben, w1332: "again I don't like the unnatural circle effect that looks like UI. The vfx should be part of
    the game world in its appearance". A PR changing effect art carries `Art language:` (the reference compared, and
    no ring/circle/halo/UI-like overlay, or the person's words asking for one); `pr_evidence.py` fails it without.
+   This holds for FFU's art as much as the game's; recreated or ported art also follows 5o.
 5d. **A glow is measured against a glowing reference in the same frame (w1323).** A new or changed glow (emissive
    lines, an HDR accent) is put beside a powered mass driver in one built-player frame at normal zoom and measured with
    the game repo's `scripts/feel/glow_compare.py` (hot glow-hue pixels as a share of each crop, their contrast, the
@@ -202,6 +203,21 @@ in the built player (drive-game, "The mouse cursor in a built player"; w980).
    classic assembler prefabs when Ben's screenshot showed the new model ("what no, i was talking about updating the new
    assembler model, not the old one lol"). The PR's `Picked:` line ([merge.md](merge.md)) carries the still, what it
    shows and the built result beside it ([lesson](../lessons/research-the-decision-not-the-topic.md#build-the-pick-the-person-saw-its-still-checked-against-their-words-w1323-w2580-2026-10-31)).
+5o. **Recreated or ported art is graded on the built game's screen and by the art language (w2895; FFU art too).**
+   Art that rebuilds or replaces something the game shows (FFU's rebuild of FF1 content, a stand-in for a pack asset)
+   starts from a capture of the reference as the player sees it in the built game (a built-player still or clip at
+   gameplay zoom, its lighting, bloom and placement), never only its texture or model file or the source pack; a
+   reference the built game never shows is dropped, not rebuilt. The fresh art critic's brief carries that capture
+   beside the new art's own render, Ben's art language and the person's words, and asks: (1) "Is there an in-game
+   capture of the reference? If not, say so and grade nothing as close." (2) "Name the two solid main colours and the
+   bright HDR accent: does the accent bloom, and does it read beside the game's own structures?" (3) "Does it read as
+   the thing in the capture, under the game's light?" (4) "Did an earlier round name this flaw?" A flaw back after
+   about three rounds (a guess at the count) stops the polishing: the next ask to Ben is 2 or 3 clearly different
+   takes with the reference as inspiration, not another near-match. The PR's Evidence carries `Reference capture:` (the
+   capture) and `Art language:` (the colours and the accent); `pr_evidence.py` fails FFU art (`art/`) without them
+   ([lesson](../lessons/visual-fixes-are-verified-by-looking.md#recreated-art-is-graded-on-the-games-screen-and-by-the-art-language-not-by-a-file-w2895);
+   Ben, w2895: "for the structures, they need to match my art style. and only bring over assets actually used in the
+   game"; "it doenst look right, maybe just make a new one with this as an inspiration").
 6. **`watch_video` and the blind model review are a second opinion.** They have passed clips
    that did not contain the event, and agreed with a mistake the brief described as intended.
    Quote them, and say where the frames contradict them.

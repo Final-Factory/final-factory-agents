@@ -345,6 +345,12 @@ One file each under `lessons/`: the rule, why (the incident, dated), how to appl
   PR that adds a model or effect art without a filled `Hero art:` line (concepts and pick, detail comparison, how it
   differs, distinct, measured cost; merge checklist), and checklist 5f is the reviewer's read; publish the concepts
   before any build-quality clip (w1497).
+- [Recreated art is graded on the game's screen and by the art language](lessons/visual-fixes-are-verified-by-looking.md#recreated-art-is-graded-on-the-games-screen-and-by-the-art-language-not-by-a-file-w2895):
+  art that rebuilds something the game shows (FFU's rebuild of FF1, a pack stand-in) is graded against a capture of
+  it in the built game (light, bloom, camera, placement), never only its file or the pack, and by the two colours
+  plus HDR accent before closeness; no capture, the critic says so; a flaw back round after round brings Ben 2 or 3
+  different takes, not another near-match (checklist 5o; w2895: "it doenst look right"). `pr_evidence.py` fails FFU
+  art (`art/`) without `Reference capture:` and `Art language:`.
 - [New models are checked at scale, in the game](lessons/visual-fixes-are-verified-by-looking.md#new-models-are-checked-at-scale-in-the-game-beside-their-neighbours-w2204): a new or changed
   in-world model (item, structure, ship, projectile, pickup) gets a built-game still beside its existing neighbours at
   gameplay zoom (an item on a connector and in an inserter hand), and its size matches theirs; a still of it alone or an

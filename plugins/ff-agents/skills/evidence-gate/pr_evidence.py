@@ -18,6 +18,7 @@ projectile or pickup) names a built-player still of it beside its neighbours on 
 its 1:1 crop or slowed segment on 'Close-ups:' and, for occlusion, every surface on 'Surfaces:' (checklists/visual.md 5g,
 w1567), a pick of a design, mock, model or asset named in the brief or the evidence carries its 'Picked:' line (the
 still the person picked, what it shows, their words, how they match, the build beside it; checklists/merge.md, w2669),
+art for FFU (an art/ folder, no Unity Assets/) names a capture of the reference as the built game shows it on 'Reference capture:' and the two main colours and the HDR accent on 'Art language:' (checklists/visual.md 5o, w2895),
 and a Deck-facing change says 'Real Deck: verified ...' or 'not verified on a real Deck' (checklists/deck.md). It cannot tell whether anyone looked carefully. Standard library only; `gh` for everything that reads GitHub.
 
     pr_evidence.py --repo OWNER/NAME --pr N               check one pull request (exit 1 on FAIL)
@@ -52,6 +53,12 @@ PENDING = re.compile(r"\b(pending|not yet|tbd|todo|to be (done|verified|reviewed
 EFFECT_ART = re.compile(r"/(VFX|Vfx|Effects?)/|Vfx[^/]*\.(shader|shadergraph|hlsl|mat)$|\.(vfx|shader|shadergraph|"
                         r"shadersubgraph|mat)$|Particle", re.IGNORECASE)
 NOT_EFFECT_ART = re.compile(r"/UI/|Icon|Sprite|Hologram|Font|/Fog|Outline", re.IGNORECASE)
+# Art for FFU, the Rust engine (w2895): its own art/ folder, no Unity Assets/. Scripts and READMEs there are not art.
+FFU_ART = re.compile(r"^art/.+\.(png|jpe?g|webp|ktx2|exr|hdr|tga|gltf|glb|bin|obj|fbx|blend|wgsl)$", re.IGNORECASE)
+CAPTURE = re.compile(r"\.(png|jpe?g|webp|mp4|webm|mov)\b|\batt_\w+|/review/", re.IGNORECASE)
+UNUSED = re.compile(r"\b(never (placed|shown|showed|shows|drawn|draws|loaded|loads|used|uses)|not used|unused|"
+                    r"not in the build)\b", re.IGNORECASE)
+ACCENT = re.compile(r"\b(accent|HDR|bloom\w*)\b", re.IGNORECASE)
 NO_OVERLAY = re.compile(r"\b(no|without|none of|never)\b[^.;\n]{0,40}\b(rings?|circles?|halos?|indicators?|overlays?|ui[- ]like)\b",
                         re.IGNORECASE)
 REFERENCE = re.compile(r"\b(compared|reference|beside|against|side by side|matches)\b", re.IGNORECASE)
@@ -211,8 +218,9 @@ def has_basis(basis: str) -> bool:
 
 
 def applies(files: list[str]) -> bool:
-    """Game code or assets a player can meet. Docs, tools and tests of existing behaviour need no section."""
-    return any(f.startswith("Assets/") and not NOT_GAME_CODE.search(f) for f in files)
+    """Game code or assets a player can meet, or FFU art (w2895). Docs, tools and tests of existing behaviour need no
+    section."""
+    return any((f.startswith("Assets/") and not NOT_GAME_CODE.search(f)) or FFU_ART.search(f) for f in files)
 
 
 def shared_assets(files: list[str] | None) -> list[str]:
@@ -839,6 +847,47 @@ def art_language_problems(section: str, art_files: list[str]) -> list[str]:
         found.append("'Art language' does not say the effect draws no ring, circle, halo or UI-like overlay, nor "
                      "quote the person asking for one: an effect is in-world light, debris, sparks or the object's own "
                      "material (w1241, w1332)")
+    return found
+
+
+def ffu_art_problems(body: str, art_files: list[str]) -> list[str]:
+    """w2895: art for FFU (an `art/` folder, no Unity `Assets/`) passed this script with "no game code or assets
+    changed" while Ben turned it down twice. ffu #141 was graded against the asset pack, not FF1's structures: "for the
+    structures, they need to match my art style. and only bring over assets actually used in the game". ffu #177 chased
+    FF1's texture file for 15 critic rounds with no capture of FF1's screen: "it doenst look right". Such a PR names a
+    capture of the reference as the built game shows it, and says how it holds the art language (checklists/visual.md
+    5o)."""
+    where = ", ".join(art_files[:3])
+    section = evidence_section(body or "")
+    if section is None:
+        return [f"art changed ({where}) and no '## Evidence' section: it needs a 'Reference capture:' and an 'Art "
+                "language:' line (checklists/visual.md 5o, w2895)"]
+    found = []
+    capture = field(section, "Reference capture")
+    text = capture[1] if capture else ""
+    if not text:
+        found.append(f"art changed ({where}) and no 'Reference capture:' line: name the still or clip of the reference "
+                     "as a player sees it in the built game (its lighting, bloom, camera and placement), not its texture "
+                     "or model file or the source pack (checklists/visual.md 5o; Ben, w2895: \"it doenst look right\")")
+    elif UNUSED.search(text):
+        found.append("'Reference capture' says the game never shows the reference: only bring over what the built game "
+                     "uses (Ben, w2895: \"only bring over assets actually used in the game\")")
+    elif text.lower().startswith("none"):
+        found.append("no capture of the reference: get one from the built game before the look goes to the person, and "
+                     "grade against it (w2895)")
+    elif text.lower().startswith("n/a"):
+        if len(text) < 25:
+            found.append("'Reference capture: n/a' has to say why (new art with no counterpart in the game)")
+    elif not CAPTURE.search(text):
+        found.append("'Reference capture' names no still or clip (a .png, .jpg or .mp4, a review folder or an att_ id)")
+    art = field(section, "Art language")
+    if not art or not art[1]:
+        found.append("no 'Art language:' line: say the two solid main colours and the one bright, bloomy HDR accent, "
+                     "and how they read on screen beside the game's own art (checklists/visual.md 5c; Ben, w2895: "
+                     "\"they need to match my art style\")")
+    elif not (re.search(r"colou?rs?\b", art[1], re.IGNORECASE) and ACCENT.search(art[1])):
+        found.append("'Art language' does not name the two main colours and the bright, bloomy HDR accent (w1066, "
+                     "w2895): closeness to a reference is not the art language")
     return found
 
 
@@ -1503,7 +1552,11 @@ def balance_problems(body: str, files: list[str] | None) -> list[str]:
 def check(body: str, files: list[str] | None = None, brief: str | None = None,
           changes: dict | None = None) -> tuple[list[str], list[str]]:
     """Every reason the evidence is not ready (empty = PASS), and notes that do not fail it."""
-    used_by = used_by_problems(body, files) + balance_problems(body, files)
+    ffu_art = [f for f in files or [] if FFU_ART.search(f)]
+    if ffu_art and not any(f.startswith("Assets/") for f in files or []):
+        # FFU's pull requests carry their own evidence; the art lines are what this script holds them to (w2895).
+        return ffu_art_problems(body, ffu_art), []
+    used_by =used_by_problems(body, files) + balance_problems(body, files)
     section = evidence_section(body or "")
     if section is None:
         return (["no '## Evidence' section: say what each claim of this pull request rests on "
