@@ -5,6 +5,15 @@ the structured layout, Steam Deck sizing). The [visual checklist](visual.md) app
 adds what a screen needs. The recipe (the Deck tour, the pixel checks, uGUI pitfalls) is the
 `unity-ui` skill.
 
+**A change that only alters what a panel prints (a number, a unit, a value) is still a UI change** (w2999, the station
+shield readout's +X/s): `pr_evidence.py` counts every changed file under `/UI/` as UI, and asks for the whole set at once.
+That is Intended look, Built player, Looked, Content, Full content, Overlaps, Window overlaps, Covered text, Alignment,
+Style, Moved, Pinned, Shape, Colour, Eye, Shots, Clips with the event's seconds and a flicker result, Critic and Real Deck.
+Plan the run from the start: build the base commit and yours, run the same Deck tour on both on a save that shows the value
+(1920x1080, 1280x800 classic and docked), then take a fresh ui-critic on the pack. When no classic reference panel is open,
+run Style as `ui_layout.py check --touched <panel> --ref <panel>`: it compares the panel against its own before. w2999 added
+these lines one checker round at a time and needed four rounds.
+
 **The design gate: no UI still or mock reaches a person until it has passed** (w1399; Ben, 2026-10-16: "you make bad UI
 mistakes constantly", after three screens their workers and their orchestrator had passed). In order:
 1. Build from the game's own components and colours (the game repo's `docs/UI-Style.md`). A see-through colour draws much
