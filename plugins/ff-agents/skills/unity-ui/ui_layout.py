@@ -259,10 +259,11 @@ def _pairs(census: dict, depth: int, min_px: float, same_block: bool):
 
 
 def overlaps(census: dict, depth: int = 2, min_px: float = 16.0, opened: list[str] | None = None,
-             backdrops: list[str] | None = None, transient: list[str] | None = None) -> dict:
-    """{(blockA, blockB): {"px": area, "example": (pathA, pathB)}} for always-on HUD blocks whose solid elements overlap.
-    With `opened` (the openedPanels patterns) an element of a panel the player opens does not count: it may cover the
-    HUD (see opened_over_hud, which checks that it does so properly)."""
+             backdrops: list[str] | None = None, transient: list[str] | None = None, spec: dict | None = None) -> dict:
+    """{(blockA, blockB): {"px": area, "example": (pathA, pathB), "why": words}} for always-on HUD blocks whose solid
+    elements overlap. With `opened` (the openedPanels patterns) an element of a panel the player opens does not count: it
+    may cover the HUD (see opened_over_hud, which checks that it does so properly). With `spec`, "why" is the requester's
+    words when hud-clusters.json allows every overlapping element pair of the two blocks (block_allowance), else None."""
     pairs: dict[tuple[str, str], dict] = {}
     for a, ba, b, bb, px, _ in _pairs(census, depth, min_px, same_block=False):
         if opened and (opened_prefix(a["path"], opened) or opened_prefix(b["path"], opened)):
@@ -272,7 +273,10 @@ def overlaps(census: dict, depth: int = 2, min_px: float = 16.0, opened: list[st
         if transient and bool(opened_prefix(a["path"], transient)) != bool(opened_prefix(b["path"], transient)):
             continue  # a hover card over a panel its hover does not show
         key = tuple(sorted((ba, bb)))
-        entry = pairs.setdefault(key, {"px": 0.0, "example": (a["path"], b["path"])})
+        why = block_allowance(spec, a["path"], b["path"])
+        entry = pairs.setdefault(key, {"px": 0.0, "example": (a["path"], b["path"]), "why": why})
+        if entry["why"] and not why:
+            entry["why"], entry["example"] = None, (a["path"], b["path"])
         entry["px"] += px
     return pairs
 
@@ -502,6 +506,21 @@ def allowance(spec: dict | None, census: dict, rects: dict, a: dict, la: str, b:
         for x, y, lx in ((a, b, la), (b, a, lb)):
             if path_has(x["path"], entry["a"]) and path_has(y["path"], entry["b"]) and when_holds(entry.get("when"), census, rects, lx):
                 return "allowed", entry["who"][-1]
+    return None
+
+
+def block_allowance(spec: dict | None, a: str, b: str) -> str | None:
+    """The requester's words (the last `who`) when a hud-clusters.json windowOverlaps.allowed entry allows two always-on
+    HUD elements (paths) to overlap, else None. Only an entry naming both sides exactly, with no '*' in either and no
+    `when`, counts here: a glob or a condition was written for an open window (Ben, w742: "the blueprint panel showing
+    over objectives is fine since its a temporarily opened panel"), and keeps its window-only meaning (w2996: the chat
+    lines over the Objectives card, Ben: "It can appear over stuff because it's not always showing though")."""
+    for entry in window_spec(spec).get("allowed", []):
+        if "*" in entry["a"] or "*" in entry["b"] or entry.get("when"):
+            continue
+        for x, y in ((a, b), (b, a)):
+            if path_has(x, entry["a"]) and path_has(y, entry["b"]):
+                return entry["who"][-1]
     return None
 
 
@@ -1570,20 +1589,25 @@ def run_check(args) -> int:
     failed = False
 
     transient = transient_patterns(spec)
-    ob = overlaps(before, args.block_depth, opened=patterns, backdrops=backdrops, transient=transient)
-    oa = overlaps(after, args.block_depth, opened=patterns, backdrops=backdrops, transient=transient)
-    new = {k: v for k, v in oa.items() if k not in ob}
+    ob = overlaps(before, args.block_depth, opened=patterns, backdrops=backdrops, transient=transient, spec=spec)
+    oa = overlaps(after, args.block_depth, opened=patterns, backdrops=backdrops, transient=transient, spec=spec)
     moved = moved_blocks(before, after, args.block_depth, args.tolerance)
-    kept = {k: v for k, v in oa.items() if k in ob and (k[0] in moved or k[1] in moved)}
+    # a pair hud-clusters.json allows (block_allowance) is neither new nor kept: it prints ALLOWED with the words (w2996)
+    allowed_hud = {k: v for k, v in oa.items() if v["why"]}
+    new = {k: v for k, v in oa.items() if k not in ob and not v["why"]}
+    kept = {k: v for k, v in oa.items() if k in ob and (k[0] in moved or k[1] in moved) and not v["why"]}
     over = opened_over_hud(after, patterns, args.block_depth)
     print(f"Overlaps: {len(ob)} block pairs before, {len(oa)} after, {len(new)} new, {len(kept)} kept between blocks "
-          f"the change moved (ui_layout.py, whole screen, block depth {args.block_depth}); {len(over['pairs'])} "
+          f"the change moved, {len(allowed_hud)} allowed with the requester's words (hud-clusters.json windowOverlaps) "
+          f"(ui_layout.py, whole screen, block depth {args.block_depth}); {len(over['pairs'])} "
           f"opened-panel pair(s) over the HUD, not counted here")
     for (a, b), v in sorted(new.items(), key=lambda kv: -kv[1]["px"])[:15]:
         print(f"  NEW: {short(a)}  x  {short(b)}: {v['px']:.0f} px2, e.g. {short(v['example'][0], 2)} under {short(v['example'][1], 2)}")
     for (a, b), v in sorted(kept.items(), key=lambda kv: -kv[1]["px"])[:15]:
         print(f"  KEPT: {short(a)}  x  {short(b)}: {ob[(a, b)]['px']:.0f} -> {v['px']:.0f} px2: the change moved one of "
               f"them and left them overlapping")
+    for (a, b), v in sorted(allowed_hud.items(), key=lambda kv: -kv[1]["px"])[:15]:
+        print(f"  ALLOWED: {short(a)}  x  {short(b)}: {v['px']:.0f} px2; allowed: {v['why']}")
     failed |= bool(new) or bool(kept)
 
     wd = window_diff(before, after, spec, args.block_depth, args.tolerance)
@@ -1703,10 +1727,12 @@ def run_overlaps(args) -> int:
     census = load(args.census)
     spec = json.loads(Path(args.clusters).read_text(encoding="utf-8"))
     pairs = overlaps(census, args.block_depth, opened=opened_patterns(spec), backdrops=backdrop_patterns(spec),
-                    transient=transient_patterns(spec))
-    print(f"{len(pairs)} overlapping block pairs between always-on HUD blocks (block depth {args.block_depth})")
+                    transient=transient_patterns(spec), spec=spec)
+    print(f"{len(pairs)} overlapping block pairs between always-on HUD blocks (block depth {args.block_depth}), "
+          f"{sum(1 for v in pairs.values() if v['why'])} allowed with the requester's words")
     for (a, b), v in sorted(pairs.items(), key=lambda kv: -kv[1]["px"]):
-        print(f"  {short(a)}  x  {short(b)}: {v['px']:.0f} px2, e.g. {short(v['example'][0], 2)} / {short(v['example'][1], 2)}")
+        tail = f"; ALLOWED: {v['why']}" if v["why"] else ""
+        print(f"  {short(a)}  x  {short(b)}: {v['px']:.0f} px2, e.g. {short(v['example'][0], 2)} / {short(v['example'][1], 2)}{tail}")
     windows = window_overlaps(census, spec, args.block_depth)
     bad = [v for v in windows if v["status"] == "not allowed"]
     print(f"{len(bad)} window overlap(s) not allowed, {len(windows) - len(bad)} allow-listed (open windows against the HUD "
