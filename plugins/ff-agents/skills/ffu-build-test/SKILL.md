@@ -64,6 +64,9 @@ never rewritten (`tools/check_snapshot_compat.sh BASE_REF` holds it in CI). No t
 - Read CI by commit, not by `gh pr checks` (a vault token cannot read checks):
   `gh run list -R Final-Factory/ffu --commit <sha>` and, on red, `gh run view <id> -R Final-Factory/ffu --log-failed | tail -80`.
   To wait, use `blocked_on` with `ci:Final-Factory/ffu#<n>` and the head, never a poll loop.
+- A PR that adds or changes art (`art/`) runs the evidence-gate's `pr_evidence.py --repo Final-Factory/ffu --pr <n>`
+  before Ben is asked and before it merges: it wants `Reference capture:` and `Art language:` in `## Evidence`
+  (ffu-drive, "Art previews"; w2895).
 - Merge on green: `gh pr merge <n> -R Final-Factory/ffu --merge --match-head-commit <sha>`. "Not mergeable" means
   another PR touched the same lines (often `docs/PLAN.md`): `git merge origin/main`, keep both sides, push, wait for CI
   again. Never force-push or rebase a pushed branch.

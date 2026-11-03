@@ -1,0 +1,4 @@
+art/surfaces/README.md
+art/surfaces/nebula_face.png
+crates/ffu-bake/src/surfaces.rs
+docs/pack-recreation.md
