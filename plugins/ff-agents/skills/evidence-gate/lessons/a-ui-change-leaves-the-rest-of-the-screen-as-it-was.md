@@ -212,7 +212,7 @@ Why w826's check let 3 and 4 through, measured from the PRs and the code:
 
 **How to apply.** [The UI checklist](../checklists/ui.md), the hard rule at its top and item 22: census 1920x1080,
 1280x800 and 1280x800 docked with a station selected; `ui_layout.py moves` and `ui_layout.py pins`; every move asked in the
-brief's own words; `pr_evidence.py --brief`. The places Ben fixed himself are in `unity-ui/hud-pins.json` with his words, and
+brief's own words; `pr_evidence.py --brief`. The places Ben fixed himself are in `hud-pins.json` (the game repo, `scripts/nightly/ui_layout/`) with his words, and
 `ui_layout.py pins` checks them in every census whatever the parent showed. MEASURED (editor censuses of develop 9798f308c,
 `unity-ui/tests/fixtures/w894-develop-*.json`): it breaks Station Info (bottom edge at 264 of 800 px, centre x 282) and the
 hover card (right edge at 358 of 1280 px) at 1280x800 docked, and passes 1920x1080 and 1280x800 undocked. The fix itself is
@@ -294,7 +294,7 @@ A window over a lower layer (Station Info, the Objectives card, the game world) 
 **Rule.** Every open window (the Player Inventory, a Cargo Hold, Station Core or Station Grid panel, the Station
 strip, a slide-out) against the other windows and the HUD is `ui_layout.py`'s `Window overlaps:` line
 (`check`) or its listing (`ui_layout.py overlaps <census.json>`): both elements named, the overlap rect, and
-NOT ALLOWED unless `unity-ui/hud-clusters.json` `windowOverlaps` holds the requester's words for that pair. A new
+NOT ALLOWED unless `hud-clusters.json` `windowOverlaps` (the game repo, `scripts/nightly/ui_layout/`) holds the requester's words for that pair. A new
 one, or one left between windows the change moved, fails `pr_evidence.py`. An `Overlaps: 0` line says nothing about
 windows. Never measure rects by hand and call a window overlap clean.
 
@@ -308,7 +308,7 @@ over a Station Core panel while flying (a961 / comb census of #1444), and at 192
 153x26 px over a Station Grid panel; nothing had ever reported either.
 
 **What is allowed, and how to add one.** Only what a person said, in their words, in
-`hud-clusters.json` `windowOverlaps.allowed` (`a`, `b` path patterns, an optional `when`, `who` quotes): the strip over
+`hud-clusters.json` `windowOverlaps.allowed` (added by a game PR; `a`, `b` path patterns, an optional `when`, `who` quotes): the strip over
 the Player Inventory only while the strip stands directly above Station Info (Ben, w873: "yes put the station panel
 controls above station info and it should be over the player inventory", which is the develop layout; #1444's strip
 left of Station Info is not covered), any window over the Objectives card (w742, w813), a slide-out over the hotbar

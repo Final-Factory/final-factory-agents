@@ -300,7 +300,7 @@ def window_rects(census: dict, patterns: list[str] | None = None) -> list[tuple[
     """The rect of every opened window and dialog in a census: per window (an `openedPanels` match or a component named
     *Dialog*/*Modal*/*Popup*), the box around its drawn Images (a full-screen dimmer behind a dialog left out)."""
     if patterns is None:
-        patterns = ul.opened_patterns(json.loads(ul.DEFAULT_CLUSTERS.read_text(encoding="utf-8")))
+        patterns = ul.opened_patterns(json.loads(ul.default_clusters().read_text(encoding="utf-8")))
     sw, sh = ul.screen_size(census.get("screen"), [1920, 1080])
     boxes: dict[str, list[float]] = {}
     for e in census.get("elements", []):

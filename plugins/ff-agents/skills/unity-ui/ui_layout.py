@@ -86,6 +86,10 @@ pull request carries (pr_evidence.py reads them) and exits 1 when any of the fir
     ui_layout.py clusters <census.json|tour.log> [--clusters ...]   cluster edges of one census or a
                                                Deck-tour log's `rect:` lines (built players)
 
+hud-pins.json and hud-clusters.json come from the game checkout (scripts/nightly/ui_layout/, w2998), not from this plugin:
+$FF_HUD_DATA (a folder), else $FF_GAME_REPO, else the nearest folder above the working directory that holds them;
+--pins and --clusters name a file instead. The copies in tests/fixtures/ are test fixtures only.
+
 Standard library only; Pillow for --shot sampling.
 """
 from __future__ import annotations
@@ -94,13 +98,40 @@ import argparse
 import fnmatch
 import json
 import math
+import os
 import re
 import sys
 from pathlib import Path
 
-HERE = Path(__file__).resolve().parent
-DEFAULT_CLUSTERS = HERE / "hud-clusters.json"
-DEFAULT_PINS = HERE / "hud-pins.json"
+HUD_DATA_DIR = Path("scripts") / "nightly" / "ui_layout"
+
+
+def hud_data(name: str) -> Path:
+    """hud-pins.json and hud-clusters.json live in the game repo at scripts/nightly/ui_layout/ (w2998), one home for the
+    nightly HUD lane and this tool. First hit wins: $FF_HUD_DATA (a folder holding both files), $FF_GAME_REPO (a game
+    checkout), then the nearest folder at or above the working directory that holds the file."""
+    folders = []
+    if os.environ.get("FF_HUD_DATA"):
+        folders.append(Path(os.environ["FF_HUD_DATA"]))
+    if os.environ.get("FF_GAME_REPO"):
+        folders.append(Path(os.environ["FF_GAME_REPO"]) / HUD_DATA_DIR)
+    cwd = Path.cwd().resolve()
+    folders.extend(d / HUD_DATA_DIR for d in (cwd, *cwd.parents))
+    for folder in folders:
+        if (folder / name).is_file():
+            return folder / name
+    raise SystemExit("hud-pins.json (or the clusters file) lives in the game repo at scripts/nightly/ui_layout/ (w2998): "
+                     "run inside a FinalFactory checkout, set FF_GAME_REPO, or pass --pins/--clusters")
+
+
+def default_clusters() -> Path:
+    return hud_data("hud-clusters.json")
+
+
+def default_pins() -> Path:
+    return hud_data("hud-pins.json")
+
+
 TOUR_RECT = re.compile(r"->\s+(?P<path>.+?)\s+active\s+(?P<active>\w+)\s+screen x\s+(?P<x0>-?[\d.]+)\.\.(?P<x1>-?[\d.]+)\s+"
                        r"y\s+(?P<y0>-?[\d.]+)\.\.(?P<y1>-?[\d.]+)\s+of\s+(?P<w>\d+)x(?P<h>\d+)")
 
@@ -1465,7 +1496,7 @@ def shape(census: dict, sprites: dict | None = None, patterns: list[str] | None 
     stretched (w1468: the game's `transparent-block`, the hit area of its tab and menu buttons, read 45 STRETCHED)."""
     invisible = invisible or set()
     if patterns is None:
-        patterns = opened_patterns(json.loads(DEFAULT_CLUSTERS.read_text(encoding="utf-8")))
+        patterns = opened_patterns(json.loads(default_clusters().read_text(encoding="utf-8")))
     sw, sh = screen_size(census.get("screen"), [1920, 1080])
     screen_px = float(sw) * float(sh)
     sprites = sprites or {}
@@ -1596,7 +1627,7 @@ def shape_lines(results: list[tuple[str, dict]]) -> tuple[list[str], int]:
 
 def run_check(args) -> int:
     before, after = load(args.before), load(args.after)
-    spec = json.loads(Path(args.clusters).read_text(encoding="utf-8"))
+    spec = json.loads(Path(args.clusters or default_clusters()).read_text(encoding="utf-8"))
     patterns = opened_patterns(spec)
     backdrops = backdrop_patterns(spec)
     failed = False
@@ -1699,7 +1730,7 @@ def run_check(args) -> int:
         print(f"  STYLE: {f}")
     failed |= bool(failures)
 
-    lines, broken = pinned_lines([(Path(args.after).name, after)], json.loads(Path(args.pins).read_text(encoding="utf-8")),
+    lines, broken = pinned_lines([(Path(args.after).name, after)], json.loads(Path(args.pins or default_pins()).read_text(encoding="utf-8")),
                                  "ui_layout.py check")
     for line in lines:
         print(line)
@@ -1712,7 +1743,7 @@ def run_check(args) -> int:
 
 def run_pins(args) -> int:
     lines, broken = pinned_lines([(Path(c).name, load(c)) for c in args.census],
-                                 json.loads(Path(args.pins).read_text(encoding="utf-8")), "ui_layout.py pins")
+                                 json.loads(Path(args.pins or default_pins()).read_text(encoding="utf-8")), "ui_layout.py pins")
     for line in lines:
         print(line)
     return 1 if broken else 0
@@ -1726,7 +1757,7 @@ def run_moves(args) -> int:
 
 
 def run_options(args) -> int:
-    spec = json.loads(Path(args.pins).read_text(encoding="utf-8"))
+    spec = json.loads(Path(args.pins or default_pins()).read_text(encoding="utf-8"))
     options: dict[str, list[dict]] = {}
     for name, base, after in args.option:
         options.setdefault(name, []).append(option_check(load(base), load(after), args.named, spec, args.move_px))
@@ -1738,7 +1769,7 @@ def run_options(args) -> int:
 
 def run_overlaps(args) -> int:
     census = load(args.census)
-    spec = json.loads(Path(args.clusters).read_text(encoding="utf-8"))
+    spec = json.loads(Path(args.clusters or default_clusters()).read_text(encoding="utf-8"))
     pairs = overlaps(census, args.block_depth, opened=opened_patterns(spec), backdrops=backdrop_patterns(spec),
                     transient=transient_patterns(spec), spec=spec)
     print(f"{len(pairs)} overlapping block pairs between always-on HUD blocks (block depth {args.block_depth}), "
@@ -1756,7 +1787,7 @@ def run_overlaps(args) -> int:
 
 
 def run_covered_text(args) -> int:
-    spec = json.loads(Path(args.clusters).read_text(encoding="utf-8"))
+    spec = json.loads(Path(args.clusters or default_clusters()).read_text(encoding="utf-8"))
     found = covered_text(load(args.census), opened_patterns(spec))
     print(f"{len(found)} text(s) of opened screens drawn under an opaque element above them")
     for f in found:
@@ -1781,7 +1812,7 @@ def run_shape(args) -> int:
 
 def run_clusters(args) -> int:
     census = load(args.census)
-    spec = json.loads(Path(args.clusters).read_text(encoding="utf-8"))
+    spec = json.loads(Path(args.clusters or default_clusters()).read_text(encoding="utf-8"))
     for name, c in cluster_edges(census, spec).items():
         print(f"{name}: anchor {c['anchor']}")
         for member, m in c["members"].items():
@@ -1799,7 +1830,7 @@ def main(argv=None) -> int:
     c.add_argument("--closed", help="a census taken after closing the opened panel again: the HUD it covered must be back")
     c.add_argument("--closed-before", help="the before build's census after closing the panel: what it fails too is "
                                            "standing (listed, not counted)")
-    c.add_argument("--clusters", default=str(DEFAULT_CLUSTERS))
+    c.add_argument("--clusters", default=None)
     c.add_argument("--ref", default="InventoryPanel", help="path fragment of the classic reference panel")
     c.add_argument("--shot", help="a screenshot taken with the after census")
     c.add_argument("--ref-shot", help="a screenshot with the reference panel (usually the before one)")
@@ -1814,27 +1845,27 @@ def main(argv=None) -> int:
     m.add_argument("--move-px", type=float, default=4.0)
     q = sub.add_parser("pins", help="every census against the places Ben fixed (hud-pins.json): the 'Pinned:' line (w894)")
     q.add_argument("census", nargs="+")
-    q.add_argument("--pins", default=str(DEFAULT_PINS))
-    c.add_argument("--pins", default=str(DEFAULT_PINS))
+    q.add_argument("--pins", default=None)
+    c.add_argument("--pins", default=None)
     w = sub.add_parser("options", help="every option still of a round against master: moves only what the person named (w1429)")
     w.add_argument("--option", nargs=3, action="append", required=True, metavar=("NAME", "MASTER", "OPTION"),
                    help="an option's name, master's census and the option's census on the same screen (repeat per screen)")
     w.add_argument("--named", action="append", default=[],
                    help="a path fragment of an element the person's words name (repeat); everything else stays put")
-    w.add_argument("--pins", default=str(DEFAULT_PINS))
+    w.add_argument("--pins", default=None)
     w.add_argument("--move-px", type=float, default=4.0)
     o = sub.add_parser("overlaps", help="the overlapping block pairs of one census")
     o.add_argument("census")
-    o.add_argument("--clusters", default=str(DEFAULT_CLUSTERS))
+    o.add_argument("--clusters", default=None)
     t = sub.add_parser("covered-text", help="texts of opened screens drawn under an opaque element (w727)")
     t.add_argument("census")
-    t.add_argument("--clusters", default=str(DEFAULT_CLUSTERS))
+    t.add_argument("--clusters", default=None)
     s = sub.add_parser("shape", help="stretched sprites, mostly empty panels, walls of text: the 'Shape:' line (w1396)")
     s.add_argument("census", nargs="+")
     s.add_argument("--repo", help="the game repo: sprite sizes for a census without `spriteSize` (Deck tours before w1396)")
     k = sub.add_parser("clusters", help="cluster edges of one census or tour log")
     k.add_argument("census")
-    k.add_argument("--clusters", default=str(DEFAULT_CLUSTERS))
+    k.add_argument("--clusters", default=None)
     for p in (c, o):
         p.add_argument("--block-depth", type=int, default=2)
     args = ap.parse_args(argv)
