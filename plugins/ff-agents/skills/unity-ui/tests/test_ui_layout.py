@@ -85,7 +85,7 @@ class Cmd:
     """Runs `ui_layout.py check` on drawn censuses and returns (exit code, printed output)."""
 
     @staticmethod
-    def run(before, after, closed=None, extra=(), spec=None):
+    def run(before, after, closed=None, extra=(), spec=None, pins=None):
         import contextlib
         import io
         with tempfile.TemporaryDirectory() as tmp:
@@ -100,6 +100,10 @@ class Cmd:
                 path = Path(tmp) / "clusters.json"
                 path.write_text(json.dumps(spec), encoding="utf-8")
                 args += ["--clusters", str(path)]
+            if pins is not None:
+                path = Path(tmp) / "pins.json"
+                path.write_text(json.dumps(pins), encoding="utf-8")
+                args += ["--pins", str(path)]
             out = io.StringIO()
             with contextlib.redirect_stdout(out):
                 code = ul.main(args + list(extra))
@@ -595,14 +599,20 @@ class PinTest(unittest.TestCase):
         self.assertEqual(self.verdicts("w894-develop-1280-docked.json"),
                          {"Station Info": "broken", "building hover card": "broken", "Player Inventory": "ok"})
 
-    def test_todays_classic_layout_keeps_every_pin(self):
+    def test_the_w894_classic_layout_keeps_every_pin_but_the_old_station_info_place(self):
+        # w2920 moved Station Info from above the ability row to the bottom-left corner, so these w894 censuses (2026-10)
+        # now break its pin and keep every other one.
         for name in ("w894-develop-1920-classic.json", "w894-develop-1280-classic.json"):
             self.assertEqual(ul.layout_of(ul.load(HERE / "fixtures" / name)), "undocked")
-            self.assertEqual(set(self.verdicts(name).values()), {"ok"}, name)
+            got = self.verdicts(name)
+            self.assertEqual(got.pop("Station Info"), "broken", name)
+            self.assertEqual(set(got.values()), {"ok"}, name)
 
     def test_1282_broke_the_station_info_pin_and_its_parent_kept_it(self):
         self.assertEqual(self.verdicts("w826-1282-after-1920.json")["Station Info"], "broken")
-        self.assertEqual(self.verdicts("w826-1282-before-1920.json")["Station Info"], "ok")
+        # Its parent's place, centred above the ability row, held until w2920 put the card in the bottom-left corner.
+        self.assertEqual(self.verdicts("w826-1282-before-1920.json")["Station Info"], "broken")
+        self.assertIn("bottom-left corner", self.SPEC["pins"][0]["where"])
 
     def test_the_inventory_against_the_left_edge_is_broken(self):
         census = hud()
@@ -621,8 +631,9 @@ class PinTest(unittest.TestCase):
                             str(HERE / "fixtures" / "w894-develop-1280-docked.json")])
         text = out.getvalue()
         self.assertEqual(code, 1)
-        self.assertIn("Pinned: 8 pin(s) in 2 census(es) (1920x1080 undocked, 1280x800 docked): 2 broken, 0 not shown, "
+        self.assertIn("Pinned: 8 pin(s) in 2 census(es) (1920x1080 undocked, 1280x800 docked): 3 broken, 0 not shown, "
                       "10 not applied", text)
+        self.assertIn("BROKEN 1920x1080 undocked (w894-develop-1920-classic.json): Station Info", text)
         self.assertIn("BROKEN 1280x800 docked (w894-develop-1280-docked.json): Station Info", text)
         self.assertIn("BROKEN 1280x800 docked (w894-develop-1280-docked.json): building hover card", text)
         self.assertEqual(ul.pin_check(hud(), self.SPEC["pins"][0])[0], "not shown")
@@ -638,9 +649,33 @@ class PinTest(unittest.TestCase):
         census["elements"] += [el("InGameScene/UI Canvas/GamePanels/StationControls", [270, 600, 450, 790]),
                                el("InGameScene/UI Canvas/GamePanels/BuildInfoPanel", [7, 500, 263, 790])]
         self.assertEqual(ul.pin_check(census, pins["Station Info left of the station controls"])[0], "ok")
-        self.assertEqual(self.pins(census)["Station Info"], "not applied")
+        verdict, why = ul.pin_check(census, pins["Station Info"])
+        self.assertEqual((verdict, why.split(",")[0]), ("ok", "left of StationControls"), "orLeftOf (w2998)")
         census["elements"][-1].update(rect=[270, 400, 526, 592], visible=[270, 400, 526, 592])
         self.assertEqual(ul.pin_check(census, pins["Station Info left of the station controls"])[0], "broken")
+        self.assertEqual(ul.pin_check(census, pins["Station Info"])[0], "ok", "the above rule alone passes w2580's place")
+
+    def test_station_info_left_of_the_controls_may_stand_lower_never_higher(self):
+        """w2998: orLeftOf, ported from the game's nightly copy (game commits 15309a9b54, 688af855a7): the card left of
+        the controls passes with its bottom level with theirs or lower (lifted alone over a hotbar the controls would
+        cover), never with it higher, and never further left than maxGap x H."""
+        pin = next(p for p in self.SPEC["pins"] if p["name"] == "Station Info")
+        census = hud()
+        census["elements"] += [el("InGameScene/UI Canvas/GamePanels/StationControls", [270, 600, 450, 760]),
+                               el("InGameScene/UI Canvas/GamePanels/BuildInfoPanel", [7, 560, 263, 790])]
+        self.assertIn("its bottom 30 px lower", ul.pin_check(census, pin)[1])
+        for rect, verdict in (([7, 500, 263, 700], "broken"), ([7, 560, 200, 790], "broken"),
+                              ([7, 560, 263, 760], "ok")):
+            census["elements"][-1].update(rect=rect, visible=rect)
+            self.assertEqual(ul.pin_check(census, pin)[0], verdict, rect)
+
+    def test_station_info_without_the_controls_stays_in_the_bottom_left_corner(self):
+        pin = next(p for p in self.SPEC["pins"] if p["name"] == "Station Info")
+        census = hud()
+        census["elements"].append(el("InGameScene/UI Canvas/GamePanels/BuildInfoPanel", [7, 600, 263, 790]))
+        self.assertEqual(ul.pin_check(census, pin)[0], "ok")
+        census["elements"][-1].update(rect=[500, 600, 756, 790], visible=[500, 600, 756, 790])
+        self.assertEqual(ul.pin_check(census, pin)[0], "broken")
 
     def test_a_title_screen_census_has_no_hud_pin_and_no_dock(self):
         """w2799: the Mods screen opens only from the title screen (MainMenuPanel.cs:431), where no game runs, so no HUD
@@ -694,9 +729,9 @@ class PinTest(unittest.TestCase):
         self.assertIn("0 broken, 1 not shown", alone[0])
 
     def rail_census(self, features=("inventory-rail",), crafting=True, hover=(645, 214, 890, 495), rail=(900, 74, 1254, 600),
-                    station=(400, 500, 880, 690)):
+                    station=(53, 500, 533, 790)):
         """w2651: the classic layout at 1280x800 with the inventory rail up, Crafting left of it and the hover card left
-        of it, Station Info under Crafting. Modelled on the 1280x800 UI scale 0.9 census of FinalFactory #2946 (the rail's
+        of it, Station Info under Crafting in the bottom-left corner (w2920). Modelled on the 1280x800 UI scale 0.9 census of FinalFactory #2946 (the rail's
         right edge at 1254 px, MEASURED there); the other rects are made up to the same shape."""
         elements = [el("MinimapParent/Background", [996, 620, 1268, 792]), el("BuildInfoPanel/Box", list(station)),
                     el("InvAndCraft/InventoryPanel/Frame", list(rail)), el("HoverDescription/Card", list(hover))]
@@ -758,7 +793,7 @@ class PinTest(unittest.TestCase):
         self.assertEqual(self.pins(self.rail_census(rail=(900, 200, 1254, 600)))["Player Inventory rail"], "broken")
         self.assertEqual(self.pins(self.rail_census(hover=(1000, 214, 1245, 495)))["building hover card beside the rail"],
                          "broken", "the hover card over the rail")
-        self.assertEqual(self.pins(self.rail_census(station=(400, 420, 880, 690)))["Crafting above Station Info"], "broken")
+        self.assertEqual(self.pins(self.rail_census(station=(53, 420, 533, 790)))["Crafting above Station Info"], "broken")
 
     def test_with_the_toggle_off_the_rail_pins_do_not_apply(self):
         for features in ((), ("some-other-toggle",)):
@@ -898,7 +933,8 @@ class OptionsTest(unittest.TestCase):
         before, after = ul.load(fixtures / "w826-1282-before-1920.json"), ul.load(fixtures / "w826-1282-after-1920.json")
         unnamed = ul.option_check(before, after, [], self.PINS)["unnamed"]
         self.assertTrue(any(u.startswith("GamePanels/BuildInfoPanel") for u in unnamed), unnamed)
-        self.assertTrue(any(u.startswith("pin Station Info broken") for u in unnamed), unnamed)
+        # The parent's centred place broke the w2920 pin too, so #1282 breaks no pin its parent kept.
+        self.assertFalse(any(u.startswith("pin Station Info broken") for u in unnamed), unnamed)
         named = ul.option_check(before, after, ["BuildInfoPanel"], self.PINS)["unnamed"]
         self.assertFalse(any("BuildInfoPanel" in u or "Station Info" in u for u in named), named)
 
@@ -1046,11 +1082,17 @@ class WindowCheckTest(unittest.TestCase):
     show and the change did not touch is listed as standing."""
 
     INVENTORY_BOX = [26, 448, 489, 724]
+
+    @staticmethod
+    def check(*args, **kw):
+        # No pins: these drawn censuses keep Station Info centred above the strip, its place before w2920, and this
+        # class checks window overlaps only (PinTest checks the places).
+        return Cmd.run(*args, pins={"pins": []}, **kw)
     BEFORE = [(INVENTORY, [26, 448, 466, 724]), (STRIP, [444, 536, 818, 626]), (STATION_INFO, [489, 639, 773, 725])]
 
     def test_1444_moves_the_strip_onto_the_inventory_and_fails(self):
         after = screen((INVENTORY, [26, 448, 466, 724]), (STRIP, [193, 713, 482, 791]), (STATION_INFO, [489, 639, 773, 725]))
-        code, out = Cmd.run(screen(*self.BEFORE), after)
+        code, out = self.check(screen(*self.BEFORE), after)
         self.assertEqual(code, 1)
         self.assertIn("1 not allowed after, 0 before, 1 new, 0 kept", the_line(out, "Window overlaps"))
         self.assertIn("  NEW: Player Inventory (GamePanels/MiniInventory)  x  Station controls strip", out)
@@ -1058,7 +1100,7 @@ class WindowCheckTest(unittest.TestCase):
         self.assertIn("0 new, 0 kept", the_line(out, "Overlaps"))
 
     def test_the_allowed_overlap_before_is_listed_and_does_not_fail(self):
-        code, out = Cmd.run(screen(*self.BEFORE), screen(*self.BEFORE))
+        code, out = self.check(screen(*self.BEFORE), screen(*self.BEFORE))
         self.assertEqual(code, 0, out)
         self.assertIn("0 not allowed after, 0 before, 0 new, 0 kept between windows the change moved, 0 standing; 1 allow-listed",
                       the_line(out, "Window overlaps"))
@@ -1068,14 +1110,14 @@ class WindowCheckTest(unittest.TestCase):
         strip_left = [(STRIP, [193, 713, 482, 791]), (STATION_INFO, [489, 639, 773, 725])]
         before = screen((INVENTORY, [3, 448, 466, 724]), *strip_left)
         after = screen((INVENTORY, self.INVENTORY_BOX), *strip_left)
-        code, out = Cmd.run(before, after)
+        code, out = self.check(before, after)
         self.assertEqual(code, 1)
         self.assertIn("0 new, 1 kept between windows the change moved, 0 standing", the_line(out, "Window overlaps"))
         self.assertIn("  KEPT: ", out)
 
     def test_an_overlap_neither_window_moved_stands_and_does_not_fail(self):
         census = screen((INVENTORY, self.INVENTORY_BOX), (STRIP, [193, 713, 482, 791]), (STATION_INFO, [489, 639, 773, 725]))
-        code, out = Cmd.run(census, census)
+        code, out = self.check(census, census)
         self.assertEqual(code, 0, out)
         self.assertIn("0 new, 0 kept between windows the change moved, 1 standing", the_line(out, "Window overlaps"))
         self.assertIn("  STANDING: ", out)
@@ -1086,7 +1128,7 @@ class WindowCheckTest(unittest.TestCase):
         others = [(STRIP, [193, 713, 482, 791]), (STATION_INFO, [489, 639, 773, 725])]
         before = screen((INVENTORY, self.INVENTORY_BOX), ("MiniInventory/Content/Row", [40, 500, 200, 520]), *others)
         after = screen((INVENTORY, self.INVENTORY_BOX), ("MiniInventory/Content/Row", [40, 540, 200, 560]), *others)
-        code, out = Cmd.run(before, after)
+        code, out = self.check(before, after)
         self.assertEqual(code, 0, out)
         self.assertIn("0 new, 0 kept between windows the change moved, 1 standing", the_line(out, "Window overlaps"))
 

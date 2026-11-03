@@ -4,26 +4,46 @@
     {
       "name": "Station Info",
       "element": "BuildInfoPanel",
-      "names": ["station info"],
+      "names": [
+        "station info"
+      ],
       "rule": "above",
-      "anchor": "ActionBarParent/Hotbars/AbilityHotbar",
+      "anchor": "StationControls",
+      "orBeside": true,
+      "orLeftOf": true,
       "maxGap": 0.06,
-      "region": {"minBottom": 0.7, "centerXMin": 0.25, "centerXMax": 0.75},
-      "when": [{"notShown": "GamePanels/StationControls"}],
-      "where": "just above the ability row, bottom centre, on every screen and layout; never in the panel cluster (a build before w2580's station controls; since then the pin \"Station Info above the station controls\")",
+      "region": {
+        "minBottom": 0.7,
+        "centerXMin": 0.0,
+        "centerXMax": 0.3
+      },
+      "where": "in the bottom-left corner, the station controls just right of it with bottoms level (w2920); with no controls up, in the same corner",
       "who": [
         "Ben, 2026-10-10 (w813): \"why is station info at the top left? i didnt tell you to move that\"",
-        "Ben, 2026-10-10 (w894): \"the Station Info hover panel, it seems like you keep moving it to the top on the deck. I don't want that. I want it to just be in its normal position over the abilities, Which is now even better because we got rid of the hotbar on the deck. So just leave it. Don't put it in formation with the other panels. It's just a hover panel that shows above the abilities. Just leave it there on the desktop and the deck.\""
+        "Ben, 2026-10-10 (w894): \"the Station Info hover panel, it seems like you keep moving it to the top on the deck. I don't want that. I want it to just be in its normal position over the abilities, Which is now even better because we got rid of the hotbar on the deck. So just leave it. Don't put it in formation with the other panels. It's just a hover panel that shows above the abilities. Just leave it there on the desktop and the deck.\"",
+        "Ben, 2026-10-31 (w2580): \"That's not the hover panel mock I chose. I wanted the tile on the left above the controls panel\", after \"i'm worried it might get cut off by the objectives panel, so ensure that\"",
+        "lothsahn, 2026-11-02 (w2920): \"Please move the station information to the bottom left where the station movement and landing dialog is, and then put station movement and landing controls to the right side of it\"",
+        "lothsahn, 2026-11-02 (w2920): \"About the station info placement--it normally occupies the lower left of the layout but it moves up when the station movement controls appear. It should not move up, the station movement controls should go to the right of it\""
       ]
     },
     {
       "name": "Station Info left of the station controls",
       "element": "BuildInfoPanel",
-      "names": ["station info", "station info card", "station controls", "station movement", "landing controls"],
+      "names": [
+        "station info",
+        "station info card",
+        "station controls",
+        "station movement",
+        "landing controls"
+      ],
       "rule": "leftOf",
       "anchor": "GamePanels/StationControls",
       "maxGap": 0.03,
-      "when": [{"shown": "GamePanels/StationControls"}],
+      "when": [
+        {
+          "shown": "GamePanels/StationControls"
+        }
+      ],
       "where": "in the bottom-left corner with the station controls (Move, Land, Copy, Deconstruct, Hide panels) just right of it, bottoms level, on every screen and layout; it stays where it stood before the controls came up (since w2920; w2580, FinalFactory #2995, stood it on top of them)",
       "who": [
         "Ben, 2026-11-01 (w2580, FinalFactory #2995): \"That's not the hover panel mock I chose. I wanted the tile on the left above the controls panel\"",
@@ -35,14 +55,50 @@
     {
       "name": "building hover card",
       "element": "HoverDescription",
-      "names": ["hover panel", "hover card", "tooltip", "hover info", "item card"],
+      "names": [
+        "hover panel",
+        "hover card",
+        "tooltip",
+        "hover info",
+        "item card"
+      ],
       "rule": "above",
       "anchor": "MinimapParent",
       "maxGap": 0.06,
-      "region": {"minBottom": 0.6, "minRight": 0.8},
-      "coveredBy": [{"layout": "docked", "window": "StructuredDock", "xMin": 0.8, "yMax": 0.71, "why": "the game hides the card while a docked window overlaps its place (HoverCardFit.Covered, w1544/w2072), so a docked census with a building selected never shows it there (w2185)"},
-        {"layout": "undocked", "above": "MinimapParent", "reach": 0.3, "windows": ["InvAndCraft/UtilityPanel", "*EntityPanel"], "why": "the game hides the card while an open window overlaps it (HoverCardFit.HideUnderAWindow, w1544), and at 1280x800 a building's window reaches over the minimap's columns down into the card's place, so a census with it open does not show the card there (w2184)"}],
-      "when": [{"featureOff": "inventory-rail"}, {"layout": "docked"}, {"notShown": "InvAndCraft/InventoryPanel"}],
+      "region": {
+        "minBottom": 0.6,
+        "minRight": 0.8
+      },
+      "coveredBy": [
+        {
+          "layout": "docked",
+          "window": "StructuredDock",
+          "xMin": 0.8,
+          "yMax": 0.71,
+          "why": "the game hides the card while a docked window overlaps its place (HoverCardFit.Covered, w1544/w2072), so a docked census with a building selected never shows it there (w2185)"
+        },
+        {
+          "layout": "undocked",
+          "above": "MinimapParent",
+          "reach": 0.3,
+          "windows": [
+            "InvAndCraft/UtilityPanel",
+            "*EntityPanel"
+          ],
+          "why": "the game hides the card while an open window overlaps it (HoverCardFit.HideUnderAWindow, w1544), and at 1280x800 a building's window reaches over the minimap's columns down into the card's place, so a census with it open does not show the card there (w2184)"
+        }
+      ],
+      "when": [
+        {
+          "featureOff": "inventory-rail"
+        },
+        {
+          "layout": "docked"
+        },
+        {
+          "notShown": "InvAndCraft/InventoryPanel"
+        }
+      ],
       "where": "just above the minimap, bottom right, on every screen and layout; never in the panel cluster (with inventory-rail on and the rail up in the classic layout: left of the rail, the pin \"building hover card beside the rail\")",
       "who": [
         "Ben, 2026-10-10 (w895): \"I also noticed that the actual normal hover panel is up, you put it up in the fucking, you know, array of panels up on the top left. Don't do that, put it back over the minimap, stop moving panels around that I don't ask you to move around. It's driving me crazy.\"",
@@ -52,10 +108,20 @@
     {
       "name": "Player Inventory",
       "element": "MiniInventory",
-      "names": ["player inventory", "inventory"],
+      "names": [
+        "player inventory",
+        "inventory"
+      ],
       "rule": "offLeftEdge",
       "minLeft": 0.02,
-      "when": [{"featureOff": "inventory-rail"}, {"layout": "docked"}],
+      "when": [
+        {
+          "featureOff": "inventory-rail"
+        },
+        {
+          "layout": "docked"
+        }
+      ],
       "where": "never against the left edge of the screen (2 % of the width at least: 38 px at 1920, 26 px at 1280)",
       "who": [
         "Ben, 2026-10-10 (w895): \"I don't like the player inventory all the way up against the edge of the left side of the screen. I sent you screenshots of where I had it, where I said I liked it, so just keep it there.\""
@@ -64,13 +130,23 @@
     {
       "name": "Player Inventory rail",
       "element": "InvAndCraft/InventoryPanel",
-      "names": ["player inventory", "inventory", "inventory rail", "rail"],
+      "names": [
+        "player inventory",
+        "inventory",
+        "inventory rail",
+        "rail"
+      ],
       "rule": "rightRail",
       "maxRight": 0.04,
       "under": "GamePanels/TopInfoPanel",
       "maxBelow": 0.05,
       "maxTop": 0.12,
-      "when": [{"featureOn": "inventory-rail", "layout": "undocked"}],
+      "when": [
+        {
+          "featureOn": "inventory-rail",
+          "layout": "undocked"
+        }
+      ],
       "where": "with inventory-rail on in the classic layout: a column on the right under the top bar, at one place and one size whether the E key or a building opened it; its right edge 0 to 4 % of the width in from the screen's (the rail keeps 2 %, InventoryRail.Margin), its top 0 to 5 % of the height under the top bar's bottom edge (InventoryRail.BelowTopBar is 16 units: 21 px at 1728x917, measured; with no top bar on screen, its top in the top 12 %); on the Deck it stays wide, every slot showing",
       "who": [
         "Ben's note on w2651, 2026-10-31 20:51 UTC, his words: \"Build D, the right rail: a column on the right that never moves.\" The note goes on: \"Build D for real as one merged inventory window, behind a feature toggle.\"",
@@ -80,12 +156,33 @@
     {
       "name": "building hover card beside the rail",
       "element": "HoverDescription",
-      "names": ["hover panel", "hover card", "tooltip", "hover info", "item card"],
+      "names": [
+        "hover panel",
+        "hover card",
+        "tooltip",
+        "hover info",
+        "item card"
+      ],
       "rule": "leftOf",
       "anchor": "InvAndCraft/InventoryPanel",
       "maxGap": 0.03,
-      "coveredBy": {"layout": "undocked", "beside": "InvAndCraft/InventoryPanel", "width": 0.15, "windows": ["InvAndCraft/UtilityPanel", "*EntityPanel"], "why": "the game hides the card while an open window overlaps it (HoverCardFit.HideUnderAWindow, w1544), and Crafting and a building's window open beside the rail, over the card's columns; a short card stands under a building's window when it fits there (w2651)"},
-      "when": [{"featureOn": "inventory-rail", "layout": "undocked", "shown": "InvAndCraft/InventoryPanel"}],
+      "coveredBy": {
+        "layout": "undocked",
+        "beside": "InvAndCraft/InventoryPanel",
+        "width": 0.15,
+        "windows": [
+          "InvAndCraft/UtilityPanel",
+          "*EntityPanel"
+        ],
+        "why": "the game hides the card while an open window overlaps it (HoverCardFit.HideUnderAWindow, w1544), and Crafting and a building's window open beside the rail, over the card's columns; a short card stands under a building's window when it fits there (w2651)"
+      },
+      "when": [
+        {
+          "featureOn": "inventory-rail",
+          "layout": "undocked",
+          "shown": "InvAndCraft/InventoryPanel"
+        }
+      ],
       "where": "with inventory-rail on in the classic layout and the rail up: just left of the rail (0 to 3 % of the width between them; InventoryRail.Gap is 12 units); with the rail closed it stays over the minimap",
       "who": [
         "Ben's note on w2651, 2026-10-31 20:51 UTC, after his words \"Build D, the right rail: a column on the right that never moves.\": \"Fix the costs your report named: move the hover card to the left of the rail\""
@@ -94,11 +191,21 @@
     {
       "name": "Crafting beside the rail",
       "element": "InvAndCraft/UtilityPanel",
-      "names": ["crafting", "crafting window", "craft panel"],
+      "names": [
+        "crafting",
+        "crafting window",
+        "craft panel"
+      ],
       "rule": "leftOf",
       "anchor": "InvAndCraft/InventoryPanel",
       "maxGap": 0.03,
-      "when": [{"featureOn": "inventory-rail", "layout": "undocked", "shown": "InvAndCraft/UtilityPanel"}],
+      "when": [
+        {
+          "featureOn": "inventory-rail",
+          "layout": "undocked",
+          "shown": "InvAndCraft/UtilityPanel"
+        }
+      ],
       "where": "with inventory-rail on in the classic layout: Crafting opens just left of the rail (0 to 3 % of the width between them)",
       "who": [
         "Ben's note on w2651, 2026-10-31 20:51 UTC, his words: \"Build D, the right rail: a column on the right that never moves.\" The note goes on: \"Move no other panel.\""
@@ -107,10 +214,20 @@
     {
       "name": "Crafting above Station Info",
       "element": "InvAndCraft/UtilityPanel",
-      "names": ["crafting", "crafting window", "craft panel"],
+      "names": [
+        "crafting",
+        "crafting window",
+        "craft panel"
+      ],
       "rule": "clearOf",
       "anchor": "BuildInfoPanel",
-      "when": [{"featureOn": "inventory-rail", "layout": "undocked", "shown": "InvAndCraft/UtilityPanel"}],
+      "when": [
+        {
+          "featureOn": "inventory-rail",
+          "layout": "undocked",
+          "shown": "InvAndCraft/UtilityPanel"
+        }
+      ],
       "where": "with inventory-rail on in the classic layout: Crafting stops above Station Info, its recipe list cut to whole rows, never over it (1280x800 at UI scale 0.9 included, as built in FinalFactory #2946)",
       "who": [
         "Ben's note on w2651, 2026-10-31 20:51 UTC, after his words \"Build D, the right rail: a column on the right that never moves.\": \"make Crafting stop above Station Info instead of hiding it\"",
