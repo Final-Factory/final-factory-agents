@@ -785,6 +785,24 @@ w2133 (2026-10-25, the client of a LothDesktop-host pair for PR #2507) lost abou
     - The client's Player.log `[DeterminismAudit][Heartbeat N][Epoch E][client] DeterminismFingerprintSystem ->
       Fingerprint ... details=` lines, paired with the host's `host.log` on (epoch, heartbeat), cover the tail past the
       last checkpoint. Typed checkpoints compared 13,291 heartbeats and the text lines 13,344.
+- **A windowed Linux client on its own Xvfb, and a build that the OOM killer keeps stopping** (w2991, 2026-11-03, a
+  biscuit client of a BEAST host, PR #3113, the Ancient Portal Mover; 3645 shared heartbeats, no divergence):
+  - The Linux `--build-only` build was OOM-killed twice in a row during Burst AOT (Unity at 12-13 GB plus the burst
+    `mono` at 8.6 GB, with biscuit's 7 GB swap already full). The third try, run as `taskset -c 0-5 bash
+    scripts/audit/run_build_multiplayer_audit.sh --build-only`, succeeded; it may also have reused the earlier passes'
+    Burst output, so it is one data point, not a proven fix. Move the stale `Temp/UnityLockfile` aside between tries.
+  - A Mover pack (a hover-targeted press on a structure) needs a windowed player: the host found a headless
+    `-batchmode -nographics` player packed nothing (hover comes from `MouseRaycastSystem`). No Xvfb or window manager is
+    installed on biscuit; unpack them without root into `$TMPDIR`: `apt download xvfb openbox libobrender32 libobt2
+    libimlib2t64`, `dpkg -x` each into one root, `Xvfb :N -screen 0 1280x720x24 -nolisten tcp -noreset &`, then
+    `LD_LIBRARY_PATH=<root>/usr/lib/x86_64-linux-gnu XDG_DATA_DIRS=<root>/usr/share:/usr/share DISPLAY=:N
+    <root>/usr/bin/openbox &` (without the theme dirs openbox exits at once). Launch the player with `DISPLAY=:N
+    MESA_VK_WSI_DEBUG=sw` and `-force-vulkan -screen-fullscreen 0 -screen-width 1280 -screen-height 720`: it reached
+    the title menu in about 9 s.
+  - `pointer.click` in the same heartbeat as `pointer.moveto|hotbar|N` does not take the item into hand, and the press
+    that follows only selects the structure (its info panel opens). Put `ffauto:wait|0.5` after each `pointer.moveto`,
+    and check a `GET /v1/screenshot` shows the item at the cursor before the press.
+  - `kill -0 <pid>` in a wait loop is refused by the harness as killing a process by hand; test `[ -d /proc/<pid> ]`.
 
 ## A Linux host leg on biscuit: console commands and detector counts from a headless host {#linux-host-leg}
 
