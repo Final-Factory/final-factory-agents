@@ -477,7 +477,7 @@ A new overlap or one kept between windows you moved fails; never measure rects b
 (w961's strip stood 11 px over the Player Inventory and the HUD-block count said 0).
 **Name both layers first (w2150):** "Before calling an overlap a defect, name both elements' layers; higher-over-lower is by design (Ben)". Lowest first: the game world; HUD info (Station Info, the
 Objectives card and the tutorial, its Skip button included); station and structure windows and the panels the player
-opens; temporary chat lines may cover a window. A higher layer over a lower one is not a finding and not a fix (Ben,
+opens; temporary chat lines may cover a window, never a HUD card (w2984, the orchestrator for Ben: "The unity-ui rule that lets temporary chat sit over a window doesn't cover HUD cards": chat over Station Info or the Objectives card is a bug). Chat rows show only for seconds after a line arrives, so a census with no line just posted checked nothing (w2975: w2920's and w2952's tours never posted one and missed Station Info under the chat; post with `ffauto:chat.send|<line>` right before each still, the game repo's `specs/w2975-chat-station-info/make_tour.py`). A higher layer over a lower one is not a finding and not a fix (Ben,
 2026-10-25: "Station UI is a higher layer than tutorial or station info. You don't need to fix this"); the tool
 allow-lists those pairs by layer. Two windows over each other, a lower layer over a higher one (a hover card over a
 window) and cut-off text still fail. Lesson: evidence-gate `lessons/a-ui-change-leaves-the-rest-of-the-screen-as-it-was.md#ui-overlaps-follow-the-layer-order-higher-over-lower-is-by-design-w2150-2026-10-25`.

@@ -140,6 +140,7 @@ manual pages for these components are the source for the rules: "Auto Layout", "
 - **A viewport squeezed to nothing.** A fit that shrinks a scroll view below one row (the
   `WindowFit.MinListHeight` 80 / `MinViewportHeight` 60 floors) leaves one row visible and the
   player sees "scrunched", not "scrolls". Prefer giving the window the height, then the list.
+- **A capped list stops under a whole item, outline included (w2984).** Shortening a HUD card's scroll view to clear the chat cut a tutorial card through its text at 1280x800 and under its Skip button at 1280x720 (a fresh ui-critic: UGLY twice); cutting at the item's rect still left the tutorial's orange frame open, since it draws past the rect. Cut back to the last item that shows whole plus a margin for its outline and border (the game repo's `ObjectivesPanel.WholeItemsHeight`, `ItemBottomMargin`), measured from the content's top so the scroll position does not move it.
 - **`Destroy` lands at the end of the frame, after you reused the object (w1773).** `CircuitTabHost.RestoreSections`
   destroyed the parts it had added when a window went back to Main. When the next structure opened on the circuit view
   in the same frame, the view reused those parts, and Unity's deferred `Destroy` then removed them at frame end. The
