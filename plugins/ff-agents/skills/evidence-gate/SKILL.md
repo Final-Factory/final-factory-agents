@@ -577,6 +577,9 @@ One file each under `lessons/`: the rule, why (the incident, dated), how to appl
   it; only a concrete blocker with evidence and the smallest step only the person can take reach them (w935; w1287:
   the orchestrator told Ben twice it could not make a Claude Design project while his m5 was signed in; Ben: "I
   already asked for this").
+- [A worker hands up the requests it cannot file](lessons/research-the-route-before-you-say-cant.md#a-worker-hands-up-the-requests-it-cannot-file-w2969-2026-11-03):
+  a worker's follow-up requests go through `hand_up_requests` to the requester's orchestrator, never only a "couldn't
+  file" line in its report (w2969: w2194's five approved dragon stages closed unfiled).
 - [Drive only the windows you opened](lessons/research-the-route-before-you-say-cant.md#drive-only-the-windows-you-opened-w1287-2026-10-14): computer-use on a person's
   computer touches only windows you opened and your own tools, never their Claude desktop app or other open apps,
   even the signed-in one (w1287: a worker switched Ben's desktop app to Chat mode looking for Design while his

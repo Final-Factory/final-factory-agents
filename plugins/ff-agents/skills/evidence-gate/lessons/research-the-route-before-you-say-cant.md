@@ -131,3 +131,23 @@ already lost runs to a stale file of a dead player whose pid Windows reused.
 - Lost it? `player_slots.py mine` lists yours (FF_SESSION_ID's leases) with each one's session file, or `stale_session_file`
   when the file there predates the player. Several: `--one --pid <n>`. None: launch one; do not borrow one.
 - A player a person or another worker started is theirs, like a window they opened (the section above).
+
+## A worker hands up the requests it cannot file (w2969, 2026-11-03)
+
+**Rule.** A worker has no `request_work`, so it cannot file a request. When its work leaves new requests to file
+(build stages, a follow-up fix, briefs it wrote), it calls `hand_up_requests` with one `{title, brief}` per request,
+each brief written so it can be filed as it stands. The tool sends them to the requester's orchestrator as
+`[follow-ups to file]`, and the request's DONE waits until each one is filed (`request_work` with `related_ids`
+naming it) or its person closes the request. Writing "I couldn't file these" or "someone must file" in a report is
+not a route: say what you handed up, and with how many.
+
+**Why.** On w2194 (the Ancient Dragon design), Ben approved "Build it in the five stages as designed, numbers tuned in
+stage 5". The worker wrote the five briefs and reported "I couldn't file the five build requests myself, because none
+of my tools can create a request". That report went to no orchestrator, the cleanup's "is it done?" got a DONE, and
+the request closed with nothing filed until Ben's orchestrator filed w2962 to w2966 by hand five days later. Ben: "Also
+fix the harness for whatever caused the dragon work to not start". FF Factory now reads such a sentence as a hand-up
+too, but the tool carries the briefs and the count.
+
+**How to apply.** Before your DONE, list the requests your work leaves for later; hand them up in one
+`hand_up_requests` call; name them in the report ("handed up 5 build requests: stage 1 ..."). An orchestrator that
+gets `[follow-ups to file]` files each with `related_ids`, or closes the request saying why they are not wanted.
