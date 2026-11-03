@@ -153,7 +153,8 @@
         "a": "ChatPanel",
         "b": "ObjectivesPanel",
         "who": [
-          "Ben, 2026-11-03 (w2975/w2984), asked whether the chat lines or the Objectives card give way on short screens: \"It can appear over stuff because it's not always showing though\""
+          "Ben, 2026-11-03 (w2975/w2984), asked whether the chat lines or the Objectives card give way on short screens: \"It can appear over stuff because it's not always showing though\"",
+          "Ben, w2984, 2026-11-03, on short screens where the Objectives card fills the left column down to Station Info: \"Maybe just make the chat smaller/more compact for smaller screens. It can appear over stuff because it's not always showing though\" (ChatPanelView.CompactCanvasHeight: 4 lines closed, 8 open)"
         ]
       }
     ]
