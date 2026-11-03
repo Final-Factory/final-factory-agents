@@ -955,6 +955,16 @@ class WindowOverlapTest(unittest.TestCase):
             self.assertEqual(v["status"], "allowed", window)
             self.assertIn("Think of it in layers", v["why"])
 
+    def test_a_window_over_a_route_label_on_the_world_is_not_an_overlap(self):
+        # w2929: the route preview's stop number is drawn on the world under the whole HUD (the canvas's first sibling), so
+        # the Command Core window and the dock frame over it read 1 new and 1 kept at 1280x720 docked
+        label = dict(path="InGameScene/UI Canvas/StationRouteLabels/RouteLabel", kind="Image", rect=[671, 428, 863, 455],
+                     visible=[671, 428, 863, 455], color="#FFFFFFFF", alpha=1.0, sprite="background-main", raycast=False,
+                     depth=1, canvasOrder=-10)
+        census = screen(("HaulerEntityPanel/HaulerPanel", [400, 100, 860, 450]))
+        census["elements"].insert(0, label)
+        self.assertEqual(self.found(census), [])
+
     def test_the_layer_order_does_not_allow_two_windows_over_each_other(self):
         census = screen(("CargoEntityPanel/MainPanel", [84, 176, 436, 382]), ("StationGridEntityPanel/MainPanel", [300, 300, 700, 600]))
         (v,) = self.found(census)
