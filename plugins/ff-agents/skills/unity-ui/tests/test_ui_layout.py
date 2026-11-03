@@ -627,19 +627,20 @@ class PinTest(unittest.TestCase):
         self.assertIn("BROKEN 1280x800 docked (w894-develop-1280-docked.json): building hover card", text)
         self.assertEqual(ul.pin_check(hud(), self.SPEC["pins"][0])[0], "not shown")
 
-    def test_since_w2580_station_info_stands_above_the_station_controls(self):
-        """w2580 (FinalFactory #2995) moved the Station Info card to the left above the station controls at Ben's word
-        ("I wanted the tile on the left above the controls panel"); the old pin read every census since as 3 broken
-        (w2829). With the controls up the card is measured against them; without them (a build before #2995), the old
-        place above the ability row still holds."""
+    def test_since_w2920_station_info_stands_left_of_the_station_controls(self):
+        """w2580 (FinalFactory #2995) stood the Station Info card on top of the station controls; w2920 put it in the
+        bottom-left corner with the controls just right of it, at lothsahn's word ("It should not move up, the station
+        movement controls should go to the right of it"). With the controls up the card is measured against them:
+        left of them is ok, w2580's place on top of them is broken. Without them (a build before #2995), the old place
+        above the ability row still holds."""
         pins = {p["name"]: p for p in self.SPEC["pins"]}
         census = hud()
-        census["elements"] += [el("InGameScene/UI Canvas/GamePanels/StationControls", [7, 895, 158, 1070]),
-                               el("InGameScene/UI Canvas/GamePanels/BuildInfoPanel", [7, 720, 277, 887])]
-        self.assertEqual(ul.pin_check(census, pins["Station Info above the station controls"])[0], "ok")
+        census["elements"] += [el("InGameScene/UI Canvas/GamePanels/StationControls", [270, 600, 450, 790]),
+                               el("InGameScene/UI Canvas/GamePanels/BuildInfoPanel", [7, 500, 263, 790])]
+        self.assertEqual(ul.pin_check(census, pins["Station Info left of the station controls"])[0], "ok")
         self.assertEqual(self.pins(census)["Station Info"], "not applied")
-        census["elements"][-1].update(rect=[809, 796, 1111, 888], visible=[809, 796, 1111, 888])
-        self.assertEqual(ul.pin_check(census, pins["Station Info above the station controls"])[0], "broken")
+        census["elements"][-1].update(rect=[270, 400, 526, 592], visible=[270, 400, 526, 592])
+        self.assertEqual(ul.pin_check(census, pins["Station Info left of the station controls"])[0], "broken")
 
     def test_a_title_screen_census_has_no_hud_pin_and_no_dock(self):
         """w2799: the Mods screen opens only from the title screen (MainMenuPanel.cs:431), where no game runs, so no HUD
