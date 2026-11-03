@@ -87,3 +87,23 @@ refused; the editor log says `[UnityMcpStdioAutoStart] UseHttpTransport pref is 
   `~/.config/unity3d` counts. `pkill -f <pattern>` also matches the shell running it when the pattern appears
   anywhere in that command line, and exits 144: write `pkill -f "player/finalfactor[y]"`, and keep the literal path
   out of the rest of that command.
+
+## Timed and input legs on Xvfb (w2951, biscuit, 2026-11-03)
+
+Measuring the map's WASD pan in a Linux dev player under a private Xvfb with no window manager:
+
+- **Vulkan with vsync off crashes there**: `-force-vulkan` with `MESA_VK_WSI_DEBUG=sw` runs, but `-ffFeelVsync 0`
+  ends in SIGSEGV in `vk::CommandBuffer::DoImageWriteBarrier` at Present (window size and
+  `MESA_VK_WSI_PRESENT_MODE=fifo` made no difference). FramePacer holds a `-ffFeelFps` cap only with vSyncCount 0, so
+  a capped frame rate is out of reach on Vulkan there; with vsync on the software present runs uncapped (75-120 fps).
+  `-ffGameSpeed 4` or `8` gave a natural 30-34 fps leg with a heartbeat on every frame instead.
+- **`-force-glcore` is llvmpipe**: a mid-game save needs over 150 s to load (a 150 s quit timer ended it at the title;
+  give it 420 s) and the map then renders at 1.5-2.2 fps, too slow for a 20 fps leg. Two GL players at once both time
+  out at the title. `/v1/screenshot` answers 409 on GL; grab with ffmpeg x11grab.
+- **The Input System keyboard stays disabled with no focus**, even with `backgroundBehavior = IgnoreFocus` and an
+  `XSetInputFocus` on the window (ctypes libX11): every queued key is dropped. MapPanBench calls
+  `InputSystem.EnableDevice(keyboard)` (game repo, `Assets/Scripts/Behaviours/Cameras/MapPanBench.cs`, PR #3100);
+  any other script that queues keys there needs the same.
+- **Deck tour `waitFor text:` must name a row on screen**: at 1280x720 the map window's "Ancient sites" sits below the
+  scroll edge and the step failed after 10 s while the window was open; wait for a first-row text ("Power beams").
+
