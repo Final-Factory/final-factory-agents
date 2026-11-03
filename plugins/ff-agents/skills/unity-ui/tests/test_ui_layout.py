@@ -1106,6 +1106,94 @@ class WindowCheckTest(unittest.TestCase):
         self.assertIn("NOT ALLOWED: Player Inventory (GamePanels/MiniInventory)  x  Station controls strip", out.getvalue())
 
 
+class HudBlockAllowanceTest(unittest.TestCase):
+    """w2996: an hud-clusters.json windowOverlaps.allowed entry naming two always-on HUD blocks exactly (no '*', no `when`)
+    allows that pair in `check` and `overlaps` too: the chat lines over the Objectives card (Ben, 2026-11-03: "It can
+    appear over stuff because it's not always showing though"). The censuses are drawn from the 1920x1080 HUD column of
+    w2975's tours (chat lines just posted, the card above them), not recorded."""
+
+    CANVAS = "InGameScene/UI Canvas"
+
+    def census(self, chat_y0):
+        return {"screen": [1920, 1080], "elements": [
+            el("ObjectivesPanel/Card", [10, 330, 470, 610], alpha=0.71),
+            el("ObjectivesPanel/ScrollviewParent/ScrollView/Viewport/Content/Objective/Text", [24, 560, 450, 590],
+               kind="TextMeshProUGUI"),
+            el("MinimapParent/Background", [1600, 760, 1910, 1070], alpha=0.71),
+            dict(path=f"{self.CANVAS}/ChatPanel/Lines/ChatLine(Clone)/Text", kind="TextMeshProUGUI",
+                 rect=[10, chat_y0, 640, chat_y0 + 60], visible=[10, chat_y0, 640, chat_y0 + 60], color="#FFFFFFFF",
+                 alpha=1.0, sprite=None, raycast=False),
+        ]}
+
+    def spec_with(self, *entries):
+        spec = json.loads(ul.DEFAULT_CLUSTERS.read_text(encoding="utf-8"))
+        spec["windowOverlaps"]["allowed"] = [e for e in spec["windowOverlaps"]["allowed"]
+                                             if "ChatPanel" not in (e["a"], e["b"])] + list(entries)
+        return spec
+
+    WORDS = "It can appear over stuff because it's not always showing though"
+
+    def test_the_chat_lines_over_the_objectives_card_print_allowed_with_bens_words(self):
+        code, out = Cmd.run(self.census(700), self.census(570))
+        line = the_line(out, "Overlaps")
+        self.assertIn("0 new, 0 kept between blocks the change moved, 1 allowed", line)
+        self.assertIn("ALLOWED: UI Canvas/ChatPanel/Lines  x  UI Canvas/GamePanels/ObjectivesPanel", out)
+        self.assertIn(self.WORDS, out)
+        self.assertNotIn("NEW: ", out)
+        self.assertEqual(code, 0, out)
+
+    def test_a_kept_overlap_between_the_two_is_allowed_too(self):
+        code, out = Cmd.run(self.census(560), self.census(570))
+        self.assertIn("0 new, 0 kept between blocks the change moved, 1 allowed", the_line(out, "Overlaps"))
+        self.assertNotIn("KEPT: ", out)
+        self.assertEqual(code, 0, out)
+
+    def test_without_the_entry_the_same_pair_is_new(self):
+        code, out = Cmd.run(self.census(700), self.census(570), spec=self.spec_with())
+        self.assertIn("1 new, 0 kept between blocks the change moved, 0 allowed", the_line(out, "Overlaps"))
+        self.assertIn("NEW: UI Canvas/ChatPanel/Lines  x  UI Canvas/GamePanels/ObjectivesPanel", out)
+        self.assertEqual(code, 1)
+
+    def test_a_pair_the_entry_does_not_name_is_still_new(self):
+        before, after = self.census(700), self.census(700)
+        after["elements"][-1]["rect"] = after["elements"][-1]["visible"] = [1500, 1000, 1700, 1060]
+        code, out = Cmd.run(before, after)
+        self.assertIn("1 new, 0 kept between blocks the change moved, 0 allowed", the_line(out, "Overlaps"))
+        self.assertIn("MinimapParent", out.split("NEW: ")[1].splitlines()[0])
+        self.assertEqual(code, 1)
+
+    def test_a_glob_or_a_when_entry_keeps_its_window_only_meaning(self):
+        for entry in ({"a": "*", "b": "ObjectivesPanel", "who": ["Ben, w742"]},
+                      {"a": "ChatPanel", "b": "Obj*", "who": ["glob"]},
+                      {"a": "ChatPanel", "b": "ObjectivesPanel", "when": {"aStandsAbove": "BuildInfoPanel"}, "who": ["when"]}):
+            with self.subTest(entry=entry):
+                self.assertIsNone(ul.block_allowance({"windowOverlaps": {"allowed": [entry]}},
+                                                     f"{self.CANVAS}/ChatPanel/Lines/ChatLine/Text", f"{GP}/ObjectivesPanel/Card"))
+                code, out = Cmd.run(self.census(700), self.census(570), spec=self.spec_with(entry))
+                self.assertIn("1 new", the_line(out, "Overlaps"))
+                self.assertEqual(code, 1)
+
+    def test_either_order_matches_and_the_default_file_holds_the_entry(self):
+        spec = json.loads(ul.DEFAULT_CLUSTERS.read_text(encoding="utf-8"))
+        chat, card = f"{self.CANVAS}/ChatPanel/Lines/ChatLine(Clone)/Text", f"{GP}/ObjectivesPanel/Card"
+        self.assertIn(self.WORDS, ul.block_allowance(spec, chat, card))
+        self.assertIn(self.WORDS, ul.block_allowance(spec, card, chat))
+        self.assertIsNone(ul.block_allowance(spec, chat, f"{GP}/MinimapParent/Background"))
+
+    def test_overlaps_command_marks_the_pair_allowed(self):
+        import contextlib
+        import io
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "census.json"
+            path.write_text(json.dumps(self.census(570)), encoding="utf-8")
+            out = io.StringIO()
+            with contextlib.redirect_stdout(out):
+                code = ul.main(["overlaps", str(path)])
+        self.assertIn("1 overlapping block pairs between always-on HUD blocks (block depth 2), 1 allowed", out.getvalue())
+        self.assertIn(f"; ALLOWED: Ben, 2026-11-03", out.getvalue())
+        self.assertEqual(code, 0)
+
+
 class RecordedWindowTest(unittest.TestCase):
     """w981, on censuses of built development players of #1444's head (64482cf0b, w961), 1280x800 UI 0.8 and 1920x1080
     UI 0.9 classic, a Cargo Hold / Command Core in reach (specs/w961-station-panel-left/run_tour.sh, NOTUT=1). The old

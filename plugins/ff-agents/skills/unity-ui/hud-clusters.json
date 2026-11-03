@@ -50,7 +50,7 @@
   },
   "windowOverlaps": {
     "why": "No overlaps in the UI (Ben: \"UI should be clean and flowy\"). ui_layout.py lists every overlap that involves an open window (openedPanels above): window against window, and window against an always-on HUD block, each named with both elements and the overlap rect. An overlap passes only when it is listed under `allowed` with the requester's own words (and the condition they set), or is a window the dock hosts. A window over a lower layer is by design (w2150, Ben 2026-10-25: \"Think of it in layers\"; layers lowest first: the game world, HUD info such as Station Info and the Objectives card, station and structure windows), so those pairs are listed by layer below. Every other one is NOT ALLOWED: new or kept between windows the change moved fails ui_layout.py check and pr_evidence.py (w981: the Station strip stood 11 px over the Player Inventory in the Deck's classic layout and `overlaps` said 0).",
-    "howToAdd": "Only for an overlap the requester asked for, with their words word for word in `who` (the last entry is printed next to the overlap), the two sides as path patterns (components joined with /, fnmatch globs, '(Clone)' ignored, matched against a run of components anywhere in an element's path) and, when their words set a condition, `when`. Never to make a check pass, and never wider than the words: a quote about one pair allows that pair, in the situation they described. `when` supports aStandsAbove: the named element (a path tail), meaning the `a` window stands directly over it.",
+    "howToAdd": "Only for an overlap the requester asked for, with their words word for word in `who` (the last entry is printed next to the overlap), the two sides as path patterns (components joined with /, fnmatch globs, '(Clone)' ignored, matched against a run of components anywhere in an element's path) and, when their words set a condition, `when`. Never to make a check pass, and never wider than the words: a quote about one pair allows that pair, in the situation they described. `when` supports aStandsAbove: the named element (a path tail), meaning the `a` window stands directly over it. An entry with no '*' in either side and no `when` also allows those two always-on HUD blocks over each other in `Overlaps:` (block_allowance, w2996: the chat lines over the Objectives card); a glob or a `when` stays window-only.",
     "names": {
       "MiniInventory": "Player Inventory",
       "SelectionColumnStrip": "Station controls strip",
@@ -64,6 +64,7 @@
       "ActionBarParent": "ability row and hotbar",
       "MinimapParent": "minimap",
       "QuickButtons": "minimap buttons",
+      "ChatPanel": "chat lines",
       "FarStationHint": "far-station hint"
     },
     "hosting": [
@@ -125,6 +126,34 @@
         "b": "MiniInventory",
         "who": [
           "Ben, 2026-10-15 (w1342), asked where the yellow \"Too far away to use this building\" hint goes when a window opens over its fixed spot: \"Hint needs to be on top\""
+        ]
+      },
+      {
+        "a": "ChatPanel",
+        "b": "SelectionColumnStrip",
+        "who": [
+          "Ben, w1432: \"i'm ok with chat overlaying on the station controls, since its temporary\" (the evidence-gate lesson a-ui-change-leaves-the-rest-of-the-screen-as-it-was.md quotes it; w2976 put chat lines in a census for the first time)"
+        ]
+      },
+      {
+        "a": "ChatPanel",
+        "b": "StructuredStation",
+        "who": [
+          "Ben, w1432: \"i'm ok with chat overlaying on the station controls, since its temporary\" (the docked layout's station controls)"
+        ]
+      },
+      {
+        "a": "ChatPanel",
+        "b": "*EntityPanel",
+        "who": [
+          "Ben, w1432: \"i'm ok with chat overlaying on the station controls, since its temporary\"; the unity-ui skill's layer order: \"temporary chat lines may cover a window\" (w2976: chat lines over a building's window, the Select Recipe one at 1280x800)"
+        ]
+      },
+      {
+        "a": "ChatPanel",
+        "b": "ObjectivesPanel",
+        "who": [
+          "Ben, 2026-11-03 (w2975/w2984), asked whether the chat lines or the Objectives card give way on short screens: \"It can appear over stuff because it's not always showing though\""
         ]
       }
     ]
