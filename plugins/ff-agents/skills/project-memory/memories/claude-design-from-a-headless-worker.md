@@ -141,6 +141,20 @@ worked in one pass with no reload needed: Share at the toolbar, the "Publish as 
 without `--restore-window` worked this time), "Publish to web" in the preview dialog, the toast, and the same link
 updated in place.
 
+**After an unlock, Orca may refuse every coordinate click; post the click yourself (w2862, 2026-11-03, m5).** A
+`write_files` upload does not change the public link; only Share → Publish does (checked signed out). Ben unlocked the
+m5, and element-index clicks worked: "Not now" on the "Claude Design is moving on December 14" modal, then the
+in-page Share button. But every `orca computer click --x --y` answered "no longer the focused topmost recipient
+(current: no focused window)", with or without `--restore-window`, after `get-app-state`, and after
+`activate`/`set index`. System Events did report a focused Safari window. The popover's rows are not in the AX tree
+either (it stops at 1,200 nodes), so they have no element index. What worked: post the click with CoreGraphics from
+a small Swift script (`CGEvent` mouseMoved, leftMouseDown, leftMouseUp on `.cghidEventTap`), at **screen**
+coordinates = the window's `x`/`y` from `list-windows` plus the click point in the window. The window sat on the
+left display at x -2061, so "Publish as artifact" at window (952,272) was screen (-1109,450), and "Publish to web" at
+(837,741) was (-1224,919). Each click showed the next step in the screenshot, then the toast "Published to the web".
+`osascript -e 'tell application "System Events" to tell process "Safari" to get value of attribute "AXFocusedWindow"'`
+tells you whether macOS itself sees a focused window.
+
 **Check content in the iframe's outerHTML, not innerText (w2764).** A section inside a closed `<details>` is missing
 from `innerText`, so a check for its text reports "old copy" on a fresh one, or "new" never. Evaluate
 `document.documentElement.outerHTML` in the `*.frame.claudeusercontent.com` target and test for a string only the new
