@@ -108,7 +108,12 @@ The census recipe and `ui_layout.py` are in the `unity-ui` skill, `layout-census
 11. **No new overlap between always-on HUD, and opened panels done properly.** A layout census
     before and after, same save and size, with the whole HUD showing (hotbar and ability row,
     minimap and its side buttons, every slide-out opened, top bar, objectives, a selected building
-    and the Station strip) and your screen open on top. `ui_layout.py check` lists overlapping
+    and the Station strip) and your screen open on top. **Chat lines and the map are part of that HUD** (w2976: Station
+    Info moved under chat in #2995 and two verifiers passed it, since chat lines draw only about 10 s after a line
+    arrives and no census held one): post lines first (`ffauto:chat.send|/help` works in a solo game), take a still with
+    the world map open too, and take them at 1920x1080, 1280x800 and 1280x720; the game repo's `UI-w2976-hud-with-chat`
+    lane does all three. A toggle the change touches is shot on and off
+    ([lesson](../lessons/measure-against-what-the-player-sees.md#a-check-proves-the-outcome-in-every-state-on-the-claimed-path-w2976-2026-11-03)). `ui_layout.py check` lists overlapping
     always-on HUD blocks; a pair that was not there before fails, and so does one left between
     blocks your change moved (`0 new, 0 kept`). **A panel the player opens on purpose and can close
     may cover the HUD** (Ben, w732: "Put the slide out back just make it appear over the hot bar.
