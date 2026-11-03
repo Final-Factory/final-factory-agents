@@ -412,6 +412,17 @@ whoever asked for the release; never touch the partner site.
 origin/<branch>` and `gh run list -c <sha>` instead. **Never move a Steam branch, never ask a worker to,
 and never tell Ben a branch must be moved for the build to count**: report where it landed.
 
+**Checking the build in game when no free computer has Steam on `development`** (w2866, Build 31 on biscuit, Linux,
+no steamcmd): run a player built from the bump's merge commit instead, and say in the report that this is what ran.
+That commit is the same code, but not the uploaded depot. Build it with `unity-slot run --label "<v> check" --
+env FF_BUILD_DIR="$TMPDIR/b<R>-player" bash scripts/audit/run_build_multiplayer_audit.sh --build-only`
+(`Editor.LocalMultiplayerVerificationBuild.BuildLinuxMultiplayerDev`) in a sandbox at that commit, and confirm
+`version <v>` in its Player.log. Then run the features' own tours on it, `bash specs/<w>/tour/run_tour.sh <player dir>
+<out> 1920x1080 1.0`. On Linux these need a `python` → `python3` symlink on PATH and `DISPLAY=:0`. Look at each still
+yourself: a census figure can belong to another building (Build 31's "2.0kW" was the Assembler's, not the Circuit
+Module's). Take the landing from the PICS mirror above. The bump never needs a checkout of a blobless `$TMPDIR` clone:
+a `git checkout` there began fetching about 5 GB of blobs.
+
 ## 3. Patch notes: the required last step
 
 **Every requested release ends with its patch notes posted in #dev-patch-notes** (Lothsahn,
