@@ -17,17 +17,19 @@
       ]
     },
     {
-      "name": "Station Info above the station controls",
+      "name": "Station Info left of the station controls",
       "element": "BuildInfoPanel",
-      "names": ["station info", "station info card"],
-      "rule": "above",
+      "names": ["station info", "station info card", "station controls", "station movement", "landing controls"],
+      "rule": "leftOf",
       "anchor": "GamePanels/StationControls",
-      "maxGap": 0.06,
+      "maxGap": 0.03,
       "when": [{"shown": "GamePanels/StationControls"}],
-      "where": "on the left, just above the station controls (Move, Land, Copy, Deconstruct, Hide panels), on every screen and layout; never in the panel cluster (since w2580, FinalFactory #2995, merged 2026-11-02)",
+      "where": "in the bottom-left corner with the station controls (Move, Land, Copy, Deconstruct, Hide panels) just right of it, bottoms level, on every screen and layout; it stays where it stood before the controls came up (since w2920; w2580, FinalFactory #2995, stood it on top of them)",
       "who": [
         "Ben, 2026-11-01 (w2580, FinalFactory #2995): \"That's not the hover panel mock I chose. I wanted the tile on the left above the controls panel\"",
-        "Ben, 2026-11-01 (w2580): \"looks good but make header say Station Info with less top padding to make it more compact\""
+        "Ben, 2026-11-01 (w2580): \"looks good but make header say Station Info with less top padding to make it more compact\"",
+        "lothsahn, 2026-11-02 (w2920): \"Please move the station information to the bottom left where the station movement and landing dialog is, and then put station movement and landing controls to the right side of it\"",
+        "lothsahn, 2026-11-02 (w2920): \"About the station info placement--it normally occupies the lower left of the layout but it moves up when the station movement controls appear. It should not move up, the station movement controls should go to the right of it\""
       ]
     },
     {
