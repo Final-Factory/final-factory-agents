@@ -434,7 +434,7 @@ One file each under `lessons/`: the rule, why (the incident, dated), how to appl
 - [Harness tests never take a real exclusive bench ticket](lessons/settle-your-own-guesses.md#hold-the-bench-lock-as-briefly-as-the-question-allows-w1628-2026-10-20):
   FF Factory's own bench, yield or priority code is tried with its unit tests or a queue under your `$TMPDIR`, never
   with `bench_lock --timing`/`--machine` on a shared machine (w1894: a test ticket on BEAST ended w1826's host build).
-- [A check proves the outcome, in every state, on the claimed path](lessons/a-check-proves-the-outcome-in-every-state.md):
+- [A check proves the outcome, in every state, on the claimed path](lessons/measure-against-what-the-player-sees.md#a-check-proves-the-outcome-in-every-state-on-the-claimed-path-w2976-2026-11-03):
   a fix's proof, a nightly check or a merge review's verdict shows what a player would see broken: a toggle on and off in
   a built player, the PR's claimed path first; combat by an enemy's health dropping, never a target acquired; a HUD
   layout with chat lines and the map up at 1920x1080, 1280x800 and 1280x720. A red check made green by changing the

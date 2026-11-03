@@ -23,7 +23,7 @@ on the Targeter while platform drones never fired); a HUD change with chat lines
 and 1280x720 (`UI-w2976-hud-with-chat`). A PR that makes a red check pass by changing the check (an invariant exempted,
 an assert loosened, a scenario moved; #2971 after #2923) shows the outcome measured with the gameplay change in and
 out before it merges
-([lesson](../lessons/a-check-proves-the-outcome-in-every-state.md)).
+([lesson](../lessons/measure-against-what-the-player-sees.md#a-check-proves-the-outcome-in-every-state-on-the-claimed-path-w2976-2026-11-03)).
 
 **Compile the merged tree before you wait on CI** (w1555, 2026-10-20, PR #2068): after `git merge origin/master`, or
 `ff-pr push`, which merges it in again at push time, list what the merge brought (`git diff --name-only HEAD^1 HEAD --
