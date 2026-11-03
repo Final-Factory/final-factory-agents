@@ -845,6 +845,12 @@ def pin_check(census: dict, pin: dict) -> tuple[str, str]:
                  (sharing some of its width). When the anchor is not on screen (the dock hides the ability row and the
                  minimap), the element stands in the anchor's own region instead (region: minBottom x H for its bottom
                  edge, its centre between centerXMin and centerXMax x W, or its right edge past minRight x W).
+                 orBeside: true also passes the element standing right of the anchor, its left edge at most maxGap x H
+                 past the anchor's right edge and the two bottom edges level (w2580: the Station Info card moves beside
+                 the station controls where standing on them would reach the Objectives panel). orLeftOf: true
+                 passes it standing left of the anchor, its bottom level with the anchor's or lower (w2920: the card in
+                 the bottom-left corner, the station controls right of it, lifted alone over a hotbar they would cover).
+                 Both came from the game repo's nightly copy of this tool (w2998).
     offLeftEdge  the element's left edge at least minLeft x W from the screen's left edge.
     rightRail    a column on the right (w2651): the element's right edge 0 to maxRight x W in from the screen's right
                  edge, and its top edge under the bar `under` (the top bar): 0 to maxBelow x H below that bar's bottom
@@ -910,6 +916,13 @@ def pin_check(census: dict, pin: dict) -> tuple[str, str]:
         gap = anchor[1] - r[3]
         over = min(r[2], anchor[2]) - max(r[0], anchor[0])
         if gap < -2 or gap > pin["maxGap"] * h or over <= 0:
+            beside = r[0] - anchor[2]
+            if pin.get("orBeside") and -2 <= beside <= pin["maxGap"] * h and abs(r[3] - anchor[3]) <= 4:
+                return "ok", f"beside {pin['anchor'].split('/')[-1]}, {beside:.0f} px right of it, bottoms level ({at})"
+            left = anchor[0] - r[2]
+            if pin.get("orLeftOf") and -2 <= left <= pin["maxGap"] * h and r[3] >= anchor[3] - 4 and r[1] < anchor[3]:
+                level = "bottoms level" if abs(r[3] - anchor[3]) <= 4 else f"its bottom {r[3] - anchor[3]:.0f} px lower"
+                return "ok", f"left of {pin['anchor'].split('/')[-1]}, {left:.0f} px from it, {level} ({at})"
             return "broken", (f"bottom edge {gap:.0f} px above {pin['anchor'].split('/')[-1]}'s top edge (0 to "
                               f"{pin['maxGap'] * h:.0f} px), {max(over, 0):.0f} px of its width shared ({at})")
         return "ok", f"{gap:.0f} px above {pin['anchor'].split('/')[-1]} ({at})"
