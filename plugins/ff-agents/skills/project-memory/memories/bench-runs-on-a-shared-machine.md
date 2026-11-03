@@ -92,4 +92,10 @@ metadata:
    release frame rounds then spread 2-4 ms (master alone 35.0-43.1 ms on JustPlay1003), so an effect of a few tenths of
    a ms needs the profile's job CPU (`CpuBudget` digest, 3.3 ms and both pairs agreeing) as its measure.
 
+9. **`ff-leftovers end` ends your own ticket holder** (w2951, biscuit, 2026-11-03). The background
+   `bench_queue.py timed` that holds your ticket is a process your session started, so `ff-leftovers end` ends it with
+   the players: `bench_queue.py status` read "free" right after, and the next legs ran with no ticket. Run
+   `ff-leftovers end` before you take the ticket or after you release it, never while a timed leg is due; end a stray
+   player of a timed run by its pid instead.
+
 Related: [[beast-shared-machine-perf-ab-side-by-side]], [[profile-a-save-top-systems]].
