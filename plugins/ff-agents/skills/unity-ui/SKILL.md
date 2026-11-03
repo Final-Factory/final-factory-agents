@@ -457,9 +457,14 @@ python "$FF_SKILLS/unity-ui/ui_layout.py" check --before before.json --after aft
     --touched <your window> --shot after.png --ref-shot classic.png --ref-census classic.json
 ```
 
+`hud-pins.json` and `hud-clusters.json` live in the game repo, `scripts/nightly/ui_layout/` (w2998), one home for the
+nightly HUD lane and this tool; the tool reads them from the checkout it runs in (or `FF_GAME_REPO`, `FF_HUD_DATA`, `--pins`,
+`--clusters`). A new pin, cluster or allowed overlap is added there by a game PR; a new rule in the tool is added here first.
+The copies under `tests/fixtures/` are test fixtures only.
+
 It prints the `Overlaps:`, `Window overlaps:`, `Opened panels:`, `Alignment:` and `Style:` lines for the PR and exits 1 on a new overlap
 between always-on HUD blocks (a panel the player opens and closes may cover the HUD: Ben, w732 and w742; it
-must be on top, clickable, inside the screen and give the HUD back, `--closed`), a cluster ([hud-clusters.json](hud-clusters.json)) drifting more than 2 px, or a
+must be on top, clickable, inside the screen and give the HUD back, `--closed`), a cluster (`hud-clusters.json`) drifting more than 2 px, or a
 touched panel more than delta E 10 from the classic Inventory on screen, or with different art or
 see-through. Measured in the editor at 1280x800, classic layout (w733): #1264 (121b8691b) moved the
 quick buttons from 7 to 24 px off the minimap, the toggles 31 px and the hotbar 98 px, and nothing
@@ -470,7 +475,7 @@ was 2.1 before it.
 **Windows count too (w981).** `Overlaps:` is the always-on HUD blocks. Every open window (the Player Inventory, a Cargo Hold,
 Station Core or Grid panel, the Station strip, a slide-out) against the other windows and the HUD is the `Window overlaps:`
 line, and `ui_layout.py overlaps <census.json>` lists them for one census, each pair named with both elements and the overlap
-rect, NOT ALLOWED unless [hud-clusters.json](hud-clusters.json) `windowOverlaps` holds the requester's words for that pair
+rect, NOT ALLOWED unless `hud-clusters.json` `windowOverlaps` holds the requester's words for that pair
 (Ben, w873: "yes put the station panel controls above station info and it should be over the player inventory", only while the
 strip stands above Station Info). Take the census with the windows in reach open (a Cargo Hold or Command Core selected).
 A new overlap or one kept between windows you moved fails; never measure rects by hand and call a window overlap clean
@@ -497,7 +502,7 @@ python "$FF_SKILLS/unity-ui/ui_layout.py" pins a-1920.json a-1280.json a-docked.
 `moves` prints the `Moved:` line and one line per HUD block that moved or resized more than 4 px, labelled with its
 screen and layout. Mark each `asked (Ben): "his words"` from inside the brief's quotation marks, naming that element on
 that screen, or put the element back; there is no "justified". `pins` checks the places Ben fixed himself
-([hud-pins.json](hud-pins.json): Station Info just above the abilities, the hover card just above the minimap, the Player
+(`hud-pins.json`: Station Info just above the abilities, the hover card just above the minimap, the Player
 Inventory off the left edge; with `inventory-rail` on, the rail on the right with the hover card and Crafting left of
 it, w2651) in every census, whatever the parent looked like. Measured (editor): #1282 moved Station Info
 x -312, y -736 px at 1920x1080; on develop 9798f308c the docked layout breaks the Station Info and hover card pins, and

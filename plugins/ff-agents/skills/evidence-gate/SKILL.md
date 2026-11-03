@@ -486,7 +486,7 @@ One file each under `lessons/`: the rule, why (the incident, dated), how to appl
   brief did not ask to move, every move listed and asked for in the brief's own words (w826: #1280
   pushed the objectives card under the Station strip, #1282 moved the Station Info box to the top left;
   Ben: "i didnt tell you to move that"); w894: the hard rule, no "justified" moves, quotes checked against the
-  brief, the docked layout censused, and the places Ben fixed pinned (`unity-ui/hud-pins.json`) because the dock had
+  brief, the docked layout censused, and the places Ben fixed pinned (`hud-pins.json` in the game repo, `scripts/nightly/ui_layout/`) because the dock had
   kept Station Info and the hover card top left since w772 and every parent-based diff called that normal.
 - [Options move only what the person named](lessons/a-ui-change-leaves-the-rest-of-the-screen-as-it-was.md#options-and-mocks-move-only-what-the-person-named-w1429-2026-10-17): the hard rule holds
   for every option and mock offered, not only the pull request (w1429: on w1386 the round-3 options A, B and C each moved
@@ -496,7 +496,7 @@ One file each under `lessons/`: the rule, why (the incident, dated), how to appl
 - [A fix that clears one overlap must not land on a window that was clear](lessons/a-ui-change-leaves-the-rest-of-the-screen-as-it-was.md#a-fix-that-clears-one-overlap-must-not-land-on-a-window-that-was-clear-w1911-2026-10-24): `unity-ui/window_changes.py` lists NEW COVER, RESIZED and moved windows between two censuses; a gate FAIL on window overlaps is a regression, and a case with no free way is a fork with stills (w1911).
   overlaps` counted only always-on HUD blocks, so the Station strip standing 11 px over the Player Inventory (w961, #1444;
   22 to 45 px on develop with w978) read 0 and a worker measured rects by hand (w981); now every open window against the
-  HUD and each other is the `Window overlaps:` line, allowed only by a quoted `hud-clusters.json` `windowOverlaps` entry,
+  HUD and each other is the `Window overlaps:` line, allowed only by a quoted `hud-clusters.json` `windowOverlaps` entry (game repo, `scripts/nightly/ui_layout/`),
   and `pr_evidence.py` fails a new or kept one ([UI checklist](checklists/ui.md), item 24).
 - [UI overlaps follow the layer order](lessons/a-ui-change-leaves-the-rest-of-the-screen-as-it-was.md#ui-overlaps-follow-the-layer-order-higher-over-lower-is-by-design-w2150-2026-10-25): "Before calling an overlap a defect, name both elements' layers; higher-over-lower is by design (Ben)". The game world, then HUD info
   (Station Info, the Objectives card and the tutorial), then station and structure windows; higher over lower is not a

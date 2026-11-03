@@ -394,7 +394,6 @@ STATE = re.compile(r"\b(\d{3,4})\s*x\s*(\d{3,4})(?:\s+(undocked|docked|title))?"
 # The screens every layout change is censused on (w894: the Deck's docked layout is where Station Info and the hover card
 # were stacked top left, and no census looked at it).
 REQUIRED_STATES = ("1920x1080", "1280x800 undocked", "1280x800 docked")
-PINS = Path(__file__).resolve().parent.parent / "unity-ui" / "hud-pins.json"
 STOP = ('Ben, 2026-10-10 (w895): "stop moving panels around that I don\'t ask you to move around. It\'s driving me crazy."')
 
 
@@ -423,8 +422,14 @@ def brief_in_body(body: str) -> str | None:
 
 
 def pins() -> list[dict]:
+    """hud-pins.json from the game checkout (unity-ui's ui_layout.hud_data: $FF_HUD_DATA, $FF_GAME_REPO, else the working
+    directory's checkout; w2998). A missing file stops the check rather than reading as no pins."""
+    unity_ui = str(Path(__file__).resolve().parent.parent / "unity-ui")
+    if unity_ui not in sys.path:
+        sys.path.insert(0, unity_ui)
+    import ui_layout
     try:
-        return json.loads(PINS.read_text(encoding="utf-8")).get("pins", [])
+        return json.loads(ui_layout.default_pins().read_text(encoding="utf-8")).get("pins", [])
     except (OSError, ValueError):
         return []
 

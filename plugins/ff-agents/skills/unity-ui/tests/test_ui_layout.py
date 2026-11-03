@@ -4,17 +4,20 @@
 """
 import importlib.util
 import json
+import os
 import sys
 import tempfile
 import unittest
 from pathlib import Path
 
+# hud-pins.json and hud-clusters.json live in the game repo (w2998); these tests read the copies kept as fixtures.
 HERE = Path(__file__).resolve().parent
+os.environ["FF_HUD_DATA"] = str(HERE / "fixtures")
 sys.path.insert(0, str(HERE.parent))
 import ui_layout as ul  # noqa: E402
 
 GP = "InGameScene/UI Canvas/GamePanels"
-OPENED = ul.opened_patterns(json.loads(ul.DEFAULT_CLUSTERS.read_text(encoding="utf-8")))
+OPENED = ul.opened_patterns(json.loads(ul.default_clusters().read_text(encoding="utf-8")))
 
 
 def el(path, rect, kind="Image", color="#FFFFFFFF", alpha=1.0, sprite="background-main", **extra):
@@ -147,7 +150,7 @@ class BackdropTest(unittest.TestCase):
 
     def test_a_control_lying_on_the_map_is_not_an_overlap_with_it(self):
         before, after = self.census(500), self.census(650)
-        spec = json.loads(ul.DEFAULT_CLUSTERS.read_text(encoding="utf-8"))
+        spec = json.loads(ul.default_clusters().read_text(encoding="utf-8"))
         self.assertEqual(ul.overlaps(after, 2, opened=OPENED, backdrops=ul.backdrop_patterns(spec)), {})
         code, out = Cmd.run(before, after)
         self.assertIn("0 new, 0 kept", out)
@@ -156,7 +159,7 @@ class BackdropTest(unittest.TestCase):
         self.assertTrue(ul.overlaps(self.census(650), 2, opened=OPENED))
 
     def test_a_hover_card_over_an_unrelated_panel_is_not_an_overlap_but_two_hover_panels_are(self):
-        spec = json.loads(ul.DEFAULT_CLUSTERS.read_text(encoding="utf-8"))
+        spec = json.loads(ul.default_clusters().read_text(encoding="utf-8"))
         tr = ul.transient_patterns(spec)
         card = el("HoverDescription(Clone)/Card", [1000, 500, 1260, 600], alpha=0.9)
         tip = el("Tooltip(Clone)/Text", [1100, 550, 1200, 650], alpha=0.9)
@@ -167,7 +170,7 @@ class BackdropTest(unittest.TestCase):
         self.assertEqual(len(both), 1)
 
     def test_the_shipped_spec_lists_the_map_and_not_the_map_controls(self):
-        patterns = ul.backdrop_patterns(json.loads(ul.DEFAULT_CLUSTERS.read_text(encoding="utf-8")))
+        patterns = ul.backdrop_patterns(json.loads(ul.default_clusters().read_text(encoding="utf-8")))
         self.assertTrue(ul.opened_prefix(f"{GP}/Map/Image", patterns))
         self.assertIsNone(ul.opened_prefix(f"{GP}/MapControls/Controls/AddMarker", patterns))
         self.assertIsNone(ul.opened_prefix(f"{GP}/MinimapParent/MapImage", patterns))
@@ -202,7 +205,7 @@ class MenuBackdropTest(unittest.TestCase):
         self.assertIn("0 new, 0 kept", the_line(out, "Overlaps"))
 
     def test_the_shipped_spec_lists_the_menu_backdrop_and_not_its_panels(self):
-        patterns = ul.backdrop_patterns(json.loads(ul.DEFAULT_CLUSTERS.read_text(encoding="utf-8")))
+        patterns = ul.backdrop_patterns(json.loads(ul.default_clusters().read_text(encoding="utf-8")))
         self.assertTrue(ul.opened_prefix(f"{self.MENU}/MenuParent/Mask", patterns))
         self.assertTrue(ul.opened_prefix(f"{self.MENU}/MenuParent/LeftScrim", patterns))
         self.assertIsNone(ul.opened_prefix(f"{self.MENU}/MenuParent/PanelsParent/SaveLoadPanel/Background", patterns))
@@ -216,7 +219,7 @@ class OpenedPanelTest(unittest.TestCase):
     its clicks, stay on screen and give the HUD back when closed. Always-on HUD overlaps still fail."""
 
     def test_the_shipped_spec_classifies_the_panels_and_not_the_hud(self):
-        patterns = ul.opened_patterns(json.loads(ul.DEFAULT_CLUSTERS.read_text(encoding="utf-8")))
+        patterns = ul.opened_patterns(json.loads(ul.default_clusters().read_text(encoding="utf-8")))
         for path in (f"{GP}/QuckControls/OptionsPanels/BpControls/Controls", f"{GP}/InvAndCraft/InventoryPanel",
                      f"{GP}/BlueprintPanelChild/SolidBackdrop", f"{GP}/LightEntityPanel(Clone)/Window",
                      f"{GP}/StructuredStation/Background"):
@@ -237,7 +240,7 @@ class OpenedPanelTest(unittest.TestCase):
         self.assertIn("OPENED OVER HUD: ", out)
 
     def test_the_old_exemption_is_gone_from_the_spec(self):
-        self.assertNotIn("byDesign", json.loads(ul.DEFAULT_CLUSTERS.read_text(encoding="utf-8")))
+        self.assertNotIn("byDesign", json.loads(ul.default_clusters().read_text(encoding="utf-8")))
 
     def test_the_same_overlap_between_always_on_blocks_still_fails(self):
         # The quick buttons are HUD, not a panel the player opens: standing on the hotbar is a defect.
@@ -586,7 +589,7 @@ class PinTest(unittest.TestCase):
     don't want that" and "put it back over the minimap, stop moving panels around that I don't ask you to move around".
     MEASURED: editor censuses of develop 9798f308c (tests/fixtures/w894-develop-*.json)."""
 
-    SPEC = json.loads(ul.DEFAULT_PINS.read_text(encoding="utf-8"))
+    SPEC = json.loads(ul.default_pins().read_text(encoding="utf-8"))
 
     def verdicts(self, name):
         census = ul.load(HERE / "fixtures" / name)
@@ -830,7 +833,7 @@ class PinTest(unittest.TestCase):
                      ul.load(HERE / "fixtures" / "w894-develop-1280-docked.json"))
 
 
-SPEC = json.loads(ul.DEFAULT_CLUSTERS.read_text(encoding="utf-8"))
+SPEC = json.loads(ul.default_clusters().read_text(encoding="utf-8"))
 
 
 def screen(*elements):
@@ -870,7 +873,7 @@ class OptionsTest(unittest.TestCase):
     times". w826 and w894 checked the pull request's moves; nothing checked the options offered before it."""
 
     NAMED = ["BlueprintPanelChild/ActionBar/SaveNewBlueprint"]
-    PINS = json.loads(ul.DEFAULT_PINS.read_text(encoding="utf-8"))
+    PINS = json.loads(ul.default_pins().read_text(encoding="utf-8"))
 
     def census(self, save=(400, 408), strip_y=470, info=(558, 515)):
         base = hud()
@@ -1168,7 +1171,7 @@ class HudBlockAllowanceTest(unittest.TestCase):
         ]}
 
     def spec_with(self, *entries):
-        spec = json.loads(ul.DEFAULT_CLUSTERS.read_text(encoding="utf-8"))
+        spec = json.loads(ul.default_clusters().read_text(encoding="utf-8"))
         spec["windowOverlaps"]["allowed"] = [e for e in spec["windowOverlaps"]["allowed"]
                                              if "ChatPanel" not in (e["a"], e["b"])] + list(entries)
         return spec
@@ -1216,7 +1219,7 @@ class HudBlockAllowanceTest(unittest.TestCase):
                 self.assertEqual(code, 1)
 
     def test_either_order_matches_and_the_default_file_holds_the_entry(self):
-        spec = json.loads(ul.DEFAULT_CLUSTERS.read_text(encoding="utf-8"))
+        spec = json.loads(ul.default_clusters().read_text(encoding="utf-8"))
         chat, card = f"{self.CANVAS}/ChatPanel/Lines/ChatLine(Clone)/Text", f"{GP}/ObjectivesPanel/Card"
         self.assertIn(self.WORDS, ul.block_allowance(spec, chat, card))
         self.assertIn(self.WORDS, ul.block_allowance(spec, card, chat))
@@ -1576,6 +1579,84 @@ class SampleWithoutPillowTest(unittest.TestCase):
                 sys.modules["PIL"] = saved
         self.assertIn("pillow", str(raised.exception).lower())
         self.assertIn("venv", str(raised.exception))
+
+
+class HudDataTest(unittest.TestCase):
+    """w2998: hud-pins.json and hud-clusters.json live in the game repo; hud_data finds them from the environment or from
+    a game checkout above the working directory, and only when a command needs one."""
+
+    NAMES = ("hud-pins.json", "hud-clusters.json")
+
+    def setUp(self):
+        self.saved = {key: os.environ.pop(key, None) for key in ("FF_HUD_DATA", "FF_GAME_REPO")}
+        self.cwd = os.getcwd()
+        self.tmp = tempfile.TemporaryDirectory()
+        self.root = Path(self.tmp.name).resolve()
+
+    def tearDown(self):
+        os.chdir(self.cwd)
+        for key, value in self.saved.items():
+            os.environ.pop(key, None)
+            if value is not None:
+                os.environ[key] = value
+        self.tmp.cleanup()
+
+    def checkout(self, name):
+        folder = self.root / name / "scripts" / "nightly" / "ui_layout"
+        folder.mkdir(parents=True)
+        for file in self.NAMES:
+            (folder / file).write_text("{}", encoding="utf-8")
+        return folder
+
+    def test_a_game_checkout_above_the_working_directory_is_found(self):
+        folder = self.checkout("game")
+        nested = self.root / "game" / "Assets" / "Scripts"
+        nested.mkdir(parents=True)
+        os.chdir(nested)
+        self.assertEqual(ul.hud_data("hud-pins.json"), folder / "hud-pins.json")
+        self.assertEqual(ul.default_clusters(), folder / "hud-clusters.json")
+
+    def test_ff_game_repo_wins_over_the_walk(self):
+        self.checkout("here")
+        there = self.checkout("there")
+        os.chdir(self.root / "here")
+        os.environ["FF_GAME_REPO"] = str(self.root / "there")
+        self.assertEqual(ul.default_pins(), there / "hud-pins.json")
+
+    def test_ff_hud_data_wins_over_ff_game_repo(self):
+        self.checkout("there")
+        data = self.root / "data"
+        data.mkdir()
+        (data / "hud-pins.json").write_text("{}", encoding="utf-8")
+        os.environ["FF_GAME_REPO"] = str(self.root / "there")
+        os.environ["FF_HUD_DATA"] = str(data)
+        self.assertEqual(ul.default_pins(), data / "hud-pins.json")
+
+    def test_with_nothing_found_a_command_stops_with_the_message_and_import_still_works(self):
+        import subprocess
+        census = self.root / "census.json"
+        census.write_text(json.dumps({"elements": []}), encoding="utf-8")
+        env = {key: value for key, value in os.environ.items() if key not in ("FF_HUD_DATA", "FF_GAME_REPO")}
+        script = HERE.parent / "ui_layout.py"
+        imported = subprocess.run([sys.executable, "-c", f"import sys; sys.path.insert(0, {str(HERE.parent)!r}); import ui_layout"],
+                                  cwd=self.root, env=env, capture_output=True, text=True)
+        self.assertEqual(imported.returncode, 0, imported.stderr)
+        ran = subprocess.run([sys.executable, str(script), "pins", str(census)], cwd=self.root, env=env,
+                             capture_output=True, text=True)
+        self.assertNotEqual(ran.returncode, 0)
+        self.assertIn("scripts/nightly/ui_layout/ (w2998)", ran.stderr)
+        self.assertIn("set FF_GAME_REPO, or pass --pins/--clusters", ran.stderr)
+        self.assertEqual(len(ran.stderr.strip().splitlines()), 1, ran.stderr)
+
+    def test_an_explicit_pins_file_needs_no_game_checkout(self):
+        import contextlib
+        import io
+        census = self.root / "census.json"
+        census.write_text((HERE / "fixtures" / "w894-develop-1920-classic.json").read_text(encoding="utf-8"), encoding="utf-8")
+        os.chdir(self.root)
+        with contextlib.redirect_stdout(io.StringIO()) as out:
+            ul.main(["pins", str(census), "--pins", str(HERE / "fixtures" / "hud-pins.json")])
+        self.assertIn("Pinned:", out.getvalue())
 
 
 if __name__ == "__main__":

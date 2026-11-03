@@ -34,7 +34,7 @@ move panels around unless I tell you to."). Never move, re-anchor, restack or re
 hover panel (Station Info, the building hover card) unless the brief quotes the person asking for that exact element to
 move. A layout change touches only what was asked; whatever else its code would push aside stays where it was, and a
 conflict you cannot solve without moving something goes back to the person as a question before the PR. Item 22 is how it
-is checked; the places Ben fixed himself are pinned in `unity-ui/hud-pins.json`.
+is checked; the places Ben fixed himself are pinned in `hud-pins.json` (the game repo, `scripts/nightly/ui_layout/`; a game PR adds a pin).
 
 **The same rule holds for every option and mock you offer** (w1429, Ben's fifth correction, 2026-10-17: "getting extremely
 worried you guys moved the fucking station controls panel when i told you not to twelve times"). An option or mock may
@@ -126,7 +126,7 @@ The census recipe and `ui_layout.py` are in the `unity-ui` skill, `layout-census
     beside `heldstation`, with `--closed-before` the before tour's; say which census it was). What still fails: overlaps between always-on HUD blocks (hotbar and minimap
     buttons, ability row and hotbar, Objectives and minimap), a panel drawn under the HUD or cut off
     by the screen edge, drift (item 12) and colour (item 13). What counts as opened is
-    `hud-clusters.json` `openedPanels`: add a window only when the player opens and closes it, never
+    `hud-clusters.json` `openedPanels` (the game repo, `scripts/nightly/ui_layout/`): add a window only when the player opens and closes it, never
     to make a check pass. Restore what your change displaced rather than moving other blocks.
     **Windows are measured too (item 24, w981):** the `Window overlaps:` line, windows against each other and the HUD,
     not allowed unless `hud-clusters.json` `windowOverlaps` holds the requester's words for that pair.
@@ -221,7 +221,7 @@ screen; on desktop three labels stopped fitting, the two windows left their defa
       "justified": #1397 marked Station Info and the hover card "not asked: justified" in the dock and passed, and Ben
       saw them at the top left.
     - `ui_layout.py pins a-1920.json a-1280.json a-docked.json` checks the places Ben fixed himself
-      (`unity-ui/hud-pins.json`: Station Info just above the abilities, the building hover card just above the minimap,
+      (`hud-pins.json`: Station Info just above the abilities, the building hover card just above the minimap,
       the Player Inventory off the left edge) in every after census, whatever the parent looked like: the dock had stacked
       Station Info and the hover card top left since w772, so every before/after diff after it saw them "unmoved". Paste
       its `Pinned:` line; a broken pin is put back. A pin changes only when the person asks, in a harness PR with their

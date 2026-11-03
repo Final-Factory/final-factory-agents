@@ -2,12 +2,15 @@
 
     python3 -m unittest discover -s plugins/ff-agents/skills/evidence-gate/tests -p 'test_*.py' -v
 """
+import os
 import re
 import sys
 import unittest
 from pathlib import Path
 
 HERE = Path(__file__).resolve().parent
+# hud-pins.json lives in the game repo (w2998); these tests read unity-ui's fixture copy.
+os.environ["FF_HUD_DATA"] = str(HERE.parent.parent / "unity-ui" / "tests" / "fixtures")
 sys.path.insert(0, str(HERE.parent))
 import pr_evidence as pe  # noqa: E402
 
