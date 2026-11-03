@@ -215,3 +215,5 @@ manual pages for these components are the source for the rules: "Auto Layout", "
   path, double-click) needs a Deck route.
 - **A held button changes meaning with the layer** (`panel_open`): closing a panel with B dropped
   the layer while B was down and boarded a vehicle (w644 H-2, `SteamInputBridge`).
+- **A scroll edge that cuts a row through its text looks broken** (w2929: a fresh critic, UGLY at 1280x720). `WindowFit` puts a list's whole content in one viewport. Mark the row container with `WindowFitRows`, and the viewport ends at the top of the row it would cut. Lift the button under the list into a `WindowFitFooter`, which stands `FooterGap` below the viewport.
+- **`build_player.sh` needs a clean tracked tree** (w2929). An editor session re-serializes `.mat` files under `Assets/Art`, which blocks the build. Run `git checkout -- Assets/Art` before you build, if the diff there is not yours.
