@@ -1,6 +1,6 @@
 ---
 name: determinism-audit
-description: Verify multiplayer determinism work — the paired two-editor localhost audit (ParrelSync clone setup incl. the FMOD symlink gotcha, .ff-local-automation.json, per-heartbeat fingerprint comparison) plus the persistent determinism testcases (feature 009) and the wrapper audit scripts (run_join_catchup_audit.sh, run_construction_audit.sh, compare_determinism_reports.sh). Use when verifying any multiplayer/determinism change, running a paired host+client session, comparing determinism reports, or diagnosing a desync/divergence.
+description: Verify multiplayer determinism work — the paired two-editor localhost audit (ParrelSync clone setup incl. the FMOD symlink gotcha, .ff-local-automation.json, per-heartbeat fingerprint comparison) plus the persistent determinism testcases (feature 009) and the wrapper audit scripts (run_join_catchup_audit.sh, run_construction_audit.sh, compare_determinism_reports.sh). Use when verifying any multiplayer/determinism change, running a paired host+client session, comparing determinism reports, or diagnosing a desync/divergence. Not for an ffu checkout (FFU, the Rust engine), where ffu-determinism replaces it.
 ---
 
 

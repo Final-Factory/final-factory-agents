@@ -1,6 +1,6 @@
 ---
 name: add-network-operation
-description: Add a new gameplay mutation (network operation) to Final Factory's deterministic lockstep pipeline - the request/completed op pair, host-side validation, payload baking, broadcast, and the single-player shared path. Use when adding ANY new gameplay state mutation, when wiring a client intent to authoritative state, or when tempted to mutate simulation state from a direct ClientRpc (never do that - it races the heartbeat and desyncs).
+description: Add a new gameplay mutation (network operation) to Final Factory's deterministic lockstep pipeline - the request/completed op pair, host-side validation, payload baking, broadcast, and the single-player shared path. Use when adding ANY new gameplay state mutation, when wiring a client intent to authoritative state, or when tempted to mutate simulation state from a direct ClientRpc (never do that - it races the heartbeat and desyncs). Not for an ffu checkout (FFU, the Rust engine), where ffu-add-op replaces it.
 ---
 
 # Adding a network operation (the right place for gameplay mutations)

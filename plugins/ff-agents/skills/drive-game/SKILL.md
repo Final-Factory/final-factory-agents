@@ -1,6 +1,6 @@
 ---
 name: drive-game
-description: Drive the running Final Factory game in the Unity editor via the MCP bridge — enter play mode, press or hold keys, open the in-game menu, load saves, and take screenshots (the canonical capture recipe other skills point at; gameplay recipes in recipes.md). Use when asked to run, interact with, or screenshot the live game.
+description: Drive the running Final Factory game in the Unity editor via the MCP bridge — enter play mode, press or hold keys, open the in-game menu, load saves, and take screenshots (the canonical capture recipe other skills point at; gameplay recipes in recipes.md). Use when asked to run, interact with, or screenshot the live game. Not for an ffu checkout (FFU, the Rust engine), where ffu-drive replaces it.
 ---
 
 # Driving the Final Factory game from an agent runtime

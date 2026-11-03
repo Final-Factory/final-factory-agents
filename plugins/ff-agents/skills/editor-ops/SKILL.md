@@ -1,6 +1,6 @@
 ---
 name: editor-ops
-description: "Final Factory Unity editor operations via the MCP bridge: pinning the right instance, compile verification (stale-assembly and .meta traps), the EditMode suites, recovering a hung editor or bridge, the Unity CLI channel, long-run monitoring. Use BEFORE any task that needs the live editor: tests, a compile check, play mode, a stuck editor or bridge, a long build or audit."
+description: "Final Factory Unity editor operations via the MCP bridge: pinning the right instance, compile verification (stale-assembly and .meta traps), the EditMode suites, recovering a hung editor or bridge, the Unity CLI channel, long-run monitoring. Use BEFORE any task that needs the live editor: tests, a compile check, play mode, a stuck editor or bridge, a long build or audit. Not for an ffu checkout (FFU, the Rust engine), where ffu-build-test replaces it."
 ---
 
 

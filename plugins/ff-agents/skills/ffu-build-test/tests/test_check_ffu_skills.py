@@ -95,6 +95,32 @@ class CheckFfuSkills(unittest.TestCase):
     def test_a_repo_slug_is_not_a_binary(self):
         self.assertEqual(self.problems(GOOD + "\n`gh pr merge 1 -R Final-Factory/ffu --merge`\n"), [])
 
+    def map_problems(self, rows, ff1_description="Drive FF1. Not for an ffu checkout, where ffu-x replaces it."):
+        skills = self.skill.parents[1]
+        for name, desc in (("drive-game", ff1_description), ("handoff", "Hand off.")):
+            (skills / name).mkdir(exist_ok=True)
+            (skills / name / "SKILL.md").write_text(f"---\nname: {name}\ndescription: {desc}\n---\n\nbody ffu-x\n")
+        (skills / "ffu-build-test").mkdir(exist_ok=True)
+        (skills / "ffu-build-test" / "skill-map.md").write_text(
+            "| Skill | In an ffu checkout | Why |\n|---|---|---|\n" + "".join(f"| {a} | {b} | c |\n" for a, b in rows))
+        self.skill.write_text(GOOD, encoding="utf-8")
+        return [p for p in c.check(self.root / "agents", None) if p.startswith("skill-map")]
+
+    def test_a_complete_map_passes(self):
+        self.assertEqual(self.map_problems([("drive-game", "ffu-x"), ("handoff", "shared")]), [])
+
+    def test_a_skill_missing_from_the_map_fails(self):
+        p = self.map_problems([("drive-game", "ffu-x")])
+        self.assertTrue(any("no row for handoff" in x for x in p), p)
+
+    def test_a_replacement_that_does_not_exist_fails(self):
+        p = self.map_problems([("drive-game", "ffu-nope"), ("handoff", "shared")])
+        self.assertTrue(any("ffu-nope: not an ffu-* skill" in x for x in p), p)
+
+    def test_a_replaced_skill_must_name_its_replacement(self):
+        p = self.map_problems([("drive-game", "ffu-x"), ("handoff", "shared")], ff1_description="Drive FF1.")
+        self.assertTrue(any("does not name its FFU replacement ffu-x" in x for x in p), p)
+
 
 if __name__ == "__main__":
     unittest.main()
