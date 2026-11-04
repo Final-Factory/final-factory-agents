@@ -377,3 +377,39 @@ leg moved one. Check the claim against the censuses, not the still alone.
 - Before you fix or file a "covers" or "missing" finding, name its leg and state. Then check every open census at
   every size: does the element's rect meet any window's rect? Is the element in the census at all? An element
   missing where it should show is a finding of its own.
+
+## A tour's "0 failures" is not a census: read its log, and take the pins from the station tour (w3050, 2026-11-04)
+
+**Rule:** a tour run counts as evidence only when its log says the steps ran and its stills show the game. Read
+`tour.log` and one still before you read any number from it. Take a `Pinned:` line from the station tour
+(`specs/w1064-craft-queue-grouping/`), not from a lane that cannot show every pin.
+
+### Why
+
+w3050 (the craft queue under the ability bar at 1280x720) took four detours before its evidence passed:
+
+- `run_station_tour.sh` calls `timeout`, which a Mac does not have, so every leg failed at once.
+- With `-ffAutomationRole solo` added beside `-ffSoloNewGame w881` (to stop quit saves, w2486), the player hung on
+  "Generating map". The tour still reported 0 failures, because no step ever ran.
+- The lane `deck_lane.py UI-w2975-chat-station-info` cannot give a passing `Pinned:` line. Station Info stands
+  above the station controls there (3 broken pins, the same before and after, in its baseline since w2975), the
+  Player Inventory is never up, and the lane has no docked leg.
+- `ui_layout.py check --touched CraftQueuePanels` printed "no --touched panel is open" with the queue on screen,
+  because each slot image is under the 2 % of the screen that `panels()` counts. `--ref CraftQueuePanels` then
+  matched the queue's progress fill and compared every slot with it (delta E 52.6 for art unchanged since master).
+  This is fixed in the same PR as this lesson.
+- `pr_evidence.py` read a body whose fields were all `- ` list items as missing every field, and rejected a
+  lower-case `Measured:` basis without saying why. Both are fixed in the same PR as this lesson.
+
+### How to apply
+
+- On a Mac, wrap a player launch in `perl -e 'alarm shift; exec @ARGV' 900 <command>` in place of `timeout 900`.
+  The game repo's `specs/w1064-craft-queue-grouping/run_station_tour_mac.sh` does this.
+- A new game with no quit save: `-ffAutomationRole solo -ffAutomationSeed w881 -ffSoloObjectives HandHoldy`.
+  Never pair `-ffAutomationRole solo` with `-ffSoloNewGame`. After each leg, grep its `tour.log` for the last step
+  and its Player.log for `[QuitSave]`, and open one still.
+- A UI PR whose own lane cannot show every pin also runs the station tour on both builds. That gives a Cargo Hold
+  selected, an Assembler hovered and the Player Inventory up, at 1920x1080, 1280x800 and 1280x800 docked. Paste
+  that tour's `Pinned:` line, and name the lane's standing broken pins and the baseline that holds them.
+- A canvas measure in a scaled scroll content is not its prefab's number. The craft queue's step measured 47.92
+  units, not the 50 its grid states. Measure the step from two neighbours' rects in the census.
