@@ -1,0 +1,8 @@
+crates/ffu-bake/src/darksky.rs
+crates/ffu-bake/src/lib.rs
+crates/ffu-bake/src/main.rs
+crates/ffu-bake/src/surfaces.rs
+crates/ffu-client/src/main.rs
+crates/ffu-client/src/packs.rs
+docs/PLAN.md
+docs/pack-recreation.md
