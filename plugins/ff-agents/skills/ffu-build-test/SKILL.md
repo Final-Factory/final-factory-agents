@@ -94,6 +94,11 @@ never rewritten (`tools/check_snapshot_compat.sh BASE_REF` holds it in CI). No t
   `peers.rs` saw 93 of 100 (measured, ffu #209). Pace such a server from the test (the peers test's `Gate` lets the
   relays the test owns forward only while it is watching). Prove the fix with a planted stall that fails before and
   passes after, plus a loop of 50.
+- A plain `ffu-server` (no shard) at a fixed `--tps` keeps ticking between the test's last read and its kill or check:
+  `server.rs`'s kill -9 test ran on past its next `--snapshot-every` snapshot when the test thread was held up 125 ms,
+  and recovery replayed none of the client's ticks (ffu-lothdesktop-1, CI run 41921083432; w3109). Start it with
+  `--paced` and write `until T` lines to its stdin, one tick ahead of the client, so it is parked at a known tick when
+  the test acts (ffu #242; RED with `FFU_KILL9_STALL_MS=300`, GREEN at 300 ms and 2 s, 50 of 50 on Windows).
 - **A `--tps 0` server's pace is its disk's**: with `--sync every` (the default) each tick waits on `sync_data`, about
   80 ticks a second on BEAST and 2 on ffu-lothdesktop-1 (measured, w3095, ffu #227). The same test crawls out of time
   on one runner and outruns the test thread on another. Run test shards at a fixed `--tps` with `--sync none` (the
@@ -124,7 +129,13 @@ never rewritten (`tools/check_snapshot_compat.sh BASE_REF` holds it in CI). No t
   usage of each socket address`). Main's `rolling_deploy` and `sim_switch` passed 18 of 50 Windows runs (probe ffu
   #230); with `deploy::ControlConn` (one connection per shard; the control port answers every line on it) BEAST passed
   40 of 40 (ffu #229, measured). A 10048 on a `connect`, not a `bind`, is this. Check: `grep -rn 'deploy::request'
-  crates/*/tests` finds none inside a loop.
+  crates/*/tests` finds none inside a loop. One old `deploy_ops` run left 2280 TIME_WAIT sockets on its 3 control
+  ports in 30 s, and 0 with `ControlConn` (w3101, measured by diffing `netstat -an | grep TIME_WAIT` before and after
+  a run, grouped by remote address). `deploy::tests::a_poll_holds_one_connection_however_many_requests_it_sends`
+  asserts one accepted connection (`Control::connections()`) for 2000 polls (ffu #235).
+- Before writing an ffu fix, list the open PRs on the same files (`gh pr list -R Final-Factory/ffu --state open
+  --json number,title,files`): w3096 and w3101 each wrote the same kept-connection helper at the same time, and the
+  second had to rebuild on the first (ffu #229, #235).
 - Before blaming your change for a Windows flake, run the same probe on unchanged `main` (a probe PR with main's code
   and the same loop): w3096's #229 looked like it failed 31 of 50, and main failed 32 of 50 the same way.
 - `tools/sim_switch.sh` builds sim build A from the working tree, but its planted build B from a `git worktree` of
