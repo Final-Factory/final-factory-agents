@@ -91,6 +91,10 @@ Write `critic.md` where the brief says, in this order:
 - **Per still**: one paragraph of what you see; its verdict, BROKEN, UGLY or OK; the nine rubric answers (`1 PASS: ...`,
   `3 FAIL UGLY: ...`); the
   side-by-side verdicts.
+- **Named part**: when the brief quotes the person's words (or a `Reading:` block), say which part each descriptive word
+  refers to and whether the after still changed that part, from the before beside it. An edit that left the named part
+  as it was, or changed a neighbouring part instead, is a BROKEN flaw, however good it looks (w2195, w2992). A trait the
+  person said of another object carried onto this one is the same flaw.
 - **Flaws**, BROKEN and UGLY first: each marked NEW or STANDING, with the still, the element, where, the rubric item,
   why a player would mind, and a fix direction in a sentence (what to change, never code). NEW: this change made it, or
   the person's words ask for its kind of fix (w1386's words were "fix the ones that are clearly bugs", and its stills
