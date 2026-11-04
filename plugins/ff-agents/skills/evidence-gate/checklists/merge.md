@@ -15,6 +15,12 @@ you open the PR. When w1137 retired `develop`, GitHub moved every open PR based 
 CLAUDE.md still said develop. `gh pr view <n> --json baseRefName`, and the rule from `git show origin/master:CLAUDE.md`,
 not from your branch's copy. A base you did not pick is a question to stop on, not a detail.
 
+**Every repo's trunk takes your work only through a PR, from every clone** (w3111, 2026-11-04): a worker in a `$TMPDIR`
+clone of final-factory-agents committed on its local master and ran `git push origin HEAD`, which put ec77f376 and
+46605709 straight on master with no PR check. Before you push from a clone, `git branch --show-current`: on master or
+main, push under a branch name (`git push origin HEAD:refs/heads/<branch>`) and open the PR; never `git push origin HEAD`
+or a bare `git push` there. FF Factory's guard refuses it for the game repo, the plugin and FF Factory (ff-factory#824).
+
 **A fix is proven by the outcome, in every state, on the path it claims** (w2976, 2026-11-03: four regressions of one
 playtest passed the nightly and its merge review). The `## Evidence` names the outcome a player would see broken and
 shows it: a toggle or mode on and off in a built player, the PR's claimed path first (#3068's minimap Signal was checked

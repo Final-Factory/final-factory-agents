@@ -250,6 +250,44 @@ class PackTest(unittest.TestCase):
             self.assertTrue((out / "b" / "s1-before.png").exists() and (out / "b" / "s1-after.png").exists())
             self.assertTrue(any(p.name.startswith("ref1-") for p in (out / "refs").iterdir()))
 
+    def test_a_brief_with_its_ask_in_prose_carries_the_ask_labelled_as_the_briefs(self):
+        """w3111: w3099's brief stated its ask in prose ("It moves only the alert row.") and quoted only window names and
+        a rule, so a critic given the quotes alone graded every move of the alert row BROKEN as unnamed (4 BROKEN; with
+        the ask passed as --words, 0). Without --words, pack warns and carries the ask under the brief's own heading."""
+        with tempfile.TemporaryDirectory() as d:
+            out = Path(d) / "pack"
+            err = io.StringIO()
+            with redirect_stdout(io.StringIO()), redirect_stderr(err):
+                code = uk.main(["pack", "--after", f"{RealCaseTest.R2}@0,0,450,310", "--ref", str(RealCaseTest.R1),
+                                "--brief", str(FIX / "w3099-brief.txt"), "--out", str(out)])
+            self.assertEqual(code, 0)
+            self.assertIn("warning: no --words given", err.getvalue())
+            words = (out / "b" / "words.md").read_text(encoding="utf-8")
+            person, _, brief = words.partition("# The brief's ask (the dispatcher's words, not the person's)")
+            self.assertIn('"move only what the person asked to move"', person)
+            self.assertNotIn("alert row", person)          # the ask is never labelled as the person's
+            self.assertIn("It moves only the alert row.", brief)
+            self.assertIn("The fix keeps the row clear of the count, or wraps the row.", brief)
+            self.assertIn("a fresh ui-critic on the stills reports 0 broken.", brief)   # the Done-when block
+            self.assertNotIn("Repo: Final-Factory", brief)
+            prompt = (out / "prompt.md").read_text(encoding="utf-8")
+            self.assertIn("under its own heading the brief's ask", prompt)
+            self.assertNotIn("alert row", prompt)          # the words still wait in b/ until Pass A is written
+
+    def test_the_persons_words_given_carry_no_brief_ask(self):
+        with tempfile.TemporaryDirectory() as d:
+            out = Path(d) / "pack"
+            err = io.StringIO()
+            with redirect_stdout(io.StringIO()), redirect_stderr(err):
+                code = uk.main(["pack", "--after", f"{RealCaseTest.R2}@0,0,450,310", "--ref", str(RealCaseTest.R1),
+                                "--brief", str(FIX / "w3099-brief.txt"), "--words", "move the alerts so they don't cover the count",
+                                "--out", str(out)])
+            self.assertEqual(code, 0)
+            self.assertEqual(err.getvalue(), "")
+            words = (out / "b" / "words.md").read_text(encoding="utf-8")
+            self.assertIn('"move the alerts so they don\'t cover the count"', words)
+            self.assertNotIn("brief's ask", words)
+
     def test_a_pack_without_a_reference_window_is_refused(self):
         """The critic judges a window beside the game's others (w1818): no --ref and no --repo is an error."""
         with tempfile.TemporaryDirectory() as d:
