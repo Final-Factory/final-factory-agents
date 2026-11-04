@@ -1580,3 +1580,30 @@ class TransitionJumpAndPaletteTest(unittest.TestCase):
     def test_allowed_colours_are_not_foreign(self):
         report = self.run_tool("purple", "--allow-hues", "purple,magenta,blue")
         self.assertEqual(report["off_palette"], [])
+
+
+class MergeGate3180Test(unittest.TestCase):
+    """w3088: #3180 (w3080) merged on green CI with this body failing; ff-pr merge and the merge-on-green pilot now run
+    `pr_evidence.py --repo <repo> --pr <n>` first and refuse on anything but exit 0 (ff-factory machine/evidenceGate.ts)."""
+
+    def fixture(self, name):
+        body = (HERE / "fixtures" / f"{name}.md").read_text(encoding="utf-8")
+        files = (HERE / "fixtures" / f"{name}.files").read_text(encoding="utf-8").splitlines()
+        return body, files
+
+    def test_3180_as_merged_fails_for_its_placeholders_its_missing_not_verified_line_and_its_heartbeats(self):
+        reasons = pe.check(*self.fixture("pr-3180-rejoin-ghost"))[0]
+        self.assertEqual(len(reasons), 3, reasons)
+        joined = "\n".join(reasons)
+        self.assertIn("not 'PAIR_RESULT'", joined)
+        self.assertIn("no 'Not verified:' line", joined)
+        self.assertIn("'Determinism audit' does not give the number of heartbeats", joined)
+
+    def test_3180_as_fixed_passes(self):
+        self.assertEqual(pe.check(*self.fixture("pr-3180-rejoin-ghost-fixed"))[0], [])
+
+    def test_pr_without_repo_is_a_usage_error_with_a_non_zero_exit(self):
+        import subprocess
+        run = subprocess.run([sys.executable, str(HERE.parent / "pr_evidence.py"), "--pr", "3180"],
+                             capture_output=True, text=True, timeout=60)
+        self.assertNotEqual(run.returncode, 0, run.stdout + run.stderr)

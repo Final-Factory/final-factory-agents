@@ -257,7 +257,12 @@ It prints PASS or FAIL with the reasons, and exits 1 on FAIL. Chain the merge to
 only: after `;` or on the next line of the same command the merge runs on a FAIL too (w793). Never pipe the
 check's output before the `&&` (`| head`, `| tail`, `| grep`): a pipeline's exit status is its last command's, so
 `pr_evidence.py ... 2>&1 | head -2 && gh pr merge` merges on a FAIL (w888, #1393). To trim the output, redirect it to
-a file and test the exit (`pr_evidence.py ... > v.txt 2>&1 && gh pr merge ...`). `ff-pr merge` reads CI, not the
+a file and test the exit (`pr_evidence.py ... > v.txt 2>&1 && gh pr merge ...`). `ff-pr merge`, the merge-on-green
+pilot and a raw `gh pr merge` in an FF Factory worker's shell now run `pr_evidence.py --repo <repo> --pr <n>` themselves
+on a Final-Factory/FinalFactory PR and refuse on anything but exit 0, naming the failing lines (w3088, ff-factory
+machine/evidenceGate.ts: #3180 merged on green after `pr_evidence.py --pr 3180`, with no `--repo`, printed only a usage
+error). A usage error is not a verdict: always pass both `--repo` and `--pr`, and read PASS before you call the evidence
+checked. Outside FF Factory, or on an ff-pr older than that, `ff-pr merge` reads CI, not the
 verdict: gate it the same way (w1684, #2148: `... --comment 2>&1 | head -2; ...; ff-pr merge` merged on a FAIL; w2083, #2484: `pr_evidence.py ... 2>&1 | tail -3 && gh pr edit ... && ff-pr merge` merged on a stale-copy FAIL). A
 draft checked with `--body-file` needs the PR's files too (`--repo`, `--pr`; before 1.29.82 it ran with none, so the
 Balance and Used by rules never fired on the draft). `--comment` posts the verdict on the

@@ -1,0 +1,4 @@
+Assets/Scripts/Serialization/ConstructionSiteKnnReconciliationSystem.cs
+Assets/Tests/Serialization/ConstructionSiteKnnReconciliationSystemTest.cs
+Documentation/Determinism-Fix-Patterns.md
+scripts/nightly/scenarios/MP-W3080-rejoin-with-queued-ghost.json
