@@ -88,3 +88,8 @@ bench ticket on FF Factory machines (ffu `CLAUDE.md`, "Timing claims"). `ffu-hea
 `python3 check_ffu_skills.py [--ffu <ffu checkout>]` (beside this file) fails when an `ffu-*` skill names a Unity or
 FF1 tool, or, given a checkout, a binary, subcommand, flag, agent method or `tools/` script ffu does not have. Run it
 with `--ffu` after changing any `ffu-*` skill or after ffu's command line changes.
+
+`skill-map.md` beside it says, for every ff-agents skill, what to use in an ffu checkout: an `ffu-*` skill, the same
+skill (shared), or nothing yet (FF1 only, with the reason). The checker fails a skill the map leaves out, a replacement
+that does not exist, and an FF1 skill whose description does not name its replacement. A new ff-agents skill needs a
+row there.

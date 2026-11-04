@@ -1,6 +1,6 @@
 ---
 name: ffu-drive
-description: Run and look at Final Factory Universe (FFU), the Rust engine in Final-Factory/ffu - bounded headless runs, the `ffu` window, offscreen stills, clips and frame stats, the agent state API (`ffu-headless serve`, JSON-RPC - query, get, set as ops, step, watch, capture), the `ffu-mcp` sidecar that survives the engine's crash, and the hot-reload edit-to-running loop. Use when asked to run, inspect, screenshot or drive FFU, or to answer "why is this stalled" in an FFU sector; it replaces drive-game and playtest there.
+description: Run and look at Final Factory Universe (FFU), the Rust engine in Final-Factory/ffu - bounded headless runs, the `ffu` window, offscreen stills, clips and frame stats, the agent state API (`ffu-headless serve`, JSON-RPC - query, get, set as ops, step, watch, capture), the `ffu-mcp` sidecar that survives the engine's crash, and the hot-reload edit-to-running loop. Use when asked to run, inspect, screenshot or drive FFU, or to answer "why is this stalled" in an FFU sector; it replaces drive-game there (a goal-directed playtest is ffu-playtest, a server and clients ffu-multiplayer, a panel ffu-ui).
 ---
 
 # Driving FFU
@@ -50,7 +50,8 @@ printf '%s\n' \
 ```
 
 - Methods: `discover` (each method's params as JSON Schema; call it first), `schema`, `stats`, `get {x,y}`,
-  `query {kind?, stalled?, rect?, limit?}`, `set {op: place|remove|set_recipe, x, y, kind?, dir?, param?}`,
+  `query {kind?, stalled?, rect?, limit?}`, `set {op: place|remove|set_recipe|insert, x, y, kind?, dir?, param?,
+  item?, count?}`,
   `watch {x,y}`, `unwatch {id}`, `step {n?}`, `save {path}`, `capture {path, width?, height?, view?}`, `ui_tree`.
 - "Why is this stalled": `query {"stalled": true}` gives `stall_reasons` counts and each building's `stalled` text;
   `get` on one gives its `stalled` and the tile it `faces`, with the building there.
@@ -58,7 +59,8 @@ printf '%s\n' \
   `would_apply`. `step` runs the tick that applies it; `get` then shows the result (measured, w2895: a `remove` at
   (64, 2), then `step`, then `get` answers "no building at (64, 2)").
 - `capture` needs a renderer: serve from the client, `$B/ffu --headless serve --start ...`. Plain `ffu-headless serve`
-  answers -32002. `ui_tree` is an empty screen until M5 gives the engine a UI.
+  answers -32002. `ui_tree {index | x,y, width?, height?}` answers a building's inspector as a tree of nodes with
+  bounds and focus (`/ff-agents:ffu-ui`). `insert` puts `count` of `item` into a Cargo Hold, all or nothing.
 
 ## The MCP sidecar
 
@@ -80,7 +82,9 @@ $B/ffu --start factory:250000:1 --frames 600 --stats frames.json              # 
 ```
 
 `--warm 480` first runs 480 ticks so smelters have output. In the window: WASD or arrows pan, wheel or +/- zoom, drag,
-space pauses, F12 saves a screenshot. Always give a window `--seconds N` so nothing you start outlives your work.
+space pauses, `[` and `]` slow and speed the clock, F12 saves `ffu-shot-N.png` in the working folder, 1 to 5 pick
+belt, miner, crafter, sink and remove (Tab the next), R rotates, a left click places and a right click removes.
+`--pack DIR` draws each kind that has a baked model in DIR's `*.ffpack` (`ffu-bake` writes them). Always give a window `--seconds N` so nothing you start outlives your work.
 `ffu --headless <cmd>` is `ffu-headless <cmd>`. Judge motion from a clip, not a still (`/ff-agents:watch-video`'s
 viewing rules hold; its recorder is for Unity players).
 
@@ -108,3 +112,20 @@ it, with the same camera and no warm-up. On Windows the window runs from a copy 
 since cargo cannot replace a running `ffu.exe`. An edit that changes the snapshot layout follows the snapshot rule
 (version bump, old decoder kept). `tools/measure_edit_loop.sh [ROUNDS] [OUT_DIR]` times the loop under a bench ticket
 and writes `rounds.csv`; it needs a display.
+
+## When it crashes
+
+Every ffu binary writes a crash report on a panic, and a monitor process writes a minidump on a native fault, to
+`FFU_CRASH_DIR` when set, else the platform's folder (`%LOCALAPPDATA%\FinalFactoryUniverse\crashes` on Windows,
+`~/Library/Logs/FinalFactoryUniverse/crashes` on macOS, `$XDG_STATE_HOME/ffu/crashes` on Linux), named
+`crash-<app>-<ms>-<pid>.txt` or `.dmp`. Set `FFU_CRASH_DIR="$OUT/crashes"` for a run you start, so its reports stay
+in your folder.
+
+```sh
+cargo build --release -p ffu-crash --features symbolicate --bin ffu-minidump
+$B/ffu-minidump "$OUT/crashes/crash-ffu-<ms>-<pid>.dmp" $B/ffu        # the crashing stack with file:line
+./tools/check_crash_report.sh $B/ffu-headless "$OUT/crash-check" $B/ffu-minidump   # plants a panic, segv and abort
+```
+
+The symbols come from the binary's own debug info (the release profile keeps it), so symbolicate with the exact
+binary that crashed.

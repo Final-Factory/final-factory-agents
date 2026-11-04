@@ -1,6 +1,6 @@
 ---
 name: playtest
-description: Run a goal-directed agent playtest of Final Factory through the 020 harness — boot or attach a session, drive the game with ffauto pointer/ui/movement commands, observe via state snapshots, screenshots, and temporal visual episodes (the Watch/playback surface), wait on predicates non-blockingly, judge outcomes, and author reproducible bug reports. Use when asked to playtest or watch the game, pursue a gameplay goal, verify a feature by playing, judge motion/pacing, or hunt gameplay bugs.
+description: Run a goal-directed agent playtest of Final Factory through the 020 harness — boot or attach a session, drive the game with ffauto pointer/ui/movement commands, observe via state snapshots, screenshots, and temporal visual episodes (the Watch/playback surface), wait on predicates non-blockingly, judge outcomes, and author reproducible bug reports. Use when asked to playtest or watch the game, pursue a gameplay goal, verify a feature by playing, judge motion/pacing, or hunt gameplay bugs. Not for an ffu checkout (FFU, the Rust engine), where ffu-playtest replaces it.
 ---
 
 

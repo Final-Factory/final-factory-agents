@@ -1,6 +1,6 @@
 ---
 name: unity-ui
-description: "Build and verify Final Factory's Unity uGUI screens (panels, windows, HUD, popups, Steam Deck sizing) the way a player sees them: uGUI layout pitfalls, the Deck tour, ui_check.py pixel checks, the ui_layout.py census (overlaps, drift, moves only as asked, hud-pins.json), and the design gate (design-rubric.md, ui_look.py, a fresh ui-critic). Use before changing or reviewing any UI, and before calling a UI change verified."
+description: "Build and verify Final Factory's Unity uGUI screens (panels, windows, HUD, popups, Steam Deck sizing) the way a player sees them: uGUI layout pitfalls, the Deck tour, ui_check.py pixel checks, the ui_layout.py census (overlaps, drift, moves only as asked, hud-pins.json), and the design gate (design-rubric.md, ui_look.py, a fresh ui-critic). Use before changing or reviewing any UI, and before calling a UI change verified. Not for an ffu checkout (FFU, the Rust engine), where ffu-ui replaces it."
 ---
 
 # Unity UI: build it, then verify it like a player

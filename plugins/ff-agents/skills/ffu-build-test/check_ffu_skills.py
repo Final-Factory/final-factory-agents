@@ -6,7 +6,9 @@ Two checks over the code of each `plugins/*/skills/ffu-*/SKILL.md` (fenced block
 
 1. Offline, always: no Unity or FF1 tool is named (the Unity MCP bridge, unity-bridge.py, player slots, ffauto, a game
    repo script, a C# file), and a skill named as `/ff-agents:<name>` is an ffu-* skill or one of a few shared ones.
-2. With `--ffu <checkout>`: every ffu binary's subcommand and `--flag`, every `cargo -p <crate>` and `--features`,
+2. The skill map (`skill-map.md` beside this file, when present): every ff-agents skill has a row, a replacement it
+   names is an ffu-* skill that exists, and each replaced FF1 skill names its replacement in its own description.
+3. With `--ffu <checkout>`: every ffu binary's subcommand and `--flag`, every `cargo -p <crate>` and `--features`,
    every `tools/<script>`, every agent API method (`"method":"x"`, `ffu_x`) and `set` op the skill names exists in
    that checkout's source.
 
@@ -39,7 +41,10 @@ BINARIES = {
     "ffu-bench": "ffu-bench",
     "ffu-bake": "ffu-bake",
     "ffu-content": "ffu-content",
+    "ffu-bots": "ffu-bots",
+    "ffu-minidump": "ffu-crash",
 }
+SUBCOMMANDS = {"ffu-headless", "ffu-server", "ffu-bots", "ffu-bake", "ffu-content", "ffu-bench"}
 MCP_EXTRA_TOOLS = {"engine"}
 
 
@@ -120,7 +125,7 @@ def ffu_problems(code: list[str], ffu: Ffu) -> list[str]:
                     if a.startswith("--") and re.fullmatch(r"--[a-z0-9-]+", a) and a not in known:
                         bad.append(f"{base}: no flag {a} in crates/{BINARIES[base]}: {c.strip()[:100]}")
                 nxt = next((a for a in toks[i + 1:] if not a.startswith("-")), None)
-                if (base in {"ffu-headless", "ffu-server"} and nxt and re.fullmatch(r"[a-z]+", nxt)
+                if (base in SUBCOMMANDS and nxt and re.fullmatch(r"[a-z]+", nxt)
                         and nxt not in known):
                     bad.append(f"{base}: no subcommand {nxt}: {c.strip()[:100]}")
             if t == "-p" and i + 1 < len(toks) and toks[i + 1].startswith("ffu"):
@@ -149,6 +154,37 @@ def ffu_problems(code: list[str], ffu: Ffu) -> list[str]:
     return bad
 
 
+def map_problems(root: Path) -> list[str]:
+    """The skill map: one row per ff-agents skill, each replacement real and named by the skill it replaces."""
+    path = root / "plugins" / "ff-agents" / "skills" / "ffu-build-test" / "skill-map.md"
+    if not path.exists():
+        return []
+    skills_dir = path.parents[1]
+    have = {p.parent.name for p in skills_dir.glob("*/SKILL.md")}
+    rows = {}
+    for line in path.read_text(encoding="utf-8").splitlines():
+        cells = [x.strip() for x in line.strip().strip("|").split("|")]
+        if len(cells) >= 3 and re.fullmatch(r"[A-Za-z][\w-]*", cells[0]) and cells[0] != "Skill":
+            rows[cells[0]] = cells[1]
+    bad = []
+    for name in sorted(have - set(rows)):
+        if not name.startswith("ffu-"):
+            bad.append(f"skill-map: no row for {name}")
+    for name, use in sorted(rows.items()):
+        if name not in have:
+            bad.append(f"skill-map: row for a skill that does not exist: {name}")
+            continue
+        if use in {"shared", "FF1 only"}:
+            continue
+        if not use.startswith("ffu-") or use not in have:
+            bad.append(f"skill-map: {name} -> {use}: not an ffu-* skill here")
+            continue
+        head = (skills_dir / name / "SKILL.md").read_text(encoding="utf-8").split("\n---", 1)[0]
+        if use not in head:
+            bad.append(f"skill-map: {name}'s description does not name its FFU replacement {use}")
+    return bad
+
+
 def check(root: Path, ffu_root: Path | None) -> list[str]:
     skills = sorted(root.glob("plugins/*/skills/ffu-*/SKILL.md"))
     if not skills:
@@ -159,7 +195,7 @@ def check(root: Path, ffu_root: Path | None) -> list[str]:
         code = code_of(s.read_text(encoding="utf-8"))
         probs = deny_problems(code) + (ffu_problems(code, ffu) if ffu else [])
         out += [f"{s.parent.name}: {p}" for p in probs]
-    return out
+    return out + map_problems(root)
 
 
 def main(argv: list[str] | None = None) -> int:
