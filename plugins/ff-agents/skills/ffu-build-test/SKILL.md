@@ -94,6 +94,14 @@ never rewritten (`tools/check_snapshot_compat.sh BASE_REF` holds it in CI). No t
   `peers.rs` saw 93 of 100 (measured, ffu #209). Pace such a server from the test (the peers test's `Gate` lets the
   relays the test owns forward only while it is watching). Prove the fix with a planted stall that fails before and
   passes after, plus a loop of 50.
+- **A `--tps 0` server's pace is its disk's**: with `--sync every` (the default) each tick waits on `sync_data`, about
+  80 ticks a second on BEAST and 2 on ffu-lothdesktop-1 (measured, w3095, ffu #227). The same test crawls out of time
+  on one runner and outruns the test thread on another. Run test shards at a fixed `--tps` with `--sync none` (the
+  replica takes `--sync` too since ffu #223), and assert the run had not passed its end when the test acted.
+  `failover.rs` does so (`FFU_FAILOVER_TPS`, `FFU_FAILOVER_SYNC`); plant a slow disk (a sleep after `sync_data`) and a
+  fast one (no sync plus a held test thread) for RED. `FFU_FAILOVER_LOGS=<dir>` keeps every child's stderr.
+- The Windows runners have no `pwsh`, and their execution policy refuses `shell: powershell` steps: write probe steps
+  in `shell: bash` or `shell: cmd` (w3095).
 - **A test never picks a port and then drops it for a child process to bind later** (Ben, w3096). The process binds
   `:0` itself and reports its address (its JSON start line: `listen`, `peer_listen`, `standby_listen`, `control`), or
   it is handed a listener that is already bound. A port that has been let go can be taken by any `bind(0)` or
