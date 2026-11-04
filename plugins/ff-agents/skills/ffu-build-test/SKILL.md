@@ -76,6 +76,16 @@ never rewritten (`tools/check_snapshot_compat.sh BASE_REF` holds it in CI). No t
   `surfaces`, and CI went red with E0433 on `png`).
 - `docs/PLAN.md` is the shared board: mark your row "in progress: <session> (wNNN)" in a one-line PR before you start,
   and record its result, with measured numbers labelled, in a PR when it is done.
+- A flaky test is fixed at its cause, never by a rerun, a retry or a longer timeout (Ben, w2895). In `ffu-server`'s
+  tests a server running free (`--tps 0` to an `--until-tick`) can finish its whole run while the test thread is held
+  up: on BEAST one 2.17 s progress read let the peers run from tick 2490 to the end with events still unsent, so
+  `peers.rs` saw 93 of 100 (measured, ffu #209). Pace such a server from the test (the peers test's `Gate` lets the
+  relays the test owns forward only while it is watching). Prove the fix with a planted stall that fails before and
+  passes after, plus a loop of 50.
+- To loop one test on the Windows runners, open a draft probe PR whose `ci.yml` runs only that test
+  (`cargo test -p <crate> --test <file>`) in N matrix copies: they spread over `ffu-beast*` and `ffu-lothdesktop-*`.
+  Set `timeout-minutes: 40`, because a lothdesktop runner took over 25 minutes for 10 peers rounds (w2895, #210).
+  Close the probe PR without merging it.
 
 ## 5. Timing claims
 
