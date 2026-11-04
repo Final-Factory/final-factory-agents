@@ -90,6 +90,21 @@ never rewritten (`tools/check_snapshot_compat.sh BASE_REF` holds it in CI). No t
   `peers.rs` saw 93 of 100 (measured, ffu #209). Pace such a server from the test (the peers test's `Gate` lets the
   relays the test owns forward only while it is watching). Prove the fix with a planted stall that fails before and
   passes after, plus a loop of 50.
+- **A test never picks a port and then drops it for a child process to bind later** (Ben, w3096). The process binds
+  `:0` itself and reports its address (its JSON start line: `listen`, `peer_listen`, `standby_listen`, `control`), or
+  it is handed a listener that is already bound. A port that has been let go can be taken by any `bind(0)` or
+  `connect()` on the machine before the child binds it. `directory.rs`'s `free_port()` failed this way on BEAST
+  (`bind 127.0.0.1:62923 ... (os error 10048)`, then `replica 1 did not start`, CI run 41885835149) and on
+  lothdesktop. Peers whose address is not known yet get `127.0.0.1:0` (never dialled), and the test tells them the
+  address afterwards on stdin (`peer ID ADDR`, `replica ADDR`; ffu #225). A restarted process takes a new port.
+  Proof: a planted holder that binds the port between the pick and the child's bind fails before and passes after
+  (#225 holds every restarted replica's old port), plus the loop of 50 on Windows.
+- Check before a test PR merges: `grep -rn 'bind("127.0.0.1:0")' crates/*/tests crates/*/src` and read each hit. A
+  listener dropped before its port goes into another process's arguments is the race above. A listener the test
+  keeps, or a dead address that is meant to refuse, is fine.
+- `tools/sim_switch.sh` builds sim build A from the working tree, but its planted build B from a `git worktree` of
+  `HEAD` (`sim_switch.sh:49`). An uncommitted merge or edit therefore reaches A and not B, so commit before you run it
+  (c11bb9a1, w3086).
 - To loop one test on the Windows runners, open a draft probe PR whose `ci.yml` runs only that test
   (`cargo test -p <crate> --test <file>`) in N matrix copies: they spread over `ffu-beast*` and `ffu-lothdesktop-*`.
   Set `timeout-minutes: 40`, because a lothdesktop runner took over 25 minutes for 10 peers rounds (w2895, #210).
