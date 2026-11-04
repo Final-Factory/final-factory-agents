@@ -240,6 +240,7 @@ look first and relay only with the critic's report (FF Factory `read_rules ui`).
   bound it stops or skips on, and see the test go RED with that bound's `>` flipped to `>=` (w1069: random worlds all
   passed the flip).
 - **A CI test does not gate on the clock** ([lesson](lessons/verify-simulation-at-a-slow-hosts-frame-rate.md#a-ci-test-does-not-gate-on-the-clock-w857-2026-10-10)). A test the editmode job runs asserts no wall-clock ratio or time limit (move the timing to a `[Category("Performance")]` test, assert the structure), and a `[UnityTest]` waiting on real I/O counts seconds, not frames (w857: a 19 % flake and 422 s of a 14 minute job).
+- **A pair run is filed only on a player build and a dry run that pass** ([lesson](lessons/verify-simulation-at-a-slow-hosts-frame-rate.md#a-pair-run-is-filed-only-on-a-player-build-and-a-dry-run-that-pass-w2963-2026-11-04)). Build a player of the head (Burst AOT runs only there) and pass the scenario's host-only dry run with its value asserts before `request_pair` (w2963: w3003 spent a pair on BC1028).
 - **A determinism pair is any two free machines; a cross-OS pair only when the change can differ by platform** ([lesson](lessons/verify-simulation-at-a-slow-hosts-frame-rate.md#a-determinism-pair-is-any-two-free-machines-a-cross-os-pair-only-when-the-change-can-differ-by-platform-w1692-2026-10-21)).
   Two players on whatever machines are free, any OS; a Mac host against a Windows or Linux client only for float or
   math-library use in the simulation, Burst or IL2CPP codegen-sensitive code, platform APIs or file paths, the desync
@@ -345,6 +346,12 @@ One file each under `lessons/`: the rule, why (the incident, dated), how to appl
   PR that adds a model or effect art without a filled `Hero art:` line (concepts and pick, detail comparison, how it
   differs, distinct, measured cost; merge checklist), and checklist 5f is the reviewer's read; publish the concepts
   before any build-quality clip (w1497).
+- [Recreated art is graded on the game's screen and by the art language](lessons/visual-fixes-are-verified-by-looking.md#recreated-art-is-graded-on-the-games-screen-and-by-the-art-language-not-by-a-file-w2895):
+  art that rebuilds something the game shows (FFU's rebuild of FF1, a pack stand-in) is graded against a capture of
+  it in the built game (light, bloom, camera, placement), never only its file or the pack, and by the two colours
+  plus HDR accent before closeness; no capture, the critic says so; a flaw back round after round brings Ben 2 or 3
+  different takes, not another near-match (checklist 5o; w2895: "it doenst look right"). `pr_evidence.py` fails FFU
+  art (`art/`) without `Reference capture:` and `Art language:`.
 - [New models are checked at scale, in the game](lessons/visual-fixes-are-verified-by-looking.md#new-models-are-checked-at-scale-in-the-game-beside-their-neighbours-w2204): a new or changed
   in-world model (item, structure, ship, projectile, pickup) gets a built-game still beside its existing neighbours at
   gameplay zoom (an item on a connector and in an inserter hand), and its size matches theirs; a still of it alone or an
@@ -480,7 +487,7 @@ One file each under `lessons/`: the rule, why (the incident, dated), how to appl
   brief did not ask to move, every move listed and asked for in the brief's own words (w826: #1280
   pushed the objectives card under the Station strip, #1282 moved the Station Info box to the top left;
   Ben: "i didnt tell you to move that"); w894: the hard rule, no "justified" moves, quotes checked against the
-  brief, the docked layout censused, and the places Ben fixed pinned (`unity-ui/hud-pins.json`) because the dock had
+  brief, the docked layout censused, and the places Ben fixed pinned (`hud-pins.json` in the game repo, `scripts/nightly/ui_layout/`) because the dock had
   kept Station Info and the hover card top left since w772 and every parent-based diff called that normal.
 - [Options move only what the person named](lessons/a-ui-change-leaves-the-rest-of-the-screen-as-it-was.md#options-and-mocks-move-only-what-the-person-named-w1429-2026-10-17): the hard rule holds
   for every option and mock offered, not only the pull request (w1429: on w1386 the round-3 options A, B and C each moved
@@ -490,7 +497,7 @@ One file each under `lessons/`: the rule, why (the incident, dated), how to appl
 - [A fix that clears one overlap must not land on a window that was clear](lessons/a-ui-change-leaves-the-rest-of-the-screen-as-it-was.md#a-fix-that-clears-one-overlap-must-not-land-on-a-window-that-was-clear-w1911-2026-10-24): `unity-ui/window_changes.py` lists NEW COVER, RESIZED and moved windows between two censuses; a gate FAIL on window overlaps is a regression, and a case with no free way is a fork with stills (w1911).
   overlaps` counted only always-on HUD blocks, so the Station strip standing 11 px over the Player Inventory (w961, #1444;
   22 to 45 px on develop with w978) read 0 and a worker measured rects by hand (w981); now every open window against the
-  HUD and each other is the `Window overlaps:` line, allowed only by a quoted `hud-clusters.json` `windowOverlaps` entry,
+  HUD and each other is the `Window overlaps:` line, allowed only by a quoted `hud-clusters.json` `windowOverlaps` entry (game repo, `scripts/nightly/ui_layout/`),
   and `pr_evidence.py` fails a new or kept one ([UI checklist](checklists/ui.md), item 24).
 - [UI overlaps follow the layer order](lessons/a-ui-change-leaves-the-rest-of-the-screen-as-it-was.md#ui-overlaps-follow-the-layer-order-higher-over-lower-is-by-design-w2150-2026-10-25): "Before calling an overlap a defect, name both elements' layers; higher-over-lower is by design (Ben)". The game world, then HUD info
   (Station Info, the Objectives card and the tutorial), then station and structure windows; higher over lower is not a

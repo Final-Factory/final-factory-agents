@@ -64,9 +64,16 @@ never rewritten (`tools/check_snapshot_compat.sh BASE_REF` holds it in CI). No t
 - Read CI by commit, not by `gh pr checks` (a vault token cannot read checks):
   `gh run list -R Final-Factory/ffu --commit <sha>` and, on red, `gh run view <id> -R Final-Factory/ffu --log-failed | tail -80`.
   To wait, use `blocked_on` with `ci:Final-Factory/ffu#<n>` and the head, never a poll loop.
+- A PR that adds or changes art (`art/`) runs the evidence-gate's `pr_evidence.py --repo Final-Factory/ffu --pr <n>`
+  before Ben is asked and before it merges: it wants `Reference capture:` and `Art language:` in `## Evidence`
+  (ffu-drive, "Art previews"; w2895).
 - Merge on green: `gh pr merge <n> -R Final-Factory/ffu --merge --match-head-commit <sha>`. "Not mergeable" means
   another PR touched the same lines (often `docs/PLAN.md`): `git merge origin/main`, keep both sides, push, wait for CI
   again. Never force-push or rebase a pushed branch.
+- A conflict in a feature-gated list (`mod` lines under `#[cfg(feature = ...)]`, as in `ffu-bake/src/lib.rs`) keeps
+  each side's `#[cfg]` line, and the check after it builds the crate without the feature too (`cargo check -p <crate>`):
+  `--all-features` passes locally while CI's featureless build fails (w2895: ffu #149's merge dropped the `bake` gate on
+  `surfaces`, and CI went red with E0433 on `png`).
 - `docs/PLAN.md` is the shared board: mark your row "in progress: <session> (wNNN)" in a one-line PR before you start,
   and record its result, with measured numbers labelled, in a PR when it is done.
 

@@ -88,6 +88,17 @@ belt, miner, crafter, sink and remove (Tab the next), R rotates, a left click pl
 `ffu --headless <cmd>` is `ffu-headless <cmd>`. Judge motion from a clip, not a still (`/ff-agents:watch-video`'s
 viewing rules hold; its recorder is for Unity players).
 
+## Art previews
+
+New or recreated art (a model, texture, material or effect under `art/`) follows the evidence-gate visual checklist,
+items 5c (the art language: two solid main colours plus one bright, bloomy HDR accent) and 5o (w2895). Before a fresh
+critic grades it or Ben sees it: a capture of the FF1 original as the built FF1 game draws it (its lighting, bloom,
+camera, placement; if the built game never shows it, it is not rebuilt), and an `ffu` still of ours at the same zoom
+beside it. Give the critic both, Ben's art-language words and 5o's four questions; never only the texture or model
+file or the source pack. A flaw that comes back round after round goes to Ben as 2 or 3 different takes, not one more
+near-match. The PR's `## Evidence` carries `Reference capture:` and `Art language:`, and
+`python3 <evidence-gate>/pr_evidence.py --repo Final-Factory/ffu --pr <n>` passes before you ask Ben or merge.
+
 ## The edit-to-running loop (hot reload)
 
 ```sh

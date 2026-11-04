@@ -4,17 +4,20 @@
 """
 import importlib.util
 import json
+import os
 import sys
 import tempfile
 import unittest
 from pathlib import Path
 
+# hud-pins.json and hud-clusters.json live in the game repo (w2998); these tests read the copies kept as fixtures.
 HERE = Path(__file__).resolve().parent
+os.environ["FF_HUD_DATA"] = str(HERE / "fixtures")
 sys.path.insert(0, str(HERE.parent))
 import ui_layout as ul  # noqa: E402
 
 GP = "InGameScene/UI Canvas/GamePanels"
-OPENED = ul.opened_patterns(json.loads(ul.DEFAULT_CLUSTERS.read_text(encoding="utf-8")))
+OPENED = ul.opened_patterns(json.loads(ul.default_clusters().read_text(encoding="utf-8")))
 
 
 def el(path, rect, kind="Image", color="#FFFFFFFF", alpha=1.0, sprite="background-main", **extra):
@@ -85,7 +88,7 @@ class Cmd:
     """Runs `ui_layout.py check` on drawn censuses and returns (exit code, printed output)."""
 
     @staticmethod
-    def run(before, after, closed=None, extra=(), spec=None):
+    def run(before, after, closed=None, extra=(), spec=None, pins=None):
         import contextlib
         import io
         with tempfile.TemporaryDirectory() as tmp:
@@ -100,6 +103,10 @@ class Cmd:
                 path = Path(tmp) / "clusters.json"
                 path.write_text(json.dumps(spec), encoding="utf-8")
                 args += ["--clusters", str(path)]
+            if pins is not None:
+                path = Path(tmp) / "pins.json"
+                path.write_text(json.dumps(pins), encoding="utf-8")
+                args += ["--pins", str(path)]
             out = io.StringIO()
             with contextlib.redirect_stdout(out):
                 code = ul.main(args + list(extra))
@@ -143,7 +150,7 @@ class BackdropTest(unittest.TestCase):
 
     def test_a_control_lying_on_the_map_is_not_an_overlap_with_it(self):
         before, after = self.census(500), self.census(650)
-        spec = json.loads(ul.DEFAULT_CLUSTERS.read_text(encoding="utf-8"))
+        spec = json.loads(ul.default_clusters().read_text(encoding="utf-8"))
         self.assertEqual(ul.overlaps(after, 2, opened=OPENED, backdrops=ul.backdrop_patterns(spec)), {})
         code, out = Cmd.run(before, after)
         self.assertIn("0 new, 0 kept", out)
@@ -152,7 +159,7 @@ class BackdropTest(unittest.TestCase):
         self.assertTrue(ul.overlaps(self.census(650), 2, opened=OPENED))
 
     def test_a_hover_card_over_an_unrelated_panel_is_not_an_overlap_but_two_hover_panels_are(self):
-        spec = json.loads(ul.DEFAULT_CLUSTERS.read_text(encoding="utf-8"))
+        spec = json.loads(ul.default_clusters().read_text(encoding="utf-8"))
         tr = ul.transient_patterns(spec)
         card = el("HoverDescription(Clone)/Card", [1000, 500, 1260, 600], alpha=0.9)
         tip = el("Tooltip(Clone)/Text", [1100, 550, 1200, 650], alpha=0.9)
@@ -163,7 +170,7 @@ class BackdropTest(unittest.TestCase):
         self.assertEqual(len(both), 1)
 
     def test_the_shipped_spec_lists_the_map_and_not_the_map_controls(self):
-        patterns = ul.backdrop_patterns(json.loads(ul.DEFAULT_CLUSTERS.read_text(encoding="utf-8")))
+        patterns = ul.backdrop_patterns(json.loads(ul.default_clusters().read_text(encoding="utf-8")))
         self.assertTrue(ul.opened_prefix(f"{GP}/Map/Image", patterns))
         self.assertIsNone(ul.opened_prefix(f"{GP}/MapControls/Controls/AddMarker", patterns))
         self.assertIsNone(ul.opened_prefix(f"{GP}/MinimapParent/MapImage", patterns))
@@ -198,7 +205,7 @@ class MenuBackdropTest(unittest.TestCase):
         self.assertIn("0 new, 0 kept", the_line(out, "Overlaps"))
 
     def test_the_shipped_spec_lists_the_menu_backdrop_and_not_its_panels(self):
-        patterns = ul.backdrop_patterns(json.loads(ul.DEFAULT_CLUSTERS.read_text(encoding="utf-8")))
+        patterns = ul.backdrop_patterns(json.loads(ul.default_clusters().read_text(encoding="utf-8")))
         self.assertTrue(ul.opened_prefix(f"{self.MENU}/MenuParent/Mask", patterns))
         self.assertTrue(ul.opened_prefix(f"{self.MENU}/MenuParent/LeftScrim", patterns))
         self.assertIsNone(ul.opened_prefix(f"{self.MENU}/MenuParent/PanelsParent/SaveLoadPanel/Background", patterns))
@@ -212,7 +219,7 @@ class OpenedPanelTest(unittest.TestCase):
     its clicks, stay on screen and give the HUD back when closed. Always-on HUD overlaps still fail."""
 
     def test_the_shipped_spec_classifies_the_panels_and_not_the_hud(self):
-        patterns = ul.opened_patterns(json.loads(ul.DEFAULT_CLUSTERS.read_text(encoding="utf-8")))
+        patterns = ul.opened_patterns(json.loads(ul.default_clusters().read_text(encoding="utf-8")))
         for path in (f"{GP}/QuckControls/OptionsPanels/BpControls/Controls", f"{GP}/InvAndCraft/InventoryPanel",
                      f"{GP}/BlueprintPanelChild/SolidBackdrop", f"{GP}/LightEntityPanel(Clone)/Window",
                      f"{GP}/StructuredStation/Background"):
@@ -233,7 +240,7 @@ class OpenedPanelTest(unittest.TestCase):
         self.assertIn("OPENED OVER HUD: ", out)
 
     def test_the_old_exemption_is_gone_from_the_spec(self):
-        self.assertNotIn("byDesign", json.loads(ul.DEFAULT_CLUSTERS.read_text(encoding="utf-8")))
+        self.assertNotIn("byDesign", json.loads(ul.default_clusters().read_text(encoding="utf-8")))
 
     def test_the_same_overlap_between_always_on_blocks_still_fails(self):
         # The quick buttons are HUD, not a panel the player opens: standing on the hotbar is a defect.
@@ -582,7 +589,7 @@ class PinTest(unittest.TestCase):
     don't want that" and "put it back over the minimap, stop moving panels around that I don't ask you to move around".
     MEASURED: editor censuses of develop 9798f308c (tests/fixtures/w894-develop-*.json)."""
 
-    SPEC = json.loads(ul.DEFAULT_PINS.read_text(encoding="utf-8"))
+    SPEC = json.loads(ul.default_pins().read_text(encoding="utf-8"))
 
     def verdicts(self, name):
         census = ul.load(HERE / "fixtures" / name)
@@ -595,14 +602,20 @@ class PinTest(unittest.TestCase):
         self.assertEqual(self.verdicts("w894-develop-1280-docked.json"),
                          {"Station Info": "broken", "building hover card": "broken", "Player Inventory": "ok"})
 
-    def test_todays_classic_layout_keeps_every_pin(self):
+    def test_the_w894_classic_layout_keeps_every_pin_but_the_old_station_info_place(self):
+        # w2920 moved Station Info from above the ability row to the bottom-left corner, so these w894 censuses (2026-10)
+        # now break its pin and keep every other one.
         for name in ("w894-develop-1920-classic.json", "w894-develop-1280-classic.json"):
             self.assertEqual(ul.layout_of(ul.load(HERE / "fixtures" / name)), "undocked")
-            self.assertEqual(set(self.verdicts(name).values()), {"ok"}, name)
+            got = self.verdicts(name)
+            self.assertEqual(got.pop("Station Info"), "broken", name)
+            self.assertEqual(set(got.values()), {"ok"}, name)
 
     def test_1282_broke_the_station_info_pin_and_its_parent_kept_it(self):
         self.assertEqual(self.verdicts("w826-1282-after-1920.json")["Station Info"], "broken")
-        self.assertEqual(self.verdicts("w826-1282-before-1920.json")["Station Info"], "ok")
+        # Its parent's place, centred above the ability row, held until w2920 put the card in the bottom-left corner.
+        self.assertEqual(self.verdicts("w826-1282-before-1920.json")["Station Info"], "broken")
+        self.assertIn("bottom-left corner", self.SPEC["pins"][0]["where"])
 
     def test_the_inventory_against_the_left_edge_is_broken(self):
         census = hud()
@@ -621,8 +634,9 @@ class PinTest(unittest.TestCase):
                             str(HERE / "fixtures" / "w894-develop-1280-docked.json")])
         text = out.getvalue()
         self.assertEqual(code, 1)
-        self.assertIn("Pinned: 8 pin(s) in 2 census(es) (1920x1080 undocked, 1280x800 docked): 2 broken, 0 not shown, "
+        self.assertIn("Pinned: 8 pin(s) in 2 census(es) (1920x1080 undocked, 1280x800 docked): 3 broken, 0 not shown, "
                       "10 not applied", text)
+        self.assertIn("BROKEN 1920x1080 undocked (w894-develop-1920-classic.json): Station Info", text)
         self.assertIn("BROKEN 1280x800 docked (w894-develop-1280-docked.json): Station Info", text)
         self.assertIn("BROKEN 1280x800 docked (w894-develop-1280-docked.json): building hover card", text)
         self.assertEqual(ul.pin_check(hud(), self.SPEC["pins"][0])[0], "not shown")
@@ -638,9 +652,33 @@ class PinTest(unittest.TestCase):
         census["elements"] += [el("InGameScene/UI Canvas/GamePanels/StationControls", [270, 600, 450, 790]),
                                el("InGameScene/UI Canvas/GamePanels/BuildInfoPanel", [7, 500, 263, 790])]
         self.assertEqual(ul.pin_check(census, pins["Station Info left of the station controls"])[0], "ok")
-        self.assertEqual(self.pins(census)["Station Info"], "not applied")
+        verdict, why = ul.pin_check(census, pins["Station Info"])
+        self.assertEqual((verdict, why.split(",")[0]), ("ok", "left of StationControls"), "orLeftOf (w2998)")
         census["elements"][-1].update(rect=[270, 400, 526, 592], visible=[270, 400, 526, 592])
         self.assertEqual(ul.pin_check(census, pins["Station Info left of the station controls"])[0], "broken")
+        self.assertEqual(ul.pin_check(census, pins["Station Info"])[0], "ok", "the above rule alone passes w2580's place")
+
+    def test_station_info_left_of_the_controls_may_stand_lower_never_higher(self):
+        """w2998: orLeftOf, ported from the game's nightly copy (game commits 15309a9b54, 688af855a7): the card left of
+        the controls passes with its bottom level with theirs or lower (lifted alone over a hotbar the controls would
+        cover), never with it higher, and never further left than maxGap x H."""
+        pin = next(p for p in self.SPEC["pins"] if p["name"] == "Station Info")
+        census = hud()
+        census["elements"] += [el("InGameScene/UI Canvas/GamePanels/StationControls", [270, 600, 450, 760]),
+                               el("InGameScene/UI Canvas/GamePanels/BuildInfoPanel", [7, 560, 263, 790])]
+        self.assertIn("its bottom 30 px lower", ul.pin_check(census, pin)[1])
+        for rect, verdict in (([7, 500, 263, 700], "broken"), ([7, 560, 200, 790], "broken"),
+                              ([7, 560, 263, 760], "ok")):
+            census["elements"][-1].update(rect=rect, visible=rect)
+            self.assertEqual(ul.pin_check(census, pin)[0], verdict, rect)
+
+    def test_station_info_without_the_controls_stays_in_the_bottom_left_corner(self):
+        pin = next(p for p in self.SPEC["pins"] if p["name"] == "Station Info")
+        census = hud()
+        census["elements"].append(el("InGameScene/UI Canvas/GamePanels/BuildInfoPanel", [7, 600, 263, 790]))
+        self.assertEqual(ul.pin_check(census, pin)[0], "ok")
+        census["elements"][-1].update(rect=[500, 600, 756, 790], visible=[500, 600, 756, 790])
+        self.assertEqual(ul.pin_check(census, pin)[0], "broken")
 
     def test_a_title_screen_census_has_no_hud_pin_and_no_dock(self):
         """w2799: the Mods screen opens only from the title screen (MainMenuPanel.cs:431), where no game runs, so no HUD
@@ -694,9 +732,9 @@ class PinTest(unittest.TestCase):
         self.assertIn("0 broken, 1 not shown", alone[0])
 
     def rail_census(self, features=("inventory-rail",), crafting=True, hover=(645, 214, 890, 495), rail=(900, 74, 1254, 600),
-                    station=(400, 500, 880, 690)):
+                    station=(53, 500, 533, 790)):
         """w2651: the classic layout at 1280x800 with the inventory rail up, Crafting left of it and the hover card left
-        of it, Station Info under Crafting. Modelled on the 1280x800 UI scale 0.9 census of FinalFactory #2946 (the rail's
+        of it, Station Info under Crafting in the bottom-left corner (w2920). Modelled on the 1280x800 UI scale 0.9 census of FinalFactory #2946 (the rail's
         right edge at 1254 px, MEASURED there); the other rects are made up to the same shape."""
         elements = [el("MinimapParent/Background", [996, 620, 1268, 792]), el("BuildInfoPanel/Box", list(station)),
                     el("InvAndCraft/InventoryPanel/Frame", list(rail)), el("HoverDescription/Card", list(hover))]
@@ -758,7 +796,7 @@ class PinTest(unittest.TestCase):
         self.assertEqual(self.pins(self.rail_census(rail=(900, 200, 1254, 600)))["Player Inventory rail"], "broken")
         self.assertEqual(self.pins(self.rail_census(hover=(1000, 214, 1245, 495)))["building hover card beside the rail"],
                          "broken", "the hover card over the rail")
-        self.assertEqual(self.pins(self.rail_census(station=(400, 420, 880, 690)))["Crafting above Station Info"], "broken")
+        self.assertEqual(self.pins(self.rail_census(station=(53, 420, 533, 790)))["Crafting above Station Info"], "broken")
 
     def test_with_the_toggle_off_the_rail_pins_do_not_apply(self):
         for features in ((), ("some-other-toggle",)):
@@ -795,7 +833,7 @@ class PinTest(unittest.TestCase):
                      ul.load(HERE / "fixtures" / "w894-develop-1280-docked.json"))
 
 
-SPEC = json.loads(ul.DEFAULT_CLUSTERS.read_text(encoding="utf-8"))
+SPEC = json.loads(ul.default_clusters().read_text(encoding="utf-8"))
 
 
 def screen(*elements):
@@ -835,7 +873,7 @@ class OptionsTest(unittest.TestCase):
     times". w826 and w894 checked the pull request's moves; nothing checked the options offered before it."""
 
     NAMED = ["BlueprintPanelChild/ActionBar/SaveNewBlueprint"]
-    PINS = json.loads(ul.DEFAULT_PINS.read_text(encoding="utf-8"))
+    PINS = json.loads(ul.default_pins().read_text(encoding="utf-8"))
 
     def census(self, save=(400, 408), strip_y=470, info=(558, 515)):
         base = hud()
@@ -898,7 +936,8 @@ class OptionsTest(unittest.TestCase):
         before, after = ul.load(fixtures / "w826-1282-before-1920.json"), ul.load(fixtures / "w826-1282-after-1920.json")
         unnamed = ul.option_check(before, after, [], self.PINS)["unnamed"]
         self.assertTrue(any(u.startswith("GamePanels/BuildInfoPanel") for u in unnamed), unnamed)
-        self.assertTrue(any(u.startswith("pin Station Info broken") for u in unnamed), unnamed)
+        # The parent's centred place broke the w2920 pin too, so #1282 breaks no pin its parent kept.
+        self.assertFalse(any(u.startswith("pin Station Info broken") for u in unnamed), unnamed)
         named = ul.option_check(before, after, ["BuildInfoPanel"], self.PINS)["unnamed"]
         self.assertFalse(any("BuildInfoPanel" in u or "Station Info" in u for u in named), named)
 
@@ -1046,11 +1085,17 @@ class WindowCheckTest(unittest.TestCase):
     show and the change did not touch is listed as standing."""
 
     INVENTORY_BOX = [26, 448, 489, 724]
+
+    @staticmethod
+    def check(*args, **kw):
+        # No pins: these drawn censuses keep Station Info centred above the strip, its place before w2920, and this
+        # class checks window overlaps only (PinTest checks the places).
+        return Cmd.run(*args, pins={"pins": []}, **kw)
     BEFORE = [(INVENTORY, [26, 448, 466, 724]), (STRIP, [444, 536, 818, 626]), (STATION_INFO, [489, 639, 773, 725])]
 
     def test_1444_moves_the_strip_onto_the_inventory_and_fails(self):
         after = screen((INVENTORY, [26, 448, 466, 724]), (STRIP, [193, 713, 482, 791]), (STATION_INFO, [489, 639, 773, 725]))
-        code, out = Cmd.run(screen(*self.BEFORE), after)
+        code, out = self.check(screen(*self.BEFORE), after)
         self.assertEqual(code, 1)
         self.assertIn("1 not allowed after, 0 before, 1 new, 0 kept", the_line(out, "Window overlaps"))
         self.assertIn("  NEW: Player Inventory (GamePanels/MiniInventory)  x  Station controls strip", out)
@@ -1058,7 +1103,7 @@ class WindowCheckTest(unittest.TestCase):
         self.assertIn("0 new, 0 kept", the_line(out, "Overlaps"))
 
     def test_the_allowed_overlap_before_is_listed_and_does_not_fail(self):
-        code, out = Cmd.run(screen(*self.BEFORE), screen(*self.BEFORE))
+        code, out = self.check(screen(*self.BEFORE), screen(*self.BEFORE))
         self.assertEqual(code, 0, out)
         self.assertIn("0 not allowed after, 0 before, 0 new, 0 kept between windows the change moved, 0 standing; 1 allow-listed",
                       the_line(out, "Window overlaps"))
@@ -1068,14 +1113,14 @@ class WindowCheckTest(unittest.TestCase):
         strip_left = [(STRIP, [193, 713, 482, 791]), (STATION_INFO, [489, 639, 773, 725])]
         before = screen((INVENTORY, [3, 448, 466, 724]), *strip_left)
         after = screen((INVENTORY, self.INVENTORY_BOX), *strip_left)
-        code, out = Cmd.run(before, after)
+        code, out = self.check(before, after)
         self.assertEqual(code, 1)
         self.assertIn("0 new, 1 kept between windows the change moved, 0 standing", the_line(out, "Window overlaps"))
         self.assertIn("  KEPT: ", out)
 
     def test_an_overlap_neither_window_moved_stands_and_does_not_fail(self):
         census = screen((INVENTORY, self.INVENTORY_BOX), (STRIP, [193, 713, 482, 791]), (STATION_INFO, [489, 639, 773, 725]))
-        code, out = Cmd.run(census, census)
+        code, out = self.check(census, census)
         self.assertEqual(code, 0, out)
         self.assertIn("0 new, 0 kept between windows the change moved, 1 standing", the_line(out, "Window overlaps"))
         self.assertIn("  STANDING: ", out)
@@ -1086,7 +1131,7 @@ class WindowCheckTest(unittest.TestCase):
         others = [(STRIP, [193, 713, 482, 791]), (STATION_INFO, [489, 639, 773, 725])]
         before = screen((INVENTORY, self.INVENTORY_BOX), ("MiniInventory/Content/Row", [40, 500, 200, 520]), *others)
         after = screen((INVENTORY, self.INVENTORY_BOX), ("MiniInventory/Content/Row", [40, 540, 200, 560]), *others)
-        code, out = Cmd.run(before, after)
+        code, out = self.check(before, after)
         self.assertEqual(code, 0, out)
         self.assertIn("0 new, 0 kept between windows the change moved, 1 standing", the_line(out, "Window overlaps"))
 
@@ -1104,6 +1149,94 @@ class WindowCheckTest(unittest.TestCase):
         self.assertIn("0 overlapping block pairs between always-on HUD blocks", out.getvalue())
         self.assertIn("1 window overlap(s) not allowed, 0 allow-listed", out.getvalue())
         self.assertIn("NOT ALLOWED: Player Inventory (GamePanels/MiniInventory)  x  Station controls strip", out.getvalue())
+
+
+class HudBlockAllowanceTest(unittest.TestCase):
+    """w2996: an hud-clusters.json windowOverlaps.allowed entry naming two always-on HUD blocks exactly (no '*', no `when`)
+    allows that pair in `check` and `overlaps` too: the chat lines over the Objectives card (Ben, 2026-11-03: "It can
+    appear over stuff because it's not always showing though"). The censuses are drawn from the 1920x1080 HUD column of
+    w2975's tours (chat lines just posted, the card above them), not recorded."""
+
+    CANVAS = "InGameScene/UI Canvas"
+
+    def census(self, chat_y0):
+        return {"screen": [1920, 1080], "elements": [
+            el("ObjectivesPanel/Card", [10, 330, 470, 610], alpha=0.71),
+            el("ObjectivesPanel/ScrollviewParent/ScrollView/Viewport/Content/Objective/Text", [24, 560, 450, 590],
+               kind="TextMeshProUGUI"),
+            el("MinimapParent/Background", [1600, 760, 1910, 1070], alpha=0.71),
+            dict(path=f"{self.CANVAS}/ChatPanel/Lines/ChatLine(Clone)/Text", kind="TextMeshProUGUI",
+                 rect=[10, chat_y0, 640, chat_y0 + 60], visible=[10, chat_y0, 640, chat_y0 + 60], color="#FFFFFFFF",
+                 alpha=1.0, sprite=None, raycast=False),
+        ]}
+
+    def spec_with(self, *entries):
+        spec = json.loads(ul.default_clusters().read_text(encoding="utf-8"))
+        spec["windowOverlaps"]["allowed"] = [e for e in spec["windowOverlaps"]["allowed"]
+                                             if "ChatPanel" not in (e["a"], e["b"])] + list(entries)
+        return spec
+
+    WORDS = "It can appear over stuff because it's not always showing though"
+
+    def test_the_chat_lines_over_the_objectives_card_print_allowed_with_bens_words(self):
+        code, out = Cmd.run(self.census(700), self.census(570))
+        line = the_line(out, "Overlaps")
+        self.assertIn("0 new, 0 kept between blocks the change moved, 1 allowed", line)
+        self.assertIn("ALLOWED: UI Canvas/ChatPanel/Lines  x  UI Canvas/GamePanels/ObjectivesPanel", out)
+        self.assertIn(self.WORDS, out)
+        self.assertNotIn("NEW: ", out)
+        self.assertEqual(code, 0, out)
+
+    def test_a_kept_overlap_between_the_two_is_allowed_too(self):
+        code, out = Cmd.run(self.census(560), self.census(570))
+        self.assertIn("0 new, 0 kept between blocks the change moved, 1 allowed", the_line(out, "Overlaps"))
+        self.assertNotIn("KEPT: ", out)
+        self.assertEqual(code, 0, out)
+
+    def test_without_the_entry_the_same_pair_is_new(self):
+        code, out = Cmd.run(self.census(700), self.census(570), spec=self.spec_with())
+        self.assertIn("1 new, 0 kept between blocks the change moved, 0 allowed", the_line(out, "Overlaps"))
+        self.assertIn("NEW: UI Canvas/ChatPanel/Lines  x  UI Canvas/GamePanels/ObjectivesPanel", out)
+        self.assertEqual(code, 1)
+
+    def test_a_pair_the_entry_does_not_name_is_still_new(self):
+        before, after = self.census(700), self.census(700)
+        after["elements"][-1]["rect"] = after["elements"][-1]["visible"] = [1500, 1000, 1700, 1060]
+        code, out = Cmd.run(before, after)
+        self.assertIn("1 new, 0 kept between blocks the change moved, 0 allowed", the_line(out, "Overlaps"))
+        self.assertIn("MinimapParent", out.split("NEW: ")[1].splitlines()[0])
+        self.assertEqual(code, 1)
+
+    def test_a_glob_or_a_when_entry_keeps_its_window_only_meaning(self):
+        for entry in ({"a": "*", "b": "ObjectivesPanel", "who": ["Ben, w742"]},
+                      {"a": "ChatPanel", "b": "Obj*", "who": ["glob"]},
+                      {"a": "ChatPanel", "b": "ObjectivesPanel", "when": {"aStandsAbove": "BuildInfoPanel"}, "who": ["when"]}):
+            with self.subTest(entry=entry):
+                self.assertIsNone(ul.block_allowance({"windowOverlaps": {"allowed": [entry]}},
+                                                     f"{self.CANVAS}/ChatPanel/Lines/ChatLine/Text", f"{GP}/ObjectivesPanel/Card"))
+                code, out = Cmd.run(self.census(700), self.census(570), spec=self.spec_with(entry))
+                self.assertIn("1 new", the_line(out, "Overlaps"))
+                self.assertEqual(code, 1)
+
+    def test_either_order_matches_and_the_default_file_holds_the_entry(self):
+        spec = json.loads(ul.default_clusters().read_text(encoding="utf-8"))
+        chat, card = f"{self.CANVAS}/ChatPanel/Lines/ChatLine(Clone)/Text", f"{GP}/ObjectivesPanel/Card"
+        self.assertIn(self.WORDS, ul.block_allowance(spec, chat, card))
+        self.assertIn(self.WORDS, ul.block_allowance(spec, card, chat))
+        self.assertIsNone(ul.block_allowance(spec, chat, f"{GP}/MinimapParent/Background"))
+
+    def test_overlaps_command_marks_the_pair_allowed(self):
+        import contextlib
+        import io
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "census.json"
+            path.write_text(json.dumps(self.census(570)), encoding="utf-8")
+            out = io.StringIO()
+            with contextlib.redirect_stdout(out):
+                code = ul.main(["overlaps", str(path)])
+        self.assertIn("1 overlapping block pairs between always-on HUD blocks (block depth 2), 1 allowed", out.getvalue())
+        self.assertIn("; ALLOWED: Ben, w2984, 2026-11-03", out.getvalue())
+        self.assertEqual(code, 0)
 
 
 class RecordedWindowTest(unittest.TestCase):
@@ -1446,6 +1579,84 @@ class SampleWithoutPillowTest(unittest.TestCase):
                 sys.modules["PIL"] = saved
         self.assertIn("pillow", str(raised.exception).lower())
         self.assertIn("venv", str(raised.exception))
+
+
+class HudDataTest(unittest.TestCase):
+    """w2998: hud-pins.json and hud-clusters.json live in the game repo; hud_data finds them from the environment or from
+    a game checkout above the working directory, and only when a command needs one."""
+
+    NAMES = ("hud-pins.json", "hud-clusters.json")
+
+    def setUp(self):
+        self.saved = {key: os.environ.pop(key, None) for key in ("FF_HUD_DATA", "FF_GAME_REPO")}
+        self.cwd = os.getcwd()
+        self.tmp = tempfile.TemporaryDirectory()
+        self.root = Path(self.tmp.name).resolve()
+
+    def tearDown(self):
+        os.chdir(self.cwd)
+        for key, value in self.saved.items():
+            os.environ.pop(key, None)
+            if value is not None:
+                os.environ[key] = value
+        self.tmp.cleanup()
+
+    def checkout(self, name):
+        folder = self.root / name / "scripts" / "nightly" / "ui_layout"
+        folder.mkdir(parents=True)
+        for file in self.NAMES:
+            (folder / file).write_text("{}", encoding="utf-8")
+        return folder
+
+    def test_a_game_checkout_above_the_working_directory_is_found(self):
+        folder = self.checkout("game")
+        nested = self.root / "game" / "Assets" / "Scripts"
+        nested.mkdir(parents=True)
+        os.chdir(nested)
+        self.assertEqual(ul.hud_data("hud-pins.json"), folder / "hud-pins.json")
+        self.assertEqual(ul.default_clusters(), folder / "hud-clusters.json")
+
+    def test_ff_game_repo_wins_over_the_walk(self):
+        self.checkout("here")
+        there = self.checkout("there")
+        os.chdir(self.root / "here")
+        os.environ["FF_GAME_REPO"] = str(self.root / "there")
+        self.assertEqual(ul.default_pins(), there / "hud-pins.json")
+
+    def test_ff_hud_data_wins_over_ff_game_repo(self):
+        self.checkout("there")
+        data = self.root / "data"
+        data.mkdir()
+        (data / "hud-pins.json").write_text("{}", encoding="utf-8")
+        os.environ["FF_GAME_REPO"] = str(self.root / "there")
+        os.environ["FF_HUD_DATA"] = str(data)
+        self.assertEqual(ul.default_pins(), data / "hud-pins.json")
+
+    def test_with_nothing_found_a_command_stops_with_the_message_and_import_still_works(self):
+        import subprocess
+        census = self.root / "census.json"
+        census.write_text(json.dumps({"elements": []}), encoding="utf-8")
+        env = {key: value for key, value in os.environ.items() if key not in ("FF_HUD_DATA", "FF_GAME_REPO")}
+        script = HERE.parent / "ui_layout.py"
+        imported = subprocess.run([sys.executable, "-c", f"import sys; sys.path.insert(0, {str(HERE.parent)!r}); import ui_layout"],
+                                  cwd=self.root, env=env, capture_output=True, text=True)
+        self.assertEqual(imported.returncode, 0, imported.stderr)
+        ran = subprocess.run([sys.executable, str(script), "pins", str(census)], cwd=self.root, env=env,
+                             capture_output=True, text=True)
+        self.assertNotEqual(ran.returncode, 0)
+        self.assertIn("scripts/nightly/ui_layout/ (w2998)", ran.stderr)
+        self.assertIn("set FF_GAME_REPO, or pass --pins/--clusters", ran.stderr)
+        self.assertEqual(len(ran.stderr.strip().splitlines()), 1, ran.stderr)
+
+    def test_an_explicit_pins_file_needs_no_game_checkout(self):
+        import contextlib
+        import io
+        census = self.root / "census.json"
+        census.write_text((HERE / "fixtures" / "w894-develop-1920-classic.json").read_text(encoding="utf-8"), encoding="utf-8")
+        os.chdir(self.root)
+        with contextlib.redirect_stdout(io.StringIO()) as out:
+            ul.main(["pins", str(census), "--pins", str(HERE / "fixtures" / "hud-pins.json")])
+        self.assertIn("Pinned:", out.getvalue())
 
 
 if __name__ == "__main__":

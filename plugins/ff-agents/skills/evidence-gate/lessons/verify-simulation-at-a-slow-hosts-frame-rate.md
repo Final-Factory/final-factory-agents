@@ -192,6 +192,27 @@ away. The file lacked `using FFCore.Extensions;` (`CS0103: The name 'Ecs' does n
 pass, the whole pair was spent, and a fresh pair run had to be filed after the fix. A test file reaches the player build
 too: `build_player.sh` compiles every assembly, test assemblies included.
 
+## A pair run is filed only on a player build and a dry run that pass (w2963, 2026-11-04)
+
+**Rule.** An editor compile is not enough for a pair run of a simulation change. Before `request_pair`, at the head
+the legs will run:
+
+1. **Build a player yourself** (`scripts/nightly/build_player.sh <project> <sha> win <cache>`, under `unity-slot run`;
+   about 10 minutes on BEAST with `FF_BUILD_BURST_X64_TARGETS=16`, measured) and grep its log for `error CS` and `BC1`
+   lines. Burst AOT compiles every `[BurstCompile]` method only in a player build; the editor runs a Burst `OnCreate`
+   managed, so EditMode passes code a player build refuses.
+2. **Pass the scenario's host-only dry run on that player** (`ffnightly.py run --player <dir> --scenario <id>-dry`,
+   made by the pair script's `--dry`), with the value asserts the pair will check (exact raw values, counts), not
+   only "no error".
+
+**Why.** w2963 (Ancient Dragon stage 2, PR #3123). Its first pair run, w3003, never ran: both legs' player builds of
+c894f941 failed Burst BC1028 at `DragonDamageForwardSystem.cs:84`, a `params EntityQuery[]` `RequireAnyForUpdate`
+in a `[BurstCompile] OnCreate`, while every EditMode test passed. w3003's dry run on a probe fix then found two more
+bugs EditMode had missed: a kill on a flat map's tile with no biome entry dropped no Mover (moverBoxes 0), and the
+pool lost 4,000 raw of 24,000 on an engaged heartbeat's rescale. After a local player build and dry run passed, the
+rerun w3005 passed the first time (2,396 heartbeats, no divergence). w3004 added `BurstManagedArrayGuardTest` for the
+BC1028 class; the build and the dry run catch the rest.
+
 ## A client leg reaches the host from its own machine first (w2259, 2026-10-26)
 
 **Rule.** An address that works from one machine is a claim about that machine only. Before a client leg builds or

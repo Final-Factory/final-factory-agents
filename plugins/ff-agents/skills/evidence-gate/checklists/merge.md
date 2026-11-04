@@ -191,6 +191,11 @@ Not verified: the Bats' slot lag (simulation, follow-up PR)
   green `Test in editmode` run, or your own editor's `refresh_unity` at that head logged no `error CS`; a red or
   unfinished CI run is not a go
   ([lesson](../lessons/verify-simulation-at-a-slow-hosts-frame-rate.md#a-pair-run-is-filed-only-on-a-commit-that-compiles-w2125-2026-10-25)).
+- **...and on a player build and a dry run that pass** (w2963): a simulation change's pair run is filed only after your
+  own `build_player.sh` of that head shows no `error CS` or `BC1` line (Burst AOT runs only there; an editor runs a
+  `[BurstCompile] OnCreate` managed) and the scenario's host-only `--dry` run passed on it with the pair's value asserts
+  (w3003 spent a pair on BC1028, then its dry run found two bugs EditMode had missed)
+  ([lesson](../lessons/verify-simulation-at-a-slow-hosts-frame-rate.md#a-pair-run-is-filed-only-on-a-player-build-and-a-dry-run-that-pass-w2963-2026-11-04)).
 - **After merging `origin/master` in, look for tests it brought that pin what you changed** (w2095, 2026-10-25): grep
   `Assets/Tests` for each constant or member you changed (`git diff origin/master...HEAD`), and run the selection
   again (`scripts/test_select.py`). A guard test merged meanwhile pins the old value: w2129's

@@ -5,6 +5,7 @@ only (the script decodes PNG itself).
 """
 import io
 import json
+import os
 import subprocess
 import sys
 import tempfile
@@ -13,6 +14,7 @@ from contextlib import redirect_stderr, redirect_stdout
 from pathlib import Path
 
 HERE = Path(__file__).resolve().parent
+os.environ["FF_HUD_DATA"] = str(HERE / "fixtures")  # the game repo holds the real files (w2998)
 sys.path.insert(0, str(HERE.parent))
 import ui_look as uk  # noqa: E402
 

@@ -18,7 +18,7 @@ opened panel"):
   top, be fully visible and clickable with nothing under them catching the clicks, and closing them must give the HUD
   back.
 
-`hud-clusters.json` `openedPanels.paths` is the list of what counts as an opened panel (path components, `*` globs).
+`hud-clusters.json` `openedPanels.paths` (the game repo's `scripts/nightly/ui_layout/`, w2998; a game PR edits it) is the list of what counts as an opened panel (path components, `*` globs).
 Anything not on it is HUD. Add an entry only for something the player opens and closes; never to make a check pass.
 
 ## Take one
@@ -258,7 +258,7 @@ python "$FF_SKILLS/unity-ui/ui_layout.py" pins a-1920.json a-1280.json a-docked.
   the brief, a Deck quote on a desktop line, a pinned element whose quote does not name it (unless it only got
   taller or shorter in place, left, right and anchored edges kept: w1824), one line for several elements, and a missing
   screen or layout.
-- `pins` checks [hud-pins.json](hud-pins.json) in every census, against no baseline: Station Info's bottom edge 0 to 6 %
+- `pins` checks `hud-pins.json` (the game repo, `scripts/nightly/ui_layout/`) in every census, against no baseline: Station Info's bottom edge 0 to 6 %
   of the height above the ability row and over it (or, where the dock hides the row, in the bottom 30 % of the screen
   and the middle half of its width); the hover card the same over the minimap (or bottom right); the Player Inventory's
   left edge at least 2 % of the width from the screen's edge. A pin whose element is not on screen is "not shown" and
@@ -390,7 +390,7 @@ It prints the lines the pull request carries (`Overlaps:`, `Opened panels:`, `Al
   The census only sees what draws (alpha 0.02 and up). An invisible full-screen raycast catcher under a panel is
   invisible to it: with a panel open over the hotbar, also run the event-system probe (`DeckTour` `hud` block in PR
   #1287 counted 66 of 66 click points reaching the panel).
-- **Alignment**: each cluster in `clusters.json` (default: [hud-clusters.json](hud-clusters.json),
+- **Alignment**: each cluster in `clusters.json` (default: `hud-clusters.json` from the game repo,
   the bottom-right HUD) measures every member's edges against its anchor and the gaps between
   members. A change of more than 2 px between before and after fails. A member missing on one side
   is reported.

@@ -86,6 +86,10 @@ pull request carries (pr_evidence.py reads them) and exits 1 when any of the fir
     ui_layout.py clusters <census.json|tour.log> [--clusters ...]   cluster edges of one census or a
                                                Deck-tour log's `rect:` lines (built players)
 
+hud-pins.json and hud-clusters.json come from the game checkout (scripts/nightly/ui_layout/, w2998), not from this plugin:
+$FF_HUD_DATA (a folder), else $FF_GAME_REPO, else the nearest folder above the working directory that holds them;
+--pins and --clusters name a file instead. The copies in tests/fixtures/ are test fixtures only.
+
 Standard library only; Pillow for --shot sampling.
 """
 from __future__ import annotations
@@ -94,13 +98,40 @@ import argparse
 import fnmatch
 import json
 import math
+import os
 import re
 import sys
 from pathlib import Path
 
-HERE = Path(__file__).resolve().parent
-DEFAULT_CLUSTERS = HERE / "hud-clusters.json"
-DEFAULT_PINS = HERE / "hud-pins.json"
+HUD_DATA_DIR = Path("scripts") / "nightly" / "ui_layout"
+
+
+def hud_data(name: str) -> Path:
+    """hud-pins.json and hud-clusters.json live in the game repo at scripts/nightly/ui_layout/ (w2998), one home for the
+    nightly HUD lane and this tool. First hit wins: $FF_HUD_DATA (a folder holding both files), $FF_GAME_REPO (a game
+    checkout), then the nearest folder at or above the working directory that holds the file."""
+    folders = []
+    if os.environ.get("FF_HUD_DATA"):
+        folders.append(Path(os.environ["FF_HUD_DATA"]))
+    if os.environ.get("FF_GAME_REPO"):
+        folders.append(Path(os.environ["FF_GAME_REPO"]) / HUD_DATA_DIR)
+    cwd = Path.cwd().resolve()
+    folders.extend(d / HUD_DATA_DIR for d in (cwd, *cwd.parents))
+    for folder in folders:
+        if (folder / name).is_file():
+            return folder / name
+    raise SystemExit("hud-pins.json (or the clusters file) lives in the game repo at scripts/nightly/ui_layout/ (w2998): "
+                     "run inside a FinalFactory checkout, set FF_GAME_REPO, or pass --pins/--clusters")
+
+
+def default_clusters() -> Path:
+    return hud_data("hud-clusters.json")
+
+
+def default_pins() -> Path:
+    return hud_data("hud-pins.json")
+
+
 TOUR_RECT = re.compile(r"->\s+(?P<path>.+?)\s+active\s+(?P<active>\w+)\s+screen x\s+(?P<x0>-?[\d.]+)\.\.(?P<x1>-?[\d.]+)\s+"
                        r"y\s+(?P<y0>-?[\d.]+)\.\.(?P<y1>-?[\d.]+)\s+of\s+(?P<w>\d+)x(?P<h>\d+)")
 
@@ -259,10 +290,11 @@ def _pairs(census: dict, depth: int, min_px: float, same_block: bool):
 
 
 def overlaps(census: dict, depth: int = 2, min_px: float = 16.0, opened: list[str] | None = None,
-             backdrops: list[str] | None = None, transient: list[str] | None = None) -> dict:
-    """{(blockA, blockB): {"px": area, "example": (pathA, pathB)}} for always-on HUD blocks whose solid elements overlap.
-    With `opened` (the openedPanels patterns) an element of a panel the player opens does not count: it may cover the
-    HUD (see opened_over_hud, which checks that it does so properly)."""
+             backdrops: list[str] | None = None, transient: list[str] | None = None, spec: dict | None = None) -> dict:
+    """{(blockA, blockB): {"px": area, "example": (pathA, pathB), "why": words}} for always-on HUD blocks whose solid
+    elements overlap. With `opened` (the openedPanels patterns) an element of a panel the player opens does not count: it
+    may cover the HUD (see opened_over_hud, which checks that it does so properly). With `spec`, "why" is the requester's
+    words when hud-clusters.json allows every overlapping element pair of the two blocks (block_allowance), else None."""
     pairs: dict[tuple[str, str], dict] = {}
     for a, ba, b, bb, px, _ in _pairs(census, depth, min_px, same_block=False):
         if opened and (opened_prefix(a["path"], opened) or opened_prefix(b["path"], opened)):
@@ -272,7 +304,10 @@ def overlaps(census: dict, depth: int = 2, min_px: float = 16.0, opened: list[st
         if transient and bool(opened_prefix(a["path"], transient)) != bool(opened_prefix(b["path"], transient)):
             continue  # a hover card over a panel its hover does not show
         key = tuple(sorted((ba, bb)))
-        entry = pairs.setdefault(key, {"px": 0.0, "example": (a["path"], b["path"])})
+        why = block_allowance(spec, a["path"], b["path"])
+        entry = pairs.setdefault(key, {"px": 0.0, "example": (a["path"], b["path"]), "why": why})
+        if entry["why"] and not why:
+            entry["why"], entry["example"] = None, (a["path"], b["path"])
         entry["px"] += px
     return pairs
 
@@ -502,6 +537,21 @@ def allowance(spec: dict | None, census: dict, rects: dict, a: dict, la: str, b:
         for x, y, lx in ((a, b, la), (b, a, lb)):
             if path_has(x["path"], entry["a"]) and path_has(y["path"], entry["b"]) and when_holds(entry.get("when"), census, rects, lx):
                 return "allowed", entry["who"][-1]
+    return None
+
+
+def block_allowance(spec: dict | None, a: str, b: str) -> str | None:
+    """The requester's words (the last `who`) when a hud-clusters.json windowOverlaps.allowed entry allows two always-on
+    HUD elements (paths) to overlap, else None. Only an entry naming both sides exactly, with no '*' in either and no
+    `when`, counts here: a glob or a condition was written for an open window (Ben, w742: "the blueprint panel showing
+    over objectives is fine since its a temporarily opened panel"), and keeps its window-only meaning (w2996: the chat
+    lines over the Objectives card, Ben: "It can appear over stuff because it's not always showing though")."""
+    for entry in window_spec(spec).get("allowed", []):
+        if "*" in entry["a"] or "*" in entry["b"] or entry.get("when"):
+            continue
+        for x, y in ((a, b), (b, a)):
+            if path_has(x, entry["a"]) and path_has(y, entry["b"]):
+                return entry["who"][-1]
     return None
 
 
@@ -826,6 +876,12 @@ def pin_check(census: dict, pin: dict) -> tuple[str, str]:
                  (sharing some of its width). When the anchor is not on screen (the dock hides the ability row and the
                  minimap), the element stands in the anchor's own region instead (region: minBottom x H for its bottom
                  edge, its centre between centerXMin and centerXMax x W, or its right edge past minRight x W).
+                 orBeside: true also passes the element standing right of the anchor, its left edge at most maxGap x H
+                 past the anchor's right edge and the two bottom edges level (w2580: the Station Info card moves beside
+                 the station controls where standing on them would reach the Objectives panel). orLeftOf: true
+                 passes it standing left of the anchor, its bottom level with the anchor's or lower (w2920: the card in
+                 the bottom-left corner, the station controls right of it, lifted alone over a hotbar they would cover).
+                 Both came from the game repo's nightly copy of this tool (w2998).
     offLeftEdge  the element's left edge at least minLeft x W from the screen's left edge.
     rightRail    a column on the right (w2651): the element's right edge 0 to maxRight x W in from the screen's right
                  edge, and its top edge under the bar `under` (the top bar): 0 to maxBelow x H below that bar's bottom
@@ -891,6 +947,13 @@ def pin_check(census: dict, pin: dict) -> tuple[str, str]:
         gap = anchor[1] - r[3]
         over = min(r[2], anchor[2]) - max(r[0], anchor[0])
         if gap < -2 or gap > pin["maxGap"] * h or over <= 0:
+            beside = r[0] - anchor[2]
+            if pin.get("orBeside") and -2 <= beside <= pin["maxGap"] * h and abs(r[3] - anchor[3]) <= 4:
+                return "ok", f"beside {pin['anchor'].split('/')[-1]}, {beside:.0f} px right of it, bottoms level ({at})"
+            left = anchor[0] - r[2]
+            if pin.get("orLeftOf") and -2 <= left <= pin["maxGap"] * h and r[3] >= anchor[3] - 4 and r[1] < anchor[3]:
+                level = "bottoms level" if abs(r[3] - anchor[3]) <= 4 else f"its bottom {r[3] - anchor[3]:.0f} px lower"
+                return "ok", f"left of {pin['anchor'].split('/')[-1]}, {left:.0f} px from it, {level} ({at})"
             return "broken", (f"bottom edge {gap:.0f} px above {pin['anchor'].split('/')[-1]}'s top edge (0 to "
                               f"{pin['maxGap'] * h:.0f} px), {max(over, 0):.0f} px of its width shared ({at})")
         return "ok", f"{gap:.0f} px above {pin['anchor'].split('/')[-1]} ({at})"
@@ -1433,7 +1496,7 @@ def shape(census: dict, sprites: dict | None = None, patterns: list[str] | None 
     stretched (w1468: the game's `transparent-block`, the hit area of its tab and menu buttons, read 45 STRETCHED)."""
     invisible = invisible or set()
     if patterns is None:
-        patterns = opened_patterns(json.loads(DEFAULT_CLUSTERS.read_text(encoding="utf-8")))
+        patterns = opened_patterns(json.loads(default_clusters().read_text(encoding="utf-8")))
     sw, sh = screen_size(census.get("screen"), [1920, 1080])
     screen_px = float(sw) * float(sh)
     sprites = sprites or {}
@@ -1564,26 +1627,31 @@ def shape_lines(results: list[tuple[str, dict]]) -> tuple[list[str], int]:
 
 def run_check(args) -> int:
     before, after = load(args.before), load(args.after)
-    spec = json.loads(Path(args.clusters).read_text(encoding="utf-8"))
+    spec = json.loads(Path(args.clusters or default_clusters()).read_text(encoding="utf-8"))
     patterns = opened_patterns(spec)
     backdrops = backdrop_patterns(spec)
     failed = False
 
     transient = transient_patterns(spec)
-    ob = overlaps(before, args.block_depth, opened=patterns, backdrops=backdrops, transient=transient)
-    oa = overlaps(after, args.block_depth, opened=patterns, backdrops=backdrops, transient=transient)
-    new = {k: v for k, v in oa.items() if k not in ob}
+    ob = overlaps(before, args.block_depth, opened=patterns, backdrops=backdrops, transient=transient, spec=spec)
+    oa = overlaps(after, args.block_depth, opened=patterns, backdrops=backdrops, transient=transient, spec=spec)
     moved = moved_blocks(before, after, args.block_depth, args.tolerance)
-    kept = {k: v for k, v in oa.items() if k in ob and (k[0] in moved or k[1] in moved)}
+    # a pair hud-clusters.json allows (block_allowance) is neither new nor kept: it prints ALLOWED with the words (w2996)
+    allowed_hud = {k: v for k, v in oa.items() if v["why"]}
+    new = {k: v for k, v in oa.items() if k not in ob and not v["why"]}
+    kept = {k: v for k, v in oa.items() if k in ob and (k[0] in moved or k[1] in moved) and not v["why"]}
     over = opened_over_hud(after, patterns, args.block_depth)
     print(f"Overlaps: {len(ob)} block pairs before, {len(oa)} after, {len(new)} new, {len(kept)} kept between blocks "
-          f"the change moved (ui_layout.py, whole screen, block depth {args.block_depth}); {len(over['pairs'])} "
+          f"the change moved, {len(allowed_hud)} allowed with the requester's words (hud-clusters.json windowOverlaps) "
+          f"(ui_layout.py, whole screen, block depth {args.block_depth}); {len(over['pairs'])} "
           f"opened-panel pair(s) over the HUD, not counted here")
     for (a, b), v in sorted(new.items(), key=lambda kv: -kv[1]["px"])[:15]:
         print(f"  NEW: {short(a)}  x  {short(b)}: {v['px']:.0f} px2, e.g. {short(v['example'][0], 2)} under {short(v['example'][1], 2)}")
     for (a, b), v in sorted(kept.items(), key=lambda kv: -kv[1]["px"])[:15]:
         print(f"  KEPT: {short(a)}  x  {short(b)}: {ob[(a, b)]['px']:.0f} -> {v['px']:.0f} px2: the change moved one of "
               f"them and left them overlapping")
+    for (a, b), v in sorted(allowed_hud.items(), key=lambda kv: -kv[1]["px"])[:15]:
+        print(f"  ALLOWED: {short(a)}  x  {short(b)}: {v['px']:.0f} px2; allowed: {v['why']}")
     failed |= bool(new) or bool(kept)
 
     wd = window_diff(before, after, spec, args.block_depth, args.tolerance)
@@ -1662,7 +1730,7 @@ def run_check(args) -> int:
         print(f"  STYLE: {f}")
     failed |= bool(failures)
 
-    lines, broken = pinned_lines([(Path(args.after).name, after)], json.loads(Path(args.pins).read_text(encoding="utf-8")),
+    lines, broken = pinned_lines([(Path(args.after).name, after)], json.loads(Path(args.pins or default_pins()).read_text(encoding="utf-8")),
                                  "ui_layout.py check")
     for line in lines:
         print(line)
@@ -1675,7 +1743,7 @@ def run_check(args) -> int:
 
 def run_pins(args) -> int:
     lines, broken = pinned_lines([(Path(c).name, load(c)) for c in args.census],
-                                 json.loads(Path(args.pins).read_text(encoding="utf-8")), "ui_layout.py pins")
+                                 json.loads(Path(args.pins or default_pins()).read_text(encoding="utf-8")), "ui_layout.py pins")
     for line in lines:
         print(line)
     return 1 if broken else 0
@@ -1689,7 +1757,7 @@ def run_moves(args) -> int:
 
 
 def run_options(args) -> int:
-    spec = json.loads(Path(args.pins).read_text(encoding="utf-8"))
+    spec = json.loads(Path(args.pins or default_pins()).read_text(encoding="utf-8"))
     options: dict[str, list[dict]] = {}
     for name, base, after in args.option:
         options.setdefault(name, []).append(option_check(load(base), load(after), args.named, spec, args.move_px))
@@ -1701,12 +1769,14 @@ def run_options(args) -> int:
 
 def run_overlaps(args) -> int:
     census = load(args.census)
-    spec = json.loads(Path(args.clusters).read_text(encoding="utf-8"))
+    spec = json.loads(Path(args.clusters or default_clusters()).read_text(encoding="utf-8"))
     pairs = overlaps(census, args.block_depth, opened=opened_patterns(spec), backdrops=backdrop_patterns(spec),
-                    transient=transient_patterns(spec))
-    print(f"{len(pairs)} overlapping block pairs between always-on HUD blocks (block depth {args.block_depth})")
+                    transient=transient_patterns(spec), spec=spec)
+    print(f"{len(pairs)} overlapping block pairs between always-on HUD blocks (block depth {args.block_depth}), "
+          f"{sum(1 for v in pairs.values() if v['why'])} allowed with the requester's words")
     for (a, b), v in sorted(pairs.items(), key=lambda kv: -kv[1]["px"]):
-        print(f"  {short(a)}  x  {short(b)}: {v['px']:.0f} px2, e.g. {short(v['example'][0], 2)} / {short(v['example'][1], 2)}")
+        tail = f"; ALLOWED: {v['why']}" if v["why"] else ""
+        print(f"  {short(a)}  x  {short(b)}: {v['px']:.0f} px2, e.g. {short(v['example'][0], 2)} / {short(v['example'][1], 2)}{tail}")
     windows = window_overlaps(census, spec, args.block_depth)
     bad = [v for v in windows if v["status"] == "not allowed"]
     print(f"{len(bad)} window overlap(s) not allowed, {len(windows) - len(bad)} allow-listed (open windows against the HUD "
@@ -1717,7 +1787,7 @@ def run_overlaps(args) -> int:
 
 
 def run_covered_text(args) -> int:
-    spec = json.loads(Path(args.clusters).read_text(encoding="utf-8"))
+    spec = json.loads(Path(args.clusters or default_clusters()).read_text(encoding="utf-8"))
     found = covered_text(load(args.census), opened_patterns(spec))
     print(f"{len(found)} text(s) of opened screens drawn under an opaque element above them")
     for f in found:
@@ -1742,7 +1812,7 @@ def run_shape(args) -> int:
 
 def run_clusters(args) -> int:
     census = load(args.census)
-    spec = json.loads(Path(args.clusters).read_text(encoding="utf-8"))
+    spec = json.loads(Path(args.clusters or default_clusters()).read_text(encoding="utf-8"))
     for name, c in cluster_edges(census, spec).items():
         print(f"{name}: anchor {c['anchor']}")
         for member, m in c["members"].items():
@@ -1760,7 +1830,7 @@ def main(argv=None) -> int:
     c.add_argument("--closed", help="a census taken after closing the opened panel again: the HUD it covered must be back")
     c.add_argument("--closed-before", help="the before build's census after closing the panel: what it fails too is "
                                            "standing (listed, not counted)")
-    c.add_argument("--clusters", default=str(DEFAULT_CLUSTERS))
+    c.add_argument("--clusters", default=None)
     c.add_argument("--ref", default="InventoryPanel", help="path fragment of the classic reference panel")
     c.add_argument("--shot", help="a screenshot taken with the after census")
     c.add_argument("--ref-shot", help="a screenshot with the reference panel (usually the before one)")
@@ -1775,27 +1845,27 @@ def main(argv=None) -> int:
     m.add_argument("--move-px", type=float, default=4.0)
     q = sub.add_parser("pins", help="every census against the places Ben fixed (hud-pins.json): the 'Pinned:' line (w894)")
     q.add_argument("census", nargs="+")
-    q.add_argument("--pins", default=str(DEFAULT_PINS))
-    c.add_argument("--pins", default=str(DEFAULT_PINS))
+    q.add_argument("--pins", default=None)
+    c.add_argument("--pins", default=None)
     w = sub.add_parser("options", help="every option still of a round against master: moves only what the person named (w1429)")
     w.add_argument("--option", nargs=3, action="append", required=True, metavar=("NAME", "MASTER", "OPTION"),
                    help="an option's name, master's census and the option's census on the same screen (repeat per screen)")
     w.add_argument("--named", action="append", default=[],
                    help="a path fragment of an element the person's words name (repeat); everything else stays put")
-    w.add_argument("--pins", default=str(DEFAULT_PINS))
+    w.add_argument("--pins", default=None)
     w.add_argument("--move-px", type=float, default=4.0)
     o = sub.add_parser("overlaps", help="the overlapping block pairs of one census")
     o.add_argument("census")
-    o.add_argument("--clusters", default=str(DEFAULT_CLUSTERS))
+    o.add_argument("--clusters", default=None)
     t = sub.add_parser("covered-text", help="texts of opened screens drawn under an opaque element (w727)")
     t.add_argument("census")
-    t.add_argument("--clusters", default=str(DEFAULT_CLUSTERS))
+    t.add_argument("--clusters", default=None)
     s = sub.add_parser("shape", help="stretched sprites, mostly empty panels, walls of text: the 'Shape:' line (w1396)")
     s.add_argument("census", nargs="+")
     s.add_argument("--repo", help="the game repo: sprite sizes for a census without `spriteSize` (Deck tours before w1396)")
     k = sub.add_parser("clusters", help="cluster edges of one census or tour log")
     k.add_argument("census")
-    k.add_argument("--clusters", default=str(DEFAULT_CLUSTERS))
+    k.add_argument("--clusters", default=None)
     for p in (c, o):
         p.add_argument("--block-depth", type=int, default=2)
     args = ap.parse_args(argv)

@@ -2,12 +2,15 @@
 
     python3 -m unittest discover -s plugins/ff-agents/skills/evidence-gate/tests -p 'test_*.py' -v
 """
+import os
 import re
 import sys
 import unittest
 from pathlib import Path
 
 HERE = Path(__file__).resolve().parent
+# hud-pins.json lives in the game repo (w2998); these tests read unity-ui's fixture copy.
+os.environ["FF_HUD_DATA"] = str(HERE.parent.parent / "unity-ui" / "tests" / "fixtures")
 sys.path.insert(0, str(HERE.parent))
 import pr_evidence as pe  # noqa: E402
 
@@ -869,6 +872,56 @@ class ArtLanguageTest(unittest.TestCase):
                                           "Assets/Art/Shaders/AltIconSprite.ShaderGraph"])[0]
         self.assertFalse([p for p in problems if "Art language" in p], problems)
 
+
+class FfuArtTest(unittest.TestCase):
+    """w2895: Ben turned down two FFU art PRs that a fresh critic had passed and this script waved through as "no game
+    code or assets changed". ffu #141 (a canister and a hub graded against the asset pack): "for the structures, they
+    need to match my art style. and only bring over assets actually used in the game". ffu #177 (the Ancient Portal
+    nebula, 15 critic rounds against FF1's texture file, no capture of FF1's screen): "it doenst look right"."""
+
+    def case(self, name):
+        body = (HERE / "fixtures" / f"{name}.md").read_text(encoding="utf-8")
+        files = (HERE / "fixtures" / f"{name}.files").read_text(encoding="utf-8").split()
+        return body, files
+
+    def with_lines(self, body, *lines):
+        return edit(body, "## Evidence\n", "## Evidence\n" + "".join(line + "\n" for line in lines))
+
+    def test_ffu_art_needs_the_section(self):
+        _, files = self.case("ffu-177-portal-nebula")
+        self.assertTrue(pe.applies(files))
+        self.assertFalse(pe.applies(["crates/ffu-sim/src/lib.rs", "art/models/mining-station/build.py", "docs/PLAN.md"]))
+
+    def test_177_as_shown_fails_on_the_capture_and_the_art_language(self):
+        problems = pe.check(*self.case("ffu-177-portal-nebula"))[0]
+        self.assertEqual(len(problems), 2, problems)
+        self.assertIn("no 'Reference capture:' line", problems[0])
+        self.assertIn("no 'Art language:' line", problems[1])
+
+    def test_141_as_shown_fails_too(self):
+        problems = pe.check(*self.case("ffu-141-mining-station"))[0]
+        self.assertIn("no 'Reference capture:' line", " ".join(problems))
+
+    def test_a_capture_and_the_art_language_pass(self):
+        body, files = self.case("ffu-177-portal-nebula")
+        good = self.with_lines(body, "Reference capture: FF1's portal in a built player at gameplay zoom, bloom on: "
+                                     "shots/ff1-portal-ingame.png beside ours, shots/ffu-portal.png",
+                               "Art language: navy and indigo as the two main colours, one salmon HDR accent that blooms")
+        self.assertEqual(pe.check(good, files)[0], [])
+
+    def test_no_capture_or_an_unused_reference_fails(self):
+        body, files = self.case("ffu-141-mining-station")
+        art = "Art language: slate-blue and gunmetal colours, one cyan HDR accent"
+        none = self.with_lines(body, "Reference capture: none yet", art)
+        self.assertIn("get one from the built game", " ".join(pe.check(none, files)[0]))
+        unused = self.with_lines(body, "Reference capture: n/a: FF1 never placed these models", art)
+        self.assertIn("only bring over what the built game uses", " ".join(pe.check(unused, files)[0]))
+
+    def test_closeness_alone_is_not_the_art_language(self):
+        body, files = self.case("ffu-177-portal-nebula")
+        near = self.with_lines(body, "Reference capture: shots/ff1-portal-ingame.png",
+                               "Art language: mean RGB within 7 of FF1's texture")
+        self.assertIn("closeness to a reference is not the art language", " ".join(pe.check(near, files)[0]))
 
 HERO_LINE = ("Hero art: concepts: shots/concept-a-tether.png, shots/concept-b-fold.png, shots/concept-c-lattice.png shown to "
              "Ben, he picked B; detail: compared with the Railgun and the Advanced Assembler in one still "
