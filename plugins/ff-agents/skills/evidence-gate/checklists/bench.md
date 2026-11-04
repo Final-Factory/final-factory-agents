@@ -117,6 +117,12 @@ Mechanics: the game repo's `Documentation/Bench-Lock.md`.
       holder's own sandbox editor rides along by design, even another session's. A close can stall on Unity's "Save
       Scene" dialog (slot3's load editor sat on it about a minute until it was force-stopped), so a demo or report
       checks each closed editor's pid is gone, not only closed.json.
+- [ ] **No CI job beside the timing** (w3112, 2026-11-04, for ben: on m3, exclusive ticket t00001116 timed FFU while
+      the Mac's GitHub Actions runners ran jobs from 15:35 to 16:09, load average up to 24.1 against about 2 idle).
+      Runner.Listener processes are the idle baseline; a running Runner.Worker means a CI job is active. The grant
+      waits out a running job (20 min at most) and the daemon pauses idle listeners on macOS and Linux (Windows: waited
+      out only); a timing whose history `ci` event says `gave_up`, or names `busy_runners`, ran beside CI: say so beside
+      its numbers. Mechanics: the game repo's `Documentation/Bench-Lock.md` "No CI job beside a timed run".
 - [ ] **Checking the turn's editor close on your own editor** (w2116, 2026-10-25). The holder's own sandbox rides along
       (`e.id !== h.sandbox`, ff-factory machine/benchTurn.ts), so take the ticket with `FF_SANDBOX_ID=<another name>` and
       `FF_SESSION_ID=` blank in the leg script: your editor closes like anyone's, and a sessionless holder leaves other
