@@ -136,7 +136,9 @@ A worker session's PreToolUse hook refuses `gh pr create --base master` (it guar
 repo's default branch is master, so run `gh pr create` without `--base` and put the body in a file (w742).
 The same hook refuses `git switch` and `git checkout <branch>` in any clone, a `$TMPDIR` clone too, while the sandbox's
 editor runs (w1770). Commit on the clone's checked-out branch and push it under a new name:
-`git push origin HEAD:refs/heads/<branch>`, then `gh pr create --head <branch>`; `git merge --ff-only origin/master`
+`git push origin HEAD:refs/heads/<branch>`, then `gh pr create --head <branch>`; never `git push origin HEAD` or a bare
+`git push` from a clone on master (w3111: that put ec77f376 and 46605709 straight on this repo's master; the guard refuses
+it since ff-factory#824, and the repo's master has no branch protection); `git merge --ff-only origin/master`
 brings it up to date afterwards.
 
 The manifests are UTF-8 with literal em-dashes. `bumpVersion.sh` uses sed, which rewrites only

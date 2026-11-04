@@ -354,7 +354,10 @@ control, and a redesign goes out as 2 or 3 clearly different options built from 
     --repo <game repo> --brief <brief file> --out <dir>` builds the critic's whole input: each still, each window at its own
     pixels (and 2x), the game's reference panels (`docs/ui-style/ref/ref-*.png`) and the person's quoted words, held back
     until the critic has judged the stills alone. Run a fresh `ff-agents:ui-critic` on it (Codex: a direct `reviewer`
-    child given the pack's `prompt.md`); never brief it with what you changed or meant. Its `critic.md` goes in the review
+    child given the pack's `prompt.md`); never brief it with what you changed or meant. Before it starts, read the pack's
+    `b/words.md`: the element your change moves must be named there, by the person's words (`--words "<their ask>"`) or
+    the brief's ask heading pack adds without `--words`. A list of window names and rules alone grades the asked-for move
+    BROKEN (w3111: w3099's critic, 4 BROKEN, then 0 with the ask passed). Its `critic.md` goes in the review
     folder with the stills. Fix every NEW broken or ugly finding or answer it with the person's words asking for exactly
     that; file the STANDING ones (wNNN in the report: "handed on to be filed" is still open; a small fix on a screen you
     already shoot is made here, w1546); shoot any coverage gap the critic names that is the person's own case; then pack the new stills for a new critic. Before fixing or filing a finding, name the census its still came from (as the windows open, or after a leg dragged one) and check it there; the before and after stills come from the same steps on both builds (w1790, w1821). NEW: this change made it, or the

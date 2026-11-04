@@ -1180,10 +1180,44 @@ def neutral_order(names: list[str], seed: str) -> list[int]:
 def quotes_in(text: str) -> list[str]:
     """The quoted words in a brief: every straight or curly double-quoted run of 12 characters or more, in order, once."""
     out = []
-    for m in re.finditer(r"[\"“]([^\"“”]{12,}?)[\"”]", text):
+    # Pair every quote first, short ones too: skipping a short one ("N in queue") made its closing mark open the next
+    # match, and every later quote came out as the text between two quotes (w3111).
+    for m in re.finditer(r"[\"“]([^\"“”]*)[\"”]", text):
         q = " ".join(m.group(1).split())
-        if q not in out:
+        if len(q) >= 12 and q not in out:
             out.append(q)
+    return out
+
+
+ASK_SENTENCE = re.compile(r"^(?:the fix|fix:|the ask|ask:)|\bmoves? only\b|\bonly (?:moves?|changes?)\b", re.I)
+
+
+def ask_lines(text: str) -> list[str]:
+    """The brief's own ask, in its words: its Done-when block and every sentence that says what the fix does or may move
+    ("The fix keeps the row clear of the count", "It moves only the alert row"). w3099's brief put its ask in prose and
+    quoted only window names and a rule, so a critic given its quotes alone graded the asked-for move BROKEN (w3111)."""
+    out: list[str] = []
+
+    def add(s: str) -> None:
+        s = " ".join(s.strip().lstrip("-*•").split())
+        if len(s) >= 12 and s not in out:
+            out.append(s)
+
+    lines = text.splitlines()
+    k = 0
+    while k < len(lines):
+        m = re.match(r"^\s*(?:#+\s*)?done[ -]when\b:?\s*(.*)$", lines[k], re.I)
+        if m:
+            add(m.group(1))
+            k += 1
+            while k < len(lines) and lines[k].strip() and not lines[k].lstrip().startswith("#"):
+                add(lines[k])
+                k += 1
+            continue
+        for sentence in re.split(r"(?<=[.!?])\s+", lines[k].strip()):
+            if ASK_SENTENCE.search(sentence.lstrip("-*• ")):
+                add(sentence)
+        k += 1
     return out
 
 
@@ -1253,10 +1287,21 @@ def run_pack(args) -> int:
         shutil.copyfile(ref, ref_dir / name)
         ref_files.append(f"- {name}")
     words = list(args.words or [])
+    asks: list[str] = []
     if args.brief:
-        words += [q for q in quotes_in(Path(args.brief).read_text(encoding="utf-8", errors="replace")) if q not in words]
-    (b_dir / "words.md").write_text("# The person's words, verbatim\n\n" + "\n".join(f"- \"{w}\"" for w in words) + "\n",
-                                     encoding="utf-8")
+        brief_text = Path(args.brief).read_text(encoding="utf-8", errors="replace")
+        words += [q for q in quotes_in(brief_text) if q not in words]
+        if not args.words:
+            # w3111: without --words the quotes may name none of what the change moves; the brief's ask goes in beside them.
+            asks = [a for a in ask_lines(brief_text) if not any(a in w or w in a for w in words)]
+            print(f"pack: warning: no --words given, so b/words.md holds the brief's quotes ({len(words)}) and, under its "
+                  f"own heading, the brief's ask ({len(asks)} line(s)): read it, and pass the person's ask with --words "
+                  f"\"<their words>\" when you have them (w3111)", file=sys.stderr)
+    text = "# The person's words, verbatim\n\n" + "\n".join(f"- \"{w}\"" for w in words) + "\n"
+    if asks:
+        text += ("\n# The brief's ask (the dispatcher's words, not the person's)\n\nAn element these lines say the change "
+                 "moves or changes is named, not an unnamed move.\n\n" + "\n".join(f"- {a}" for a in asks) + "\n")
+    (b_dir / "words.md").write_text(text, encoding="utf-8")
     rubric = HERE / "design-rubric.md"
     report = out / "critic.md"
     paired = sorted(name for name in (q.name for q in b_dir.iterdir()) if name.endswith(("-before.png", "-after.png")))
@@ -1264,7 +1309,7 @@ def run_pack(args) -> int:
                     ", ".join(f"`{n}`" for n in paired) + "; a still with no pair here has no before). ") if paired else ". "
     prompt = PACK_PROMPT.format(pack=pack, rubric=rubric, a=a_dir, a_files="\n".join(a_files), refs=ref_dir,
                                 ref_files="\n".join(ref_files), b=b_dir,
-                                words_line="`words.md` (the person's words, verbatim)", b_files_line=" " + befores_line
+                                words_line="`words.md` (the person's words, verbatim" + (", and under its own heading the brief's ask: an element it names is named, not an unnamed move" if asks else "") + ")", b_files_line=" " + befores_line
                                 if paired else ". ",
                                 report=report, scratch=Path(out).resolve().as_posix())
     (out / "prompt.md").write_text(prompt, encoding="utf-8")
@@ -1296,7 +1341,7 @@ def main(argv=None) -> int:
     q.add_argument("--before", action="append", help="the same screen before, in the same order as --after")
     q.add_argument("--ref", action="append", help="a reference panel still (default: <repo>/docs/ui-style/ref/ref-*.png)")
     q.add_argument("--repo", help="the game repo (for the reference panels)")
-    q.add_argument("--brief", help="the request's brief: its quoted words go to Pass B")
+    q.add_argument("--brief", help="the request's brief: its quoted words go to Pass B, and without --words its ask and Done-when lines too, labelled as the brief's (w3111)")
     q.add_argument("--words", action="append", help="a quote of the person's to add")
     q.add_argument("--rect", action="append", help="the panel's rect when there is no census, x0,y0,x1,y1")
     q.add_argument("--out", required=True)

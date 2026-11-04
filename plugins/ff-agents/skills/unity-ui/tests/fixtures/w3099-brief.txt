@@ -1,0 +1,11 @@
+[from the orchestrator, for ben]
+Repo: Final-Factory/FinalFactory.
+
+The alert row covers the craft queue's "N in queue" count at 1280x720 and 1280x800, in the docked "StationControls"
+panel under the "BuildInfoPanel". The fix keeps the row clear of the count, or wraps the row. It moves only the alert row.
+
+Keep to the standing rule: "move only what the person asked to move".
+
+Done when:
+- the alert row sits clear of the queue count at 1280x720, 1280x800 and 1920x1080, in a built player;
+- a fresh ui-critic on the stills reports 0 broken.
