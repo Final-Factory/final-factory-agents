@@ -1467,6 +1467,21 @@ class ShapeTest(unittest.TestCase):
         squashed = dict(self.CLIPPED, rect=[1385.4, 447.3, 1428.6, 468.7])
         self.assertEqual(len(ul.shape({"screen": [1920, 1080], "elements": [squashed]})["stretched"]), 1)
 
+    # w3099: a craft-queue slot's progress fill caught at low progress (the census of the 1280x800 / 0.9 after still).
+    PROGRESS = {"path": "InGameScene/UI Canvas/GamePanels/CraftQueuePanels/Viewport/Content/ItemCraftQueue/ContentParent/"
+                        "CraftButton(Clone)/Slider/Fill Area/Fill", "kind": "Image", "rect": [281.3, 729.6, 292.7, 775.4],
+                "visible": [281.3, 729.6, 292.7, 775.4], "alpha": 0.714, "sprite": "fill", "maskOnly": False,
+                "spriteSize": [256.0, 256.0], "spriteBorder": [0.0, 0.0, 0.0, 0.0], "imageType": "Simple",
+                "preserveAspect": False}
+
+    def test_a_progress_bars_fill_is_sized_by_its_value_not_stretched(self):
+        census = {"screen": [1280, 800], "elements": [dict(self.PROGRESS)]}
+        self.assertEqual(ul.shape(census)["stretched"], [])
+
+    def test_the_same_sprite_outside_a_slider_still_is(self):
+        bar = dict(self.PROGRESS, path="InGameScene/UI Canvas/GamePanels/CraftQueuePanels/Fill")
+        self.assertEqual(len(ul.shape({"screen": [1280, 800], "elements": [bar]})["stretched"]), 1)
+
     def test_a_sliver_showing_under_a_mask_is_not_judged(self):
         sliver = dict(self.CLIPPED, rect=[1385.4, 447.3, 1428.6, 490.5], visible=[1385.4, 447.3, 1428.6, 450.3])
         self.assertEqual(ul.shape({"screen": [1920, 1080], "elements": [sliver]})["stretched"], [])

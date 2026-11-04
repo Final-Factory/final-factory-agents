@@ -1540,6 +1540,11 @@ def shape(census: dict, sprites: dict | None = None, patterns: list[str] | None 
         if (not name or e.get("maskOnly") or e.get("alpha", 1.0) < 0.25 or min(w, h) < 6 or name in invisible
                 or min(v[2] - v[0], v[3] - v[1]) < 6):
             continue
+        # A Slider's fill takes its rect from the slider's value (SLIDER_VALUE): a live progress bar caught early is a thin
+        # sliver of its sprite, not a sprite drawn off its shape (w3099: a craft-queue slot's progress fill, sprite `fill`
+        # 256x256 drawn 11x46 px at 1280x800 / 0.9, read STRETCHED on an alert-row change that never touched the queue).
+        if SLIDER_VALUE.search(e["path"]):
+            continue
         if e.get("preserveAspect") or e.get("imageType") == "Tiled":
             continue
         if e.get("spriteSize"):
