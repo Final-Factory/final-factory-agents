@@ -815,6 +815,25 @@ w2133 (2026-10-25, the client of a LothDesktop-host pair for PR #2507) lost abou
   - A one-shot refusal shown on the world canvas (`PlayerCanvasController.ShowMessageIfPresent`) is not in
     Player.log: take the screenshot within a second of the click (at 3 s it was gone).
   - Run 2 compared 934 of 934 sampled heartbeats (8..7472) with no divergence.
+- **A client refused at approval with `Jobs|managed` is the host's fault, and a biscuit client can stall on disk**
+  (w3040, 2026-11-04, a biscuit Linux client of a BEAST editor host, PR #3146):
+  - The client log shows `Jobs|managed` and `[Reconnect] DisconnectClassified class=RemoteRemoval category=Jobs`.
+    The detail is the HOST's jobs (`DisconnectClassifier.cs:139`; the check is `PeerCompatibilityToken.cs:289-294`,
+    the w1555 guard), so a Burst built client (`[Burst] self-check: jobs=burst option=on`) cannot fix it. The editor
+    host had Burst off: the bootstrap turns it off for a legacy `.ff-local-automation.json`
+    (`LocalMultiplayerAutomationLauncher.cs:266`), and `BurstSelfCheck` keeps its answer across play sessions
+    (`BurstSelfCheck.cs:30`). The host turns Burst on (synchronous), reloads the domain, and sends HOST WAITING only
+    once its log says `jobs=burst`. Two host runs were lost to it.
+  - Run r6's client hung 63 s in a blocked `write()` (HangWatchdog report, main thread in libc `__write`) while another
+    sandbox's batch build ran on biscuit (`/proc/pressure/io` full avg300 12.7%). The 5 s reconnect watchdog tripped,
+    four reconnects timed out, and the client still wrote its report (0..2193 compared clean, but no reads after the
+    build). Read `/proc/pressure/io` before launching, and tell the host a rerun may be needed.
+  - An editor host running `execute_code` stalls its heartbeats (client `[MP pacing] maxGapMs=21708`): r7's client
+    tripped its watchdog at heartbeat 30 and rejoined by itself (epoch 3); the host compared the epoch-3 window.
+  - `until ! pgrep -f run_build_multiplayer_audit; do sleep 30; done` never ends: `pgrep -f` matches the waiting
+    shell's own command line. Wait for the `--build-only: player at` line in the script's output instead.
+  - `observe.state|structure|x|z` through the agent channel reads `massDriver.target` and `relativeTarget` on a headless
+    client.
 
 ## A Linux host leg on biscuit: console commands and detector counts from a headless host {#linux-host-leg}
 
