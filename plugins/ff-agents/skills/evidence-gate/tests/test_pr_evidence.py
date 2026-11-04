@@ -934,6 +934,33 @@ class FfuArtTest(unittest.TestCase):
                                "Art language: mean RGB within 7 of FF1's texture")
         self.assertIn("closeness to a reference is not the art language", " ".join(pe.check(near, files)[0]))
 
+    def test_222_the_dark_sky_bake_code_is_art(self):
+        # w3097: ffu #222's sky is drawn by ffu-bake's Rust and changes no art/ file; it passed as "no game code".
+        body, files = self.case("ffu-222-dark-sky")
+        self.assertTrue(pe.applies(files))
+        self.assertIn("crates/ffu-bake/src/darksky.rs", pe.ffu_art_files(files))
+        self.assertEqual(pe.check(body, files)[0], [])
+        bare = "\n".join(line for line in body.splitlines() if "Reference capture" not in line and "Art language" not in line)
+        problems = pe.check(bare, files)[0]
+        self.assertEqual(len(problems), 2, problems)
+        self.assertIn("no 'Reference capture:' line", problems[0])
+        self.assertIn("no 'Art language:' line", problems[1])
+
+    def test_a_docs_only_ffu_pr_is_not_art(self):
+        _, files = self.case("ffu-208-plan-docs")
+        self.assertFalse(pe.applies(files))
+        self.assertEqual(pe.ffu_art_files(files), [])
+
+    def test_render_and_shader_code_is_art_and_its_tests_ci_and_docs_are_not(self):
+        for f in ("crates/ffu-render/src/sky.rs", "crates/ffu-render/src/sky.wgsl", "crates/ffu-render/effects/beam.ffx",
+                  "crates/ffu-bake/src/surfaces.rs", "crates/ffu-client/src/fx.rs", "crates/ffu-ui/src/panel.wgsl"):
+            self.assertTrue(pe.applies([f]), f)
+        for f in ("crates/ffu-render/tests/sky.rs", "crates/ffu-render/golden/sky_corner.png",
+                  "crates/ffu-render/examples/light_bench.rs", "crates/ffu-render/Cargo.toml", "crates/ffu-bake/README.md",
+                  "crates/ffu-bake/tests/fixtures/fuzz_pack_crash_a714.bin", "crates/ffu-render/tests/sky.wgsl",
+                  "crates/ffu-client/src/main.rs", ".github/workflows/ci.yml", "docs/PLAN.md"):
+            self.assertFalse(pe.applies([f]), f)
+
 HERO_LINE = ("Hero art: concepts: shots/concept-a-tether.png, shots/concept-b-fold.png, shots/concept-c-lattice.png shown to "
              "Ben, he picked B; detail: compared with the Railgun and the Advanced Assembler in one still "
              "(shots/detail-side-by-side.png); differs: from the Railgun's slug and the Plasma Bolt's orb in "
