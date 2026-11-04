@@ -116,7 +116,7 @@ look first and relay only with the critic's report (FF Factory `read_rules ui`).
 Ben, w2195 and w2992: "i want the platform itself taller, not just the top spire thing"; "i was just saying the big
 spinning thing under it was spikey". Before a design, concept or model edit, write which part each of the person's
 descriptive words refers to and which part the edit changes; a trait said of a neighbour or reference object is not
-carried over ([lesson](lessons/name-the-part-the-persons-words-describe.md); [visual checklist](checklists/visual.md), item 1b).
+carried over ([lesson](lessons/research-the-decision-not-the-topic.md#name-the-part-the-persons-words-describe-then-edit-that-part-w2195-w2992-2026-11-04); [visual checklist](checklists/visual.md), item 1b).
 
 ## Reports and briefs
 

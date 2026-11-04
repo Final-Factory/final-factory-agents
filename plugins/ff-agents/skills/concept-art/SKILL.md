@@ -115,7 +115,7 @@ Write `Reading:` first: each descriptive word of the person's, the object or par
 looks are for. A remark about a neighbour or a reference is not a style for the new look (w2992: Ben called the spinning
 collector under the platform spiky, and every hub concept came back spiky: "i dont like the spikeyness lol"). Put the
 `Reading:` in the first review note so a critic judges against it, and have the critic check the looks changed the part
-named (evidence-gate lesson `name-the-part-the-persons-words-describe`).
+named (evidence-gate lesson `research-the-decision-not-the-topic`, "Name the part").
 
 ## Bring them to the person
 

@@ -41,7 +41,7 @@ in the built player (drive-game, "The mouse cursor in a built player"; w980).
    edit changes. A word about a neighbour, a reference or a different part is not carried to the target. The after
    still beside the before shows the named part changed and nothing else; if the reading is still ambiguous, say it in the
    first review note for the critic
-   ([lesson](../lessons/name-the-part-the-persons-words-describe.md); w2195 stretched the spire when Ben wanted the
+   ([lesson](../lessons/research-the-decision-not-the-topic.md#name-the-part-the-persons-words-describe-then-edit-that-part-w2195-w2992-2026-11-04); w2195 stretched the spire when Ben wanted the
    platform taller, w2992 made every hub spiky when he called the collector under it spiky).
 2. **A built player, and the real event.** Launch it from the slot pool and reach the event the
    way a player does: the real hit, the real deconstruct, the real second rider. An editor rig or
