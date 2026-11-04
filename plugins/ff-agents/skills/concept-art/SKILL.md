@@ -39,6 +39,11 @@ look to choose from, never the model: the game's look is the low-poly Blender mo
 
 Measured on the Dyson Hub concepts (w3026, for w2992: a 4x4 ground building that takes in swarm power and routes it out):
 
+0. **Only when the shape is still open: a few `core` top-down layout ideas first** (3 credits each), one design per
+   image, in plain words ("a ring at the centre, a socket mid each side"). Take only the layout from them, never the
+   colours: in w3032 none of 4 `core` images kept the coral, two added orange, and a "3 by 3 thumbnail sheet" prompt
+   gave nine near-copies of one design (measured, 2026-11-04). The block-outs are the exploration: make one per look,
+   as hard-surface concept artists do in Blender (sourced, 80 Level 2025-08-06 and 2025-08-13; research report r86, w3032).
 1. **Block it out in Blender in the game palette with the glow already in it.** Flat-shaded primitives in the
    building's two main colours, cyan emission at about 1.1 (it keeps the cyan hue through the Standard view
    transform), a dark slate world, an orthographic camera for the three-quarter and the true top-down view. Add bloom
@@ -56,6 +61,7 @@ Measured on the Dyson Hub concepts (w3026, for w2992: a 4x4 ground building that
 | `ultra` over the block-out at 0.68 | the shapes drift: the well lost its bowl, the anchor's top view lost its plinth |
 | `ultra` over the block-out at 0.45 to 0.5 | keeps everything, but looks like a lightly painted render: tell the person these are direction picks |
 | `ultra` over the block-out at 0.5 to 0.58 | **the pick**: painted, and the layout, palette and glow hold |
+| 2D first (w3032): `core` text only, 2 thumbnail sheets and 2 single concepts | 0 of 4 kept the coral; the sheets had little variety (the greyscale one was 20 grey blocks seen from three-quarter, not from above); one single top-down gave a usable four-socket layout. $0.12 |
 
 Cost: 42 calls and $2.86 for 4 looks in both views over two critic rounds, most of it on the failed modes
 before the recipe (measured, w3026). Each final is 8 credits.
