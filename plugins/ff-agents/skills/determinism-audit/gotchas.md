@@ -37,7 +37,7 @@ load-bearing for future runs even where the original defect is fixed.
 - [Reading a pair's witness-compare.txt: pose distance is the verdict](#witness-pose-distance) (w1555)
 - [A world-generation pair: drive the host post-join, compare lists, keep the client yours](#worldgen-pair) (w2271; world objects from saves, ffnightly deletes local saves, w2386; a `nearby` probe grid, rich asteroids by ore amount, UTC checkpoints, w2889)
 - [A live-driven built pair: reopen panels after a resync, overlap the report windows](#live-driven-pair) (w2238)
-- [A Linux client leg on biscuit: build, headless launch, a scripted paste](#linux-client-leg) (w2133, w2326)
+- [A Linux client leg on biscuit: build, headless launch, a scripted paste](#linux-client-leg) (w2133, w2326, w3029: an item into hand)
 - [A Linux host leg on biscuit: console commands and detector counts from a headless host](#linux-host-leg) (w2281)
 - [A host-only scenario with a remote client: pause on join, tower spawns, flow control](#host-scenario-remote-client) (w2586)
 - [A hand-launched built host: TargetClients counts the host, and turn the audit on](#hand-launched-host) (w2797; every post-ready segment needs `ffauto:`, a new label per relaunch, w2861)
@@ -803,6 +803,18 @@ w2133 (2026-10-25, the client of a LothDesktop-host pair for PR #2507) lost abou
     that follows only selects the structure (its info panel opens). Put `ffauto:wait|0.5` after each `pointer.moveto`,
     and check a `GET /v1/screenshot` shows the item at the cursor before the press.
   - `kill -0 <pid>` in a wait loop is refused by the harness as killing a process by hand; test `[ -d /proc/<pid> ]`.
+- **Taking a building into hand: the hotbar, never `blueprint.hold|<item name>`** (w3029, 2026-11-04, a biscuit
+  Linux client of a BEAST host, PR #3139, Antimatter Collectors built by clicking a station):
+  - `ffauto:blueprint.hold|Antimatter Power Station` is refused on both peers: "could not decode the blueprint string
+    (expected an 'ffblueprintstart' copy/paste string)". It takes only a copied blueprint string. The brief said it,
+    and both legs' run 1 was void. Use `hotbar.set|0|<item>`, `pointer.moveto|hotbar|0`, `wait|0.5`,
+    `pointer.click`, then `pointer.moveto|<x>|<z>`, `wait|0.5`, `pointer.click` (check a `GET /v1/screenshot` first).
+  - A fresh FlatMap game has no construction bots: placed blueprints stay `state: frame` and nothing leaves the
+    inventory. `ffauto:spawn.ships|Construction Bot|N` spawns them through the op queue; `inventory.add|Construction
+    Bot|N` only adds items. The host's bots then built the client's collectors too, paid from the HOST's inventory.
+  - A one-shot refusal shown on the world canvas (`PlayerCanvasController.ShowMessageIfPresent`) is not in
+    Player.log: take the screenshot within a second of the click (at 3 s it was gone).
+  - Run 2 compared 934 of 934 sampled heartbeats (8..7472) with no divergence.
 
 ## A Linux host leg on biscuit: console commands and detector counts from a headless host {#linux-host-leg}
 
