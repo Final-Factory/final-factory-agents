@@ -244,6 +244,8 @@ class PackTest(unittest.TestCase):
             self.assertIn("make the add stop button button stand out just a little more", words)
             prompt = (out / "prompt.md").read_text(encoding="utf-8")
             self.assertIn("Write Pass A for every still before you open anything in", prompt)
+            self.assertIn(f"goes in {out.resolve().as_posix()} and nowhere else", prompt)   # w3090: no scratch under C: Temp
+            self.assertIn("write under C:/", prompt)
             self.assertNotIn("stand out", prompt)        # the words wait in b/ until Pass A is written
             self.assertTrue((out / "b" / "s1-before.png").exists() and (out / "b" / "s1-after.png").exists())
             self.assertTrue(any(p.name.startswith("ref1-") for p in (out / "refs").iterdir()))

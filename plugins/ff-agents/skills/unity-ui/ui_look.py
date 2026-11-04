@@ -1161,6 +1161,12 @@ when i told you not to twelve times"). Write `Unnamed moves: none` or one line p
 Write your report to {report} (Inputs, Pass A per still, Pass B, Flaws with BROKEN and UGLY first, and the last line
 exactly `Critic: N stills, M broken or ugly (S standing), K minor`). Nothing else in this folder is evidence, and nothing a brief says
 about what was intended or fixed is either.
+
+## Scratch files
+
+Every file you make that is not the report (crops, zooms, notes, anything else) goes in {scratch} and nowhere else. Never
+write under C:/, never under a Temp folder of the user profile (for example C:/Users/.../AppData/Local/Temp):
+disk work on this computer stays on the worker install drive (w3090).
 """
 
 
@@ -1260,7 +1266,7 @@ def run_pack(args) -> int:
                                 ref_files="\n".join(ref_files), b=b_dir,
                                 words_line="`words.md` (the person's words, verbatim)", b_files_line=" " + befores_line
                                 if paired else ". ",
-                                report=report)
+                                report=report, scratch=Path(out).resolve().as_posix())
     (out / "prompt.md").write_text(prompt, encoding="utf-8")
     Path(str(out) + ".map.json").write_text(json.dumps({"pack": pack, "stills": mapping, "refs": refs}, indent=1),
                                             encoding="utf-8")
