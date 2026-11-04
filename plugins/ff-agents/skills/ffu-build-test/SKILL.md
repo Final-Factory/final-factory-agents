@@ -94,6 +94,11 @@ never rewritten (`tools/check_snapshot_compat.sh BASE_REF` holds it in CI). No t
   `peers.rs` saw 93 of 100 (measured, ffu #209). Pace such a server from the test (the peers test's `Gate` lets the
   relays the test owns forward only while it is watching). Prove the fix with a planted stall that fails before and
   passes after, plus a loop of 50.
+- A plain `ffu-server` (no shard) at a fixed `--tps` keeps ticking between the test's last read and its kill or check:
+  `server.rs`'s kill -9 test ran on past its next `--snapshot-every` snapshot when the test thread was held up 125 ms,
+  and recovery replayed none of the client's ticks (ffu-lothdesktop-1, CI run 41921083432; w3109). Start it with
+  `--paced` and write `until T` lines to its stdin, one tick ahead of the client, so it is parked at a known tick when
+  the test acts (ffu #242; RED with `FFU_KILL9_STALL_MS=300`, GREEN at 300 ms and 2 s, 50 of 50 on Windows).
 - **A `--tps 0` server's pace is its disk's**: with `--sync every` (the default) each tick waits on `sync_data`, about
   80 ticks a second on BEAST and 2 on ffu-lothdesktop-1 (measured, w3095, ffu #227). The same test crawls out of time
   on one runner and outruns the test thread on another. Run test shards at a fixed `--tps` with `--sync none` (the
