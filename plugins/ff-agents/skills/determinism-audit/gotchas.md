@@ -1224,3 +1224,31 @@ of epochs 1, 2 and 3 (`toggles+census`, "the join save did not carry everything"
   core's east tile, 31,9 for that blueprint placed at 30,10, right after it; w2868 did the same. r3 then switched the
   condition-less Assembler Connector → Solar Panel → Strut → Connector on both peers, 3001/3001 clean. Before a pair
   run claims a recipe switch, check `armed:true` in the pre-join `circuit.dump`.
+
+## A client-side Relay stall with wss_blackhole_proxy.py: join at heartbeat 0, the stall is shorter than you wrote {#relay-stall-client}
+
+From w3071 (2026-11-04), the client leg of a LothDesktop host / BEAST client pair for PR #3166 (Development players of
+17298f1c1, client started with `-ffRelayTestWssVia 41000 -ffRelayTestDropDtls` beside `wss_blackhole_proxy.py`).
+
+- **Join a host that just started.** Two of three client runs were kicked `FlowControl:TooSlow` before any stall:
+  - The rejoin into a host already at hb ~2800 ran at frame p50 135 ms, max 812 ms, and was dropped 24 s after
+    `client-ready`. BEAST's CPU was at 27%, so load was not the cause.
+  - The first run, joined at hb 0, held 2.5 min. It was dropped 13 s after a test of the driver sent about 50
+    agent-channel commands at once (5 accepted, the rest 429). A fresh host plus a join at hb 0 and one
+    `movement.goto` every ~8 s at a slowly growing radius held for the whole run.
+  - Do not "fix" the kick with `-ffFlowControlWaitForSlowPeers` on the host for a stall test: under that rule the host
+    holds for a stalled peer and then evicts it (FlowControl.cs `LeadSeconds` docs, HeartbeatSystem.cs
+    `ShouldHoldHeartbeatForFlowControl`), so the stall ends in an eviction, not a plain reconnect.
+- **`blackhole` only stalls the connections already open.** The client's watchdog tripped 5.2 s in, and its reconnect
+  opened a new wss connection 8 s in, which the proxy passes. So the link was dead about 8 s, not the 25 s written,
+  and `ReconnectRestored` came back while the control file still said `blackhole`. Say so in the report. A longer real
+  outage needs a different proxy mode.
+- **What the plain reconnect looks like on the client** (17298f1c1): `WatchdogTripped appliedAgeSeconds=5.2`,
+  `AwaitServeAfterLinkLoss ... epoch=1`, `ReconnectAttempt(1)`, three `DroppedStaleEpoch ... awaitingServe=True`
+  (two Heartbeat, one PlayerDeparted), `RejoinWorldApplied attempts=1 serveSeconds=1.0` at epoch 2 hb 1, and
+  `ReconnectRestored episodeSeconds=4.7`. On the host it shows only `SessionEnded:Superseded` for the old connection.
+- **`ff-leftovers end` did not end the client player.** It was launched by `player_slots.py launch` under
+  `timeout -s TERM` in a background shell. It ended the shell and the driver, but `finalfactory.exe` kept running and
+  writing its Player.log, and a `publish_attachment` of that log failed its SHA-256 check. Find the pid with
+  `player_slots.py mine` and `taskkill //PID <pid>`. Check with `tasklist` that it is gone before you publish the log,
+  and gzip it (57 MB down to 2.7 MB).
