@@ -1680,5 +1680,40 @@ class HudDataTest(unittest.TestCase):
         self.assertIn("Pinned:", out.getvalue())
 
 
+class PinHighlightFrameTest(unittest.TestCase):
+    """w3069: the tutorial highlight frame (StationControls/RedAlertFrame/AlertCompact) hangs 7 to 10 px below the station
+    controls while "Manually move or land any station" is up. The Station Info pin read it as part of the controls and
+    broke on 'bottoms level' in every docked d1 census. MEASURED: w3063's census, built player, 1280x720 docked."""
+
+    SPEC = json.loads((HERE / "fixtures" / "hud-pins.json").read_text(encoding="utf-8"))
+    PIN = next(p for p in SPEC["pins"] if p["name"] == "Station Info")
+
+    def census(self):
+        return ul.load(HERE / "fixtures" / "w3063-d1-cc-alerts-chat-layout.json")
+
+    def test_the_fixture_has_the_frame_below_the_controls(self):
+        c = self.census()
+        self.assertLess(ul.find(c, "StationControls", ("RedAlertFrame",))[3], ul.find(c, "StationControls")[3] - 5)
+
+    def test_station_info_reads_ok_with_the_highlight_frame_up(self):
+        self.assertEqual(ul.pin_check(self.census(), self.PIN)[0], "ok")
+
+    def test_no_pin_of_the_census_is_broken(self):
+        c = self.census()
+        self.assertEqual([p["name"] for p in self.SPEC["pins"] if ul.pin_check(c, p)[0] == "broken"], [])
+
+    def test_a_real_break_still_fails(self):
+        # The controls moved under Station Info: shift everything at or under StationControls left onto it.
+        c = self.census()
+        dx = ul.find(c, "BuildInfoPanel")[0] - ul.find(c, "StationControls")[0] + 20
+        for e in c["elements"]:
+            if "StationControls" in e["path"].split("/"):
+                for key in ("rect", "visible"):
+                    if e.get(key):
+                        e[key] = [e[key][0] + dx, e[key][1], e[key][2] + dx, e[key][3]]
+        verdict, what = ul.pin_check(c, self.PIN)
+        self.assertEqual(verdict, "broken", what)
+
+
 if __name__ == "__main__":
     unittest.main()

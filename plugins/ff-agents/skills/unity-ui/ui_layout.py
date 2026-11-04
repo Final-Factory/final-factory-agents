@@ -868,6 +868,16 @@ def pin_applies(census: dict, pin: dict) -> str | None:
     return f"its 'when' does not hold here ({layout_of(census)}, toggles on: {on})"
 
 
+# w3069: the tutorial highlight frame hangs 7 to 10 px below StationControls while "Manually move or land any station" is
+# up; it is not part of the element Ben fixed, so a pin measures without it. Kept here, not in hud-pins.json (the game
+# repo's file): one list for every pin, and a pin file from an older game checkout still reads right.
+PIN_LEAVE_OUT = ("RedAlertFrame",)
+
+
+def pin_find(census: dict, name: str):
+    return find(census, name, PIN_LEAVE_OUT)
+
+
 def pin_check(census: dict, pin: dict) -> tuple[str, str]:
     """('ok' | 'broken' | 'not shown' | 'covered' | 'not applied', what was measured) for one pin of hud-pins.json in one
     census ('covered': hidden by design, covered_by_window; 'not applied': its `when` does not hold, pin_applies).
@@ -896,7 +906,7 @@ def pin_check(census: dict, pin: dict) -> tuple[str, str]:
     skip = pin_applies(census, pin)
     if skip:
         return "not applied", skip
-    r = find(census, pin["element"])
+    r = pin_find(census, pin["element"])
     if r is None:
         hidden = covered_by_window(census, pin)
         if hidden:
@@ -912,7 +922,7 @@ def pin_check(census: dict, pin: dict) -> tuple[str, str]:
         inset, problems = w - r[2], []
         if inset < -2 or inset > pin["maxRight"] * w:
             problems.append(f"right edge {inset:.0f} px in from the screen's (0 to {pin['maxRight'] * w:.0f})")
-        bar = find(census, pin["under"]) if pin.get("under") else None
+        bar = pin_find(census, pin["under"]) if pin.get("under") else None
         if bar is not None:
             below = r[1] - bar[3]
             if below < -2 or below > pin["maxBelow"] * h:
@@ -924,7 +934,7 @@ def pin_check(census: dict, pin: dict) -> tuple[str, str]:
             return "broken", f"{'; '.join(problems)} ({at})"
         return "ok", f"right edge {inset:.0f} px in, top at {r[1]:.0f} px ({at})"
     if pin["rule"] in ("leftOf", "clearOf"):
-        anchor = find(census, pin["anchor"])
+        anchor = pin_find(census, pin["anchor"])
         name = pin["anchor"].split("/")[-1]
         if anchor is None:
             if pin["rule"] == "clearOf":
@@ -942,7 +952,7 @@ def pin_check(census: dict, pin: dict) -> tuple[str, str]:
         return "ok", f"{gap:.0f} px left of {name} ({at})"
     if pin["rule"] != "above":
         raise ValueError(f"hud-pins.json: unknown rule {pin['rule']!r}")
-    anchor = find(census, pin["anchor"])
+    anchor = pin_find(census, pin["anchor"])
     if anchor is not None:
         gap = anchor[1] - r[3]
         over = min(r[2], anchor[2]) - max(r[0], anchor[0])
@@ -1143,11 +1153,13 @@ def option_lines(options: dict[str, list[dict]], named: list[str], how: str) -> 
 # clusters
 
 
-def find(census: dict, name: str):
-    """The union of the visible rects of everything at or under the object named `name` (a name or a path tail)."""
+def find(census: dict, name: str, leave_out: tuple = ()):
+    """The union of the visible rects of everything at or under the object named `name` (a name or a path tail).
+    `leave_out`: names of parts that do not count (any element with one of them as a path segment is skipped)."""
     name = name.strip("/")
     hits = [e.get("visible") or e["rect"] for e in census["elements"]
-            if e["path"] == name or e["path"].endswith("/" + name) or ("/" + name + "/") in ("/" + e["path"] + "/")]
+            if (e["path"] == name or e["path"].endswith("/" + name) or ("/" + name + "/") in ("/" + e["path"] + "/"))
+            and not (leave_out and set(e["path"].split("/")) & set(leave_out))]
     hits = [r for r in hits if area(r) > 0]
     return union(hits) if hits else None
 
