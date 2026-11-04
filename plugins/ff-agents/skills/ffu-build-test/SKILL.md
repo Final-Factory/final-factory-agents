@@ -51,6 +51,10 @@ cargo run --release -p ffu-headless -- crosscheck --threads 1,4,16 --golden gold
   FFU_CAPTURE_DIR=<dir>` and group the pixels that differ from the golden into blobs. Re-bless (`FFU_BLESS=1`, on the
   adapter the golden was blessed on) only when every blob is a change you meant to make; any other blob means the code
   is wrong (w2895 M2.17b: two 15 px discs on the two crafters, nothing else, so the golden was out of date).
+- A test that opens a GPU device holds its crate's one-device lock (`ffu-render`'s `tests::gpu`, `ffu-client`'s
+  `packs::tests::gpu` / `one_gpu_at_a_time`; a new crate with GPU tests adds one). Several devices made at once crash
+  Mesa's Vulkan loader: a SIGSEGV with no Rust panic, in 25 of 200 parallel runs of `ffu-client`'s tests on biscuit
+  without the lock and 0 of 200 with it (measured, w2895 M2.17b, probe ffu #226).
 - Fuzzing is by hand only: `tools/fuzz.sh [seconds] [target ...]` (nightly and cargo-fuzz).
 
 ## 3. The rules a sim change keeps
