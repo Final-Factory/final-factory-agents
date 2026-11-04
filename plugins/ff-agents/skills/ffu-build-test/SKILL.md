@@ -24,6 +24,9 @@ whole verification. The repo's own `CLAUDE.md` is binding and longer; this skill
 
   `ffu-client` (the `ffu` binary) builds SDL3 from source and needs cmake on PATH: without it the build stops with
   "build script failed". A cold release build of `ffu-client` took 1 min 40 s there, `ffu-headless` 31 s (measured).
+  On BEAST `cargo` is on PATH (`~/.cargo/bin`) and cmake is Visual Studio's:
+  `export PATH="/c/Program Files/Microsoft Visual Studio/2022/Community/Common7/IDE/CommonExtensions/Microsoft/CMake/CMake/bin:$PATH"`
+  (measured, w2895 M2.17b).
 - Put those exports in `$TMPDIR/rust.sh` and source it in every shell call: shell state does not persist.
 
 ## 2. The checks, in CI's order
@@ -44,6 +47,10 @@ cargo run --release -p ffu-headless -- crosscheck --threads 1,4,16 --golden gold
   `ffu-headless crosscheck --golden golden/crosscheck --write-golden` only for a change meant to move it.
 - Build a player with `-p ffu-client`, never `--workspace`: `ffu-mcp` turns `agent-api` on and Cargo unifies features
   across one command's packages. `tools/check_compiled_out.sh` (CI) fails a player build that holds the agent API.
+- A golden image test that fails after a change: before re-blessing, render with `FFU_FALLBACK_ADAPTER=1
+  FFU_CAPTURE_DIR=<dir>` and group the pixels that differ from the golden into blobs. Re-bless (`FFU_BLESS=1`, on the
+  adapter the golden was blessed on) only when every blob is a change you meant to make; any other blob means the code
+  is wrong (w2895 M2.17b: two 15 px discs on the two crafters, nothing else, so the golden was out of date).
 - Fuzzing is by hand only: `tools/fuzz.sh [seconds] [target ...]` (nightly and cargo-fuzz).
 
 ## 3. The rules a sim change keeps
