@@ -55,6 +55,19 @@ EFFECT_ART = re.compile(r"/(VFX|Vfx|Effects?)/|Vfx[^/]*\.(shader|shadergraph|hls
 NOT_EFFECT_ART = re.compile(r"/UI/|Icon|Sprite|Hologram|Font|/Fog|Outline", re.IGNORECASE)
 # Art for FFU, the Rust engine (w2895): its own art/ folder, no Unity Assets/. Scripts and READMEs there are not art.
 FFU_ART = re.compile(r"^art/.+\.(png|jpe?g|webp|ktx2|exr|hdr|tga|gltf|glb|bin|obj|fbx|blend|wgsl)$", re.IGNORECASE)
+# FFU art made by code (w3097): ffu #222's dark sky came from ffu-bake's Rust (`ffu-bake darksky`) and passed as "no game
+# code or assets changed". The code that makes the image: ffu-bake's and ffu-render's sources (shaders, sky, meshes,
+# effects and their .ffx), ffu-client's fx.rs, and any .wgsl. Not their tests/, examples/, golden/ images, Cargo.toml
+# or docs, and not the rest of ffu-client (input, network, the window), so a test, CI or docs change does not trip it.
+FFU_IMAGE_CODE = re.compile(r"^crates/ffu-(bake|render)/src/.+\.(rs|wgsl)$|^crates/ffu-render/effects/.+\.ffx$|"
+                            r"^crates/ffu-client/src/fx\.rs$|^(?!.*/(tests|examples|benches|golden)/).+\.wgsl$")
+
+
+def ffu_art_files(files: list[str]) -> list[str]:
+    """FFU art files and the code that draws FFU's image (w2895, w3097)."""
+    return [f for f in files if FFU_ART.search(f) or FFU_IMAGE_CODE.search(f)]
+
+
 CAPTURE = re.compile(r"\.(png|jpe?g|webp|mp4|webm|mov)\b|\batt_\w+|/review/", re.IGNORECASE)
 UNUSED = re.compile(r"\b(never (placed|shown|showed|shows|drawn|draws|loaded|loads|used|uses)|not used|unused|"
                     r"not in the build)\b", re.IGNORECASE)
@@ -220,9 +233,9 @@ def has_basis(basis: str) -> bool:
 
 
 def applies(files: list[str]) -> bool:
-    """Game code or assets a player can meet, or FFU art (w2895). Docs, tools and tests of existing behaviour need no
-    section."""
-    return any((f.startswith("Assets/") and not NOT_GAME_CODE.search(f)) or FFU_ART.search(f) for f in files)
+    """Game code or assets a player can meet, or FFU art or the code that draws it (w2895, w3097). Docs, tools and
+    tests of existing behaviour need no section."""
+    return any(f.startswith("Assets/") and not NOT_GAME_CODE.search(f) for f in files) or bool(ffu_art_files(files))
 
 
 def shared_assets(files: list[str] | None) -> list[str]:
@@ -867,7 +880,7 @@ def ffu_art_problems(body: str, art_files: list[str]) -> list[str]:
     where = ", ".join(art_files[:3])
     section = evidence_section(body or "")
     if section is None:
-        return [f"art changed ({where}) and no '## Evidence' section: it needs a 'Reference capture:' and an 'Art "
+        return [f"art or the code that draws it changed ({where}) and no '## Evidence' section: it needs a 'Reference capture:' and an 'Art "
                 "language:' line (checklists/visual.md 5o, w2895)"]
     found = []
     capture = field(section, "Reference capture")
@@ -1559,7 +1572,7 @@ def balance_problems(body: str, files: list[str] | None) -> list[str]:
 def check(body: str, files: list[str] | None = None, brief: str | None = None,
           changes: dict | None = None) -> tuple[list[str], list[str]]:
     """Every reason the evidence is not ready (empty = PASS), and notes that do not fail it."""
-    ffu_art = [f for f in files or [] if FFU_ART.search(f)]
+    ffu_art = ffu_art_files(files or [])
     if ffu_art and not any(f.startswith("Assets/") for f in files or []):
         # FFU's pull requests carry their own evidence; the art lines are what this script holds them to (w2895).
         return ffu_art_problems(body, ffu_art), []
