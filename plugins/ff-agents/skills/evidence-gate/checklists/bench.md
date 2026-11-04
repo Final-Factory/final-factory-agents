@@ -69,6 +69,13 @@ Mechanics: the game repo's `Documentation/Bench-Lock.md`.
       add the flag (off by default, zero cost without it) before planning A/B rounds.
 - [ ] **A short plan.** The fewest rounds that can answer the question (lothsahn: "Get them all to shorten their plans a
       lot"); the round count is a cap, never the plan.
+- [ ] **Size the biggest leg with a short probe before the series** (w3094, 2026-11-04, m3). A briefed plan of 12
+      `ffu-headless phases` runs came to ~21 h of exclusive bench: a 50-tick probe measured trident:20000 at 11.1 s a
+      tick, so one 2000-tick run was 6 h or more. Probe the biggest leg (a few ticks or seconds), multiply it out, and
+      when the plan will not fit a sitting, report the probe with a reduced plan to the requester before starting it
+      (w2895's answer: 100 ticks of the big camps, 3 rounds only of the small ones). Run a leg over ~10 min detached
+      (`nohup bash leg.sh &`) with a `wake_me`, never as a Claude Code `run_in_background` Bash job: that job is killed
+      at its time limit (2 h at most) and its child with it, which lost a 2 h leg here.
 - [ ] **Early stop on, and a decision on enough signal.** The probe scripts' `ab_stop.py` stop is left on, or the
       report says why `EARLY_STOP=0`. Once the data shows the answer beyond the noise, stop and decide (lothsahn: "if
       they have sufficient signal, just make a decision"), with the measured numbers and their spread in the report.
