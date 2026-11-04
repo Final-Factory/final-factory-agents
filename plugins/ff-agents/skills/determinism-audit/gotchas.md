@@ -791,6 +791,11 @@ w2133 (2026-10-25, the client of a LothDesktop-host pair for PR #2507) lost abou
     `mono` at 8.6 GB, with biscuit's 7 GB swap already full). The third try, run as `taskset -c 0-5 bash
     scripts/audit/run_build_multiplayer_audit.sh --build-only`, succeeded; it may also have reused the earlier passes'
     Burst output, so it is one data point, not a proven fix. Move the stale `Temp/UnityLockfile` aside between tries.
+  - Second data point (w3048, 2026-11-04, the biscuit client of an m5 host, PR #3149): three OOM kills in a row in
+    Burst AOT (the burst `mono` at 7.3-8.5 GB plus Unity at ~10 GB, swap full, another sandbox's player up);
+    `MONO_GC_PARAMS="nursery-size=64m,soft-heap-limit=4g"` did not help (burst still peaked at 7.3 GB);
+    `taskset -c 0-3` then built in about a minute. **On biscuit, start the first build with `taskset -c 0-3`** and
+    `ff-leftovers end` the orphan burst `mono` after any OOM kill.
   - A Mover pack (a hover-targeted press on a structure) needs a windowed player: the host found a headless
     `-batchmode -nographics` player packed nothing (hover comes from `MouseRaycastSystem`). No Xvfb or window manager is
     installed on biscuit; unpack them without root into `$TMPDIR`: `apt download xvfb openbox libobrender32 libobt2
