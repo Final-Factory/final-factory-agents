@@ -425,6 +425,27 @@ class StyleTest(unittest.TestCase):
         summaries, _ = ul.style(None, hud(), "InventoryPanel", touched_fragments=["InventoryPanel"])
         self.assertEqual(summaries, [])
 
+    def test_a_touched_small_panel_is_measured_against_its_own_look(self):
+        # w3050: the craft queue's slots are each under 2 % of the screen, so `--touched CraftQueuePanels` said "no
+        # --touched panel is open", and `--ref CraftQueuePanels` found no reference.
+        def queue(*icons):
+            # one 40x40 slot and its item icons; clones share a path, so the census keeps the last icon drawn
+            c = hud()
+            c["elements"] += [el("CraftQueuePanels/Content/CraftButton(Clone)/Panel", [10, 700, 50, 740], sprite="icon-button")]
+            c["elements"] += [el("CraftQueuePanels/Content/CraftButton(Clone)/Icon", [14 + 50 * i, 704, 46 + 50 * i, 736],
+                                 sprite=icon) for i, icon in enumerate(icons)]
+            return c
+        # the queue's items came in another order: the last icon differs, but the before census draws it there too
+        summaries, failures = ul.style(queue("Gear", "Plate"), queue("Plate", "Gear"), "CraftQueuePanels",
+                                       touched_fragments=["CraftQueuePanels"])
+        self.assertTrue(any("CraftButton(Clone)/Panel (touched) vs Content/CraftButton(Clone)/Panel: delta E 0.0" in s
+                            for s in summaries), summaries)
+        self.assertTrue(any("drawn at this path before too: content" in s for s in summaries), summaries)
+        self.assertEqual(failures, [])
+        # art the before census never drew at that path is a new look
+        _, failures = ul.style(queue("Wire"), queue("Gear"), "CraftQueuePanels", touched_fragments=["CraftQueuePanels"])
+        self.assertTrue(any("art 'Gear' vs 'Wire'" in f for f in failures), failures)
+
     def test_tint_colour_and_alpha_on_the_same_art(self):
         after = hud()
         after["elements"].append(el("BlueprintPanelChild", [392, 68, 850, 444], color="#0D1724FF", alpha=0.98))

@@ -1245,7 +1245,10 @@ def changed_panels(before: dict | None, after: dict, touched: list[str] | None =
     """Panels that are new or changed colour, alpha or art since `before`, plus every panel whose path contains one
     of the `touched` fragments (the windows the change is about), changed or not."""
     pa = panels(after)
-    forced = [dict(e, why="touched") for p, e in pa.items() if any(t.lower() in p.lower() for t in touched or [])]
+    # A panel the change names is measured whatever its size (w3050: the craft queue's slots are each under the 2 %
+    # share, so `--touched CraftQueuePanels` printed "no --touched panel is open" with the queue on screen).
+    forced = [dict(e, why="touched") for p, e in panels(after, min_share=0).items()
+              if any(t.lower() in p.lower() for t in touched or [])]
     if before is None:
         return forced
     pb = panels(before)
@@ -1263,8 +1266,9 @@ def changed_panels(before: dict | None, after: dict, touched: list[str] | None =
 
 
 def reference(census: dict, fragment: str):
-    """The largest panel whose path contains the fragment."""
-    cands = [e for e in panels(census, 0.005).values() if fragment.lower() in e["path"].lower()]
+    """The largest panel whose path contains the fragment, at any size (w3050: the craft queue's slots are under 0.5 % of
+    the screen, so `--ref CraftQueuePanels` found nothing; the largest match is the same whenever a big one exists)."""
+    cands = [e for e in panels(census, 0).values() if fragment.lower() in e["path"].lower()]
     return max(cands, key=lambda e: area(e.get("visible") or e["rect"])) if cands else None
 
 
@@ -1309,12 +1313,21 @@ def style(before: dict | None, after: dict, ref_fragment: str, shot=None, ref_sh
         return ["no panel changed colour, alpha or art" + (" and no --touched panel is open" if touched_fragments else "")], []
     if ref is None:
         return [], [f"no reference panel matching '{ref_fragment}' in the census: open the classic panel too, or pass --ref"]
+    base = ref
+    # A touched panel that did not change is measured against its own look in the reference census (w3050: with
+    # `--ref CraftQueuePanels` every slot image was compared with the queue's largest image, its progress fill,
+    # delta E 52.6 for the same art as master).
+    own = panels(ref_from, min_share=0) if ref_from is not after else {}
+    # Clones share a path, so a list's item icons differ path for path: art the reference census already draws at that
+    # path is content, not a new look.
+    drawn = {(x["path"], x.get("sprite") or "") for x in ref_from.get("elements", [])} if own else set()
     for e in touched:
         # The reference itself, in the same census: nothing to compare. The same panel taken from the before (or
         # --ref-census) census is its own look on master, which is the reference a spacing or layout change wants
         # (w1418: `--touched Tooltip(Clone) --ref Tooltip(Clone)` printed "Style: nothing checked").
         if e["path"] == ref["path"] and ref_from is after:
             continue
+        ref = own.get(e["path"], base) if e["why"] == "touched" else base
         name = short(e["path"])
         da = e.get("alpha", 1) - ref.get("alpha", 1)
         if shot and ref_shot:
@@ -1333,7 +1346,9 @@ def style(before: dict | None, after: dict, ref_fragment: str, shot=None, ref_sh
         if art == "same art" and abs(da) > max_alpha:
             failures.append(f"{name}: alpha {e.get('alpha', 1):.2f} against the reference's {ref.get('alpha', 1):.2f} "
                             f"({'more opaque' if da > 0 else 'more see-through'} than the game's panels)")
-        if art != "same art" and not (shot and ref_shot):
+        if art != "same art" and ref is not base and (e["path"], e.get("sprite") or "") in drawn:
+            summaries[-1] += " (that art is drawn at this path before too: content)"
+        elif art != "same art" and not (shot and ref_shot):
             failures.append(f"{name}: {art}: compare the screenshots (--shot/--ref-shot) or reuse the reference's sprite")
     return summaries, failures
 

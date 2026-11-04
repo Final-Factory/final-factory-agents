@@ -191,8 +191,10 @@ def evidence_section(body: str, heading: str = "Evidence") -> str | None:
 
 
 def field(section: str, name: str) -> tuple[str, str] | None:
-    """`Name (who): value` on a line of its own -> (who, value); None when the line is missing."""
-    found = re.search(rf"^\s*{re.escape(name)}\s*(?:\(([^)]*)\))?\s*:\s*(.*)$", section, re.IGNORECASE | re.MULTILINE)
+    """`Name (who): value` on a line of its own, bare or as a `- ` / `* ` list item -> (who, value); None when the line
+    is missing. w3050: a body that bulleted every field (`- Content: ...`) read as missing all of them."""
+    found = re.search(rf"^\s*(?:[-*]\s+)?{re.escape(name)}\s*(?:\(([^)]*)\))?\s*:\s*(.*)$", section,
+                      re.IGNORECASE | re.MULTILINE)
     return ((found.group(1) or "").strip(), found.group(2).strip()) if found else None
 
 
@@ -1577,12 +1579,19 @@ def check(body: str, files: list[str] | None = None, brief: str | None = None,
     unlabelled = 0
     for claim, basis in rows:
         label = basis.split(":")[0].strip()
-        unlabelled += label not in BASES and label != "GUESS"
-        if label == "GUESS":
+        lower_case = label not in BASES and label.upper() in BASES
+        unlabelled += label not in BASES and label != "GUESS" and not lower_case
+        if lower_case:
+            # w3050: "Measured: ..." rows were told only "the basis starts with MEASURED or SOURCED" and read as a
+            # measurement table
+            problems.append(f"'{claim}': the basis label goes in capitals: '{label.upper()}: <how or where>', "
+                            f"not '{label}:'")
+        elif label == "GUESS":
             problems.append(f"'{claim}' rests on a guess: verify it, or move it to 'Not verified' and take it out of "
                             f"the title and TL;DR")
         elif label not in BASES:
-            problems.append(f"'{claim}': the basis starts with MEASURED or SOURCED, then says how or where")
+            problems.append(f"'{claim}': the basis starts with MEASURED or SOURCED in capitals and a colon, then says "
+                            f"how or where ('MEASURED: ui_layout.py check at 1280x720'), not '{label[:30]}'")
         elif not has_basis(basis):
             problems.append(f"'{claim}': {label} needs what was measured or the source, after a colon")
     if unlabelled >= 2:

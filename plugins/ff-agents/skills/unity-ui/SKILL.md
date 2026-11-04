@@ -139,6 +139,14 @@ census (`<shot>.json`: small, clipped, off-screen and overlapping text, covered 
   failed ("toggle ran but the panel stayed closed"), the `I` key opened it in the docked layout only, and selecting a far Assembler selected
   nothing: six tours (before and after, three sizes) went by before a **Cargo Hold selected, an Assembler hovered** gave `0 broken, 0 not
   shown` at 1920x1080, 1280x800 and docked. Start from the game repo's `specs/w1064-craft-queue-grouping/make_station_tour.py`. In the docked layout the game hides the hover card while a docked window overlaps its place (`HoverCardFit.Covered`), so a docked census with a building selected counts it `covered by a docked window by design`, not `not shown`, when an undocked census of the same `pins` run measures it (w2185). With the inventory rail up in the classic layout (toggle `inventory-rail`), the card stands left of the rail and hides under Crafting or a building's window beside it: such a census counts it `covered by a window by design` when another census of the run shows it there, a short card under a building's window (w2651).
+- **The station tour on a Mac, and a lane that cannot pin (w3050).** `run_station_tour.sh` is Windows-only: it calls `timeout`, which macOS
+  lacks. On a Mac run the game repo's `specs/w1064-craft-queue-grouping/run_station_tour_mac.sh <player> [out]`, which wraps each launch in
+  `perl -e 'alarm shift; exec @ARGV' 900`. For a new game with no quit save it passes `-ffAutomationRole solo -ffAutomationSeed w881
+  -ffSoloObjectives HandHoldy`. `-ffAutomationRole solo` beside `-ffSoloNewGame` hangs on "Generating map", and the tour still says 0
+  failures, so check `tour.log` reached its last step. The chat lane (`deck_lane.py UI-w2975-chat-station-info`) has 3 standing broken
+  Station Info pins, no Player Inventory and no docked leg, so a UI PR on that lane takes its `Pinned:` line from this tour. A small touched
+  piece (one craft-queue slot) is measured by `ui_layout.py check --touched <it> --ref <it>`, against its own look before
+  (evidence-gate, [lesson](../evidence-gate/lessons/verify-ui-with-full-content-like-a-player.md#a-tours-0-failures-is-not-a-census-read-its-log-and-take-the-pins-from-the-station-tour-w3050-2026-11-04)).
 - **A tour that ran `ffauto:console.run` has the dev console open over the bottom-left HUD (w1064).** A `record` clip then shows the console, not the
   queue or panel. Take a `shot` first (it closes the console); the frames of a tour clip at 1920x1080 ran at about 75 fps, so check
   `frames.txt` before calling a clip real-rate. `make_tour.py --clip` in the same folder does it.

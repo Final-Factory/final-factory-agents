@@ -85,6 +85,17 @@ class CheckTest(unittest.TestCase):
         body = edit(GOOD, "MEASURED: stepped frames 118-190 of the built-player clip", "MEASURED")
         self.assertFails(body, "MEASURED needs what was measured or the source")
 
+    def test_a_lower_case_basis_says_capitals(self):
+        # w3050: "Measured: the lane's censuses" read as unlabelled with no word on what was wrong
+        body = edit(GOOD, "MEASURED: stepped frames 118-190 of the built-player clip", "Measured: stepped frames 118-190")
+        self.assertFails(body, "the basis label goes in capitals: 'MEASURED: <how or where>', not 'Measured:'")
+
+    def test_a_bulleted_field_is_read(self):
+        # w3050: a body that wrote every field as a `- ` list item read as missing all of them
+        self.assertEqual(pe.field("- Content: measured, a full queue", "Content"), ("", "measured, a full queue"))
+        self.assertEqual(pe.field("* Intended look (ben): \"wrap\"", "Intended look"), ("ben", '"wrap"'))
+        self.assertEqual(pe.field("Content: x", "Content"), ("", "x"))
+
     def test_a_measurement_table_in_the_section_is_named(self):
         # w1648: a before/after table inside ## Evidence was read as claims, one "basis" problem per row
         table = "| leg | fps | CPU ms a second |\n|---|---|---|\n| before | 62 | 2530 |\n| after | 66 | 2357 |\n"

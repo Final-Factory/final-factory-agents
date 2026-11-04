@@ -235,6 +235,10 @@ screen; on desktop three labels stopped fitting, the two windows left their defa
       Station Info and the hover card top left since w772, so every before/after diff after it saw them "unmoved". Paste
       its `Pinned:` line; a broken pin is put back. A pin changes only when the person asks, in a harness PR with their
       words.
+    - A lane that cannot show every pin (`UI-w2975-chat-station-info`: 3 standing broken Station Info pins, no Player
+      Inventory, no docked leg) does not give the `Pinned:` line: run the station tour on both builds too
+      (`specs/w1064-craft-queue-grouping/run_station_tour_mac.sh` on a Mac), and before you read its 0 failures, check
+      `tour.log` reached its last step ([lesson](../lessons/verify-ui-with-full-content-like-a-player.md#a-tours-0-failures-is-not-a-census-read-its-log-and-take-the-pins-from-the-station-tour-w3050-2026-11-04)).
     - Give `pr_evidence.py` the brief: `--brief <read_work's text saved to a file>`, or `Brief (Ben): "..."` lines in the
       PR with the person's words. It fails a quote that is not in the brief's quotations (#1392 quoted "Station Grid
       Information on the left of center", which nobody said), a Deck quote on a desktop line, a pinned element whose quote
