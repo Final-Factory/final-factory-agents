@@ -110,7 +110,11 @@ never rewritten (`tools/check_snapshot_compat.sh BASE_REF` holds it in CI). No t
   lothdesktop. Peers whose address is not known yet get `127.0.0.1:0` (never dialled), and the test tells them the
   address afterwards on stdin (`peer ID ADDR`, `replica ADDR`; ffu #225). A restarted process takes a new port.
   Proof: a planted holder that binds the port between the pick and the child's bind fails before and passes after
-  (#225 holds every restarted replica's old port), plus the loop of 50 on Windows.
+  (#225 holds every restarted replica's old port), plus the loop of 50 on Windows. A general holder: a hook in the
+  test's spawn that binds every `127.0.0.1:N` (N not 0) in the child's arguments that nothing holds yet. An address a
+  live process holds fails to bind and is skipped, so it takes only a picked-and-dropped port (w3102: it held 5 and
+  failed all 3 of main's failover tests, held none on the port-0 version). A standby reports its held peer port as
+  `peer_listen` in its start line (ffu #233), so `--peer-listen 127.0.0.1:0` works there too.
 - Check before a test PR merges: `grep -rn 'bind("127.0.0.1:0")' crates/*/tests crates/*/src` and read each hit. A
   listener dropped before its port goes into another process's arguments is the race above. A listener the test
   keeps, or a dead address that is meant to refuse, is fine.
