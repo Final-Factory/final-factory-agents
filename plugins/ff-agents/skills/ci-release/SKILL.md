@@ -294,6 +294,31 @@ parent, the green commit plus the bump, not master's tip. **Merge a B bump with 
 squash or rebase it, never merge master into it (versionBump then fails and nothing is built). `release-status.py`
 prints `Built from: <sha>` for it. The game repo's `Documentation/Release-Lanes.md`, "A or B".
 
+**Before `ff-pr merge`, give the bump PR a `Request:` line and an `## Evidence` section** (w3047, 1.0.0.38, PR #3188):
+`ff-pr merge` runs `pr_evidence.py` on every FinalFactory PR since w3088 and refused the bump three times, first for no
+`## Evidence`, then for no `Kind:` and no `Not verified:` line, and because `FFVersion.cs` counts as simulation code.
+`trigger-ci-release.sh --request wNNN` did not write a `Request:` line into the body either. Append this to the body
+(`gh pr view <n> --json body -q .body > f`, add, `gh pr edit <n> --body-file f`), filled in:
+
+```markdown
+Request: wNNN
+
+## Evidence
+
+Kind: other
+
+| Claim | Rests on |
+|---|---|
+| The bump sits on a fully green commit | MEASURED: `scripts/release/last_green.py` named <sha> fully green (master batch run <id>) |
+| <version> is the next version | SOURCED: FFVersion.cs history on master, last bump <previous> (#<pr>) |
+| No simulation state changes | MEASURED: the diff changes only `FinalFactoryVersion`, `ReleasedUtc`, `bundleVersion` and the notes file |
+| The notes name only what a player can get | MEASURED: `release_notes_lint.py` and `release_notes_check.py` over <range> exit 0 |
+
+Not verified: nothing beyond the release run itself, which FFBox runs after the merge.
+
+Built player: no: a version bump; FFBox builds the players from the merge.
+```
+
 **Right before `gh pr merge`, read what master took since the bump** (A only: a B build ships none of it; w1388, Build 107: #1814, a player fix,
 and #1812, a toggled change, merged while the bump PR's CI ran). The merge commit ships them, so
 `git log --first-parent --format='%h %s' <bump base>..origin/master`, and a player-facing one goes into
