@@ -124,7 +124,13 @@ never rewritten (`tools/check_snapshot_compat.sh BASE_REF` holds it in CI). No t
   usage of each socket address`). Main's `rolling_deploy` and `sim_switch` passed 18 of 50 Windows runs (probe ffu
   #230); with `deploy::ControlConn` (one connection per shard; the control port answers every line on it) BEAST passed
   40 of 40 (ffu #229, measured). A 10048 on a `connect`, not a `bind`, is this. Check: `grep -rn 'deploy::request'
-  crates/*/tests` finds none inside a loop.
+  crates/*/tests` finds none inside a loop. One old `deploy_ops` run left 2280 TIME_WAIT sockets on its 3 control
+  ports in 30 s, and 0 with `ControlConn` (w3101, measured by diffing `netstat -an | grep TIME_WAIT` before and after
+  a run, grouped by remote address). `deploy::tests::a_poll_holds_one_connection_however_many_requests_it_sends`
+  asserts one accepted connection (`Control::connections()`) for 2000 polls (ffu #235).
+- Before writing an ffu fix, list the open PRs on the same files (`gh pr list -R Final-Factory/ffu --state open
+  --json number,title,files`): w3096 and w3101 each wrote the same kept-connection helper at the same time, and the
+  second had to rebuild on the first (ffu #229, #235).
 - Before blaming your change for a Windows flake, run the same probe on unchanged `main` (a probe PR with main's code
   and the same loop): w3096's #229 looked like it failed 31 of 50, and main failed 32 of 50 the same way.
 - `tools/sim_switch.sh` builds sim build A from the working tree, but its planted build B from a `git worktree` of
