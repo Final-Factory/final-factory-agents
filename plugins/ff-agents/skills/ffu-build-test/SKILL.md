@@ -118,6 +118,15 @@ never rewritten (`tools/check_snapshot_compat.sh BASE_REF` holds it in CI). No t
 - Check before a test PR merges: `grep -rn 'bind("127.0.0.1:0")' crates/*/tests crates/*/src` and read each hit. A
   listener dropped before its port goes into another process's arguments is the race above. A listener the test
   keeps, or a dead address that is meant to refuse, is fine.
+- **A test polls a process on one kept connection, never a new connection per poll** (w3096). Every closed
+  connection holds its client port in TIME_WAIT for minutes, and the runners on one machine share its ephemeral ports:
+  status polls every 5-20 ms ran BEAST out, so `connect` failed with `os error 10048` (`--connect 127.0.0.1:N: Only one
+  usage of each socket address`). Main's `rolling_deploy` and `sim_switch` passed 18 of 50 Windows runs (probe ffu
+  #230); with `deploy::ControlConn` (one connection per shard; the control port answers every line on it) BEAST passed
+  40 of 40 (ffu #229, measured). A 10048 on a `connect`, not a `bind`, is this. Check: `grep -rn 'deploy::request'
+  crates/*/tests` finds none inside a loop.
+- Before blaming your change for a Windows flake, run the same probe on unchanged `main` (a probe PR with main's code
+  and the same loop): w3096's #229 looked like it failed 31 of 50, and main failed 32 of 50 the same way.
 - `tools/sim_switch.sh` builds sim build A from the working tree, but its planted build B from a `git worktree` of
   `HEAD` (`sim_switch.sh:49`). An uncommitted merge or edit therefore reaches A and not B, so commit before you run it
   (c11bb9a1, w3086).
