@@ -33,7 +33,34 @@ look to choose from, never the model: the game's look is the low-poly Blender mo
 - Never raise the cap yourself. Over it, or a balance under $1: stop and ask the person (money is theirs).
 - Make what the request asks for (3 to 4 looks is the usual ask), a couple of rounds on the one picked, not twenty.
 
-## Which mode (measured on the Suture test, w2213, 2026-10-25)
+## Which mode
+
+### Game buildings: paint over a palette block-out (the default; measured, w3026 for w2992, 2026-11-04)
+
+Measured on the Dyson Hub concepts (w3026, for w2992: a 4x4 ground building that takes in swarm power and routes it out):
+
+1. **Block it out in Blender in the game palette with the glow already in it.** Flat-shaded primitives in the
+   building's two main colours, cyan emission at about 1.1 (it keeps the cyan hue through the Standard view
+   transform), a dark slate world, an orthographic camera for the three-quarter and the true top-down view. Add bloom
+   afterwards in PIL (a blurred copy of the bright pixels, added back), not Blender's own bloom.
+2. **Then `ultra` image-to-image over it:** `--mode ultra --image <block-out> --strength 0.45` to `0.58`, a prompt of
+   about 120 words (role, parts, which colour goes where, the glow, the view), and
+   `--negative "spikes, thorns, needles, text, letters, logo, orange, amber, white background"`.
+   This kept the layout, the palette, the beam and a true top-down view in all 8 finals (4 looks x 2 views).
+
+| Tried on w3026 | What it gave (measured) |
+|---|---|
+| `style` with an in-game scene still as the style image (`style-ref-shell.png`, `--strength` 0.35) | 8 of 8 failed: they copied the still's scene (desert ground, red cloud sky, a town of buildings) and ignored the prompt's beam and top-down view. Masking the still to the palette on dark slate fixed the colours, not the shape |
+| `ultra`, text only, short prompt | got the beam and the four-way routing, but lost the coral |
+| `structure` over the block-out, control strength 0.6 and 0.9 | invented its own layout and dropped the glow |
+| `ultra` over the block-out at 0.68 | the shapes drift: the well lost its bowl, the anchor's top view lost its plinth |
+| `ultra` over the block-out at 0.45 to 0.5 | keeps everything, but looks like a lightly painted render: tell the person these are direction picks |
+| `ultra` over the block-out at 0.5 to 0.58 | **the pick**: painted, and the layout, palette and glow hold |
+
+Cost: 42 calls and $2.86 for 4 looks in both views over two critic rounds, most of it on the failed modes
+before the recipe (measured, w3026). Each final is 8 credits.
+
+### Ships and units: start from a finished neighbour (measured on the Suture test, w2213, 2026-10-25)
 
 | Mode | Input | What it gave |
 |---|---|---|
