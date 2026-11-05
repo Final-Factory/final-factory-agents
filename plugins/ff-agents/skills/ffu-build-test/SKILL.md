@@ -133,6 +133,12 @@ never rewritten (`tools/check_snapshot_compat.sh BASE_REF` holds it in CI). No t
   ports in 30 s, and 0 with `ControlConn` (w3101, measured by diffing `netstat -an | grep TIME_WAIT` before and after
   a run, grouped by remote address). `deploy::tests::a_poll_holds_one_connection_however_many_requests_it_sends`
   asserts one accepted connection (`Control::connections()`) for 2000 polls (ffu #235).
+- **A test's scratch folder or file comes from `tempfile`**, held until the test ends
+  (`let guard = tempfile::Builder::new().prefix("ffu-<what>-").tempdir().unwrap(); let dir = guard.path();`; a helper
+  returns the `TempDir`, not its path), never a hand-made `std::env::temp_dir().join(...)`: those were never removed and
+  left about 18,500 `ffu-*` folders (11.3 GB) in biscuit's `/tmp`, which turned every biscuit job red (w3118, w3119).
+  `tools/check_temp_leaks.sh <command>` runs every `cargo test` step in CI on an empty temp folder and fails on anything
+  left there; run your test through it locally too (`tools/check_temp_leaks.sh cargo test -p <crate>`; ffu #248).
 - Before writing an ffu fix, list the open PRs on the same files (`gh pr list -R Final-Factory/ffu --state open
   --json number,title,files`): w3096 and w3101 each wrote the same kept-connection helper at the same time, and the
   second had to rebuild on the first (ffu #229, #235).
