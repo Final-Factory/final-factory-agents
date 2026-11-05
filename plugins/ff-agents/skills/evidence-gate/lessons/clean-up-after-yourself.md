@@ -321,6 +321,9 @@ properly cleaned up so we arent wasting system resources on our machines after w
   a session started, 2 min after its process stops once no request waits for it, 10 min after it stops while one still
   does, and never before a pending check-in is due plus 10 min; a game player nobody owns 10 min after it is first
   seen so. That is a safety net, not the teardown: the report still says what you ended.
+- **Never put `ff-leftovers end` in a leg or queue script that other background legs of yours run beside** (w3125,
+  2026-11-05): it ends everything your session started, your own background queue and later legs' players too. Run it
+  once, at the end, after every background run has finished.
 - `ff-leftovers` comes with the FF Factory daemon (w1196). On a machine whose daemon predates it (the command is not
   found), end your own players by pid: `player_slots.py status` lists the leases, and `kill <pid>` of a player passes
   the hook (it refuses a kill whose command names Unity, node, claude or PowerShell).

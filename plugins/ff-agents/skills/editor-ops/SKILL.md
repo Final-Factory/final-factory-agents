@@ -557,6 +557,8 @@ slots").
   list only the files you meant to change. The same two files are what `build_player.sh` means by "refused: tracked changes" (exit 66) when you start
   a build right after stopping the editor (w1403, beast slot4, 2026-10-16, twice): check `git diff --stat`, and when it is only
   their re-serialization (the localization table's long `m_Key` lines re-wrapped), `git checkout --` them and start again.
+  A sandbox's editor also rewrites five `.mat` files just by loading the project (`DysonBotMapMaterial`, `DysonBotPanel`,
+  `LanceDark`, `LancePink`, `LanceViolet`; w3125, BEAST slot1, 2026-11-05): `git checkout --` them before the build, never commit them.
 - An editor you open by hand beside your own (the clone editor of a paired run, via
   `launch-editor.sh`) needs a held slot: `unity-slot acquire --count 1 --label "clone editor"
   --project <clone path>`, then `unity-slot release <id>` once it is closed (`--ttl`, default 120
