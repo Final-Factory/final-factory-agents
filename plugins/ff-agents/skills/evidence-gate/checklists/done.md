@@ -41,7 +41,11 @@ holds, or the report says what is left instead of DONE.
    what. **No `ff-leftovers end` until `grep -c FF_LEFTOVERS_CALLERS "$(command -v ff-leftovers)"` prints 1 or more**:
    before FF Factory's w1222 fix it ended the worker's own Claude process on Windows; end what `list` shows by pid
    ([not `end` before the w1222 fix](../lessons/clean-up-after-yourself.md#not-ff-leftovers-end-before-the-w1222-fix)). Every player you started had a quit timer (`-ffSoloQuitAfterSeconds`). A run you keep going while you
-   are stopped has a `wake_me` check-in set for it. Biscuit, 2026-10-13: two headless players of closed requests (w1072,
+   are stopped has a `wake_me` check-in set for it, due when it ends: that check-in is what keeps it from the leftover
+   sweep. Your own `blocked_on` holds it, and so does a dispatcher's block of your request when you are its one worker or
+   it names you in `session_ids`; a held one still keeps your run until it is due (w3120: before that fix w2895's block on
+   another leg's CI cancelled 738652d6's soak check-in, and the sweep killed the 24 h soak 12 h in). A dispatcher blocking
+   a request with several workers names the workers the block is about in `session_ids`. Biscuit, 2026-10-13: two headless players of closed requests (w1072,
    w1025) ran 27 h and 34 h on about 6 cores at 100% fans, and nobody's report had said they were still up
    ([processes you started end before DONE](../lessons/clean-up-after-yourself.md#processes-you-started-end-before-done-w1196-w1197)).
 5. **Labels and ids.** Each number and recommendation is labelled measured, sourced or guess, and
