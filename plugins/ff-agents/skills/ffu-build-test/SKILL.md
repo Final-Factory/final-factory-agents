@@ -72,6 +72,14 @@ never rewritten (`tools/check_snapshot_compat.sh BASE_REF` holds it in CI). No t
   `Request: wNNN` (or `Part of: wNNN`) in the body.
 - CI runs on ffu's own runners, one job at a time each: `ffu-linux` (biscuit), `ffu-windows` (BEAST), `ffu-macos`
   (the M3). A job waits while its machine is off; a queue of several minutes is normal.
+- **A run whose only jobs left are `ffu-macos` ones, queued for over half an hour, means the M3 is off**: check
+  `gh api repos/Final-Factory/ffu/actions/runners` (ffu-m3, ffu-m3-2 `offline`) and the portal journal (grep `m3`)
+  before you wait on it. ffu's main has no branch protection. A PR that touches no `crates/ffu-sim` and no platform
+  `cfg` merges on green Linux and Windows legs, and says so: "the macOS legs never ran" (w2895, 2026-11-05: M3 offline
+  from 11:57Z, ffu #222 queued 5 h). Never add a runner on m5 (Ben's own Mac) without asking him.
+- **A Windows test job red with every test passed and `temp leak check: ... MSBuildTemp`** was the build, not a test:
+  SDL3's `-sys` crates build through cmake and MSBuild when a runner rebuilds its target. The test jobs build with
+  `cargo test ... --no-run` before `check_temp_leaks.sh` since ffu #249 (w2895); keep any new checked step that way.
 - Read CI by commit, not by `gh pr checks` (a vault token cannot read checks):
   `gh run list -R Final-Factory/ffu --commit <sha>` and, on red, `gh run view <id> -R Final-Factory/ffu --log-failed | tail -80`.
   To wait, use `blocked_on` with `ci:Final-Factory/ffu#<n>` and the head, never a poll loop.
