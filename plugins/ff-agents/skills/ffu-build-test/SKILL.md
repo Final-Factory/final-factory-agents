@@ -145,6 +145,23 @@ never rewritten (`tools/check_snapshot_compat.sh BASE_REF` holds it in CI). No t
   (`cargo test -p <crate> --test <file>`) in N matrix copies: they spread over `ffu-beast*` and `ffu-lothdesktop-*`.
   Set `timeout-minutes: 40`, because a lothdesktop runner took over 25 minutes for 10 peers rounds (w2895, #210).
   Close the probe PR without merging it.
+  - The lothdesktop runners carry the same labels as BEAST's (`self-hosted, Windows, X64, ffu-windows`), so 20 copies
+    can all land on BEAST's five runners. Use 40 copies to get lothdesktop runs (w3104: 40 copies gave lothdesktop 2 or
+    3 of them per round).
+  - A loop of runs inside one step under bash `-e` ends at the first failing `cargo test` or `grep` and prints
+    nothing about it: put `|| true` after both.
+  - Failures on several BEAST runners at the same wall-clock millisecond are a stall of the whole machine, not the
+    test. Check `portal_logs` (journal, grep `beast`) for a daemon update or a leftover-process kill at that time
+    (w3104: three runs' A shards were released at the same moment).
+- `ffu-server follow` reads with a **5 s** timeout (`tools.rs`, `follow`), not the 30 s `client.rs` sets at connect. A
+  test with followers fails on any client silence over 5 s, and the timeout is never the fix. Find the step that
+  makes the silence (w3104, ffu #244):
+  - A connect to a refused loopback port holds about 2 s on Windows. So code that dials an address it looked up keeps
+    looking the route up while it dials, and drops the dial once the route moves (`ffu-gateway` `open_watching`).
+  - A test acting as the operator starts the shards at once, not one after another, while clients wait
+    (`sim_switch.rs` `start_all`). Four starts one after another took 4.5 s on a loaded lothdesktop runner.
+  - Plant a slow start by setting `FFU_SWITCH_TO` to a `.cmd` wrapper (`@echo off`, `ping -n 3 127.0.0.1 >nul`, then
+    `"<ffu-server.exe>" %*`).
 
 ## 5. Timing claims
 
