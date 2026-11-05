@@ -658,3 +658,24 @@ its logic in the `execute_code` snippet.) It measures *editor-resident* memory (
 editor-only objects), so it is for **relative before/after comparison in the same editor
 state**, not absolute player numbers. This lets Claude measure memory changes itself instead
 of asking the user to capture snapshots.
+
+## Hunting native leaks and heap corruption in the editor (w3116)
+
+Unity's `-diag-*` switches are reachable in the editor through its diagnostic switches, set from `execute_code`
+by reflection:
+
+- `UnityEngine.Debug.GetDiagnosticSwitch(name)` (non-public static) returns the switch. Set its non-public
+  `persistentValue` property, not `value`: a runtime `value` does nothing. Then `mcp__machine__unity` restart.
+  Set it back to `false` and restart again once you are done.
+- `JobTempMemoryLeakValidation` (the editor's `-diag-job-temp-memory-leak-validation`): the "JobTempAlloc has
+  allocations that are more than the maximum lifespan of 4 frames old" warning then lists each allocation with
+  `state=OK/EXPIRED` and a stack. Group them by the first game (non-`UnityEngine.`/`Unity.Entities.`) Mono JIT frame.
+  At the title screen there are Unity-internal ones (BatchRendererGroup, CullScene, AllocateDrawCommandsJob) from the
+  editor's Step pumping: not game code. w3116 found `NetworkedReservedItemsRebuildSystem`'s undisposed TempJob array.
+- `ForceDebugAllocator` with `DebugAllocatorMode` 1 decommits freed memory, so a use-after-free or an overrun faults
+  at the write instead of corrupting the heap for a later free. Expect about twice the memory and a slower load.
+
+A test that pins a native leak: run the system once to warm its query caches, then `NativeLeakDetection.Mode =
+NativeLeakDetectionMode.Enabled`, `UnsafeUtility.ForgiveLeaks()`, run it again, `UnsafeUtility.CheckForLeaks()` must be
+0; forgive and restore the mode in `finally` (game repo
+`Assets/Tests/ConstructionBots/NetworkedReservedItemsRebuildLeakTest.cs`).
