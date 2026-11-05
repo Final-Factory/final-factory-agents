@@ -31,6 +31,12 @@ an assert loosened, a scenario moved; #2971 after #2923) shows the outcome measu
 out before it merges
 ([lesson](../lessons/measure-against-what-the-player-sees.md#a-check-proves-the-outcome-in-every-state-on-the-claimed-path-w2976-2026-11-03)).
 
+**Code that hands a person's words to "the" worker of a request has a test with two workers on it** (w3117, 2026-11-05):
+on w2895 Ben's note named worker aa60d124 and ffu #202, and FF Factory's update_work sent it to b4440e1e as the answer to
+the [needs you] it held, because the request had one open question; b4440e1e took it as a correction and asked Ben again.
+Route by what the words name (a session id, a PR), never by which worker holds the open question, and say what happens
+to words that name nobody (ff-factory#827).
+
 **Compile the merged tree before you wait on CI** (w1555, 2026-10-20, PR #2068): after `git merge origin/master`, or
 `ff-pr push`, which merges it in again at push time, list what the merge brought (`git diff --name-only HEAD^1 HEAD --
 '*.cs'`). If any `.cs` changed, compile and run your touched tests on the merged head before you push or wait: an API
