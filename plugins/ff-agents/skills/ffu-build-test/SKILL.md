@@ -90,6 +90,23 @@ never rewritten (`tools/check_snapshot_compat.sh BASE_REF` holds it in CI). No t
 - **A Windows test job red with every test passed and `temp leak check: ... MSBuildTemp`** was the build, not a test:
   SDL3's `-sys` crates build through cmake and MSBuild when a runner rebuilds its target. The test jobs build with
   `cargo test ... --no-run` before `check_temp_leaks.sh` since ffu #249 (w2895); keep any new checked step that way.
+- **A job red with "The runner has received a shutdown signal" or "lost communication with the server", and no step
+  failed, is the runner's machine, not a test** (w3152, ffu #286: biscuit dropped its portal link three times at
+  07:34-07:39Z on 2026-11-06; lothdesktop at 100% CPU lost ffu-lothdesktop-2). Check `portal_logs` (journal, grep the
+  machine), then re-run the failed jobs and say why: that is not a flaky-test rerun. `gh run rerun --failed` needs a
+  finished run; one held open by queued macOS legs needs `gh run cancel`, then `force-cancel` (above).
+- **CI time on biscuit is compiling, not testing** (w3152, measured): the old single Linux `check` job took 11.8 min
+  alone and 32.3 min with 4 copies at once, because every compile step slowed about 4x on the 16 cores while the tests
+  barely moved. So Linux runs `lint`, `check` and `check-release` as separate jobs on separate runners (ffu #286). A
+  new Linux step goes in the job whose build it reuses; never add a step that builds a new profile or feature set to
+  `check`.
+- **Never `cargo test -p <crate>` after the workspace `--all-features` build in one job**: Cargo resolves features
+  again for the packages one command selects and rebuilds much of the tree (2.5 min a step idle, 5 under load). Run the
+  binaries already built with `tools/run_built_tests.sh <package> [<target>] -- <libtest args>` (ffu #286).
+- **A line protocol on a raw `TcpStream` sets `set_nodelay(true)` on both ends and sends each line as one
+  `write_all`**: `writeln!` writes the line and its `\n` separately, and Linux's Nagle plus delayed ACK held each reply
+  about 82 ms. `deploy`'s 2000-poll test took 164 s on biscuit and 0.07 s on BEAST (w3152, measured; ffu #286). A test
+  that is fast on Windows and slow only on Linux, in a request-reply loop, is this first.
 - Read CI by commit, not by `gh pr checks` (a vault token cannot read checks):
   `gh run list -R Final-Factory/ffu --commit <sha>` and, on red, `gh run view <id> -R Final-Factory/ffu --log-failed | tail -80`.
   To wait, use `blocked_on` with `ci:Final-Factory/ffu#<n>` and the head, never a poll loop.
