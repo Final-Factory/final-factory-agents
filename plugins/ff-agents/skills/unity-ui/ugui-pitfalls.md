@@ -185,6 +185,11 @@ manual pages for these components are the source for the rules: "Auto Layout", "
   the label's font, material, size and colour has nothing to re-localize.
 - **Text size is known after a mesh update.** `ForceMeshUpdate()` before reading `textInfo`,
   `preferredHeight` or line counts on a text changed this frame.
+- **A key appended to a tooltip wraps alone (w3184).** The game's tooltip has a fixed width (`SimpleTooltip.FitWidthToText`
+  only shrinks), so "Open the Blueprint Panel [P]." put "[P]." alone on its last line, and a fresh ui-critic called it
+  UGLY. Join the key to the word before it with U+00A0: TMP's line breaker skips 0xA0 (`TMP_Text.cs`) and draws it with
+  the font's space when the font has no such glyph (`TMP_FontAsset.cs`). The game repo's
+  `QuickButtonsController.WithHotkey` does it for every `{0}` key format.
 
 ## Long languages and fixed-width panels (w812, Ben's German screenshots)
 
