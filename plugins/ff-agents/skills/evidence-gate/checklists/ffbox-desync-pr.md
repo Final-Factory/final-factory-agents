@@ -30,6 +30,14 @@ worker? Seems like we're wasting time." Since ffbox commits 1754f18 and 786f5ec:
   test` section names any test the container could not run (a play-mode test, a three-peer
   scenario): run it.
 
+- **Already in flight, and fixed in place** (w3250). Before you classify, also list the open and
+  merged `ffbox/*` and `ffbox-f/*` PRs (`gh pr list --state all --search "head:ffbox/" --limit 30`):
+  one that fixes the same cause closes this one as superseded with a link, and you end `RESOLVED:
+  superseded by #<m>`. A branch that is right but lacks something (the test, a file it should not
+  carry) is fixed in place: fetch it fresh, commit, `git push origin HEAD:<branch>` (never force),
+  merge. A branch of your own only for a wrong fix, closing FFBox's PR in the same step; #3262
+  re-made #3259 to drop assets FFBox had already dropped.
+
 - **Is it already on master?** Before you classify, check the branch is on origin
   (`git ls-remote origin '<branch>'`) and whether master already carries the fix: grep master for the
   diff's lines, and read the diagnosis's `base_sha.txt` (`fetch_ffbox_report` with `diagnosis`), since
