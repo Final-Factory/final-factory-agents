@@ -1,6 +1,6 @@
 ---
 name: say-done-per-request
-description: "A worker ends its report with `DONE: wNNN` when every step of that FF Factory request is finished, the steps after the merge included, and answers a wrap-up or an \"Is it done?\" with DONE or one line of what is left. Never DONE while something is left."
+description: "A superseded PR or request is closed with a note naming what covers it (SUPERSEDED line, w3248). A worker ends its report with `DONE: wNNN` when every step of that FF Factory request is finished, the steps after the merge included, and answers a wrap-up or an \"Is it done?\" with DONE or one line of what is left. Never DONE while something is left."
 date: 2026-10-05
 ---
 
@@ -46,3 +46,33 @@ scenario's fixture (no power, and supply bots that carry 0 before the research; 
 - A failed check is explained by evidence, never dismissed: "that run predated the fix" needs
   `git merge-base --is-ancestor <fix> <build commit>` to say so, and "the fixture is wrong" needs
   the fixture fixed and the check rerun green.
+
+## Close what other work superseded, naming what covers it (w3248, 2026-11-06)
+
+**Rule.** When you find a pull request or a work request (a ledger wNNN) fully covered by other work (another request,
+a merged PR, a fix already on master), close it yourself with a note naming what supersedes it. Do this whether or not
+it is yours and whether or not a PR of yours replaces it. Lothsahn, 2026-11-06 (w3248): "Please make sure workers close
+out work requests if they're fully superseded by another."
+
+- **A pull request**: `gh pr close <n> --comment "Superseded by #<m> (<what it did>), merged on master at <sha>."`
+  Check first that it is fully covered: diff the two changes, or confirm that every file and hunk of it is on master
+  (`git merge-base --is-ancestor`, `git log -S`). A PR only partly covered stays open, and you comment on the part that
+  is left. An `ffbox/*` PR is closed the same way, with no Discord post (FFBox owns that).
+- **A work request**: close its open PRs as above, then end your report with a line
+  `SUPERSEDED: wNNN by <what covers it>` (`by w3245`, `by #3244, merged on master`), one line per request (ff-factory
+  w3248, docs/orchestrators.md "`SUPERSEDED: wNNN by <what>`"). The ledger closes it as cancelled with "superseded by …"
+  as its note and tells its people if it is your own request or your request names it (related ids, or its id in your
+  title, brief or notes). If it is neither, or another worker is still on it, the line goes to the dispatcher, which
+  checks it and rejects or merges it. Either way you have done your part: never write "someone should close wNNN".
+  `DONE: wNNN` is for work you finished. A superseded request gets the SUPERSEDED line, not a DONE.
+- **The dispatcher** applies the same rule to every request it decides (its duplicate rule in FF Factory's
+  `dispatcherBrief`). A request fully covered by a finished request or a fix on master is rejected with a note
+  "superseded by …"; one covered by an open request is merged into it.
+
+**Why.** 2026-11-06, w3245 (the 1.0.0.40 release): worker 15b35e4f found that FFBox's crash-fix PR #3254 was fully
+covered by #3244, already merged on master, and left #3254 open because "no PR of mine replaces it". Lothsahn asked
+why it was not closed as superseded, and only then did the worker close it. A covered PR or request left open costs
+every later reader time: the dispatcher, the release worker and FFBox each read it again and work out once more that
+it is done. A request left open can also be started again.
+
+**How to apply.** Before DONE, look back over what you found covered while you worked (done checklist item 12).
