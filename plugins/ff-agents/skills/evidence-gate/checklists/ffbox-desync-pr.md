@@ -30,6 +30,15 @@ worker? Seems like we're wasting time." Since ffbox commits 1754f18 and 786f5ec:
   test` section names any test the container could not run (a play-mode test, a three-peer
   scenario): run it.
 
+- **Is it already on master?** Before you classify, check the branch is on origin
+  (`git ls-remote origin '<branch>'`) and whether master already carries the fix: grep master for the
+  diff's lines, and read the diagnosis's `base_sha.txt` (`fetch_ffbox_report` with `diagnosis`), since
+  FFBox may have diagnosed against a master older than the merge. If a merged PR already fixes the
+  cause, end `RESOLVED: already fixed by PR #<n>` (and close FFBox's PR with that reason, if it has
+  one). w3138, 2026-11-06: conversation 1207 diagnosed on base `2b2b2cd7af` (2026-10-22), said
+  "Already fixed on master? No", and wrote the tile-less loot box fix that PR #2267 had merged on
+  2026-10-23; its branch was never pushed.
+
 ## 1. Classify before anything else
 
 Read the whole diff against `origin/master`. Write the class and the reason (the files, and when the
