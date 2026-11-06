@@ -56,6 +56,18 @@ plays the fleet (one line: mismatches, errors, CPU and memory per bot; exit 1 on
 an exclusive bench ticket, which holds at most a 30-minute turn: run an hour's soak under a shared ticket and measure
 in a shorter exclusive run (`bots_hour.sh`'s header says the same).
 
+`./tools/soak.sh [STATIONS] [BOTS] [IDLE] [SECONDS] [OUT]` is the many-station soak (M2.15, ffu #279): one shard
+server, a fleet process per station with a referee that keeps a cargo ledger (`ffu-bots run --audit --window 960`),
+then `replay-station` for every station and `tools/soak_audit.py`, whose `summary.json` `"ok"` is the verdict (exit 1
+on a mismatch, a ledger error, an unbalanced window or a short fleet). Measured on lothdesktop (w2895, release,
+`soak.sh 120 100 20 86400`): 10,000 bots over 120 stations ran 24 h to tick 507,523 with 0 mismatches, 0 ledger errors,
+527 windows balanced and an awake fraction of 0.594, at 5.9 UPS for the one server process (shared machine, no ticket).
+
+- A run longer than your turn needs a `wake_me` pending for its whole length, renewed until it ends. `blocked_on`
+  cancels the check-in, and FF Factory's clean-up then ends everything your session started about 2 minutes after
+  your process stops: w2895's first 24 h soak was killed at 12 h that way. Wait on CI or another PR only after the run
+  has finished.
+
 ## A world shard: stations, peers, standbys
 
 ```sh
