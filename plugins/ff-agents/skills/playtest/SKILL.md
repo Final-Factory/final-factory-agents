@@ -244,6 +244,14 @@ sandbox on the machine: on a busy machine it answers "the lab is locked by anoth
 background loop (every 30 s); never point `FF_NIGHTLY_ROOT` elsewhere to dodge the lock, which keeps windowed runs from
 loading the machine together.
 
+**A "the button says yes but the click does nothing" bug needs a real-click lane (w3208).** `ffauto:ui.click` drives the
+real EventSystem raycast at the control's centre and returns before the effect lands (a Quick Craft craft landed about 17
+heartbeats later), so `poll` the outcome (the button's `data.interactable`, an inventory total) with a `timeoutS`, never a
+snapshot right after the click. Before you trust a click, `ui.read|hud|<path>` the button and the HUD block next to it and
+compare their `screenRect`s: at 1280x720 Quick Craft's buttons 7-10 sat under `ActionBarParent/Hotbars`, so a click there
+hit the hotbar. Run the lane on master's build (RED) and on the fix (GREEN), and assert the anti-vacuity first (the button
+is shown and interactable). Example: the game repo's `scripts/nightly/scenarios/REG-w3208-quickcraft-click.json`.
+
 ## Multiplayer gameplay fixes need two real built players
 
 Finalize, copy, and compare both peers' baseline reports **before** injecting a disconnect,
