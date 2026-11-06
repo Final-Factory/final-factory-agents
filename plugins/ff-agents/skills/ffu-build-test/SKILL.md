@@ -119,6 +119,17 @@ never rewritten (`tools/check_snapshot_compat.sh BASE_REF` holds it in CI). No t
   replica takes `--sync` too since ffu #223), and assert the run had not passed its end when the test acted.
   `failover.rs` does so (`FFU_FAILOVER_TPS`, `FFU_FAILOVER_SYNC`); plant a slow disk (a sleep after `sync_data`) and a
   fast one (no sync plus a held test thread) for RED. `FFU_FAILOVER_LOGS=<dir>` keeps every child's stderr.
+- **A `--sync every` shard at a fixed `--tps` can go silent for over 30 s on a loaded Windows disk** (w3168, ffu #302).
+  Its tick runs 16 `sync_data` calls, and `ShardServer::run` answers hellos only between ticks. A shard that is alive
+  and ticking then leaves a client's Welcome read to time out: `read Welcome: ... (os error 10060)` (shard.rs's kill -9
+  test, CI run 42181965847, ffu-beast-2). On BEAST's F: drive, one tick's 16 fsyncs took a median of 5.2 ms when the
+  disk was idle and up to 23.5 s with 4 buffered writers loading it (measured). A 10060 means the shard is alive; a
+  dead one gives 10054 or EOF.
+  - Every test shard runs `--sync none`. Since #302 that flag also skips the snapshots' `sync_all`.
+  - A kill of the process loses nothing written through `write()`, so `--sync none` keeps a kill -9 test's claim.
+  - For RED, plant a sleep after each synced append past the restart's first tick; it then hits only the restarted
+    shard.
+  - `tests/shard.rs` writes each child's stderr to `<dir>.stderr-N.log` and prints that log when the test panics.
 - The Windows runners have no `pwsh`, and their execution policy refuses `shell: powershell` steps: write probe steps
   in `shell: bash` or `shell: cmd` (w3095).
 - **A test never picks a port and then drops it for a child process to bind later** (Ben, w3096). The process binds
