@@ -100,6 +100,14 @@ changed code runs) in your first report and in the PR description.
 - [ ] A 2-peer built-player check that reproduces the fork: red on master, green with the fix,
       with the heartbeat count (the `determinism-audit` skill; players start from the slot pool,
       never a new exe path).
+      Skip it when the request's brief carries lothsahn's FFBox hand-off words (conversation 1547, w3222,
+      2026-11-06): "Reproduce the desync itself (ffmode2, or the paired determinism audit) only when no
+      regression test on the branch reaches it", and the branch's test is red on master and green with the
+      fix, run both ways by you. Then `## Evidence` says `Determinism audit: not needed, <why, quoting him>`
+      (`pr_evidence.py` accepts a "not needed" line of 30 characters or more).
+- [ ] Every `Report:` line is confirmed in that report's own dump, not only the one FFBox diagnosed: diff
+      both peers' Detail lines of the forked surface per tile (w3222: the `ContainersDetail` entries
+      grouped by tile; each of the five reports differed only at the stacked-box tile, with equal counts).
 - [ ] The repo's rules: `fp` only, no wall-clock or frame dependence, the crown-jewel surfaces,
       save compatibility (an UpgradeStep and a golden fixture if saved state changes).
 - [ ] Save version bumped -> old-save load test present, run, green. Then the bump needs no person's
