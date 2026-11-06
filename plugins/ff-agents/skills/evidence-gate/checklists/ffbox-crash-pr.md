@@ -27,6 +27,10 @@ is worked like a crash.
 - [ ] Check `git log origin/master` for the crashing function: it may already be fixed. If so, end
       `RESOLVED: already fixed by PR #<n>` and close FFBox's PR with that reason (w1701 and w1702:
       FFBox's two Leech PRs, #2164 and #2165, were both fixed by #2162).
+      This holds even when no PR of yours replaces it and a brief says "close an FFBox PR only when your own PR
+      replaces it": that line is about fixes you redo, not about one master already holds (w3245, 2026-11-06: #3254
+      left open though #3244 had merged the same guard and a test covering its cases; lothsahn asked why it was not
+      closed as superseded). Name the covering PR, its merge commit and that the rest is editor-rewritten assets.
 
 ## 1. Show the cause
 
