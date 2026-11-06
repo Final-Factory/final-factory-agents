@@ -109,6 +109,11 @@ never rewritten (`tools/check_snapshot_compat.sh BASE_REF` holds it in CI). No t
   that is fast on Windows and slow only on Linux, in a request-reply loop, is this first.
 - Read CI by commit, not by `gh pr checks` (a vault token cannot read checks):
   `gh run list -R Final-Factory/ffu --commit <sha>` and, on red, `gh run view <id> -R Final-Factory/ffu --log-failed | tail -80`.
+  While the run's `ffu-macos` legs sit queued (m3 runners offline) the run stays "in progress" and `--log-failed`
+  (or `--job <id> --log`) answers "logs will be available when it is complete". Read a finished job anyway:
+  `gh run view <id> -R Final-Factory/ffu --json jobs --jq '.jobs[]|"\(.databaseId) \(.name) \(.conclusion)"'`, then
+  `gh api repos/Final-Factory/ffu/actions/jobs/<job id>/logs --allow-escape-sequences | sed 's/\x1b\[[0-9;]*m//g' > "$TMPDIR/job.log"`
+  (without the flag gh refuses the colour codes and writes nothing; w2895 leg D, ffu #257, 2026-11-06).
   To wait, use `blocked_on` with `ci:Final-Factory/ffu#<n>` and the head, never a poll loop.
 - A PR that adds or changes art (`art/`), or the code that draws the image (`crates/ffu-bake/src`, `crates/ffu-render/src`
   and `effects/`, `crates/ffu-client/src/fx.rs`, any `.wgsl`; w3097, ffu #222's baked sky), runs the evidence-gate's `pr_evidence.py --repo Final-Factory/ffu --pr <n>`
