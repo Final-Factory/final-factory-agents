@@ -839,6 +839,18 @@ w2133 (2026-10-25, the client of a LothDesktop-host pair for PR #2507) lost abou
     shell's own command line. Wait for the `--build-only: player at` line in the script's output instead.
   - `observe.state|structure|x|z` through the agent channel reads `massDriver.target` and `relativeTarget` on a headless
     client.
+- **A short scripted host run leaves a minute-checkpoint client with no checkpoint** (w3256, 2026-11-06, a biscuit
+  client of an m5 host, PR #3275, Leeches robbing a flying station; three runs that ended 16 s to about 60 s after the join):
+  - The loop's first `audit.write` comes 60 s after `dwell-started`. Runs 2 and 3 closed before it, and the end
+    checkpoint taken after the host's `ClosedByRemote` was refused with `state_not_playable ... the game is 'menu'` (the
+    w2763 note above saw it work from the menu; here it did not). Ask the host how long its run lasts after the join,
+    take one `audit.write` within ~10 s of `dwell-started`, then every 15-20 s for a run under 5 minutes.
+  - What still carried the comparison: the client's desync reports (their `LeechesDetail` and other `*Detail` lines are
+    taken at the same heartbeat on both peers; run 3's was byte-identical across Mac ARM and Linux x86) and the
+    per-heartbeat `DeterminismFingerprintSystem -> Fingerprint` lines in the client log. Publish both before the DONE.
+  - A host's `desync.inject` (a dropped item) forks every recovery serve after it at heartbeat 8 on
+    grids+power+haulers+census: the drop reloads as a placed piece at tile (0,0,0). That is the inject's artifact, not
+    the change under test; compare only the window before the inject.
 
 ## A Linux host leg on biscuit: console commands and detector counts from a headless host {#linux-host-leg}
 
