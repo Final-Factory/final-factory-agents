@@ -618,3 +618,22 @@ Measured on m5 (macOS) with the Steam 1.0.0.23 player over the agent channel (de
 - **A Steam install on macOS** launches through `player_slots.py launch --detach <...>/steamapps/common/FinalFactory/finalfactory.app`
   (the harness refuses the Steam path itself). A `-logFile` into a folder that does not exist made the first launch
   exit with nothing in the log: create the folder first.
+
+## Reaching the Ancient Guardian's reveal cinematic in under a minute (w3194, 2026-11-06)
+
+The Guardian's story (spec 095) is a Simulation toggle on pre-1.0 and before 1.0.0.0: turn `luminae-shards` on before the
+world exists (`-ffFeatures=luminae-shards` on a built player; in the editor `SessionFeatures.Begin(ids + "luminae-shards")`
+right after the new game). Then, measured on BEAST in the editor and in a Development player of c79c2cccc8, FlatMap:
+
+1. `ffauto:vfx.superenemies|invulnerable` first: the Guardian's swarm kills the player before the reveal otherwise.
+2. `ffauto:terrain.place|Antimatter Nexus|160|0`; the Guardian field spawns around it.
+3. `ffauto:player.setposition|148|0`, wait, then `player.setposition|154|0`: discovery fires at the exploration
+   revealer's edge (about 350 u), which the player reached at tile 153 in every editor take. The player log then has
+   `[StoryCinematic] begins AncientGuardian` and `... ends` about 14 s later (the simulation is frozen meanwhile).
+
+A built player: `player_slots.py launch --detach <exe> -- -ffSoloNewGame <seed> -ffSoloFlatMap true -ffAgentControl true
+-ffAgentControlDev true -ffFeatures=luminae-shards -ffSoloQuitAfterSeconds 420`, then `record_clip.py --pid <pid> --pre
+"vfx.superenemies|invulnerable" --pre "terrain.place|Antimatter Nexus|160|0" --pre "player.setposition|148|0" --lead 2
+--do "player.setposition|154|0" --seconds 24` records the whole reveal. Editor frames grabbed with
+`ScreenCapture.CaptureScreenshotIntoRenderTexture` + `AsyncGPUReadback` come out upside down (vflip on encode), and
+`Time.captureFramerate` slows the cinematic's real-time clock, so stamp each frame with `Time.unscaledTime` instead.
