@@ -170,6 +170,8 @@ Mechanics: the game repo's `Documentation/Bench-Lock.md`.
       file, not the branch head, and the next arm silently times the wrong code. Reset every arm with
       `git read-tree -u --reset <head>` (restores, deletes and re-adds to the head's tree; `git read-tree -u --reset HEAD`
       at the end gives the sandbox back), and print each arm's `git diff --stat <head> -- Assets` into the run log.
+      An arm built from another commit's whole tree gets its checkout from `scripts/nightly/scratch_clone.sh`, never
+      from a plain clone (w3180: about 6 GB of LFS copies per clone on Windows; `delete.md` 1b).
 - [ ] **A script holding `bench_queue.py timed` in the background starts timing on `granted tNNN: time now`, never on
       "granted"** (w3158, 2026-11-06, biscuit). `bench queue: tNNN: granted (exclusive)` prints first, then the grant
       waits up to 20 min for CI jobs (w3112), and that wait counts against the 30-minute turn: a `grep -q granted` leg

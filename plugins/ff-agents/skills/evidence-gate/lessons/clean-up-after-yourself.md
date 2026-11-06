@@ -177,6 +177,38 @@ still showed 78G free on V: after a 10 GB delete, while `Get-PSDrive` showed 81.
 folder's children) and prints the biggest children in GB, then run it once for every root you need. The home folder and
 `AppData` measured in w1561 are on C:, which w1755 put off limits: the guard refuses `robocopy /L` there now.
 
+## A scratch clone links its LFS files, and `du` is not what it costs (w3177, w3180)
+
+**Rule.** To get a full checkout of the game repo at another commit (to build an old commit, an A/B arm or a bisect leg),
+run the game repo's `scripts/nightly/scratch_clone.sh <sandbox> <sha> $TMPDIR/<dir> [--library]` and then
+`build_player.sh` on that clone. Do not use a plain `git clone`, do not copy each LFS file with `cp -c`, do not run
+`git add -u` over them, and do not make a `git worktree` of the main clone. To say what clones cost, compare `df` before
+and after deleting them, or add up only the files with one link (`find <dir> -type f -links 1`). Never add up `du` or
+robocopy's `Bytes :` over trees that hold hardlinks: both count every link again.
+
+**Why.** 2026-11-06, BEAST (w3177): ten scratch clones were under F:\ffw\tmp. `du` read about 18 GB each, and the brief
+said each clone had "its own copy of the LFS store, ~14 GB". Both were wrong (measured):
+- `git clone --shared` from a checkout makes git-lfs hardlink the source's `.git/lfs` objects. Each clone's 8 GB
+  `.git/lfs` had 9 links per object and 0 MB with a single link.
+- The cost was the checked-out LFS files in `Assets/`: about 6 GB of real copies, with no links. On Windows `cp -c` is a
+  plain full copy, because GNU cp's `-c` is not clonefile. It is free only on macOS APFS.
+- The other files added about 3.4 GB per clone. Deleting four clones freed 51 GB (df).
+- A `git worktree` of the main clone wrote its LFS downloads and metadata into the protected main clone, so the
+  harness could not remove it.
+
+scratch_clone.sh (w3180) does four things:
+1. checks out with `GIT_LFS_SKIP_SMUDGE=1`;
+2. hardlinks every LFS file that matches the sandbox's (`cp -c` on macOS);
+3. marks the linked files `--assume-unchanged`, so `git status` never runs the LFS clean filter over them;
+4. downloads only the LFS files that differ.
+
+Measured on BEAST at 7eb465e2: 5166 files linked, 14 downloaded, 2 MB of LFS data with one link, 0 MB with one link in
+`.git/lfs`, 1829 MB of real disk for the whole tree (df), and a clean tree.
+
+**How to apply.** A hardlinked file shares its bytes with the sandbox, so never edit an LFS file in a clone in place.
+Git checkout and Unity's importers replace the file instead, which breaks the link safely. Copy the Library
+(`--library`) only when build time matters: on Windows it is a full copy, about 32 GB from a sandbox.
+
 ## A clean-up never takes the folders of a request that has not closed (w1379)
 
 **Rule.** Before you delete a folder that is not yours (another worker's `tmp/ffa-<session>`, a `scratch/` or review folder named for a

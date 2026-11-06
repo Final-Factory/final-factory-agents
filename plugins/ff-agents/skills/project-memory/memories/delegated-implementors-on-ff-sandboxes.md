@@ -20,6 +20,12 @@ git -C "$D" checkout -q -b w1037-g4 <sha>
 git -C "$D" diff > "$TMPDIR/g4.patch" && git apply "$TMPDIR/g4.patch"
 ```
 
+- **A full checkout at another commit** (to build an old commit, an A/B arm or a bisect leg) comes from
+  `scripts/nightly/scratch_clone.sh <sandbox> <sha> $TMPDIR/<dir> [--library]` in the game repo, then `build_player.sh`
+  on it (w3180). It checks out with `GIT_LFS_SKIP_SMUDGE=1` and hardlinks each unchanged LFS file from the sandbox
+  (`cp -c` on macOS). Measured on BEAST: 5166 linked, 14 downloaded, 2 MB of its own LFS data. A plain clone or a
+  `cp -c` of each LFS file costs about 6 GB on Windows, where `cp -c` is a full copy (w3177: ten clones held about
+  180 GB). The sparse clone above checks out no LFS file at all, so it stays cheap.
 - Without `MSYS_NO_PATHCONV=1`, Git Bash rewrites `/scripts/` to `C:/Program Files/Git/scripts/` and the checkout comes
   out empty ("0% of tracked files present").
 - The nightly runner needs only `scripts/` and the save fixtures, so a child can run scenarios from that clone. It

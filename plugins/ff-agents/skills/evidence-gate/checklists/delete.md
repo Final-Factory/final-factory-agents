@@ -19,6 +19,12 @@ For any `rm`, `Remove-Item`, `del`, `rd`, `git clean`, `shutil.rmtree` or clean-
    An install folder on C: allows only that folder. The one exception: the game's `Never Games` folders under AppData
    (`LocalLow`, `Local`, `Roaming`) may be read and measured, and are never deleted, moved or written (lothsahn: "Let's let
    it scan the never games folder, but not the rest of C.  And it shouldn't modify it.").
+1b. **Does a size you report count hardlinks more than once?** (w3177) A scratch clone's `.git/lfs` and its linked LFS
+   files share bytes with a sandbox. `du` and robocopy count them in every clone (w3177: 18 GB read per clone, about
+   12 GB freed per clone by df). Report what `df` gained, or the size of files with one link
+   (`find <dir> -type f -links 1`). A full checkout at another commit comes from `scripts/nightly/scratch_clone.sh`,
+   not a plain clone or `cp -c` (about 6 GB of LFS copies per clone on Windows;
+   [lesson](../lessons/clean-up-after-yourself.md#a-scratch-clone-links-its-lfs-files-and-du-is-not-what-it-costs-w3177-w3180)).
 2. **Is every path of this delete strictly inside it?** Write the list of paths first and compare each to the root
    ([delete only inside the worker root](../lessons/clean-up-after-yourself.md#delete-only-inside-the-workers-install-folder-outside-it-measure-and-report-w896), w896: lothsahn, "in general we
    should only be clearing data in the install folder for the worker"). One outside path, a wildcard that can reach
