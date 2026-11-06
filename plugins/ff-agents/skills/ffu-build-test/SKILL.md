@@ -241,6 +241,16 @@ never rewritten (`tools/check_snapshot_compat.sh BASE_REF` holds it in CI). No t
     and the gateway's subscribe loop with probes that stamp their own time
     (`eprintln!("@{} PROBE ..", SystemTime::now()...as_millis() % 10_000_000)`), never a timestamper reading the pipe:
     that reader can be starved exactly when the machine stalls.
+  - **The stall is Defender's real-time scan queue** (w3182, trace on BEAST 2026-11-06 15:22Z). Defender scans a new
+    file when it is closed and an exe when it starts, synchronously in the caller's thread. When other sandboxes
+    flood it (cp of a Unity `Library/BurstCache`, a cold cargo build), every scan on the machine waits 9 to 24 s. In
+    `sim_switch` three shards closed their tick-256 `snap-*.bin.tmp`, waited 11.0 s, then 1.6 s more, and stopped
+    ticking, so the followers hit their 5 s timeout (measured). Trace it without admin: BEAST's
+    `Performance Log Users` holds `NT AUTHORITY\INTERACTIVE`, so `xperf -start <name> -on <guids> -f x.etl -FileMode
+    Circular -MaxFile 2048` with user-mode providers works (Antimalware-Engine `0A002690-…`, -RTP `8E92DEEF-…`,
+    -AMFilter `CFEB0608-…`); `wpr -start CPU` (the kernel logger) is refused. Stop the trace as soon as a run fails,
+    because 2 GB holds only a few minutes. `tracerpt x.etl -of CSV`, then pair each Engine `Start`/`Stop` by its scan
+    id: an AMFilter `OnClose` event raised in the ffu process itself means that thread is waiting on the scan.
 - **A BEAST-only flake whose runs take 2.5 times their normal time means a loaded machine** (w3173). w3167's three
   `sim_switch` failures ran 54 s against a normal 21 s while w3168's disk-hog writers ran in another sandbox. Check the
   other sandboxes' transcripts (`~/.claude/projects/F--ffw-sandboxes-slot*/*.jsonl`, the tool calls at the failure's
