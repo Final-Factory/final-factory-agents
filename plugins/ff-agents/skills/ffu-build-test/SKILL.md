@@ -77,6 +77,11 @@ never rewritten (`tools/check_snapshot_compat.sh BASE_REF` holds it in CI). No t
   before you wait on it. ffu's main has no branch protection. A PR that touches no `crates/ffu-sim` and no platform
   `cfg` merges on green Linux and Windows legs, and says so: "the macOS legs never ran" (w2895, 2026-11-05: M3 offline
   from 11:57Z, ffu #222 queued 5 h). Never add a runner on m5 (Ben's own Mac) without asking him.
+  - While the M3 is off, a push to the same PR can make no run start. The earlier run, still queued on its `ffu-macos`
+    legs, holds the `ci-<ref>` concurrency group, and the new run sits `pending` with no jobs. FF Factory then reports
+    "no CI run exists". `gh run cancel` leaves the earlier run queued.
+    `gh api -X POST repos/Final-Factory/ffu/actions/runs/<old id>/force-cancel` ends it, and the new run is queued
+    within a minute (w3168, ffu #302, measured).
 - **A Windows test job red with every test passed and `temp leak check: ... MSBuildTemp`** was the build, not a test:
   SDL3's `-sys` crates build through cmake and MSBuild when a runner rebuilds its target. The test jobs build with
   `cargo test ... --no-run` before `check_temp_leaks.sh` since ffu #249 (w2895); keep any new checked step that way.
