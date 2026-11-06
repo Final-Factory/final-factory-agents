@@ -167,6 +167,15 @@ never rewritten (`tools/check_snapshot_compat.sh BASE_REF` holds it in CI). No t
   - Failures on several BEAST runners at the same wall-clock millisecond are a stall of the whole machine, not the
     test. Check `portal_logs` (journal, grep `beast`) for a daemon update or a leftover-process kill at that time
     (w3104: three runs' A shards were released at the same moment).
+- **A read timeout on a live owner is a stall, not a move** (w3136, ffu #264). BEAST's four shards once went quiet for
+  10.6 s (CI run 42137090708), past `ffu-gateway`'s 10 s `upstream_timeout`. `relay` re-subscribed all 8 stations to
+  the same shard and epoch at tick 97 and lost the frame in flight, so `rolling_deploy` saw "left 98 right 97". You
+  can tell this case from the log: every station's "re-subscribed from shard N (epoch E, ...) to shard N (epoch E,
+  ...)" line names the same shard and epoch on both sides, all at once. The fix keeps the stream unless the route
+  moved, and keeps a frame the timeout cut (`read_up`, `Up::pending`). Any follower that reads with a timeout keeps
+  this rule. Proof: `an_owner_silent_past_the_upstream_timeout_with_its_lease_unchanged_is_kept` (RED on main),
+  then 80 of 80 `rolling_deploy` and 120 of 120 stall-test runs on Windows (probe #265). So a timed-out recv leaves
+  a Windows socket readable (measured).
 - `ffu-server follow` reads with a **5 s** timeout (`tools.rs`, `follow`), not the 30 s `client.rs` sets at connect. A
   test with followers fails on any client silence over 5 s, and the timeout is never the fix. Find the step that
   makes the silence (w3104, ffu #244):
