@@ -637,3 +637,23 @@ A built player: `player_slots.py launch --detach <exe> -- -ffSoloNewGame <seed> 
 --do "player.setposition|154|0" --seconds 24` records the whole reveal. Editor frames grabbed with
 `ScreenCapture.CaptureScreenshotIntoRenderTexture` + `AsyncGPUReadback` come out upside down (vflip on encode), and
 `Time.captureFramerate` slows the cinematic's real-time clock, so stamp each frame with `Time.unscaledTime` instead.
+
+## Riding a moving station with the multiplayer menu held, in one editor (w3232, 2026-11-06)
+
+Proven on lothdesktop, master, flat single-player game. It measured a passenger's camera against the ship under the
+multiplayer Esc menu, before and after the fix (FinalFactory PR #3267).
+
+- **Only a Command Core, Small Command Core, Rocket Adapter or Dark Energy Rocket Adapter can be boarded.** They carry
+  `RideableStructure` (`ConfigLoadingUtil.cs:757` adds it when `config.IsRideable`, and `VehicleRideValidator.cs:24`
+  requires it). A bare Hauler from `ffauto:mobilestation.place` cannot be boarded: `combat.ride` logs "No rideable
+  structure within reach".
+- **A rideable flying station:** take the first `ffblueprintstart` line of
+  `ValidationScenarios/mobilestations/hauler-two-stop.ffbp.txt` (strip `\r`) and run
+  `ffauto:blueprint.place|<it>|7|10`. It places and builds the station at once (5 structures: Station Core, Command Core
+  and solar). Then `ffauto:combat.ride` boards it (`PlayerState.IsRiding`), and
+  `ffauto:mobilestation.movenow|<coreGridX>|<coreGridZ>|<destX>|<destZ>` flies it. The core's `Placeable.GridTile` was
+  (-1,0,-1).
+- **A multiplayer player's menu state without a second peer:** take the private static `UI.UiController._uiHold` (a
+  `UI.UiPauseHold` struct) by reflection, box it, invoke `Request(hasRemotePeers: true, alreadyPaused: false)` on the
+  box, and write the box back with `FieldInfo.SetValue(null, box)`. That gives `IsGameplayBlocked` true and `IsPaused`
+  false, so the simulation runs on. The menu itself is not drawn. Clear the hold with `UiController.SetUiPause(false)`.
