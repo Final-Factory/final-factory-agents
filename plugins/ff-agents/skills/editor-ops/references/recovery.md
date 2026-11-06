@@ -352,7 +352,11 @@ holding `git checkout <branch>` or `git checkout -b`, even inside a one-off clon
 under `$TMPDIR`, and refuses the whole command line, so nothing before it runs either (w787, the
 m3: checking out a `final-factory-agents` PR branch in a temp clone was refused with "blocked
 while this sandbox's Unity editor is running"). `switch_branch` only moves the sandbox's own
-worktree. In a scratch clone, start on the branch with `git clone -b <branch> <url> <dir>`, bring
+worktree. A scratch clone of the game repo at a commit (to build it or time an A/B arm) comes from the game repo's
+`scripts/nightly/scratch_clone.sh <sandbox> <sha> $TMPDIR/<dir>`: it hardlinks the sandbox's LFS files, where a plain
+`git clone` or `cp -c` writes about 6 GB of LFS copies on Windows (w3180; project-memory
+`delegated-implementors-on-ff-sandboxes.md`). In a scratch clone of another repo, start on the branch with
+`git clone -b <branch> <url> <dir>`, bring
 a pushed branch up to date with `git merge origin/<base>` (never a rebase), and open a new branch
 by pushing a refspec from wherever you are: `git push origin HEAD:refs/heads/<new-branch>`.
 The hook reads the command text, so those words inside a `-m` message or a `gh pr create --body`
