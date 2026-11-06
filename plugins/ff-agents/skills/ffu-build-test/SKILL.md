@@ -232,6 +232,22 @@ never rewritten (`tools/check_snapshot_compat.sh BASE_REF` holds it in CI). No t
     (`sim_switch.rs` `start_all`). Four starts one after another took 4.5 s on a loaded lothdesktop runner.
   - Plant a slow start by setting `FFU_SWITCH_TO` to a `.cmd` wrapper (`@echo off`, `ping -n 3 127.0.0.1 >nul`, then
     `"<ffu-server.exe>" %*`).
+  - **A Windows process start can itself take 14 to 17 s** (w3173). `sim_switch`'s four-shard test failed 1 in 50 on
+    BEAST with every follower at 10060 because the test's `Command::spawn` of the first next-build shard, right after
+    the A shards exited, blocked 13.8 s and 17.1 s inside CreateProcess (2 of 100 probed runs). Every other start in
+    those runs took 48 ms or less, 40,598 bare starts in 20 min took 0.44 s at worst, and 7,717 starts right after
+    writing fresh 2 MB files took 74 ms at worst (measured, BEAST, debug build). The gateway's own threads ran on time
+    throughout, so no ffu code was in the stall. Before blaming ffu code for a switch timeout, probe the test's spawn
+    and the gateway's subscribe loop with probes that stamp their own time
+    (`eprintln!("@{} PROBE ..", SystemTime::now()...as_millis() % 10_000_000)`), never a timestamper reading the pipe:
+    that reader can be starved exactly when the machine stalls.
+- **A BEAST-only flake whose runs take 2.5 times their normal time means a loaded machine** (w3173). w3167's three
+  `sim_switch` failures ran 54 s against a normal 21 s while w3168's disk-hog writers ran in another sandbox. Check the
+  other sandboxes' transcripts (`~/.claude/projects/F--ffw-sandboxes-slot*/*.jsonl`, the tool calls at the failure's
+  UTC time) for planted load: hog writers, busy loops, Unity batch builds. A whole-machine freeze shows as many
+  processes waking in the same millisecond (four A shards "exited" at one stamp, 11 to 21 s late). A leg that plants
+  CPU or disk load breaks other sandboxes' tests, so it holds an exclusive bench ticket
+  (`bench_queue.py timed`) like a timing leg.
 
 ## 5. Timing claims
 
