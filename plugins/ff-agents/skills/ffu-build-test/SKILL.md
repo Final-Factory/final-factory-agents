@@ -102,6 +102,12 @@ never rewritten (`tools/check_snapshot_compat.sh BASE_REF` holds it in CI). No t
   `peers.rs` saw 93 of 100 (measured, ffu #209). Pace such a server from the test (the peers test's `Gate` lets the
   relays the test owns forward only while it is watching). Prove the fix with a planted stall that fails before and
   passes after, plus a loop of 50.
+- **A count a test reads once the far end has the bytes is counted before the write, never after** (w3167, ffu #300).
+  `proxy.rs`'s `pipe` did `write_all` and then `fetch_add`: the test's client read its last 4-byte echo and the test
+  read `stats()` while the down thread sat between the two, so it saw `(160, 156)` on ffu-biscuit-3. A count that is
+  exactly one chunk short, with every byte delivered in order, is this. Plant a sleep right after the write for RED
+  (0 of 10 on Windows and Linux, measured); GREEN 10 of 10 and the fix alone 50 of 50 on both. Any counter, flag or
+  log line a test checks after the other side saw the data follows the same rule.
 - A plain `ffu-server` (no shard) at a fixed `--tps` keeps ticking between the test's last read and its kill or check:
   `server.rs`'s kill -9 test ran on past its next `--snapshot-every` snapshot when the test thread was held up 125 ms,
   and recovery replayed none of the client's ticks (ffu-lothdesktop-1, CI run 41921083432; w3109). Start it with
@@ -159,6 +165,9 @@ never rewritten (`tools/check_snapshot_compat.sh BASE_REF` holds it in CI). No t
   (`cargo test -p <crate> --test <file>`) in N matrix copies: they spread over `ffu-beast*` and `ffu-lothdesktop-*`.
   Set `timeout-minutes: 40`, because a lothdesktop runner took over 25 minutes for 10 peers rounds (w2895, #210).
   Close the probe PR without merging it.
+  - The same probe loops on Linux (`runs-on: [self-hosted, ffu-linux]`). Give each matrix leg its own branch through
+    `actions/checkout` `ref:`, so RED (main + the plant), GREEN (the fix + the plant) and the fix alone run in one
+    probe PR (w3167, ffu #299). A sandbox cannot delete remote branches, so the probe branches stay after it closes.
   - The lothdesktop runners carry the same labels as BEAST's (`self-hosted, Windows, X64, ffu-windows`), so 20 copies
     can all land on BEAST's five runners. Use 40 copies to get lothdesktop runs (w3104: 40 copies gave lothdesktop 2 or
     3 of them per round).
