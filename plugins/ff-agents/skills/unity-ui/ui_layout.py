@@ -674,7 +674,7 @@ def keyed(census: dict) -> dict:
     return out
 
 
-def moves(before: dict, after: dict, move_px: float = 4.0) -> dict:
+def moves(before: dict, after: dict, move_px: float = 4.0, pins: list | None = None) -> dict:
     """What moved between two censuses of the same save, size and open screens (w826).
 
     Every element whose rect (the RectTransform's, not the clipped part) changed more than move_px on any edge is
@@ -682,8 +682,10 @@ def moves(before: dict, after: dict, move_px: float = 4.0) -> dict:
     Station Info box moving as a whole is one part, not its forty texts; an element that changed by a different amount
     from its siblings is its own part (a box that grew). Parts are reported per HUD block (block depth 2: GamePanels/X,
     what a person calls an element), with the block's outer rect. Returns {"moved": [{"path", "delta", "before",
-    "after", "elements", "parts"}], "gone": [path], "new": [path], "screen": "WxH"}; "gone" and "new" are blocks with
-    no element on the other side."""
+    "after", "elements", "parts"}], "gone": [path], "new": [path], "covered": [(path, why)], "screen": "WxH"}; "gone"
+    and "new" are blocks with no element on the other side. A gone block that a pin of `pins` (hud-pins.json) names and
+    the game hides by design in the after census (pin_check 'covered', covered_by_window) is in "covered", not "gone"
+    (w3196: the hover card under a docked window, w2185, read as gone and asked the requester's words for it)."""
     old, now = keyed(before), keyed(after)
     common = [k for k in now if k in old]
     delta = {k: [now[k][i] - old[k][i] for i in range(4)] for k in common}
@@ -733,13 +735,20 @@ def moves(before: dict, after: dict, move_px: float = 4.0) -> dict:
             reparented.append((block, target))
             gone.remove(block)
             new.remove(target)
+    covered = []
+    for block in list(gone):
+        named = [p for p in pins or [] if under_canvas(block) == f"GamePanels/{p['element']}"]
+        why = next((w for v, w in (pin_check(after, p) for p in named) if v == "covered"), None)
+        if why:
+            covered.append((block, why))
+            gone.remove(block)
     w, h = screen_size(after.get("screen") or before.get("screen"), [0, 0])
     biggest = lambda b: -max(max(abs(d) for d in b["delta"]), max(abs(d) for d in b["parts"][0]["delta"]))
     layout = layout_of(after)
     if layout_of(before) != layout:
         raise ValueError(f"the before census is {layout_of(before)} and the after one {layout}: compare the same layout")
     return {"moved": sorted(blocks.values(), key=biggest), "gone": gone, "new": new, "reparented": reparented,
-            "screen": f"{int(w)}x{int(h)} {layout}"}
+            "covered": covered, "screen": f"{int(w)}x{int(h)} {layout}"}
 
 
 def reparent_target(block: str, old: dict, now: dict, same) -> str | None:
@@ -824,6 +833,8 @@ def moved_lines(results: list[dict], move_px: float, how: str) -> list[str]:
             lines.append(f"- {r['screen']} {under_canvas(unit['path'])}: {describe_move(unit)}: {MARK}")
         for path in r["gone"]:
             lines.append(f"- {r['screen']} {under_canvas(path)}: gone from the screen: {MARK}")
+        for path, why in r.get("covered", []):
+            lines.append(f"  (covered at {r['screen']}, by design, not counted: {under_canvas(path)}: {why})")
         for old_path, new_path in r.get("reparented", []):
             lines.append(f"  (reparented at {r['screen']}, the same place, not counted: {under_canvas(old_path)} -> "
                          f"{under_canvas(new_path)})")
@@ -1768,7 +1779,8 @@ def run_check(args) -> int:
         print(line)
     failed |= broken > 0
 
-    for line in moved_lines([moves(before, after, args.move_px)], args.move_px, "ui_layout.py check"):
+    pins = json.loads(Path(args.pins or default_pins()).read_text(encoding="utf-8")).get("pins", [])
+    for line in moved_lines([moves(before, after, args.move_px, pins)], args.move_px, "ui_layout.py check"):
         print(line)
     return 1 if failed else 0
 
@@ -1782,7 +1794,8 @@ def run_pins(args) -> int:
 
 
 def run_moves(args) -> int:
-    results = [moves(load(b), load(a), args.move_px) for b, a in args.pair]
+    pins = json.loads(Path(args.pins or default_pins()).read_text(encoding="utf-8")).get("pins", [])
+    results = [moves(load(b), load(a), args.move_px, pins) for b, a in args.pair]
     for line in moved_lines(results, args.move_px, "ui_layout.py moves"):
         print(line)
     return 0
@@ -1875,6 +1888,7 @@ def main(argv=None) -> int:
     m.add_argument("--pair", nargs=2, action="append", required=True, metavar=("BEFORE", "AFTER"),
                    help="a before and an after census at one size (repeat: 1920x1080, then 1280x800 at 0.8)")
     m.add_argument("--move-px", type=float, default=4.0)
+    m.add_argument("--pins", default=None, help="hud-pins.json: a pinned block hidden by design is covered, not gone")
     q = sub.add_parser("pins", help="every census against the places Ben fixed (hud-pins.json): the 'Pinned:' line (w894)")
     q.add_argument("census", nargs="+")
     q.add_argument("--pins", default=None)

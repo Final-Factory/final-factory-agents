@@ -733,6 +733,27 @@ class PinTest(unittest.TestCase):
         both, _ = ul.pinned_lines([("docked", docked), ("classic", classic)], {"pins": [pin]}, "t")
         self.assertIn("0 broken, 0 not shown, 1 covered by a window by design", both[0])
 
+    def test_a_hover_card_the_docked_window_hides_is_covered_in_moves_not_gone(self):
+        """w3196: the Station Grid stacked under a power structure's window made the docked window reach the card's place,
+        so the game hid the card (HoverCardFit.Covered); `moves` listed it "gone from the screen" and pr_evidence asked
+        the requester's words for a card the game hides by design, where `pins` already said covered (w2185)."""
+        card = [el("HoverDescription", [1000, 400, 1270, 560])]
+        before = {"screen": [1280, 800], "elements": [el("StructuredDock", [751, 59, 1270, 322])] + card}
+        after = {"screen": [1280, 800], "elements": [el("StructuredDock", [751, 59, 1270, 590])]}
+        before["elements"].append(el("TopInfoPanel", [0, 0, 1280, 40]))
+        after["elements"].append(el("TopInfoPanel", [0, 0, 1280, 40]))
+        self.assertEqual(ul.moves(before, after)["gone"], [f"{GP}/HoverDescription"], "without the pins: gone")
+        result = ul.moves(before, after, pins=self.SPEC["pins"])
+        self.assertEqual(result["gone"], [])
+        self.assertEqual([ul.under_canvas(p) for p, _ in result["covered"]], ["GamePanels/HoverDescription"])
+        lines = ul.moved_lines([result], 4, "test")
+        self.assertTrue(any(line.startswith("  (covered at 1280x800 docked, by design, not counted: "
+                                            "GamePanels/HoverDescription: under the docked window") for line in lines), lines)
+        # Gone with no window over its place: still gone, still asks.
+        bare = {"screen": [1280, 800], "elements": [el("StructuredDock", [751, 600, 1270, 790]),
+                                                    el("TopInfoPanel", [0, 0, 1280, 40])]}
+        self.assertEqual(ul.moves(before, bare, pins=self.SPEC["pins"])["gone"], [f"{GP}/HoverDescription"])
+
     def test_a_hover_card_under_a_building_window_in_the_classic_layout_is_covered(self):
         """w2184: the classic layout hides the card too while an open window overlaps it (HoverCardFit.HideUnderAWindow),
         and at 1280x800 a building's window reaches down over the minimap's columns. MEASURED, the w2184 1280x800
