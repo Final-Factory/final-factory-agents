@@ -40,6 +40,11 @@ fit", none "does it show everything and look like the game" (evidence-gate,
   `MaxHeightViewport`. Two owners alternate frame by frame, and that is flicker (the hub's own
   comment: "a second fit fighting it made the window jump").
 
+- **One factory for pooled elements (w3208).** A list that pre-makes a pool of buttons and makes more when it runs out
+  must create every element, pooled or new, through one method that wires its handlers. Quick Craft wired only its ten
+  pre-made buttons, so an 11th looked craftable and did nothing on a click (`QuickCraftPanel.CreateButton`, PR #3245).
+  Test it by asking for pool size + 1 and invoking the last element's `onClick`.
+
 The uGUI rules and the pitfalls with their fixes: [ugui-pitfalls.md](ugui-pitfalls.md).
 
 ## 2. Write down what "right" means, per screen, before the first shot
