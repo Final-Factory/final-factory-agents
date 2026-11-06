@@ -520,6 +520,9 @@ One file each under `lessons/`: the rule, why (the incident, dated), how to appl
 - [Say DONE per request](lessons/say-done-per-request.md): end a report with `DONE: wNNN` only when
   every step of the request is finished, post-merge steps included; answer a wrap-up or "Is it
   done?" with DONE or what is left (w419: w342 stayed open with its work done).
+- [Close what other work superseded](lessons/say-done-per-request.md#close-what-other-work-superseded-naming-what-covers-it-w3248-2026-11-06): a PR or work request you found fully
+  covered by other work is closed with a note naming what supersedes it (`gh pr close --comment`, a `SUPERSEDED: wNNN by
+  <what>` report line), never left open because no PR of yours replaces it (w3248: #3254 left open, covered by #3244).
 - [A fix PR names its reports](lessons/a-fix-pr-names-its-reports.md): a
   `Discord: <thread or message link>` line before it merges, and `RESOLVED: already fixed by PR #N`;
   FFBox tells the reporter from those only (w436 / #1076 went untold). And a `Report: <id>` line per

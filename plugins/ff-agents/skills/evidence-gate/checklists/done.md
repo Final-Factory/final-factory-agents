@@ -126,3 +126,7 @@ holds, or the report says what is left instead of DONE.
    not in ff-factory's `shared/githubRequirements.ts`, was added there and to docs/vault.md 13.2 in a merged PR, named in
    the report (Checks and repositories outside Final-Factory excepted; [lessons belong in the harness
    repo](../lessons/lessons-belong-in-the-harness-repo.md), "A GitHub refusal becomes a requirement", w904).
+12. **Superseded work closed.** Before DONE: any PR or work request you found fully covered by other work is closed
+   with a note naming what supersedes it (`gh pr close <n> --comment "Superseded by ..."`; a `SUPERSEDED: wNNN by <what>`
+   line in the report), whoever opened it ([lesson](../lessons/say-done-per-request.md#close-what-other-work-superseded-naming-what-covers-it-w3248-2026-11-06), w3248: #3254 stayed
+   open beside #3244 on master because "no PR of mine replaces it").
