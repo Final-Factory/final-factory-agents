@@ -55,7 +55,12 @@ cargo run --release -p ffu-headless -- crosscheck --threads 1,4,16 --golden gold
   `packs::tests::gpu` / `one_gpu_at_a_time`; a new crate with GPU tests adds one). Several devices made at once crash
   Mesa's Vulkan loader: a SIGSEGV with no Rust panic, in 25 of 200 parallel runs of `ffu-client`'s tests on biscuit
   without the lock and 0 of 200 with it (measured, w2895 M2.17b, probe ffu #226).
-- Fuzzing is by hand only: `tools/fuzz.sh [seconds] [target ...]` (nightly and cargo-fuzz).
+- Fuzzing needs nightly and cargo-fuzz (`tools/fuzz.sh [seconds] [target ...]`); BEAST has neither. Run new targets on
+  biscuit by dispatching the nightly job on your branch: `gh workflow run fuzz.yml -R Final-Factory/ffu --ref <branch>
+  -f seconds=600 -f targets="a b"`. Each target's result is its `stat::number_of_executed_units` line in
+  `gh run view <id> --log` (w2895 P0.14c, run 42208794602: four targets in about 45 minutes with the build). A new
+  target adds a `[[bin]]` in `fuzz/Cargo.toml`, a name in each of `tools/fuzz.sh`'s target lists, and minutes to
+  `fuzz.yml`'s `timeout-minutes` (10 per target plus the build).
 
 ## 3. The rules a sim change keeps
 
