@@ -671,6 +671,19 @@ w2133 (2026-10-25, the client of a LothDesktop-host pair for PR #2507) lost abou
 - A timed run's exclusive bench ticket stops the client player mid-run (5-minute warning). Tell the host, keep the
   event under test (here: deconstructing B) until you rejoin, and relaunch once `bench_queue.py status` shows no
   exclusive holder.
+  - **Better: hold a queued shared ticket for the whole run** (w3372, 2026-11-07, a LothDesktop Windows client of a
+    biscuit host, PR #3345). A client from `player_slots.py launch --detach --bench-wait` holds nothing: run 1 was asked
+    to quit at 15:20Z for w3369's timed run (the host then evicted it, `FlowControl:TooSlow`, at host heartbeat 2694),
+    and run 2 never started, since each newly queued exclusive went ahead of the player gate (`waited 840 s`). What
+    worked: `bench_queue.py run --mode shared --what "<client run>" --max-min 60 -- bash inner.sh`, where `inner.sh`
+    writes a `granted` file (tell the host "TICKET GRANTED" then), waits for a `go` file you touch on the host's HOST
+    WAITING, and runs `player_slots.py launch` WITHOUT `--detach`, so the ticket lives as long as the player. Later
+    exclusives then wait for the shared group. Run 3b ran 9804 of 9800 heartbeats clean on it.
+  - To relaunch a client and keep your place, take the new shared ticket FIRST (it joined the running shared group at
+    once while two exclusives waited) and only then kill the old player, whose ticket ends with it.
+  - A host started from a shell that then exits is stopped by the bench queue about a minute after `host-ready`
+    (w3372 run 3); the client sees only `MaxConnectionAttempts` and `join-timeout ... transport-level failure`
+    while `reach.py` still pings. Run the host as a background job that outlives the call.
 - **End the client the moment the host says it ended or quit** (w2326, 2026-10-26). A client launched with
   `-ffAutomationRole Client` keeps its reconnect loop after the host goes (`[Reconnect] ReconnectAttempt(1..4)`,
   backoff 4-8 s, about 40 s in all), so it joins the host's NEXT run on the same address and port before that run's
