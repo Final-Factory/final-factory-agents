@@ -129,6 +129,13 @@ census (`<shot>.json`: small, clipped, off-screen and overlapping text, covered 
   draw in a development player and show up as overlaps and flicker; `ui_layout.py` ignores them,
   `ui_check.py` does not. Hold keys by `seconds`, not frames: a frame count is gone in a blink at
   200 fps (#1258).
+- **Debug Info in a tour (w3309).** `{"setup": "debuginfo:on"}` keeps the development read-out up in `shot` stills and
+  logs `rect debug info` in `tour.log`. Its drawn lines are wider than its own RectTransform (284 against 243 px at
+  1280x720): measure the union of its TMP lines' rects, not the panel's. A `record` clip does not show it (absent from all
+  481 frames of a 1280x720 clip, present in the same run's stills), so its placement rests on the stills; say so in
+  `Clips:`. A change that adds a tour step needs a before build of master plus only that step's commit
+  (`scripts/nightly/scratch_clone.sh`, cherry-pick, `build_player.sh` at the new sha): master alone fails every leg
+  with "setup debuginfo:on was not run".
 - **The photos' states (w764).** `specs/w764-deck-thread/` in the game repo drives the tours that reproduce a player's
   Deck photos: `make_tour.py` parts `hub`, `docked`, `classic`, `persist` (a window dragged with the `drag` step, then the
   building opened again), `reload` (a save and load, then Info), `menus` (New Game > Custom); worlds `audit` (the saved
