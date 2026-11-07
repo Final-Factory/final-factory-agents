@@ -27,6 +27,12 @@ whole verification. The repo's own `CLAUDE.md` is binding and longer; this skill
   On BEAST `cargo` is on PATH (`~/.cargo/bin`) and cmake is Visual Studio's:
   `export PATH="/c/Program Files/Microsoft Visual Studio/2022/Community/Common7/IDE/CommonExtensions/Microsoft/CMake/CMake/bin:$PATH"`
   (measured, w2895 M2.17b).
+  On biscuit (Linux) a worker shell has neither `cargo` nor `python` on PATH: `export PATH=$HOME/.cargo/bin:$PATH`
+  and call `python3` (the bench queue script too). A backgrounded `nohup cargo build` or
+  `nohup python ...` then dies with exit 127 and leaves an empty log: w3432 lost 10 min believing a bench ticket was
+  queued. Check the first lines of a background job's log within seconds of starting it.
+- A wait loop `until ! pgrep -f "<pattern>"` matches its own shell's command line and never ends (w3432); bracket a
+  letter (`pgrep -f "[e]cho-biscuit"`) or wait on a pid file.
 - Put those exports in `$TMPDIR/rust.sh` and source it in every shell call: shell state does not persist.
 - **Keep one target per worker; never share a `CARGO_TARGET_DIR` across parallel workers** (w3396). Two builds on one
   target wait on cargo's build-directory lock ("Blocking waiting for file lock"): one rebuild alone took 44 s, two at
