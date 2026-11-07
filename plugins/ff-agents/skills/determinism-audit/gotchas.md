@@ -40,7 +40,7 @@ load-bearing for future runs even where the original defect is fixed.
 - [A Linux client leg on biscuit: build, headless launch, a scripted paste](#linux-client-leg) (w2133, w2326, w3029: an item into hand)
 - [A Linux host leg on biscuit: console commands and detector counts from a headless host](#linux-host-leg) (w2281)
 - [A host-only scenario with a remote client: pause on join, tower spawns, flow control](#host-scenario-remote-client) (w2586)
-- [A hand-launched built host: TargetClients counts the host, and turn the audit on](#hand-launched-host) (w2797; every post-ready segment needs `ffauto:`, a new label per relaunch, w2861; pin the agent channel to your pid, blueprint pieces stay separate grids, w3292; `inventory.remove` sends no op, a report holds ~2600 heartbeats, w3317; a Leech raid goes pre-join and from far away, w3323)
+- [A hand-launched built host: TargetClients counts the host, and turn the audit on](#hand-launched-host) (w2797; every post-ready segment needs `ffauto:`, a new label per relaunch, w2861; pin the agent channel to your pid, blueprint pieces stay separate grids (a Standard piece needs a Connector), w3292, w3325; a flying Abduction Machine's aggro from `AttackScheduleDetail`, w3325; `inventory.remove` sends no op, a report holds ~2600 heartbeats, w3317; a Leech raid goes pre-join and from far away, w3323)
 - [An ffnightly Linux host for a remote client: its port, its audit, its station builds](#ffnightly-linux-host) (w2824)
 - [An editor pair with presentation checks: no Audit ids in the config, a healthy host, a client machine without bench rounds](#editor-pair-presentation) (w2399)
 - [An Oracle shop pair: host buys first, `near` is tier 1, price is derived](#oracle-shop-pair) (w2518)
@@ -967,6 +967,24 @@ w2797 (2026-11-01, an m5 Mac host of a BEAST Windows client, PR #2989) launched 
   and its new position was never found (`HaulerCommandNetworkOperation.cs` matches `Placeable.GridTile`). A flight
   over two planets needs a station whose pieces really join (a save, or construction by bots), or else one
   movenow per grid, with the grid's tile read again with `observe.state|nearby` before each flight.
+  **The cause was the layout, not the blueprint** (w3325, 2026-11-06, an m5 Mac host of a LothDesktop client, PR
+  #3319). A Standard connection meets another Standard one only through a Connector
+  (`StationConnectionsSystem.cs:1179-1180`, game repo). The Abduction Machine and the Station Core are both Standard,
+  so a machine placed beside the core stays its own hauler. Put it at the end of a row of Connectors instead (w3325:
+  Station Core (0,0), Command Core (0,3) facing 2, Solar Panel (1,-2), Connectors x 3..6 at z 1 facing 1, the 9x9
+  machine at (7,-3), all built with `make_station_bp.item`). That station joined from one `blueprint.place`. Before
+  you fly, `station.state|<Command Core GridTile>` should show `buildings` equal to `haulerMembers` (8 here).
+- **A flying Abduction Machine's ForceCraft has no readout; read its aggro from the audit log** (w3325).
+  `observe.state|structure` answers `found:false` for a flying member, and no command prints ForceCraft. The toggler
+  sets aggro together with ForceCraft (`AbductionMachineTogglerSystem.cs:123-129`), and the audit log prints that aggro.
+  The `AttackScheduleDetail` lines (written at hb 1..8 and on every hb%8==7, `DeterminismFingerprintSystem.cs:816-821`)
+  end each raid target with `t(<chunk x>,<chunk z>)s=<signal>a=<aggro>`, which reads `a=10` while the machine is on
+  and `a=0` while it is off. Use `grep AttackScheduleDetail | sed` to list where the value changes, and you get the
+  on and off heartbeats on each peer. After a join, the client's lines for hb 1-7 show `chunkResults=0`, because it has
+  no signal cache until its first calc step at hb 7. They match from hb 8, and the fingerprints match throughout, so
+  this is not a fork. One more trap from the same run: the station drops to 7 members, and the machine never switches
+  on again, about one or two passes over the Terra World after take-off. Plan the on and off evidence for the first
+  pass.
 
 - **A host-driven pair scene script: build before the join, and read every tile back from the game** (w3324,
   2026-11-06, a BEAST host of a LothDesktop client, PR #3318's `specs/w3259-station-parent/pair/pair_scene.py` at
