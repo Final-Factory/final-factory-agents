@@ -28,6 +28,16 @@ whole verification. The repo's own `CLAUDE.md` is binding and longer; this skill
   `export PATH="/c/Program Files/Microsoft Visual Studio/2022/Community/Common7/IDE/CommonExtensions/Microsoft/CMake/CMake/bin:$PATH"`
   (measured, w2895 M2.17b).
 - Put those exports in `$TMPDIR/rust.sh` and source it in every shell call: shell state does not persist.
+- **Keep one target per worker; never share a `CARGO_TARGET_DIR` across parallel workers** (w3396). Two builds on one
+  target wait on cargo's build-directory lock ("Blocking waiting for file lock"): one rebuild alone took 44 s, two at
+  once 48 s and 71 s (measured, BEAST). A shared target is also never idle, so FF Factory's clean-up can never prune it.
+- **A big target is usually stale artifacts, not debug info** (w3396). Since ffu #381 (`[profile.dev] debug =
+  "line-tables-only"`, dependencies `debug = 0`) a clean `cargo test --workspace --all-features --no-run` target is
+  5.5 GB, down from 14.1 GB (measured, BEAST). Cargo never deletes what an older build left: a worker that rebuilt all
+  day held 23.6 GB, with 13.8 GB in `debug/deps` (34 hashed copies of `ffu_server`) and 5.9 GB in `debug/incremental`,
+  while fresh targets were 3.3 to 3.6 GB (measured 2026-11-07). Count the copies with
+  `ls target/debug/deps | sed -E 's/-[0-9a-f]{16}.*//' | sort | uniq -c | sort -rn | head`; when no cargo of yours
+  runs, `rm -rf "$TMPDIR/ffu-target/debug/incremental"` is rebuildable and frees most of it.
 
 ## 2. The checks, in CI's order
 
