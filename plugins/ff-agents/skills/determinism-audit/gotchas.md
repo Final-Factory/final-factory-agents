@@ -990,6 +990,16 @@ client "ffauto:..."`):
   5.1 s behind, and the host dropped it at heartbeat 3189 with `FlowControl:TooSlow` (`AutoQuit` then ended it). The
   final report it wrote on the kick still counted: with the host's checkpoints it gave 2299 shared heartbeats. Read
   `FlowControlDiag` in the client's Player.log for the drift; on a busy machine keep the shared run short.
+- **Clicking a dialog's button in a built player over the agent channel** (w3296, 2026-11-07, the waypoint delete
+  dialog of PR #3301). `ffauto:ui.click|dialog|Button[text=Delete]` and `*[text=Delete]` were rejected: each path
+  segment matches only the direct children, by name (ConfirmationModalParent(Clone) -> Mask, ConfirmationModal ->
+  OpaqueFill, OpaqueSkin, HeaderContent, Content). The rejection lists the children, so walk down from them. Or take
+  `peer.py <exe> shot host <png>`, read the button's position, and click it with `pointer.moveto|<x>|<height-y>|screen`
+  then `pointer.click`. Screen y counts from the bottom: Delete at image 902,518 in a 1600x900 player was screen
+  902,382. Both legs clicked Delete that way.
+- **A host leg's build on a short disk** (w3296): `scratch_clone.sh --library` copies the sandbox's Library (23 GB on
+  lothdesktop slot4, with 30 GB free). Instead, `switch_branch` the sandbox (editor stopped) to a new branch created
+  from the PR's sha and run `build_player.sh` on the sandbox itself: it reused the Library and built in 9.5 minutes.
 - `scripts/nightly/reach.py` is missing at PR heads older than w2259: run master's copy with
   `git show origin/master:scripts/nightly/reach.py > "$TMPDIR/reach.py"`.
 
