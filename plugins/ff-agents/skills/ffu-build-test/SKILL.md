@@ -37,6 +37,10 @@ whole verification. The repo's own `CLAUDE.md` is binding and longer; this skill
 - **Keep one target per worker; never share a `CARGO_TARGET_DIR` across parallel workers** (w3396). Two builds on one
   target wait on cargo's build-directory lock ("Blocking waiting for file lock"): one rebuild alone took 44 s, two at
   once 48 s and 71 s (measured, BEAST). A shared target is also never idle, so FF Factory's clean-up can never prune it.
+- **Give a second checkout its own target too** (w3480): a `main` worktree for the RED run and your branch must not
+  share one `CARGO_TARGET_DIR`. After building main's tests there, `cargo test` on the branch ran main's stale test
+  binaries and reported main's failures: the new `ship_flies_over_buildings` failed until its sources were touched and
+  rebuilt, then passed 3/3 (measured, BEAST). Use `CARGO_TARGET_DIR="$TMPDIR/ffu-target-main"` for the RED checkout.
 - **A big target is usually stale artifacts, not debug info** (w3396). Since ffu #381 (`[profile.dev] debug =
   "line-tables-only"`, dependencies `debug = 0`) a clean `cargo test --workspace --all-features --no-run` target is
   5.5 GB, down from 14.1 GB (measured, BEAST). Cargo never deletes what an older build left: a worker that rebuilt all
