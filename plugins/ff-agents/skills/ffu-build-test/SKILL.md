@@ -177,6 +177,17 @@ never rewritten (`tools/check_snapshot_compat.sh BASE_REF` holds it in CI). No t
   `peers.rs` saw 93 of 100 (measured, ffu #209). Pace such a server from the test (the peers test's `Gate` lets the
   relays the test owns forward only while it is watching). Prove the fix with a planted stall that fails before and
   passes after, plus a loop of 50.
+  - **The loop of 50 on a CI runner is `.github/workflows/repeat.yml`** (w3402, ffu #383). It builds once, then runs
+    one test target N times in a row and stops at the first failure. Dispatch it with package, target, filter, count
+    and os (`gh workflow run repeat.yml -R Final-Factory/ffu -f target=owner_term ...`). A PR that changes repeat.yml
+    runs it with its defaults. Keep the filter empty so the whole file repeats: ffu #383's first whole-file pass found
+    a second flake, at run 24, that a filter on the fixed tests would have hidden.
+  - **A failover test must not assume an owner stays owner until the test stops it** (w3417). A loaded runner
+    can stop a process past the link timeout plus the takeover wait (1 s + 500 ms). Its standby then takes over
+    legitimately, and a tell to the standby that lost hits a closed pipe. Check that round as you check a kill
+    (fenced old owner, one term, every message once) and plant it with SIGSTOP on the owner
+    (`FFU_OWNER_TERM_PAUSE_OWNER_MS`). On failure, quote the child's start line, exit status and stderr tail
+    (`Proc::state` in owner_term.rs): CI's temp folder is gone by the time anyone reads the log.
 - **A red in a test your PR does not touch is not rerun and does not hold the PR** (w3412, ffu #262). Ben, on ffu #370's
   failover red: "Yes, merge it now; the failing test is unrelated and its fix is a separate request." Name the exact
   failing test and line from the red run, hand up its cause fix (or name the one in flight), and merge on every other
