@@ -968,6 +968,21 @@ w2797 (2026-11-01, an m5 Mac host of a BEAST Windows client, PR #2989) launched 
   over two planets needs a station whose pieces really join (a save, or construction by bots), or else one
   movenow per grid, with the grid's tile read again with `observe.state|nearby` before each flight.
 
+- **A host-driven pair scene script: build before the join, and read every tile back from the game** (w3324,
+  2026-11-06, a BEAST host of a LothDesktop client, PR #3318's `specs/w3259-station-parent/pair/pair_scene.py` at
+  6764c50e60). Its first two runs were void:
+  - `blueprint.place` is refused once a peer is connected ("must run BEFORE clients join"), so placing a station or a
+    blueprint after `waiting-host-peers-connected` fails. Build the scene before the client joins, then send only the
+    networked ops (settings, `mobilestation.landnow`) after it joins.
+  - `observe.state|nearby` scans only grid heights 0..1 (`PlaytestStateSnapshot.cs:439`), and `|structure` reads only
+    height 0 (`:728`). Landing Zones (height 4) and Cargo Barges (height 2) never show, so a "wait until 5 built" loop
+    never passes. Read zones with `ffauto:landingzone.zonedump` (`zone@(x,y,z) '<name>'`).
+  - Don't hard-code tiles. The zones blueprint put its pads at x-1 and z+3 of the expected tiles, and the Inserter Bots
+    settled 1 to 2 tiles from where they were placed. `setting.stationparent` answers "found no grounded ..." for a
+    wrong tile. Read each tile from the game once it is built, and put the real tiles in the ops.
+  - A checkpoint report with typed Fingerprint records: `compare_determinism_reports.sh` compares only the tail of the
+    plain lines (hb 1070..3622 here) and says so. `scripts/audit/compare_audit_records.py <host> <client>` compared the
+    whole window, hb 1..3622 across 28 fields, which covered the parent ops at hb 829. Report the typed count.
 - **`inventory.remove` forks a pair** (w3317, 2026-11-06, an m5 Mac host of a BEAST Windows client, PR #3310). It
   calls `PlayersManager.Me.Inventory.RemoveItems` directly and sends no network op
   (`LocalMultiplayerAutomationCommandRunner.cs:9946-9957`, game repo). The host emptied its connector stock with it, so
