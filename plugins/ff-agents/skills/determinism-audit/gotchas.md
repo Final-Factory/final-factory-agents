@@ -852,6 +852,20 @@ w2133 (2026-10-25, the client of a LothDesktop-host pair for PR #2507) lost abou
   - A host's `desync.inject` (a dropped item) forks every recovery serve after it at heartbeat 8 on
     grids+power+haulers+census: the drop reloads as a placed piece at tile (0,0,0). That is the inject's artifact, not
     the change under test; compare only the window before the inject.
+- **A pre-1.0 (0.50) client leg with a save-reload and a link drop** (w3295, 2026-11-07, a biscuit client of an m5 host,
+  PR #3299 into pre-1.0):
+  - pre-1.0's `run_build_multiplayer_audit.sh` defaults the Linux Unity to `/opt/unity/Editor/Unity` and stops at once
+    ("Unity ... not found"). Pass `FF_UNITY_BIN=$HOME/Unity/Hub/Editor/<version>/Editor/Unity`. pre-1.0 has no
+    `scripts/nightly/reach.py`: `git show origin/master:scripts/nightly/reach.py` (and `lab_hosts.json` beside it) into
+    `$TMPDIR/tools/scripts/nightly/` and run that copy.
+  - `-ffAutomationPostConnectDelayHeartbeats` counts heartbeats applied over the whole process, summed across rejoins
+    (the host's save-reload, a reconnect): the client's dwell ended `heartbeatsApplied=20002` at epoch-2 heartbeat 3367,
+    wrote its report and AutoQuit, which the host saw as `ClosedByRemote` mid-run. Size a client's cap for every epoch
+    of the run, or leave the end to the host's word.
+  - A link drop from the client: `kill -STOP <pid>; sleep 20; kill -CONT <pid>` was allowed by the harness and gave
+    `ProtocolTimeout` → `ReconnectAttempt(1)` → `RejoinWorldApplied` (new epoch) → `ReconnectRestored` in 2.9 s.
+  - `connector.items|x|z` and `circuit.dump|x|z` through the agent channel (the POST recipe above) read a headless
+    client's belts and circuits, to match the host's at one heartbeat.
 
 ## A Linux host leg on biscuit: console commands and detector counts from a headless host {#linux-host-leg}
 
