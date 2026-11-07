@@ -48,6 +48,7 @@ load-bearing for future runs even where the original defect is fixed.
 - [A save-and-reload pair: checkpoints are rolling windows, the client rejoins by itself](#save-reload-pair) (w2558)
 - [A census diff at heartbeat 8 after every join: an empty saved buffer; the client report holds both halves](#empty-buffer-join) (w2868)
 - [A cross-OS mod desync hunt from a Linux client: cap its fps, script its rejoins, wait out the outlive window](#linux-client-mod-hunt) (w2826)
+- [A 0.50 (pre-1.0) belt and drop-box pair: circuits need their toggle, stacked boxes by a lethal hit, bot pickup needs research](#pre10-belt-dropbox-pair) (w3295)
 
 ## Full-window rule: never diagnose from a partial window {#full-window-rule}
 
@@ -1328,3 +1329,29 @@ both release it on the same heartbeat. A rehearsal on one machine found six trap
 - **On `audit.write` checkpoint reports, `compare_determinism_reports.sh` sees only the tail** (2,397 heartbeats here,
   and it warns so). `scripts/audit/compare_audit_records.py` compares the typed records over the whole window (all
   4,135 heartbeats, 28 fields), together with the DesyncVerdict counts. Run both.
+
+## A 0.50 (pre-1.0) belt and drop-box pair: circuits need their toggle, stacked boxes by a lethal hit, bot pickup needs research {#pre10-belt-dropbox-pair}
+
+w3295 (2026-11-07, an m5 macOS host and a biscuit Linux client, direct IP, PR #3299 head 0646c0d935 on the pre-1.0
+line). The scenario: a side-load into a belt a circuit has stopped, stacked drop boxes, a save and reload, and a
+client link drop. It passed (11,784 and 8,232 shared heartbeats, no divergence), but four traps cost time.
+
+- **On 0.50 a circuit needs the `circuits` simulation toggle.** With every toggle off, `circuit.set` is refused:
+  "[SetStructureSettingClientRequest] Payload validation failed for kind CircuitConfig" (`CircuitConfigApplier.cs`
+  rejects it while `FeatureToggles` `circuits` is off). Launch the host with `-ffFeatures=circuits`; the host's set wins
+  on join, and both logs print "simulation toggles on: circuits". Say in the report that the run departs from
+  "every toggle off".
+- **Stack drop boxes with a lethal `structure.damage` on a belt tile that carries items.** Each one leaves an
+  Inventory Box with that tile's items on the tile, and a ghost the bots rebuild, but only once the player holds the
+  part (`inventory.add|Connector|30`). Hit the same tile again after the rebuild for a stack. `probe.world`
+  lists `inventoryBoxes`. `setting.spawneritem` changes what a spawner chest makes, but the chest first empties the
+  hundreds of the old item it already holds, so boxes with different contents take far longer than a run allows.
+- **Construction bots pick up loot only after the Remote Construction research** (`PersistentData.CbotsPickupLootUnlocked`,
+  set by `ConstructionBotLootingUnlocked`; `ConstructionTaskAssignerSystem` skips pickup tasks without it). A new
+  automation world has no research points, so `research.chain` only queues it. Use `ffauto:player.devunlock`
+  (above) before the stack exists, or report that no bot picked a box up.
+- **A client's `-ffAutomationPostConnectDelayHeartbeats` counts applied heartbeats summed across every rejoin.** w3295's
+  client, set to 20000, ended "dwell-complete: heartbeatsApplied=20002" at epoch-2 hb 3367 after two rejoins, and the
+  host saw ClosedByRemote and AutoQuit. Size it for the whole run, all epochs, not for the window after the last join.
+- **A save-and-reload rejoin restarts the heartbeat count at epoch 1**, the same epoch as the first run, so split the
+  client log at its first `ReconnectAttempt` (the save-reload section above); the link drop then starts epoch 2.
