@@ -197,6 +197,16 @@ never rewritten (`tools/check_snapshot_compat.sh BASE_REF` holds it in CI). No t
     and os (`gh workflow run repeat.yml -R Final-Factory/ffu -f target=owner_term ...`). A PR that changes repeat.yml
     runs it with its defaults. Keep the filter empty so the whole file repeats: ffu #383's first whole-file pass found
     a second flake, at run 24, that a filter on the fixed tests would have hidden.
+  - **A lone shard takes `--paced` too** (w3437, ffu #405): the plain server's stdin `until T` lines, for a shard with
+    no peers and no standby (a standby or a peered shard still refuses it). `gateway_failover` keeps each owner one
+    tick ahead of the client (`Proc::pace`). Free at `--tps 200`, a 1 s hold of the test thread let the owner run
+    about 200 ticks ahead, so the ticks "after" a kill had been made before it (0 re-subscriptions), or the restarted
+    owner's next 150 ticks ran before any op reached it ("own ops ... 0 after").
+    - Raise a restarted owner's pace only once the gateway holds its Welcome (`gw.stats().resubscribes != 0`, within
+      `stall::ALIVE`). Raised earlier, the owner ticks once before the gateway's subscribe arrives, its Welcome is one
+      tick past the client's, and the client waits for a tick the test never allows (10060; seen once locally).
+    - A repeat run's RED on BEAST may not reproduce a local plant: main with both 1 s holds failed locally and passed
+      10 of 10 on ffu-windows (run 42405135217). Keep the local RED as the proof, and say in the PR which it was.
   - **A failover test must not assume an owner stays owner until the test stops it** (w3417). A loaded runner
     can stop a process past the link timeout plus the takeover wait (1 s + 500 ms). Its standby then takes over
     legitimately, and a tell to the standby that lost hits a closed pipe. Check that round as you check a kill
