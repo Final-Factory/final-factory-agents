@@ -50,6 +50,7 @@ load-bearing for future runs even where the original defect is fixed.
 - [A cross-OS mod desync hunt from a Linux client: cap its fps, script its rejoins, wait out the outlive window](#linux-client-mod-hunt) (w2826)
 - [A 0.50 (pre-1.0) belt and drop-box pair: circuits need their toggle, stacked boxes by a lethal hit, bot pickup needs research](#pre10-belt-dropbox-pair) (w3295)
 - [A Windows built-player client with the audit on: a 3-minute log, the report at exit, a launcher that is not the player](#win-client-audit-log) (w3371)
+- [Gatling firing and a held recipe: what the fingerprint and observe.state cannot show](#gatling-and-held-recipe-witness) (w3371)
 
 ## Full-window rule: never diagnose from a partial window {#full-window-rule}
 
@@ -1437,6 +1438,13 @@ both release it on the same heartbeat. A rehearsal on one machine found six trap
 - **The console `learnTech` is refused in multiplayer** (`QuantumCommandInterface.cs`, `RefuseLocalOnlyCheatInMultiplayer`).
   Research after the join with `ffauto:player.devunlock`, the networked DeveloperUnlock op. It researches every tech,
   so it suits a scenario about a single locked recipe only when nothing else in it depends on research.
+  **To research one tech** (w3371, 2026-11-07, PR #3344's pair: Mass Drivers researched by hb 409, then both peers
+  crafted), give points and research it the way a player does, on the host:
+  `ffauto:console.run|GiveResearchPoints 100000`, `ffauto:console.close`, `ffauto:research.chain|<tech>`,
+  `ffauto:waituntil|researchDone|<tech>|60`. `GiveResearchPoints` is not refused in multiplayer: it calls
+  `ObjectiveSimulationAuthoring.BroadcastResearchReward` (`QuantumCommandInterface.cs:996-1003`), and
+  `research.chain` is networked (`LocalMultiplayerAutomationCommandRunner.cs`, its help line). A new automation world
+  has no points, so `research.chain` alone only queues the tech.
 - **`ffauto:blueprint.place` works only before the join.** After it, paste the way a player does:
   `blueprint.hold|<bp>`, `pointer.moveto|x|z`, `pointer.click`, `blueprint.drop`. That route goes through the
   BlueprintPlacement op. A "WARNING: outside the view" from `pointer.moveto` still placed the ghosts.
@@ -1493,7 +1501,11 @@ w3371 (2026-11-07, the LothDesktop client of a BEAST-host pair for PR #3344) hit
   WatchdogTripped uplink=HostSeesUsStalled` fired, and the host dropped it at heartbeat ~2700 (`[FlowControl] Dropping
   client 1: stopped responding (reason=flow-control-hard-drift, behindSeconds=9.9)`). No flag keeps the detail out of
   the log (the host searched NetworkDeterminismAudit.cs), so keep each session under ~3 minutes: sessions of 2.5 and
-  3.4 minutes then ran to the end.
+  3.4 minutes then ran to the end. A check that needs more heartbeats runs as several sessions (w3371's Leg A: a
+  save, then a load and rejoin), each player started with its own `-logFile`, and each session's pair of logs is
+  compared on its own. The only limit in the code is a constant, `MaxDetailedLogsPerHeartbeat = 32`
+  (`NetworkDeterminismAudit.cs:36`, master 6502e1b568), and its one switch is the audit on or off (`:404`). A flag
+  that keeps the detail lines out of Player.log is worth adding; until one exists, plan the session length.
 - **The report is written at exit.** The client writes `DeterminismAudit/network-determinism-audit-legacy-<label>-client.log`
   only once its reconnect attempts run out (`status report-written`), about 60-90 s after the host quits. A stopper that
   killed the player sooner left no report for two sessions, and the file with that name was still an older session's
@@ -1503,3 +1515,24 @@ w3371 (2026-11-07, the LothDesktop client of a BEAST-host pair for PR #3344) hit
 - **`timeout` stops only the launcher.** `timeout -s TERM <n> python scripts/nightly/player_slots.py launch ...` (without
   `--detach`) ended the python launcher and left `finalfactory.exe` running, and `ff-leftovers list` did not list it.
   Launch with `--detach`, read `pid` from its JSON, and stop that pid yourself.
+
+## Gatling firing and a held recipe: what the fingerprint and observe.state cannot show {#gatling-and-held-recipe-witness}
+
+w3371 (2026-11-07, a BEAST host and a LothDesktop client, PR #3344 at db81b571cc) had to prove two things that no
+field shows:
+
+- **`gatlingRoundsFired` stays 0 since single-shot rounds** (w3205, `Step1_0_0_40GatlingRoundsSingleShot`). One Gatling
+  Rounds item is one shot (`GatlingGun.RoundsPerItem = 1`, `GatlingGun.cs:38`), so `RailgunSystem.cs:684` never takes
+  the box branch that counts `GatlingTurret.RoundsFired`; the fingerprint's `gatlingRoundsFired`
+  (`DeterminismStateFingerprint.cs:3478`) is the same on two peers whether the turrets fired or not. The turret's ammo
+  count does not show it either when belts refill it faster than it fires (it rose during w3371's run). Show firing
+  from the enemies: sample `ffauto:observe.state|enemies|<x>|<z>|40` around the turrets every ~20 s on a host. Enemies
+  that came within range, lost health and were gone by the next sample are the witness (two Stingers at 30 and 45 and
+  a Cutter at 3.5 at hb 822, gone by hb 1207). Matching fingerprints on every shared heartbeat then put the same
+  combat on the client.
+- **`RecipeAwaitingResearch` has no reader in `observe.state` or a named fingerprint field** (master 6502e1b568:
+  `git grep -l RecipeAwaitingResearch` names only the blueprint and construction code, `CrafterUpdateSystem`,
+  `RecipeAwaitingResearchSystem` and `AssemblyPanel`). It is in `FFComponents.Crafting`, so the census hash counts it
+  (a peer that removed it on another heartbeat forks there), but nothing reads "held". Show it as the section above
+  does: the recipe set, its inputs present and no `activeTask` on both peers before research, then `crafting` with
+  rising `craftProgress` after it.
