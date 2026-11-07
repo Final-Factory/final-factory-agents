@@ -176,6 +176,24 @@ never rewritten (`tools/check_snapshot_compat.sh BASE_REF` holds it in CI). No t
     lengthen a latency or ordering check this way.
   - Prove it with a planted slow start: an env var makes the Nth child of a kind sleep 40 s before `main`. ffu #358:
     main failed 9 of 9, the fix passed 9 of 9, and then 30 of 30 rounds in 10 copies on BEAST.
+  - **Give `stall::ALIVE` to every liveness read in the file you touch, and sweep the others** (w3416, ffu #393).
+    w3341 changed only the tests that had failed, and the next freeze broke the ones it left. At 16:41-16:45Z on
+    2026-11-07, three BEAST runners went red on client reads with 10060:
+    - shard.rs's 10,000-tick follower, on the client's default 30 s from `client.rs:128`;
+    - `gateway_standby.rs:224`;
+    - `sim_switch`.
+
+    Sweep with `grep -rn 'connect_station\|connect_gateway\|Client::connect\|set_timeout' crates/ffu-server/tests`.
+  - **Tell a freeze from a code stall before you fix anything.** Read the portal journal (`portal_logs`, journal,
+    grep `beast`) for `machine beast: no answer for N s` near the failure. Its times are in -07:00. Then list the
+    BEAST jobs of other runs in the same minutes and look for 10060 reds in tests that do not share code (w3416:
+    the daemon was off its link from 16:42:25 to 16:45:21Z, around the test's 30 s silence).
+  - **Plant the freeze in the server thread**, on a probe branch only. A one-off
+    `if step.tick == 3000 { sleep(40 s) }` in `ShardServer::run`'s tick loop reproduced the CI panic exactly:
+    shard.rs:383, 10060, 31.5 s on ffu-beast-5. It also catches an in-process server, which an env var on a child
+    cannot reach.
+  - `gh workflow run repeat --ref <probe branch>` works before repeat.yml is on main, once the probe branch carries
+    it: dispatch RED, GREEN and the fix alone in parallel (runs 42394090019, 42394092744, 42394095691).
   - The product's own timers (gateway `WRITE_TIMEOUT` 10 s, a 1 s `--takeover-after-ms`, the follower's 5 s read)
     still lose to a longer freeze. The real fix is BEAST's load, which needs Ben.
 - **A count a test reads once the far end has the bytes is counted before the write, never after** (w3167, ffu #300).
