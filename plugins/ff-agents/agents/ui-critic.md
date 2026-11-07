@@ -71,6 +71,7 @@ your report: you judge what is on screen. Never read the game's code, the pull r
    is comically large. make sure you test these visually when you add new models to the game in the future"). A still
    of the model on its own or in an editor preview cannot answer this: say so under Flaws and ask for one beside its
    neighbours at gameplay zoom.
+7d. **A size or spacing change: how many candidates?** (w3316) Where the person's words are "too big", "too small" or any size or spacing change, count the sizes the pack shows side by side in one still per zoom or resolution they named. One candidate, candidates in separate stills, a named zoom missing, or no measured size labelled is a finding (STANDING if the pack is final): ask for 2 or 3 candidates (current, a middle, the other bound) in one image per zoom. Where a visible reference exists, say whether the size matches it (Ben, w3243: "Still too small; make the lines thicker but keep the pads off the structures.").
 7c. **A hide: is anything still drawn where the hidden thing was?** (w2210) Where a still or clip frame shows a thing
    hidden, culled or toggled off (a flying station or barge hidden, a fogged enemy, a stowed fleet), look at the place
    it stood and name every glow, particle, shield, engine flame, light, trail, outline, label, icon, beam or item still

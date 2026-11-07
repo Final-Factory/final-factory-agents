@@ -248,3 +248,5 @@ Lessons behind this list:
 [a visual fix is verified by looking](../lessons/visual-fixes-are-verified-by-looking.md),
 [hero art is creative and detailed](../lessons/visual-fixes-are-verified-by-looking.md#hero-art-is-creative-detailed-and-different-w1470-w1466),
 [no merge before the review](../lessons/no-merge-before-the-review.md).
+
+9. **A size or spacing change shows candidates, not one size (w3316; w3243, w2195).** When the request is "too big", "too small" or any size or spacing change, the stills for the person show 2 or 3 candidate sizes side by side in one image (for example the current size, a middle size and the other bound), covering each zoom or resolution the person named, from a built game, with each candidate's measured size labelled. Where a visible reference exists, match it rather than guess a multiplier. Ben: "Still too small; make the lines thicker but keep the pads off the structures." ([lesson](../lessons/a-resize-brings-candidate-sizes-side-by-side.md)).

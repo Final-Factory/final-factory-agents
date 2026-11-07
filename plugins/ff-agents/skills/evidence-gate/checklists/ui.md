@@ -519,7 +519,10 @@ dispatch the events themselves and never reach `InputSystemUIInputModule`): use 
 focused. A gesture that "does nothing" in a background window is not a finding (w875;
 [pointer input needs OS focus](../../project-memory/memories/ui-pointer-input-needs-os-focus-and-ui-drag-bypasses-the-module.md)).
 
+**A size or spacing change shows candidates, not one size (w3316; w3243, w2195).** When the request is "too big", "too small" or any size or spacing change, the stills for the person show 2 or 3 candidate sizes side by side in one image (for example the current size, a middle size and the other bound), covering each zoom or resolution the person named, from a built game, with each candidate's measured size labelled. Where a visible reference exists, match it rather than guess a multiplier. Ben: "Still too small; make the lines thicker but keep the pads off the structures." ([lesson](../lessons/a-resize-brings-candidate-sizes-side-by-side.md)).
+
 Lessons behind this list:
+[a resize brings candidate sizes side by side](../lessons/a-resize-brings-candidate-sizes-side-by-side.md),
 [verify UI with full content, like a player](../lessons/verify-ui-with-full-content-like-a-player.md),
 [a UI change leaves the rest of the screen as it was](../lessons/a-ui-change-leaves-the-rest-of-the-screen-as-it-was.md),
 [judge every UI still by eye](../lessons/verify-ui-with-full-content-like-a-player.md#judge-every-still-by-eye-before-the-person-sees-it-w1386-w1296-2026-10-16),
