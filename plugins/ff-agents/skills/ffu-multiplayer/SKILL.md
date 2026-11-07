@@ -78,6 +78,18 @@ on a mismatch, a ledger error, an unbalanced window or a short fleet). Measured 
   minute after the start, each other leg runs `timeout 5 bash -c "</dev/tcp/<ip>/<port>"` against every remote peer
   port. A refused port means stop and say so; the run is lost anyway.
 
+- **A run against the shared world (biscuit, 100.98.100.42:7777) checks what the world runs before anything else**
+  (w3397, 2026-11-07): the brief named ffu main 66db990, but the world was redeployed from 75745c0 while the legs
+  queued for tickets, and every 66db990 client died at once with `snapshot decode: unsupported version 10`. Before you
+  take a bench ticket, read the latest `world` run (`gh run list -R Final-Factory/ffu --workflow world --limit 3
+  --json headSha,createdAt,conclusion`), build that commit (`git merge-base --is-ancestor <brief commit> <it>` says the
+  feature is in it), and probe a join: `$B/ffu-server chat --connect 100.98.100.42:7777 --name probe --seconds 3` ends
+  with `"error":null`. Say the commit you ran, and why, in the report.
+- **A timed pair run lines its tickets up by queueing both at once**, not one after the other's grant: in w3397 each
+  leg's grant lapsed unused while the other still queued (a big computer's queue and biscuit's CI drain took 10 to
+  50 min). A leg that times nothing itself (an echoer, when every number comes from the sender's clock) may run without
+  a ticket when both legs agree, with that caveat in the report.
+
 ## A world shard: stations, peers, standbys
 
 ```sh
