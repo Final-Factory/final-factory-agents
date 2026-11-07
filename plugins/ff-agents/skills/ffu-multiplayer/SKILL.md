@@ -89,6 +89,23 @@ on a mismatch, a ledger error, an unbalanced window or a short fleet). Measured 
   leg's grant lapsed unused while the other still queued (a big computer's queue and biscuit's CI drain took 10 to
   50 min). A leg that times nothing itself (an echoer, when every number comes from the sender's clock) may run without
   a ticket when both legs agree, with that caveat in the report.
+- **Check the world commit and probe a join again right before the timed run**, not only at setup. In w3444
+  (2026-11-07, a beast+biscuit pair timing chat latency for w3383) the world was redeployed at 21:04Z while the legs
+  queued for tickets (the deployed commit moved a2bc925 to d25cb01), and clients built at the old commit failed to join
+  with `snapshot decode: unsupported version 11`. Re-read `gh run list -R Final-Factory/ffu --workflow world.yml
+  --status success -L 1 --json headSha`, rebuild if it moved (ffu-server release took 19 s on BEAST, measured) and rerun
+  the 3 s probe.
+- **Don't agree a fixed wall-clock start before both exclusive tickets are in force.** On a big computer the turn can
+  run out while its CI jobs drain: in w3444 beast's first ticket (granted 20:17Z) spent its whole 20-minute turn in
+  `granted, but N CI job(s) run here` and was revoked at 20:37Z, 3 min before the agreed start. What worked: the leg
+  whose ticket comes later messages "GO" at its grant; the other leg starts its long-lived side at once (an echoer with
+  `--seconds 1500`, not 150), and the first leg starts its ~100 s timed part the moment its own drain ends (the log line
+  `granted <ticket>: time now; it is held until ...`). The second ticket (granted 21:22Z, drained 21:30Z) ran the
+  measurement in that window.
+- **Size a ping loop alongside the run by time, not count.** On Windows `ping -n 1 -w 2000` plus `sleep 1` gives one
+  sample per ~1.7 s (70 samples spanned 117 s, measured in w3444).
+- `publish_review` accepts only images, video, `.md`/`.txt`/`.json` and `.zip`: copy a `.jsonl` log or a script to
+  `<name>.txt` before you publish it.
 
 ## A world shard: stations, peers, standbys
 
