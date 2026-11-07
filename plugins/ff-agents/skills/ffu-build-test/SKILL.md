@@ -263,6 +263,29 @@ never rewritten (`tools/check_snapshot_compat.sh BASE_REF` holds it in CI). No t
   processes waking in the same millisecond (four A shards "exited" at one stamp, 11 to 21 s late). A leg that plants
   CPU or disk load breaks other sandboxes' tests, so it holds an exclusive bench ticket
   (`bench_queue.py timed`) like a timing leg.
+- **Never create, close and rename a file inside a loop that answers peers** (w3271, ffu #328). The directory
+  replica wrote `replica.bin.tmp`, closed it and renamed it inside its election loop. On ffu-lothdesktop-2 one write
+  took 0.25 to 2.1 s with `--sync none` (the close is where Defender scans), past the 120 ms election floor. No leader
+  settled, and clients read 10060 at directory.rs:277. The fix appends a checksummed record to one file kept open
+  (`StateFile`): RED 0 of 40, GREEN 40 of 40, fix alone 96 of 96 on Windows (probe #327). A slow close or rename is
+  the first suspect for any Windows stall in a loop that writes state.
+- **A loose shard's taken batches are due on its next tick** (w3271, w2895; ffu #329). A test that holds one shard
+  until a peer catches up must leave ticks after the hold, or keep the peer at its pace all through. The dilation
+  test held A before its last tick, so the credits A took then were due on a tick that never ran ("B's sink took
+  nothing", job 128216280042).
+- **A probe's round logs go in a folder of its own job** (`$RUNNER_TEMP/<what>-${{ github.run_id }}-<leg>`): the ffu
+  runners check out with `clean: false`, so a `round-*.log` an earlier leg left in the workspace was read into a later
+  leg's summary (w3271, probe #327: 301 ms "a write took" lines came from a planted leg's stale `round-5.log`).
+- **Cold Windows builds came from the shared `target/`, not from Cargo changes** (w3271, ffu #328). Every job on a
+  runner shares one `target/`, and the old end step ran `cargo clean` past 20 GB. `tools/ci-runners/keep_target.sh`
+  removes `target/native` and `target/release` first and leaves a mark that the next build prints, so a cold build
+  says whether `target/` was emptied and by which job. Clippy is a job of its own, and the Windows test job has
+  45 minutes.
+- **LothDesktop under its agents' load runs ffu's multi-process tests up to 24 times slower than BEAST** (w3271,
+  measured, job 128193001946: lookahead 228 s against 9 s, peers 137 s against 15 s, at 98-100% CPU with 6 to 8 of
+  its 10 agents mid-turn). Every test passed. A slow or timed-out job on ffu-lothdesktop-* is the machine first:
+  check `portal_logs` (journal, grep `lothdesktop`) for its CPU and busy agents at that time before you read the
+  tests. Ben picked load-gated runners for it (w3271 follow-up).
 
 ## 5. Timing claims
 
