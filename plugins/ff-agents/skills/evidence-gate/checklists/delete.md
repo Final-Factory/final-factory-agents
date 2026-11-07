@@ -25,6 +25,11 @@ For any `rm`, `Remove-Item`, `del`, `rd`, `git clean`, `shutil.rmtree` or clean-
    (`find <dir> -type f -links 1`). A full checkout at another commit comes from `scripts/nightly/scratch_clone.sh`,
    not a plain clone or `cp -c` (about 6 GB of LFS copies per clone on Windows;
    [lesson](../lessons/clean-up-after-yourself.md#a-scratch-clone-links-its-lfs-files-and-du-is-not-what-it-costs-w3177-w3180)).
+1c. **Does the writer you name rest on single-link files?** (w3389) The daemon hardlinks identical files across
+   worker clones, and linked files share one mtime, so `find -mmin` shows untouched clones as freshly written (w3389:
+   about 9.2 GB "new" in each of five clones). Sum recent writes with `find -links 1` or dedupe by inode (`%i`), and
+   size folders with one `du` call over all of them, never one per folder
+   ([lesson](../lessons/clean-up-after-yourself.md#a-deduped-file-looks-freshly-written-in-every-clone-hunt-a-writer-with-single-link-files-w3389)).
 2. **Is every path of this delete strictly inside it?** Write the list of paths first and compare each to the root
    ([delete only inside the worker root](../lessons/clean-up-after-yourself.md#delete-only-inside-the-workers-install-folder-outside-it-measure-and-report-w896), w896: lothsahn, "in general we
    should only be clearing data in the install folder for the worker"). One outside path, a wildcard that can reach
