@@ -101,7 +101,19 @@ the Windows player in it, and launch it through a player slot, never from its `B
 `"${FF_LAUNCH[@]}"` in bash after sourcing `scripts/nightly/player_launch.sh`. Built players run only from
 `<slot root>/slotK/player/`, the paths Windows Firewall allows once per machine (w513); FF Factory's guard refuses a
 direct launch from anywhere else, and every launch while another worker's timed run holds that machine's bench
-lock (w1750: move the pair to free machines, or `--bench-wait <s>`; the game repo's `Documentation/Bench-Lock.md`). On a worker-root install (LothDesktop since w576) each sandbox slotK has its own two player folders, `players/slotK-0` and `slotK-1`: `launch` picks them from the sandbox it runs in, and `--peer 1` puts a same-build client in `slotK-1` (project-memory `feedback-built-players-run-from-the-slot-pool`). A cross-build pair (host on one build, client on another) gets one
+lock (w1750; the game repo's `Documentation/Bench-Lock.md`). On a busy machine do not rely on the gate plus `--bench-wait <s>` / `FF_BENCH_WAIT_S`: it
+holds no place in line, so each newly queued exclusive ticket goes ahead of it (w3372, measured: LothDesktop's client waited 840 s and was refused; biscuit's
+host was refused the same way). Wrap each leg's player launch in a queued shared ticket instead, which takes a first-in-first-out place and, once granted,
+holds the machine for the whole run (`--max-min` bounds the turn; a shared one is capped at 60 min, `MAX_HOLD_MIN`):
+
+```sh
+python3 scripts/bench/bench_queue.py run --mode shared --what "<leg>" --max-min 45 -- <launch>
+```
+
+Order the legs: the client reports "TICKET GRANTED", the host launches and sends "HOST WAITING", then the client launches (w3372 run 3b compared 9,803
+heartbeats with no evictions). **Start that `run` as a managed background job** (the Bash tool's `run_in_background`), never with a trailing `&` inside a
+foreground call: when the starter shell exits the queue stops the command (exit 79, `EXIT_JOB_STOPPED`; Bench-Lock.md, w1964). In w3372 the host died a
+minute after host-ready and the client's join then failed at the transport level. More in `gotchas.md` (the "Better: hold a queued shared ticket" entry). On a worker-root install (LothDesktop since w576) each sandbox slotK has its own two player folders, `players/slotK-0` and `slotK-1`: `launch` picks them from the sandbox it runs in, and `--peer 1` puts a same-build client in `slotK-1` (project-memory `feedback-built-players-run-from-the-slot-pool`). A cross-build pair (host on one build, client on another) gets one
 folder each with no flag. Recipe in project-memory `feedback-beast-work-goes-through-a-sandbox`.
 
 Compare the complete shared heartbeat window across every fingerprint field (currently 25). Do not discard the
@@ -136,3 +148,9 @@ then judges the run: grep both players' logs and the desync-reports folder for a
 through the MCP bridge and confirm a clean compile on BOTH editors first (`gotchas.md` §Clone
 stale assembly). **Long audits**: launch detached and monitor the log file, not the job
 (`gotchas.md` §Wrapper-script traps).
+
+## Before you launch a pair leg (checklist)
+
+- [ ] Each leg's player runs under `bench_queue.py run --mode shared ... -- <launch>`, started as a managed background job, not `&` in a foreground call (w3372).
+- [ ] The order is client "TICKET GRANTED", host launch and "HOST WAITING", client launch; a leg that was refused or evicted once moves to this route, not to a longer `--bench-wait`.
+- [ ] Watch a multi-GB `Host.log` cheaply: grepping the whole file every few seconds rereads gigabytes each time. Poll a small signal (the `report-written`/`session-ended` marker, the report's size) or read only the new bytes (`tail -c +<offset>`) every 30 s or more. (The cost is reasoned, not measured: w3372's own note on it was cut off and its transcript was not readable when this was written.)
