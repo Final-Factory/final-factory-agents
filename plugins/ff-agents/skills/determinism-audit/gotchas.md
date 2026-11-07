@@ -40,7 +40,7 @@ load-bearing for future runs even where the original defect is fixed.
 - [A Linux client leg on biscuit: build, headless launch, a scripted paste](#linux-client-leg) (w2133, w2326, w3029: an item into hand)
 - [A Linux host leg on biscuit: console commands and detector counts from a headless host](#linux-host-leg) (w2281)
 - [A host-only scenario with a remote client: pause on join, tower spawns, flow control](#host-scenario-remote-client) (w2586)
-- [A hand-launched built host: TargetClients counts the host, and turn the audit on](#hand-launched-host) (w2797; every post-ready segment needs `ffauto:`, a new label per relaunch, w2861; pin the agent channel to your pid, blueprint pieces stay separate grids, w3292; `inventory.remove` sends no op, a report holds ~2600 heartbeats, w3317)
+- [A hand-launched built host: TargetClients counts the host, and turn the audit on](#hand-launched-host) (w2797; every post-ready segment needs `ffauto:`, a new label per relaunch, w2861; pin the agent channel to your pid, blueprint pieces stay separate grids, w3292; `inventory.remove` sends no op, a report holds ~2600 heartbeats, w3317; a Leech raid goes pre-join and from far away, w3323)
 - [An ffnightly Linux host for a remote client: its port, its audit, its station builds](#ffnightly-linux-host) (w2824)
 - [An editor pair with presentation checks: no Audit ids in the config, a healthy host, a client machine without bench rounds](#editor-pair-presentation) (w2399)
 - [An Oracle shop pair: host buys first, `near` is tier 1, price is derived](#oracle-shop-pair) (w2518)
@@ -996,6 +996,18 @@ w2797 (2026-11-01, an m5 Mac host of a BEAST Windows client, PR #2989) launched 
   epoch with `compare_determinism_reports.sh`. w3317 compared 18,938 shared epoch-2 heartbeats that way, both rounds of
   swaps included. On a Mac host with no `peer.py`, a small client of `POST /v1/command` and `GET /v1/chain/<id>` on
   `session-<pid>.json` drives the agent channel.
+- **A Leech raid (or any enemy or blueprint setup) runs before the join, and from far away** (w3323, 2026-11-06, an m5
+  Mac host of a BEAST Windows client, PR #3317 for w3307). Once a client is in, `ffauto:enemy.leechraid` and
+  `ffauto:blueprint.place` are refused (`LocalMultiplayerAutomationCommandRunner.cs` ~6478, game repo, on
+  `QuantumCommandInterface.IsMultiplayerSession`, `:356`), so they go in `-ffAutomationPreConnectCommandFile`. But the
+  host's game runs at 16 UPS while it waits for peers (hb 241 to 626 in 24 s, measured), so a raid from
+  `enemy.leechraid|1|0|-120` was already home with carried=3 by hb 241, before any client could join. A Leech flies
+  about 12 tiles/s (measured); from `|0|-3000` it latched about 3.5 minutes after a join made within a minute of
+  `waiting-host-peers-connected`, and both peers saw seek, latch and Home. Launch the host only when the client says
+  ready (a fresh host quits after 900 s with no peer). Read the Leech on each peer with `ffauto:enemy.pressure`
+  (`leech=(x,z) phase=N ... carried=N`; phase 0 seek, 1 latched, 2 home). `compare_audit_records.py` read all 6001
+  shared heartbeats of that run's final reports (the typed records keep up to 16384), not only the ~2600 of the text
+  mirror above.
 
 ## A host-only scenario with a remote client: pause on join, tower spawns, flow control {#host-scenario-remote-client}
 
