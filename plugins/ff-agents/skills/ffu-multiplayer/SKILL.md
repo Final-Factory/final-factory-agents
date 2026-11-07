@@ -113,6 +113,15 @@ on a mismatch, a ledger error, an unbalanced window or a short fleet). Measured 
   sample per ~1.7 s (70 samples spanned 117 s, measured in w3444).
 - `publish_review` accepts only images, video, `.md`/`.txt`/`.json` and `.zip`: copy a `.jsonl` log or a script to
   `<name>.txt` before you publish it.
+- **A latency check against a millisecond limit keeps lothdesktop out** (`request_pair` `avoid: ["lothdesktop"]`) and
+  logs a timestamped ping beside the run. lothdesktop's link to the world (biscuit, 100.98.100.42) swung 30-1151 ms
+  with loss (w3432, w3383, 2026-11-07): FP.8's chat failed 250 ms twice there (max 794 ms), then passed on beast and
+  biscuit at max 148 ms with the ping at 4-138 ms (w3444, measured). Without the ping beside it, a slow line cannot be
+  told from a slow link.
+- **A frame that is not tick state (chat) is handed on as it is read, never held to the next tick**: the server and
+  follower read frames between ticks, so a held one waits up to 62.5 ms a hop at 16 tps. ffu #392 (`Client::chat_to`)
+  sends each chat frame to a channel on read; `chat.rs`'s
+  `a_line_is_handed_on_as_it_is_read_without_waiting_for_the_next_tick` holds it (w3383).
 
 ## A world shard: stations, peers, standbys
 
