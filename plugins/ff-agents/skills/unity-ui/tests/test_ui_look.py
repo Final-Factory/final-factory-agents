@@ -175,6 +175,27 @@ class ContrastTest(unittest.TestCase):
         self.assertEqual(weak, [])
 
 
+    def test_text_under_an_opened_window_is_not_counted(self):
+        # w3273: the full-screen encyclopedia's stills counted the hotbar's counts drawn under it as low-contrast text.
+        img = canvas(400, 300)
+        fill(img, (0, 0, 400, 300), NAVY)
+        fill(img, (20, 20, 120, 34), (0x3B, 0x55, 0x66))
+        fill(img, (20, 220, 120, 234), (0x3B, 0x55, 0x66))
+        census = {"screen": [400, 300], "elements": [
+            el("HelpDialog/Left", (0, 0, 200, 300), color="#15374CFF", canvasOrder=50, depth=0),
+            el("HelpDialog/Right", (200, 0, 400, 300), color="#15374CFF", canvasOrder=50, depth=1),
+            el("HelpDialog/Left/Dim", (10, 10, 130, 44), kind="TextMeshProUGUI", color="#3B5566FF", text="own",
+               canvasOrder=50, depth=2),
+            el("Hotbar/Count", (10, 210, 130, 244), kind="TextMeshProUGUI", color="#3B5566FF", text="0",
+               canvasOrder=-10, depth=59),
+        ]}
+        fails, _ = uk.text_contrast(census, still(img), [(0, 0, 400, 300)])
+        self.assertEqual([f["text"] for f in fails], ["own"])
+        census["elements"][3]["canvasOrder"] = 60  # drawn over the window: on screen, counted
+        fails, _ = uk.text_contrast(census, still(img), [(0, 0, 400, 300)])
+        self.assertEqual(sorted(f["text"] for f in fails), ["0", "own"])
+
+
 class RealCaseTest(unittest.TestCase):
     """The stills Ben judged on 2026-10-16 (crops of them, at their own pixels): w1334's stop list in round 2 (#1817,
     rejected: "the active stop color is bleeding into a bunch of the panel's elements, it looks bad, like its washing

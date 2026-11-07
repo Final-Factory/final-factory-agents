@@ -536,11 +536,39 @@ def same_pairs(still: Still, pairs: list[tuple[list[float], list[float]]], label
 TAG = re.compile(r"<[^>]+>")
 
 
+def covering_windows(census: dict) -> list[tuple[str, list[float], tuple[int, int]]]:
+    """Every opened window with its box and the lowest (canvasOrder, depth) it draws at (w3273)."""
+    out = []
+    for prefix, box in window_rects(census):
+        orders = [(e["canvasOrder"], e["depth"]) for e in census.get("elements", [])
+                  if e["path"].startswith(prefix) and "canvasOrder" in e and "depth" in e]
+        if orders:
+            out.append((prefix, box, min(orders)))
+    return out
+
+
+def drawn_under(e: dict, covers) -> bool:
+    """A text of another panel inside an opened window's box that draws below the window: hidden by it, not on screen
+    (w3273: the full-screen encyclopedia's still counted 123 hotbar counts under it as low-contrast text)."""
+    if "canvasOrder" not in e or "depth" not in e:
+        return False
+    r = e.get("textRect") or e.get("visible") or e["rect"]
+    for prefix, box, lowest in covers:
+        if e["path"].startswith(prefix) or not _inside(r, box):
+            continue
+        if (e["canvasOrder"], e["depth"]) < lowest:
+            return True
+    return False
+
+
 def text_contrast(census: dict, still: Still, rects, label: str = "") -> tuple[list[dict], list[dict]]:
     """Every text inside the regions against what is drawn behind it. Returns (fails under CONTRAST_FAIL, weak ones)."""
     fails, weak = [], []
+    covers = covering_windows(census)
     for e in census.get("elements", []):
         if "Text" not in e.get("kind", "") or any(i in e["path"] for i in ul.IGNORE):
+            continue
+        if drawn_under(e, covers):
             continue
         text = TAG.sub("", e.get("text") or "").strip()
         if not text or e.get("alpha", 1.0) < 0.2:
