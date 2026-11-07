@@ -90,6 +90,12 @@ never rewritten (`tools/check_snapshot_compat.sh BASE_REF` holds it in CI). No t
 - **A Windows test job red with every test passed and `temp leak check: ... MSBuildTemp`** was the build, not a test:
   SDL3's `-sys` crates build through cmake and MSBuild when a runner rebuilds its target. The test jobs build with
   `cargo test ... --no-run` before `check_temp_leaks.sh` since ffu #249 (w2895); keep any new checked step that way.
+- **A Windows test job red with `LNK1171: unable to load mspdbcore.dll (error code: 1455)`, then "required to be
+  available in rlib format" errors, ran no test**: error 1455 is "the paging file is too small", so BEAST ran out
+  of commit memory while linking (w3385, ffu #373, CI run 42394339327 on ffu-beast-3). That is the machine, not the
+  code. Ben's rule (2026-11-07, 15:38 UTC: "Yes, merge it now; the failing test is unrelated and its fix is a separate
+  request") applies: no rerun. Merge on the run's other green Linux and Windows checks once a cause-fix request is
+  handed up (`hand_up_requests`), and name the red and that request in the PR.
 - **A job red with "The runner has received a shutdown signal" or "lost communication with the server", and no step
   failed, is the runner's machine, not a test** (w3152, ffu #286: biscuit dropped its portal link three times at
   07:34-07:39Z on 2026-11-06; lothdesktop at 100% CPU lost ffu-lothdesktop-2). Check `portal_logs` (journal, grep the
@@ -119,6 +125,10 @@ never rewritten (`tools/check_snapshot_compat.sh BASE_REF` holds it in CI). No t
   and `effects/`, `crates/ffu-client/src/fx.rs`, any `.wgsl`; w3097, ffu #222's baked sky), runs the evidence-gate's `pr_evidence.py --repo Final-Factory/ffu --pr <n>`
   before Ben is asked and before it merges: it wants `Reference capture:` and `Art language:` in `## Evidence`
   (ffu-drive, "Art previews"; w2895).
+  A decoder-only change in those paths that draws nothing (w3385: `ktx.rs` refusing malformed files) still trips
+  it; it passes with `Reference capture: n/a: <why, 25+ characters>` and an `Art language:` line saying no colours,
+  no HDR accent and no bloom change. Run the newest `pr_evidence.py` (`sort -V` over the plugin cache): the merge hook
+  refuses an older copy.
 - Merge on green: `gh pr merge <n> -R Final-Factory/ffu --merge --match-head-commit <sha>`. "Not mergeable" means
   another PR touched the same lines (often `docs/PLAN.md`): `git merge origin/main`, keep both sides, push, wait for CI
   again. Never force-push or rebase a pushed branch.
