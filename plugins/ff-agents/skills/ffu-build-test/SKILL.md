@@ -243,6 +243,20 @@ never rewritten (`tools/check_snapshot_compat.sh BASE_REF` holds it in CI). No t
   exactly one chunk short, with every byte delivered in order, is this. Plant a sleep right after the write for RED
   (0 of 10 on Windows and Linux, measured); GREEN 10 of 10 and the fix alone 50 of 50 on both. Any counter, flag or
   log line a test checks after the other side saw the data follows the same rule.
+- **A gateway or proxy that closes a stream while the peer still has unread data from it loses that data** (w3404, ffu #389).
+  - What happened: when a client left, `ffu-gateway`'s `client_reader` called `shutdown(Both)` on the owner's stream, and the session closed it again at once.
+  - The shard's reader thread had not yet read the client's last `OP_TAGGED` frames.
+    - On Windows its read then failed with os error 10053 and the buffered ops were gone.
+    - On Linux the gateway saw "Broken pipe" and the shard "client N dropped: its socket failed".
+  - `sim_switch`'s in-flight ops test then saw the last ~5-25 ops never stamped (ops_forwarded 17043, ops_acked 17038).
+  - The fix:
+    - shut down `Write` only, so the far end reads everything sent and then sees EOF;
+    - then read the far end's acks until none is outstanding, it closes, or a cap passes (`drain`, 10 s);
+    - only then close the stream.
+  - Each half alone still failed 3 of 3.
+  - For RED, plant a one-shot stall in the receiving reader near the run's end: from tick T, each reader sleeps once for `ms`. Use `FFU_PLANT_SLOW_OPS=1120:500` at 64 tps, where the senders stop at 1136 and the run ends at 1200. The held ops then wait in the socket while the client leaves, and the reader resumes before the run's end, so a lost op was lost to the close.
+  - Measured: main failed 3 of 3 on Windows and 5 of 5 on biscuit; the fix passed 3 of 3 and 5 of 5 planted, then 50 of 50 unplanted in a row on ffu-biscuit-3.
+  - A test that loses exactly the last ops a client sent before it hung up is this first.
 - A plain `ffu-server` (no shard) at a fixed `--tps` keeps ticking between the test's last read and its kill or check:
   `server.rs`'s kill -9 test ran on past its next `--snapshot-every` snapshot when the test thread was held up 125 ms,
   and recovery replayed none of the client's ticks (ffu-lothdesktop-1, CI run 41921083432; w3109). Start it with
