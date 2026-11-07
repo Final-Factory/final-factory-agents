@@ -57,8 +57,10 @@ your report: you judge what is on screen. Never read the game's code, the pull r
    (<layer>)". A higher layer over a lower one is not a flaw: leave it out of Flaws (Ben, 2026-10-25: "It doest
    matter. Station UI panels can show over other stuff like tutorial. Think of it in layers. Station UI is a higher
    layer than tutorial or station info. You don't need to fix this"; a worker had built a two-request fix for a
-   critic's flag of exactly that). Temporary chat lines may cover a window too. Still flaws: two windows or two HUD
-   blocks over each other, a lower layer over a higher one (a hover card over a window), text cut off. The
+   critic's flag of exactly that). Temporary chat lines may cover a window too, and so may a hover card or tooltip
+   (the Low power card included), even over the window's title or text (Ben, 2026-11-07, w3344, of the Low power card over the open Player Inventory's title bar: "It's fine that the low power hover panel covers text. It's a temporary world space panel that appears on hover."). Still flaws: two windows or
+   two HUD blocks over each other, two pieces one hover shows over each other (a hover card and its tooltip), a
+   HUD piece over a window, text cut off. The
    Inventory/Crafting window and a structure's window never stand open together for a player (Ben, 2026-10-24): a
    still showing both is a forced-open state, not a layout; say so at the top of your report and do not grade it.
 7. Hunt for what should not be there: a fill brighter than everything else, a colour bleeding into the controls inside a

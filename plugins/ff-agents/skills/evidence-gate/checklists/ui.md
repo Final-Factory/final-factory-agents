@@ -443,7 +443,7 @@ control, and a redesign goes out as 2 or 3 clearly different options built from 
     Think of it in layers. Station UI is a higher layer than tutorial or station info. You don't need to fix this";
     a worker had spent two requests on a fix, PR #2434, closed unmerged). Temporary chat lines may cover a window too
     (Ben, w1432: "i'm ok with chat overlaying on the station controls, since its temporary"). Still findings: two
-    elements of one layer over each other, a lower layer over a higher one (a hover card or HUD piece over a window),
+    elements of one layer over each other, a HUD piece over a window (a hover card or tooltip over a window is accepted: Ben, 2026-11-07, w3344, of the Low power card over the open Player Inventory's title bar: "It's fine that the low power hover panel covers text. It's a temporary world space panel that appears on hover."),
     and text cut off. The Inventory/Crafting window and a structure's window are mutually exclusive (Ben,
     2026-10-24): both open at once is a regression to report, and a forced-open still of them is not graded.
     Lesson: [UI overlaps follow the layer order](../lessons/a-ui-change-leaves-the-rest-of-the-screen-as-it-was.md#ui-overlaps-follow-the-layer-order-higher-over-lower-is-by-design-w2150-2026-10-25).
