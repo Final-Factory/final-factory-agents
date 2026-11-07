@@ -247,6 +247,13 @@ python "$FF_SKILLS/unity-ui/ui_layout.py" pins a-1920.json a-1280.json a-docked.
   censuses whose shot has the pinned panels up. In the Deck station tour that is `cargo-hold` and `defense-platform`
   (w2938, measured: 8 pins, 0 broken, 0 not shown over 1920x1080, 1280x800 undocked and docked); `rest`,
   `inventory-alone`, `command-core` and `assembler` each lack Station Info, the hover card or the Player Inventory.
+  That tour needs the audit world save, which is not on every machine. Without it, a new game does the same (w3359, m5,
+  2026-11-07, measured: 8 pins, 0 broken, 0 not shown at 1920x1080, 1280x800 classic and docked). Launch with
+  `-ffAutomationRole solo -ffAutomationSeed <s> -ffSoloObjectives Normal`, then run these tour steps:
+  `ffauto:player.setposition|X|Z-6`, `ffauto:blueprint.place|<one-item Cargo Hold string>|X|Z`, `ffauto:heartbeats|4`,
+  `ffauto:ui.menu|close`, `ffauto:ui.selecttile|X|Z`, `{"at": "0.75,0.985"}`, then the census. X,Z = 10,21. The game
+  repo's `scripts/deck_audit/build_audit_world.py` `blueprint("Cargo Hold")` makes the one-item string. Take a separate
+  census for the pins when your own screens have no station selected: the gate counts every census you pass.
 - `moves` compares each element's rect (the RectTransform's, not the clipped part), groups what moved into the highest
   object whose every element moved by the same amount, and prints one line per HUD block (`GamePanels/X`) with its screen
   and layout (`docked` when `StructuredDock` or `StructuredStation` is on screen, else `undocked`), its outer rect before

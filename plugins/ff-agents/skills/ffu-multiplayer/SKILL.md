@@ -85,10 +85,43 @@ on a mismatch, a ledger error, an unbalanced window or a short fleet). Measured 
   --json headSha,createdAt,conclusion`), build that commit (`git merge-base --is-ancestor <brief commit> <it>` says the
   feature is in it), and probe a join: `$B/ffu-server chat --connect 100.98.100.42:7777 --name probe --seconds 3` ends
   with `"error":null`. Say the commit you ran, and why, in the report.
+  Read it again right before each leg starts its processes, not only before the tickets: in w3444 the world was
+  redeployed again (a2bc925 to d25cb01, 21:04Z) while both legs queued, and the echoer died on start with
+  `snapshot decode: unsupported version 11`. A rebuild at the new commit took 16 s, so rebuild, re-probe and go.
+- **Agree a pair start time as UTC and parse it as UTC** (`date -u -d '20:39:50' +%s`): plain `date -d` reads the
+  time in the machine's zone (biscuit is -07:00), and w3444's scheduled echoer would have waited seven hours. An echo
+  that must outlast the other leg's queue starts with a long `--seconds` (1500) on the other leg's go; `ffu-server
+  chat` ignored SIGINT in w3444 and writes its JSON line only when `--seconds` runs out, so let it end.
 - **A timed pair run lines its tickets up by queueing both at once**, not one after the other's grant: in w3397 each
   leg's grant lapsed unused while the other still queued (a big computer's queue and biscuit's CI drain took 10 to
   50 min). A leg that times nothing itself (an echoer, when every number comes from the sender's clock) may run without
   a ticket when both legs agree, with that caveat in the report.
+- **Check the world commit and probe a join again right before the timed run**, not only at setup. In w3444
+  (2026-11-07, a beast+biscuit pair timing chat latency for w3383) the world was redeployed at 21:04Z while the legs
+  queued for tickets (the deployed commit moved a2bc925 to d25cb01), and clients built at the old commit failed to join
+  with `snapshot decode: unsupported version 11`. Re-read `gh run list -R Final-Factory/ffu --workflow world.yml
+  --status success -L 1 --json headSha`, rebuild if it moved (ffu-server release took 19 s on BEAST, measured) and rerun
+  the 3 s probe.
+- **Don't agree a fixed wall-clock start before both exclusive tickets are in force.** On a big computer the turn can
+  run out while its CI jobs drain: in w3444 beast's first ticket (granted 20:17Z) spent its whole 20-minute turn in
+  `granted, but N CI job(s) run here` and was revoked at 20:37Z, 3 min before the agreed start. What worked: the leg
+  whose ticket comes later messages "GO" at its grant; the other leg starts its long-lived side at once (an echoer with
+  `--seconds 1500`, not 150), and the first leg starts its ~100 s timed part the moment its own drain ends (the log line
+  `granted <ticket>: time now; it is held until ...`). The second ticket (granted 21:22Z, drained 21:30Z) ran the
+  measurement in that window.
+- **Size a ping loop alongside the run by time, not count.** On Windows `ping -n 1 -w 2000` plus `sleep 1` gives one
+  sample per ~1.7 s (70 samples spanned 117 s, measured in w3444).
+- `publish_review` accepts only images, video, `.md`/`.txt`/`.json` and `.zip`: copy a `.jsonl` log or a script to
+  `<name>.txt` before you publish it.
+- **A latency check against a millisecond limit keeps lothdesktop out** (`request_pair` `avoid: ["lothdesktop"]`) and
+  logs a timestamped ping beside the run. lothdesktop's link to the world (biscuit, 100.98.100.42) swung 30-1151 ms
+  with loss (w3432, w3383, 2026-11-07): FP.8's chat failed 250 ms twice there (max 794 ms), then passed on beast and
+  biscuit at max 148 ms with the ping at 4-138 ms (w3444, measured). Without the ping beside it, a slow line cannot be
+  told from a slow link.
+- **A frame that is not tick state (chat) is handed on as it is read, never held to the next tick**: the server and
+  follower read frames between ticks, so a held one waits up to 62.5 ms a hop at 16 tps. ffu #392 (`Client::chat_to`)
+  sends each chat frame to a channel on read; `chat.rs`'s
+  `a_line_is_handed_on_as_it_is_read_without_waiting_for_the_next_tick` holds it (w3383).
 
 ## A world shard: stations, peers, standbys
 

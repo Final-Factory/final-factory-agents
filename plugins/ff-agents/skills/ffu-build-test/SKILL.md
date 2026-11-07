@@ -27,10 +27,20 @@ whole verification. The repo's own `CLAUDE.md` is binding and longer; this skill
   On BEAST `cargo` is on PATH (`~/.cargo/bin`) and cmake is Visual Studio's:
   `export PATH="/c/Program Files/Microsoft Visual Studio/2022/Community/Common7/IDE/CommonExtensions/Microsoft/CMake/CMake/bin:$PATH"`
   (measured, w2895 M2.17b).
+  On biscuit (Linux) a worker shell has neither `cargo` nor `python` on PATH: `export PATH=$HOME/.cargo/bin:$PATH`
+  and call `python3` (the bench queue script too). A backgrounded `nohup cargo build` or
+  `nohup python ...` then dies with exit 127 and leaves an empty log: w3432 lost 10 min believing a bench ticket was
+  queued. Check the first lines of a background job's log within seconds of starting it.
+- A wait loop `until ! pgrep -f "<pattern>"` matches its own shell's command line and never ends (w3432); bracket a
+  letter (`pgrep -f "[e]cho-biscuit"`) or wait on a pid file.
 - Put those exports in `$TMPDIR/rust.sh` and source it in every shell call: shell state does not persist.
 - **Keep one target per worker; never share a `CARGO_TARGET_DIR` across parallel workers** (w3396). Two builds on one
   target wait on cargo's build-directory lock ("Blocking waiting for file lock"): one rebuild alone took 44 s, two at
   once 48 s and 71 s (measured, BEAST). A shared target is also never idle, so FF Factory's clean-up can never prune it.
+- **Give a second checkout its own target too** (w3480): a `main` worktree for the RED run and your branch must not
+  share one `CARGO_TARGET_DIR`. After building main's tests there, `cargo test` on the branch ran main's stale test
+  binaries and reported main's failures: the new `ship_flies_over_buildings` failed until its sources were touched and
+  rebuilt, then passed 3/3 (measured, BEAST). Use `CARGO_TARGET_DIR="$TMPDIR/ffu-target-main"` for the RED checkout.
 - **A big target is usually stale artifacts, not debug info** (w3396). Since ffu #381 (`[profile.dev] debug =
   "line-tables-only"`, dependencies `debug = 0`) a clean `cargo test --workspace --all-features --no-run` target is
   5.5 GB, down from 14.1 GB (measured, BEAST). Cargo never deletes what an older build left: a worker that rebuilt all
@@ -55,6 +65,13 @@ cargo run --release -p ffu-headless -- crosscheck --threads 1,4,16 --golden gold
 - `hashcheck` ends with `"golden_match":true`. A change that moves the hash on purpose updates
   `golden/hashcheck.txt` in the same PR and says why; re-pin a crosscheck trace with
   `ffu-headless crosscheck --golden golden/crosscheck --write-golden` only for a change meant to move it.
+- **Before a push, run `cargo test --workspace --all-features --no-fail-fast`.** A plain workspace `cargo test` stops at
+  the first crate that fails and never runs the rest. In w3459 (ffu #427), fixing the failures in `ffu-agent` revealed
+  another in `ffu-ui`'s `names.rs`, which the first run had not reached.
+- **`python3` on lothdesktop is the WindowsApps Store stub**, so `./tools/check_sim_rules.sh` stops with "Python was not
+  found". Putting `/c/Python313` on PATH does not help, because that folder has no `python3.exe`. The fix is a folder
+  (`$TMPDIR/pybin`) whose `python3` is a two-line script, `#!/bin/sh` then `exec /c/Python313/python "$@"`, put first
+  on PATH. With it the script printed "sim rules ok" (w3459, measured).
 - Build a player with `-p ffu-client`, never `--workspace`: `ffu-mcp` turns `agent-api` on and Cargo unifies features
   across one command's packages. `tools/check_compiled_out.sh` (CI) fails a player build that holds the agent API.
 - A golden image test that fails after a change: before re-blessing, render with `FFU_FALLBACK_ADAPTER=1
@@ -80,6 +97,27 @@ or unsafe code, and no panics in the tick (use `get`, `checked_*`, `saturating_*
 `Op` through `Sector::submit` (adding one: `/ff-agents:ffu-add-op`). A snapshot layout change bumps
 `SNAPSHOT_VERSION`, keeps the old decoder and adds a fixture in `crates/ffu-sim/tests/fixtures`; existing fixtures are
 never rewritten (`tools/check_snapshot_compat.sh BASE_REF` holds it in CI). No thread count may change a hash.
+
+- **A snapshot section that is not empty for older saves breaks the old fixtures' length checks.** The golden tests
+  assert that re-encoding an older fixture adds only empty sections. In w3459 (ffu #427, v12), the new power section
+  holds the rebuilt power state of any powered sector, so those asserts failed. Compute the section's exact length
+  rather than hard-coding a new number: `let mut w = ffu_sim::codec::Writer::new(); s.power().encode_state(&mut w);`
+  gives its bytes. Assert those bytes, and the zeros after them, then cut the section out before comparing with the
+  old file (`without_power` in `golden_snapshot.rs`, `power_sections` in `golden_world.rs`).
+- **A new `Kind` or `Op` is matched outside `ffu-sim` too.** `cargo check --workspace --all-features --all-targets`
+  finds the non-exhaustive matches:
+  - `ffu-agent`'s `building_json`;
+  - `ffu-headless`'s `op_name`, for a new `Op`;
+  - `ffu-client`'s `packs.rs` `model_name` and `view.rs` colours;
+  - `ffu-ui`'s inspector `kind_word`.
+
+  Only the tests find the expected lists:
+  - `ffu-agent`'s `schema_names_what_set_accepts`, which lists `Kind::ALL` names;
+  - `ffu-agent`'s `ui_tree_returns_the_build_menu_as_data`;
+  - `ffu-ui`'s gate test `every_building` and its kind count;
+  - `names.rs`'s Japanese build-menu list.
+
+  (w3459.)
 
 ## 4. Land it: PR, CI with gh, merge your own
 
@@ -114,6 +152,15 @@ never rewritten (`tools/check_snapshot_compat.sh BASE_REF` holds it in CI). No t
   07:34-07:39Z on 2026-11-06; lothdesktop at 100% CPU lost ffu-lothdesktop-2). Check `portal_logs` (journal, grep the
   machine), then re-run the failed jobs and say why: that is not a flaky-test rerun. `gh run rerun --failed` needs a
   finished run; one held open by queued macOS legs needs `gh run cancel`, then `force-cancel` (above).
+- **An artifact upload or download that fails on the network is biscuit's Wi-Fi, not ffu** (w3427, ffu #389's
+  `getaddrinfo EAI_AGAIN productionresultssa17.blob.core.windows.net` after `Request timeout: ... CreateArtifact`).
+  Biscuit is on Wi-Fi (`wlp194s0`, -66 dBm). A read-only probe leg measured 4% loss in 200 pings to its router, and 4 of
+  60 artifact-store lookups took over 5 s (2026-11-07). Since ffu #400 the diagnostic uploads (lavapipe-captures,
+  crosscheck-*, fuzz-artifacts) carry `continue-on-error: true`, so the check step is the job's verdict. A missing
+  crosscheck trace still fails `crosscompare`, which names the machine. To plant an upload network failure in a probe,
+  set the step's `https_proxy` to a host that can't resolve. The runner overrides a step's `ACTIONS_RESULTS_URL`: run
+  42399250233 uploaded anyway. Put probe workflows on a `probe/*` branch triggered on push, so `ci.yml` doesn't run.
+  A sandbox can't delete a remote branch, so hand the probe branch's deletion up.
 - **CI time on biscuit is compiling, not testing** (w3152, measured): the old single Linux `check` job took 11.8 min
   alone and 32.3 min with 4 copies at once, because every compile step slowed about 4x on the 16 cores while the tests
   barely moved. So Linux runs `lint`, `check` and `check-release` as separate jobs on separate runners (ffu #286). A
@@ -134,6 +181,11 @@ never rewritten (`tools/check_snapshot_compat.sh BASE_REF` holds it in CI). No t
   `gh api repos/Final-Factory/ffu/actions/jobs/<job id>/logs --allow-escape-sequences | sed 's/\x1b\[[0-9;]*m//g' > "$TMPDIR/job.log"`
   (without the flag gh refuses the colour codes and writes nothing; w2895 leg D, ffu #257, 2026-11-06).
   To wait, use `blocked_on` with `ci:Final-Factory/ffu#<n>` and the head, never a poll loop.
+  - **A `ci:` wait ends as soon as one leg fails** (w3272), even while the other legs are still queued. When that
+    red is a test your PR doesn't touch, and you will merge over it (below), a second `ci:` wait on the same head
+    resumes you at once. In w3459 it resumed twice, with all four biscuit runners busy and the Linux legs queued.
+    Hand up the fix for the cause, then set `wake_me` for the legs still to run. Read them by job:
+    `gh run view <id> --json jobs`.
 - A PR that adds or changes art (`art/`), or the code that draws the image (`crates/ffu-bake/src`, `crates/ffu-render/src`
   and `effects/`, `crates/ffu-client/src/fx.rs`, any `.wgsl`; w3097, ffu #222's baked sky), runs the evidence-gate's `pr_evidence.py --repo Final-Factory/ffu --pr <n>`
   before Ben is asked and before it merges: it wants `Reference capture:` and `Art language:` in `## Evidence`
@@ -182,6 +234,16 @@ never rewritten (`tools/check_snapshot_compat.sh BASE_REF` holds it in CI). No t
     and os (`gh workflow run repeat.yml -R Final-Factory/ffu -f target=owner_term ...`). A PR that changes repeat.yml
     runs it with its defaults. Keep the filter empty so the whole file repeats: ffu #383's first whole-file pass found
     a second flake, at run 24, that a filter on the fixed tests would have hidden.
+  - **A lone shard takes `--paced` too** (w3437, ffu #405): the plain server's stdin `until T` lines, for a shard with
+    no peers and no standby (a standby or a peered shard still refuses it). `gateway_failover` keeps each owner one
+    tick ahead of the client (`Proc::pace`). Free at `--tps 200`, a 1 s hold of the test thread let the owner run
+    about 200 ticks ahead, so the ticks "after" a kill had been made before it (0 re-subscriptions), or the restarted
+    owner's next 150 ticks ran before any op reached it ("own ops ... 0 after").
+    - Raise a restarted owner's pace only once the gateway holds its Welcome (`gw.stats().resubscribes != 0`, within
+      `stall::ALIVE`). Raised earlier, the owner ticks once before the gateway's subscribe arrives, its Welcome is one
+      tick past the client's, and the client waits for a tick the test never allows (10060; seen once locally).
+    - A repeat run's RED on BEAST may not reproduce a local plant: main with both 1 s holds failed locally and passed
+      10 of 10 on ffu-windows (run 42405135217). Keep the local RED as the proof, and say in the PR which it was.
   - **A failover test must not assume an owner stays owner until the test stops it** (w3417). A loaded runner
     can stop a process past the link timeout plus the takeover wait (1 s + 500 ms). Its standby then takes over
     legitimately, and a tell to the standby that lost hits a closed pipe. Check that round as you check a kill
