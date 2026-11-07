@@ -154,6 +154,13 @@ never rewritten (`tools/check_snapshot_compat.sh BASE_REF` holds it in CI). No t
   `peers.rs` saw 93 of 100 (measured, ffu #209). Pace such a server from the test (the peers test's `Gate` lets the
   relays the test owns forward only while it is watching). Prove the fix with a planted stall that fails before and
   passes after, plus a loop of 50.
+- **A red in a test your PR does not touch is not rerun and does not hold the PR** (w3412, ffu #262). Ben, on ffu #370's
+  failover red: "Yes, merge it now; the failing test is unrelated and its fix is a separate request." Name the exact
+  failing test and line from the red run, hand up its cause fix (or name the one in flight), and merge on every other
+  Linux and Windows check green, with the test and that request named in the PR. First read every job of that attempt
+  (`gh api repos/<o>/<r>/actions/runs/<id>/attempts/1/jobs`): a `gh run cancel` also cancels jobs still queued, and
+  #262's Linux `hashcheck`, queued 22 min behind busy biscuit runners, was cancelled that way without running: not
+  green. Merge `origin/main` in and push for a fresh run instead, and wait for that leg however long it queues.
 - **BEAST can freeze as a whole machine for 20 to 100 s, and a test's wall-clock wait then runs out with nothing wrong in
   the code** (w3341, ffu #357 probe, ffu #358 fix).
   - It happens when other work on BEAST runs it short of memory and it pages: soaks, extra Unity editors, every
