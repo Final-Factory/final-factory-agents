@@ -51,6 +51,7 @@ load-bearing for future runs even where the original defect is fixed.
 - [A 0.50 (pre-1.0) belt and drop-box pair: circuits need their toggle, stacked boxes by a lethal hit, bot pickup needs research](#pre10-belt-dropbox-pair) (w3295)
 - [A Windows built-player client with the audit on: a 3-minute log, the report at exit, a launcher that is not the player](#win-client-audit-log) (w3371)
 - [Gatling firing and a held recipe: what the fingerprint and observe.state cannot show](#gatling-and-held-recipe-witness) (w3371)
+- [A relay client that clicks the UI: a window, 1920x1080, a station with a Command Core](#relay-client-ui) (w3395)
 
 ## Full-window rule: never diagnose from a partial window {#full-window-rule}
 
@@ -1549,3 +1550,18 @@ field shows:
   (a peer that removed it on another heartbeat forks there), but nothing reads "held". Show it as the section above
   does: the recipe set, its inputs present and no `activeTask` on both peers before research, then `crafting` with
   rising `craftProgress` after it.
+
+## A relay client that clicks the UI: a window, 1920x1080, a station with a Command Core {#relay-client-ui}
+
+w3395 (2026-11-07, BEAST host, LothDesktop client through `pair_relay.py`, six runs of
+`MP-w3395-client-lands-from-station`). The full notes are in the game repo's `Documentation/Determinism-Test-Strategy.md`,
+"A relay client that clicks the UI".
+- A `relay-win` client runs windowed only when the scenario says `"windowed": true` and the runner has
+  `ffnightly.windowed_peer` (game repo PR #3370, w3466). Before it, ffnightly ran that client `-batchmode -nographics`:
+  no stills and no screen for its clicks.
+- Set `FF_NIGHTLY_WINDOW=1920x1080` for a client that clicks a building's panel. At 1280x720 the Player Inventory window
+  covers the station strip's Land button, and `ui.close|playerinventory` cannot close it.
+- A mobile station needs a Command Core to ride or land: use `scripts/nightly/blueprints/w3395-station-hold-command.json`,
+  not `w3258-station-hold.json`. `station.state`, `landspot` and `landaim` take the Command Core's tile.
+- A `do` that chains `ffauto` commands with `;` records only the last result in `commands.jsonl`: give each read its own
+  step.
