@@ -595,6 +595,17 @@ A completion notification alone is insufficient for long silent phases. A single
 the underlying log's last meaningful line. Silence must not be able to mean that the process
 crashed.
 
+**Stopping a background task does not stop what it started** (w3198, lothdesktop 2026-11-06). Claude Code's
+`TaskStop` on a `run_in_background` Bash task that runs a looping script (a sweep launching one player per leg under
+`timeout ... player_slots.py launch`) left the loop and its players running: after two restarts three sweeps drove one
+pool slot, and the data was void (`fleet.mark` answered 30, `fleet.survivors` later 60 marked). `ff-leftovers list`
+did not show the orphaned players, whose launcher had died; `player_slots.py mine` did. So:
+- give a looping script its own stop (a stop file it checks each leg) or let it finish; never restart one over itself;
+- after any `TaskStop`, read `player_slots.py mine` and the command lines naming your script
+  (`Get-CimInstance Win32_Process`), and end what is yours (PowerShell `Stop-Process` on your own pids; the Bash hook
+  refuses `Stop-Process`);
+- a script that picks "my player's pid" refuses when `player_slots.py mine` lists more than one, never takes the first.
+
 **A timed-out synchronous `execute_code` build may still be running.** A long call that times out
 has been seen to leave the build running and produce repeated invocations and completion markers.
 Do not assume the timeout cancelled the work. Schedule the build once from an
