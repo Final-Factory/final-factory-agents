@@ -40,7 +40,7 @@ load-bearing for future runs even where the original defect is fixed.
 - [A Linux client leg on biscuit: build, headless launch, a scripted paste](#linux-client-leg) (w2133, w2326, w3029: an item into hand)
 - [A Linux host leg on biscuit: console commands and detector counts from a headless host](#linux-host-leg) (w2281)
 - [A host-only scenario with a remote client: pause on join, tower spawns, flow control](#host-scenario-remote-client) (w2586)
-- [A hand-launched built host: TargetClients counts the host, and turn the audit on](#hand-launched-host) (w2797; every post-ready segment needs `ffauto:`, a new label per relaunch, w2861; pin the agent channel to your pid, blueprint pieces stay separate grids (a Standard piece needs a Connector), w3292, w3325; a flying Abduction Machine's aggro from `AttackScheduleDetail`, w3325; `inventory.remove` sends no op, a report holds ~2600 heartbeats, w3317; a Leech raid goes pre-join and from far away, w3323)
+- [A hand-launched built host: TargetClients counts the host, and turn the audit on](#hand-launched-host) (w2797; every post-ready segment needs `ffauto:`, a new label per relaunch, w2861; pin the agent channel to your pid, blueprint pieces stay separate grids (a Standard piece needs a Connector), w3292, w3325; a flying Abduction Machine's aggro from `AttackScheduleDetail`, w3325; `inventory.remove` sends no op, a report holds ~2600 heartbeats, w3317; a Leech raid goes pre-join and from far away, w3323; a flying machine's craft at its takeoff centre tile, no flying temperature reader, a station 50 tiles out, w3326)
 - [An ffnightly Linux host for a remote client: its port, its audit, its station builds](#ffnightly-linux-host) (w2824)
 - [An editor pair with presentation checks: no Audit ids in the config, a healthy host, a client machine without bench rounds](#editor-pair-presentation) (w2399)
 - [An Oracle shop pair: host buys first, `near` is tier 1, price is derived](#oracle-shop-pair) (w2518)
@@ -985,6 +985,39 @@ w2797 (2026-11-01, an m5 Mac host of a BEAST Windows client, PR #2989) launched 
   this is not a fork. One more trap from the same run: the station drops to 7 members, and the machine never switches
   on again, about one or two passes over the Terra World after take-off. Plan the on and off evidence for the first
   pass.
+
+- **A flying Abduction Machine's craft and heat, read on both peers** (w3326, 2026-11-07, an m5 Mac host of a
+  LothDesktop Windows client, PR #3316 for w3311, built players at 5dd19c0399).
+  - **Read it at its takeoff centre tile.** A flown station's structures keep their takeoff `GridTile`, and
+    `observe.state|structure|<x>|<z>` falls back to the flying structure whose `CenterTile` is that tile
+    (`PlaytestStateSnapshot.cs:759-763`, `TileKeyedTargets.cs:748-758`, game repo). The 9x9 machine placed at origin
+    (-3,-11) answered at its centre (1,-7), never at its origin, so w3325's `found:false` was most likely the wrong
+    tile. It gives `activeTask`, `craftProgress` (while CraftInProgress), `power.satisfaction` and the grid's
+    `heat.production`.
+  - **No command reads a flying structure's own temperature.** `charge.inspect` only looks in `FFGrid.EntityMap`
+    (`LocalMultiplayerAutomationCommandRunner.cs:15081-15083`) and fails once the station takes off, and `station.heat`
+    lists only Overdrivers. Read `temperatureRaw` (32.32 fixed point, -1159641169920 = -270.0 °C) before takeoff. In
+    flight, the fingerprint folds every `HeatProducer.CurrentTemperature` (`DeterminismStateFingerprintJobs.cs:2868`),
+    so a clean compare shows both peers agree, and the machine's health is the visible proxy: 500 fell to 418 after
+    about 70 s of crafting, then climbed back once it flew off the planet.
+  - **Place the station about 50 tiles from the planet, not at the origin.** A station flies about 7.6 world units/s
+    (10 units per tile). From the origin to the seed-`w3326` Terra World (tile (100,-461), centre (122,-439)) took
+    about 10 minutes, and all three Advanced Solar Panels died in flight (DeathMarker at hb ~8579; heat or a comet,
+    not settled). The machine then had no power. Placed at `blueprint.place|<bp>|122|-381` the flight took about
+    75 s, and nothing died.
+  - **A one-grid powered Abduction station:** the game repo's `scripts/nightly/blueprints/station-power.json` with its
+    Exploration Center swapped for `{"item":"Abduction Machine","at":[-3,-11],"size":[9,9]}`, 15 buildings in one
+    hauler. `blueprint.place` ignores research. Its 60 kW of solar against the machine's 80 kW gives satisfaction 0.53
+    while crafting.
+  - **Away from the planet the craft holds, not drops.** `activeTask` stays `crafting Urso Citizen`, with
+    `craftProgress` frozen, satisfaction back at 1 and grid heat production 6.606 → 1.8, on both peers.
+  - **The client's `-ffAutomationPostConnectDelayHeartbeats` counts across reconnect epochs**, and
+    `-ffAutomationPostConnectDelayMs` is its ceiling on the host too (1500 ms by default; w3326's first host quit
+    1.5 s after the join). A client that reconnects ends early: give the host a longer dwell than the client.
+  - **Sample a Windows client every 30 s, not 10 s.** LothDesktop, busy with other workers' builds, froze 5-16 s per
+    frame while sampling `observe.state` and `charge.inspect` every 10 s. The host evicted it `FlowControl:HardDrift`
+    three times; the host's `[MP pacing]` showed stalls=0 and maxGapMs 74. Sampling every 30 s ran a clean epoch.
+    Compare each epoch on its own.
 
 - **A host-driven pair scene script: build before the join, and read every tile back from the game** (w3324,
   2026-11-06, a BEAST host of a LothDesktop client, PR #3318's `specs/w3259-station-parent/pair/pair_scene.py` at
