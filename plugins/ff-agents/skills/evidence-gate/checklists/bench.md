@@ -178,3 +178,11 @@ Mechanics: the game repo's `Documentation/Bench-Lock.md`.
       started at load 69 beside 4 ffu CI jobs, and three later turns spent their whole 20 minutes in the CI wait. Wait for
       the `^granted .*time now` line, note when the first grant line came, and run a leg only with its length left in
       the turn (grant + 30 min), else give the turn back; record the ticket log in each leg's folder.
+- [ ] **A pair-run leg has its ticket before the GO, and `ff-leftovers end` only after its last timed leg** (w3414,
+      2026-11-07, biscuit client of a LothDesktop host). On a big computer (biscuit, BEAST, LothDesktop) `bench_queue.py
+      timed` first needs `timed_place` (with `same_machine` naming the pair run), then the grant can still wait up to
+      20 min for CI jobs: start both as soon as the run is planned, never after the host's GO (the first JustPlay1003
+      join launched 5 min late and the host's window ran out). Hold the ticket wait with `run_in_background`, never a
+      foreground until-loop: a blocking call hid the next GO for 6 min. `ff-leftovers end` ends every background job of
+      your session, your own `bench_queue.py timed` holder included, so ending a finished player between joins dropped
+      the ticket twice; re-take it at once, or let the player end by its own timeout.
