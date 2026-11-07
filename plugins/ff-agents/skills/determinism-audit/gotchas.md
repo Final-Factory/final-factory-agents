@@ -40,7 +40,7 @@ load-bearing for future runs even where the original defect is fixed.
 - [A Linux client leg on biscuit: build, headless launch, a scripted paste](#linux-client-leg) (w2133, w2326, w3029: an item into hand)
 - [A Linux host leg on biscuit: console commands and detector counts from a headless host](#linux-host-leg) (w2281)
 - [A host-only scenario with a remote client: pause on join, tower spawns, flow control](#host-scenario-remote-client) (w2586)
-- [A hand-launched built host: TargetClients counts the host, and turn the audit on](#hand-launched-host) (w2797; every post-ready segment needs `ffauto:`, a new label per relaunch, w2861)
+- [A hand-launched built host: TargetClients counts the host, and turn the audit on](#hand-launched-host) (w2797; every post-ready segment needs `ffauto:`, a new label per relaunch, w2861; pin the agent channel to your pid, blueprint pieces stay separate grids, w3292)
 - [An ffnightly Linux host for a remote client: its port, its audit, its station builds](#ffnightly-linux-host) (w2824)
 - [An editor pair with presentation checks: no Audit ids in the config, a healthy host, a client machine without bench rounds](#editor-pair-presentation) (w2399)
 - [An Oracle shop pair: host buys first, `near` is tier 1, price is derived](#oracle-shop-pair) (w2518)
@@ -941,6 +941,17 @@ w2797 (2026-11-01, an m5 Mac host of a BEAST Windows client, PR #2989) launched 
 - **A relaunched host needs a new `-ffAutomationLabel`** (w2861): the report path is
   `DeterminismAudit/network-determinism-audit-legacy-<label>-<role>.log`, so a relaunch with the same label
   overwrites the last run's report. Tell the client leg to change its label too.
+- **Pin the agent channel to your own player's pid** (w3292, 2026-11-06, an m5 Mac host of a LothDesktop client, PR
+  #3297). A helper that opened the newest `AgentControl/session-*.json` worked until another worker's player started
+  on the same Mac. Its session file was then the newest, so between 02:50 and 02:55Z a `mobilestation.movenow`, a
+  `mobilestation.dumpstate` and several `observe.state` reads went into that worker's game. Read the pid that
+  `player_slots.py launch` prints, open `session-<that pid>.json`, and check its `pid` before every scenario step.
+- **`blueprint.place` pieces stay separate grids** (w3292). A Station Core, a Command Core, Solar Panels and an
+  Abduction Machine placed from one blueprint did not join into one station; each piece was its own hauler. Only the
+  Abduction Machine flew. Once its grid had flown, `mobilestation.movenow|<takeoff tile>` answered "found no hauler",
+  and its new position was never found (`HaulerCommandNetworkOperation.cs` matches `Placeable.GridTile`). A flight
+  over two planets needs a station whose pieces really join (a save, or construction by bots), or else one
+  movenow per grid, with the grid's tile read again with `observe.state|nearby` before each flight.
 
 ## A host-only scenario with a remote client: pause on join, tower spawns, flow control {#host-scenario-remote-client}
 
