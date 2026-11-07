@@ -65,6 +65,13 @@ cargo run --release -p ffu-headless -- crosscheck --threads 1,4,16 --golden gold
 - `hashcheck` ends with `"golden_match":true`. A change that moves the hash on purpose updates
   `golden/hashcheck.txt` in the same PR and says why; re-pin a crosscheck trace with
   `ffu-headless crosscheck --golden golden/crosscheck --write-golden` only for a change meant to move it.
+- **Before a push, run `cargo test --workspace --all-features --no-fail-fast`.** A plain workspace `cargo test` stops at
+  the first crate that fails and never runs the rest. In w3459 (ffu #427), fixing the failures in `ffu-agent` revealed
+  another in `ffu-ui`'s `names.rs`, which the first run had not reached.
+- **`python3` on lothdesktop is the WindowsApps Store stub**, so `./tools/check_sim_rules.sh` stops with "Python was not
+  found". Putting `/c/Python313` on PATH does not help, because that folder has no `python3.exe`. The fix is a folder
+  (`$TMPDIR/pybin`) whose `python3` is a two-line script, `#!/bin/sh` then `exec /c/Python313/python "$@"`, put first
+  on PATH. With it the script printed "sim rules ok" (w3459, measured).
 - Build a player with `-p ffu-client`, never `--workspace`: `ffu-mcp` turns `agent-api` on and Cargo unifies features
   across one command's packages. `tools/check_compiled_out.sh` (CI) fails a player build that holds the agent API.
 - A golden image test that fails after a change: before re-blessing, render with `FFU_FALLBACK_ADAPTER=1
@@ -90,6 +97,27 @@ or unsafe code, and no panics in the tick (use `get`, `checked_*`, `saturating_*
 `Op` through `Sector::submit` (adding one: `/ff-agents:ffu-add-op`). A snapshot layout change bumps
 `SNAPSHOT_VERSION`, keeps the old decoder and adds a fixture in `crates/ffu-sim/tests/fixtures`; existing fixtures are
 never rewritten (`tools/check_snapshot_compat.sh BASE_REF` holds it in CI). No thread count may change a hash.
+
+- **A snapshot section that is not empty for older saves breaks the old fixtures' length checks.** The golden tests
+  assert that re-encoding an older fixture adds only empty sections. In w3459 (ffu #427, v12), the new power section
+  holds the rebuilt power state of any powered sector, so those asserts failed. Compute the section's exact length
+  rather than hard-coding a new number: `let mut w = ffu_sim::codec::Writer::new(); s.power().encode_state(&mut w);`
+  gives its bytes. Assert those bytes, and the zeros after them, then cut the section out before comparing with the
+  old file (`without_power` in `golden_snapshot.rs`, `power_sections` in `golden_world.rs`).
+- **A new `Kind` or `Op` is matched outside `ffu-sim` too.** `cargo check --workspace --all-features --all-targets`
+  finds the non-exhaustive matches:
+  - `ffu-agent`'s `building_json`;
+  - `ffu-headless`'s `op_name`, for a new `Op`;
+  - `ffu-client`'s `packs.rs` `model_name` and `view.rs` colours;
+  - `ffu-ui`'s inspector `kind_word`.
+
+  Only the tests find the expected lists:
+  - `ffu-agent`'s `schema_names_what_set_accepts`, which lists `Kind::ALL` names;
+  - `ffu-agent`'s `ui_tree_returns_the_build_menu_as_data`;
+  - `ffu-ui`'s gate test `every_building` and its kind count;
+  - `names.rs`'s Japanese build-menu list.
+
+  (w3459.)
 
 ## 4. Land it: PR, CI with gh, merge your own
 
@@ -153,6 +181,11 @@ never rewritten (`tools/check_snapshot_compat.sh BASE_REF` holds it in CI). No t
   `gh api repos/Final-Factory/ffu/actions/jobs/<job id>/logs --allow-escape-sequences | sed 's/\x1b\[[0-9;]*m//g' > "$TMPDIR/job.log"`
   (without the flag gh refuses the colour codes and writes nothing; w2895 leg D, ffu #257, 2026-11-06).
   To wait, use `blocked_on` with `ci:Final-Factory/ffu#<n>` and the head, never a poll loop.
+  - **A `ci:` wait ends as soon as one leg fails** (w3272), even while the other legs are still queued. When that
+    red is a test your PR doesn't touch, and you will merge over it (below), a second `ci:` wait on the same head
+    resumes you at once. In w3459 it resumed twice, with all four biscuit runners busy and the Linux legs queued.
+    Hand up the fix for the cause, then set `wake_me` for the legs still to run. Read them by job:
+    `gh run view <id> --json jobs`.
 - A PR that adds or changes art (`art/`), or the code that draws the image (`crates/ffu-bake/src`, `crates/ffu-render/src`
   and `effects/`, `crates/ffu-client/src/fx.rs`, any `.wgsl`; w3097, ffu #222's baked sky), runs the evidence-gate's `pr_evidence.py --repo Final-Factory/ffu --pr <n>`
   before Ben is asked and before it merges: it wants `Reference capture:` and `Art language:` in `## Evidence`
