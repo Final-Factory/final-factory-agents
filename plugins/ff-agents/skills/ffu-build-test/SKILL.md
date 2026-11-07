@@ -128,6 +128,12 @@ never rewritten (`tools/check_snapshot_compat.sh BASE_REF` holds it in CI). No t
   `surfaces`, and CI went red with E0433 on `png`).
 - `docs/PLAN.md` is the shared board: mark your row "in progress: <session> (wNNN)" in a one-line PR before you start,
   and record its result, with measured numbers labelled, in a PR when it is done.
+- **A multi-process `ffu-server` test that fails now and then on a shared machine: rule out a full disk first.**
+  Grep every child's stderr (`FFU_FAILOVER_LOGS=<dir>`) for `os error 112` (Windows: disk full; Linux `ENOSPC`, "No
+  space left on device"), and read the portal journal (`portal_logs`, grep the machine, `disk`) for that time. A child
+  that hits it dies, so its peer sees a link that closes right after its hello, or a run that never reaches its end.
+  w3374 (ffu #380): two loose chain-takeover failures on lothdesktop came while V: filled to 0. With 19 GB free the
+  same test passed 34 of 34 (measured). Only then chase a race.
 - A flaky test is fixed at its cause, never by a rerun, a retry or a longer timeout (Ben, w2895). In `ffu-server`'s
   tests a server running free (`--tps 0` to an `--until-tick`) can finish its whole run while the test thread is held
   up: on BEAST one 2.17 s progress read let the peers run from tick 2490 to the end with events still unsent, so
