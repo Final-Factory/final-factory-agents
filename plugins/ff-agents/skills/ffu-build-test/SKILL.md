@@ -87,6 +87,9 @@ never rewritten (`tools/check_snapshot_compat.sh BASE_REF` holds it in CI). No t
     "no CI run exists". `gh run cancel` leaves the earlier run queued.
     `gh api -X POST repos/Final-Factory/ffu/actions/runs/<old id>/force-cancel` ends it, and the new run is queued
     within a minute (w3168, ffu #302, measured).
+- **A PR that changes only `docs/` runs no CI**: `ci.yml` has `pull_request: paths-ignore: ['docs/**']` (ffu #297).
+  A `ci:` wait on it ends after 10 min with "no CI run exists". Merge it straight away with `gh pr merge <n> --merge
+  --match-head-commit <head>` (w3382: ffu #395, a PLAN row, sat 10 min in such a wait).
 - **A Windows test job red with every test passed and `temp leak check: ... MSBuildTemp`** was the build, not a test:
   SDL3's `-sys` crates build through cmake and MSBuild when a runner rebuilds its target. The test jobs build with
   `cargo test ... --no-run` before `check_temp_leaks.sh` since ffu #249 (w2895); keep any new checked step that way.
