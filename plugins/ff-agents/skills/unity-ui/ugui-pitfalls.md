@@ -136,7 +136,16 @@ manual pages for these components are the source for the rules: "Auto Layout", "
   (`CanvasRenderer.cull`). Icons, previews and buttons cut by a mask raise no text-census flag. The
   rect audit checks every graphic against its masks.
 - **Nested scroll views eat the drag.** An inner ScrollRect takes drag and wheel events even on the
-  axis it does not scroll; the outer one stops scrolling over it.
+  axis it does not scroll; the outer one stops scrolling over it. It also keeps every wheel turn at its own end (w3268,
+  PR #3308): at 1280x800 classic `WindowFit` shortens the Station Grid window into its `FitViewport` scroll view, but
+  the `StationGridTable` rows' own ScrollRect filled it, so 10 notches over the rows moved nothing and the Net row stayed
+  hidden. The fix is the game repo's `UI/Components/NestedWheelScroll`: an `IScrollHandler` on the inner viewport that
+  passes the turn to the outer view once the inner one cannot move that way (`NestedWheelScroll.Install`, `Receiver`).
+  **The Deck's bumpers, the stick and the Deck tour's `scroll` step send no wheel event**: they scroll the list under
+  the cursor through `UiHelper.ScrollRectUnderPointer` and `ListScrollAssist.ScrollBy`, so a wheel-only fix passes an
+  editor wheel test and fails on a Deck and in the tour (w3268's first build). Route both paths through one check
+  (`ListScrollAssist.ScrollBy` asks `NestedWheelScroll.Receiver` first) and test both: an `OnScroll` event and a
+  `ListScrollAssist.ScrollBy` call (`NestedWheelScrollTest`).
 - **A viewport squeezed to nothing.** A fit that shrinks a scroll view below one row (the
   `WindowFit.MinListHeight` 80 / `MinViewportHeight` 60 floors) leaves one row visible and the
   player sees "scrunched", not "scrolls". Prefer giving the window the height, then the list.
