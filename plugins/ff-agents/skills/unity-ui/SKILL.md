@@ -136,6 +136,12 @@ census (`<shot>.json`: small, clipped, off-screen and overlapping text, covered 
   `Clips:`. A change that adds a tour step needs a before build of master plus only that step's commit
   (`scripts/nightly/scratch_clone.sh`, cherry-pick, `build_player.sh` at the new sha): master alone fails every leg
   with "setup debuginfo:on was not run".
+- **A before player of your own branch: build it in your sandbox, not a scratch clone (w3447).** For an earlier commit
+  of the branch you are on, `switch_branch` to a new branch with `create_from <sha>` (editor stopped, tree clean), run
+  `unity-slot run -- build_player.sh` there, tour it, then `switch_branch` back. `scratch_clone.sh` on a loaded
+  LothDesktop linked its LFS files at about 11 a minute (hours for the game repo), and its `--library` copy (about
+  24 GB) filled V: and held every new agent on the machine until it was deleted. Keep the scratch clone for a commit
+  your sandbox cannot hold (a before build while your editor must keep running).
 - **The photos' states (w764).** `specs/w764-deck-thread/` in the game repo drives the tours that reproduce a player's
   Deck photos: `make_tour.py` parts `hub`, `docked`, `classic`, `persist` (a window dragged with the `drag` step, then the
   building opened again), `reload` (a save and load, then Info), `menus` (New Game > Custom); worlds `audit` (the saved
