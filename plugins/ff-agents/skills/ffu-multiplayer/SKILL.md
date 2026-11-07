@@ -84,6 +84,16 @@ $B/ffu-server replica --dir "$OUT/replica" --listen 127.0.0.1:0 --exit-on-stdin-
   `--standby-listen ADDR [--takeover-after-ms N]`: it follows the owner and fences it once it has been gone N ms.
   `ffu-server --help` has every flag; the directory (who owns which station at which epoch) is the `ffu-directory`
   crate, tested by `cargo test -p ffu-directory`.
+- **Peers on a Windows machine: check the firewall *after* the server first listens.** When `ffu-server.exe` at a new
+  path (`$TMPDIR/tgt/release`) first listens on `0.0.0.0`, Windows shows a firewall prompt that nobody answers. It then
+  adds inbound **Block** rules named `ffu-server` for that exe path (Private and Public profiles). A Block rule beats
+  allow-all rules such as `Tailscale-In`. The other machine's links then hang in SYN-SENT and time out, while loopback
+  and the Windows side's own outbound links work. w3346 (beast, 2026-11-07): the M2.15b soak stalled at tick 13, and
+  the firewall check had been done before the exe ever ran, so it showed nothing. Before a cross-machine run with a
+  Windows leg, do a short dry listen first. Start `ffu-server` on the peer port, check
+  `netsh advfirewall firewall show rule name=all dir=in verbose | grep -i -B12 ffu-server` for `Action: Block`, and
+  test from the peer with `bash </dev/tcp/IP/PORT`. A non-admin worker cannot delete the rule: hand its removal, or an
+  allow rule for the path, to ops before the timed run.
 
 ## When two peers disagree
 
