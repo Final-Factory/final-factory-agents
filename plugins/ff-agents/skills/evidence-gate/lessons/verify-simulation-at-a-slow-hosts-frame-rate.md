@@ -192,6 +192,13 @@ away. The file lacked `using FFCore.Extensions;` (`CS0103: The name 'Ecs' does n
 pass, the whole pair was spent, and a fresh pair run had to be filed after the fix. A test file reaches the player build
 too: `build_player.sh` compiles every assembly, test assemblies included.
 
+**Again in w3436 (2026-11-07), on a fail-before push.** The RED push of PR #3363 (its fixes switched off, to show the
+new tests fail) carried a new `GuardianMountSaveTest.cs` that had never compiled: the same missing
+`using FFCore.Extensions;` (`CS0103 'Ecs'`). CI run 42406242143 failed in compile, not in the tests, and proved nothing;
+the RED had to be pushed again. The rule covers every push whose point is a test result (a RED push, a pair run, a
+merge): compile the new test file first, by `refresh_unity` and a `run_tests` of `test_select.py`'s selection that
+names it. A new test file that uses `Ecs.*` needs `using FFCore.Extensions;`.
+
 ## A pair run is filed only on a player build and a dry run that pass (w2963, 2026-11-04)
 
 **Rule.** An editor compile is not enough for a pair run of a simulation change. Before `request_pair`, at the head
@@ -272,3 +279,19 @@ player quit with it, so no end-of-run dump was taken on either side. The run had
 
 **How to apply.** The merge checklist's pair-run lines ask for it: the brief or scenario states the heartbeat each
 required event is expected at and the run length chosen from it.
+
+## A census diff names a cause only from lines aligned at one heartbeat (w3436, 2026-11-07)
+
+**Rule.** To find what a join save left out, diff the `CensusAtSample(hb N, ...)` lines of both peers' halves for
+the same heartbeat. A `CensusDetail` line is a live dump at each peer's own `currentHeartbeat`, so two of them differ by
+time alone. A host report that says `sampleHeartbeat=unavailable (no retained sample for the verdict heartbeat)` or
+`aligned capture missed: a session reset (a recovery) replaced this world` has no aligned census. A diff against it
+gives leads, labelled guesses, never the cause. Get an aligned pair first (a census dump at the join on both peers, or
+a host that keeps its sample), then name the component.
+
+**Why.** w3436 checked whether PR #3363 fixed BaseSurviving's join desync (r141). The paired host report of the
+loopback run held the client's census at hb 8 but only the host's live census at hb 268. Bats looked like the cause:
+the same 2401 bats in different tag signatures. But both tags are `[Save]`, and 260 heartbeats of fighting explain the
+split as well. What could be said was what the census proved: BaseSurviving has no live Guardian in either census, so the
+Guardian fix cannot reach it. That went up as a follow-up that asks for an aligned census first.
+
