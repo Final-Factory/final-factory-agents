@@ -487,6 +487,8 @@ One file each under `lessons/`: the rule, why (the incident, dated), how to appl
   versions, what they saw) or "not verified on a real Deck", never a bare done on a tour, and `pr_evidence.py` fails the PR
   without a `Real Deck:` line, [checklist](checklists/deck.md): w684's glyph fix passed a tour and Ben's Deck showed none,
   w767's resolution bug is invisible to a tour that forces its size).
+- [A resize brings candidate sizes side by side](lessons/visual-fixes-are-verified-by-looking.md#a-resize-brings-candidate-sizes-side-by-side-not-one-new-size-w3243-w2195-w3316):
+  "too big" or "too small" gets 2 or 3 labelled sizes in one still per zoom, from a built game; match a visible reference (w3316).
 - [A UI change leaves the rest of the screen as it was](lessons/a-ui-change-leaves-the-rest-of-the-screen-as-it-was.md):
   a layout census before and after with the whole HUD up: no new overlap between always-on HUD
   blocks (a panel the player opens may cover the HUD: Ben, w742), no anchored cluster
