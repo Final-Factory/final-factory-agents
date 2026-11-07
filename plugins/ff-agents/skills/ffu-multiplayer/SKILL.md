@@ -85,6 +85,13 @@ on a mismatch, a ledger error, an unbalanced window or a short fleet). Measured 
   --json headSha,createdAt,conclusion`), build that commit (`git merge-base --is-ancestor <brief commit> <it>` says the
   feature is in it), and probe a join: `$B/ffu-server chat --connect 100.98.100.42:7777 --name probe --seconds 3` ends
   with `"error":null`. Say the commit you ran, and why, in the report.
+  Read it again right before each leg starts its processes, not only before the tickets: in w3444 the world was
+  redeployed again (a2bc925 to d25cb01, 21:04Z) while both legs queued, and the echoer died on start with
+  `snapshot decode: unsupported version 11`. A rebuild at the new commit took 16 s, so rebuild, re-probe and go.
+- **Agree a pair start time as UTC and parse it as UTC** (`date -u -d '20:39:50' +%s`): plain `date -d` reads the
+  time in the machine's zone (biscuit is -07:00), and w3444's scheduled echoer would have waited seven hours. An echo
+  that must outlast the other leg's queue starts with a long `--seconds` (1500) on the other leg's go; `ffu-server
+  chat` ignored SIGINT in w3444 and writes its JSON line only when `--seconds` runs out, so let it end.
 - **A timed pair run lines its tickets up by queueing both at once**, not one after the other's grant: in w3397 each
   leg's grant lapsed unused while the other still queued (a big computer's queue and biscuit's CI drain took 10 to
   50 min). A leg that times nothing itself (an echoer, when every number comes from the sender's clock) may run without
