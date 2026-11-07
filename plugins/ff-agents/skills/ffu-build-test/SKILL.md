@@ -126,6 +126,20 @@ never rewritten (`tools/check_snapshot_compat.sh BASE_REF` holds it in CI). No t
   each side's `#[cfg]` line, and the check after it builds the crate without the feature too (`cargo check -p <crate>`):
   `--all-features` passes locally while CI's featureless build fails (w2895: ffu #149's merge dropped the `bake` gate on
   `surfaces`, and CI went red with E0433 on `png`).
+- **Two PRs that each add a row to a fixed-length array can each pass CI and still break main together** (w3384).
+  - ffu-ui's `locale.rs` `WORDS: [[&str; 11]; N]` is such an array. #377 and #379 each added one word and each set N
+    from 46 to 47.
+  - Git merged them without a conflict, and each PR's CI ran before the other merged.
+  - Main then held 48 rows under a 47, and `ffu-ui` failed with E0308 until ffu #382.
+  - Before merging a PR that changes such a length, check `git log HEAD..origin/main -- <file>`. If main touched the
+    file since your CI ran, merge `origin/main` in and run `cargo check -p <crate>` first.
+- **A `#[path]` on a `mod` declared inside an inline `mod tests {}` builds on Windows and fails on Linux** (w3384, ffu
+  #377).
+  - Its path is resolved from a folder named after the inline module (`src/follow/tests/`), which does not exist.
+  - Windows resolves `..` from the text alone, so the path works there. Linux needs every folder on the path to exist,
+    so CI's Linux `lint` and `check` went red at 7bef972.
+  - Declare the module at the file's top level under `#[cfg(test)]`, where the path is relative to the file's own
+    folder, and reach it from the tests through `use super::*`.
 - `docs/PLAN.md` is the shared board: mark your row "in progress: <session> (wNNN)" in a one-line PR before you start,
   and record its result, with measured numbers labelled, in a PR when it is done.
 - **A multi-process `ffu-server` test that fails now and then on a shared machine: rule out a full disk first.**
