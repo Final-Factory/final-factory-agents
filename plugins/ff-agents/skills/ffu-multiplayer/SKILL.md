@@ -67,6 +67,16 @@ on a mismatch, a ledger error, an unbalanced window or a short fleet). Measured 
   cancels the check-in, and FF Factory's clean-up then ends everything your session started about 2 minutes after
   your process stops: w2895's first 24 h soak was killed at 12 h that way. Wait on CI or another PR only after the run
   has finished.
+- A soak over machines (`SOAK_SHARDS=K SOAK_HOSTS=... SOAK_LOCAL=...`, M2.15b) dies at once if one peer port is
+  unreachable. Windows Firewall adds two inbound Block rules named after the exe ("ffu-server", Private+Public) the
+  first time a new exe path listens and nobody answers its prompt. A Block rule beats an allow-all rule for the
+  Tailscale IP, and a worker that isn't an admin can't remove it. w3346 (2026-11-07): beast's fresh
+  `$TMPDIR/tgt/release/ffu-server.exe` was blocked, so biscuit could not reach 47102/47103. Every shard stalled at
+  tick 13, every fleet died within 75 s, and the 1 h soak failed (no rerun, per Ben). Before you agree on
+  SOAK_START_AT: on Windows, run `Get-NetFirewallRule -DisplayName ffu-server | ? Action -eq Block` (any hit means an
+  admin must remove it first, or build into a CARGO_TARGET_DIR whose exe already has an allow rule). In the first
+  minute after the start, each other leg runs `timeout 5 bash -c "</dev/tcp/<ip>/<port>"` against every remote peer
+  port. A refused port means stop and say so; the run is lost anyway.
 
 ## A world shard: stations, peers, standbys
 
