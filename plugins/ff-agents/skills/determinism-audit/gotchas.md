@@ -49,6 +49,7 @@ load-bearing for future runs even where the original defect is fixed.
 - [A census diff at heartbeat 8 after every join: an empty saved buffer; the client report holds both halves](#empty-buffer-join) (w2868)
 - [A cross-OS mod desync hunt from a Linux client: cap its fps, script its rejoins, wait out the outlive window](#linux-client-mod-hunt) (w2826)
 - [A 0.50 (pre-1.0) belt and drop-box pair: circuits need their toggle, stacked boxes by a lethal hit, bot pickup needs research](#pre10-belt-dropbox-pair) (w3295)
+- [A Windows built-player client with the audit on: a 3-minute log, the report at exit, a launcher that is not the player](#win-client-audit-log) (w3371)
 
 ## Full-window rule: never diagnose from a partial window {#full-window-rule}
 
@@ -1481,3 +1482,24 @@ client link drop. It passed (11,784 and 8,232 shared heartbeats, no divergence),
   host saw ClosedByRemote and AutoQuit. Size it for the whole run, all epochs, not for the window after the last join.
 - **A save-and-reload rejoin restarts the heartbeat count at epoch 1**, the same epoch as the first run, so split the
   client log at its first `ReconnectAttempt` (the save-reload section above); the link drop then starts epoch 2.
+
+## A Windows built-player client with the audit on: a 3-minute log, the report at exit, a launcher that is not the player {#win-client-audit-log}
+
+w3371 (2026-11-07, the LothDesktop client of a BEAST-host pair for PR #3344) hit three traps:
+
+- **The log stalls the game.** With `-ffAutomationDeterminismAudit true` the client's Player.log grew to 100 MB in
+  3 minutes from per-heartbeat DeterminismAudit detail lines (CensusDetail, LootRawDetail, ...). On LothDesktop's
+  shared V: drive the main thread hung 12.7 s in `ZwWriteFile` (HangWatchdog), the client's `[Reconnect]
+  WatchdogTripped uplink=HostSeesUsStalled` fired, and the host dropped it at heartbeat ~2700 (`[FlowControl] Dropping
+  client 1: stopped responding (reason=flow-control-hard-drift, behindSeconds=9.9)`). No flag keeps the detail out of
+  the log (the host searched NetworkDeterminismAudit.cs), so keep each session under ~3 minutes: sessions of 2.5 and
+  3.4 minutes then ran to the end.
+- **The report is written at exit.** The client writes `DeterminismAudit/network-determinism-audit-legacy-<label>-client.log`
+  only once its reconnect attempts run out (`status report-written`), about 60-90 s after the host quits. A stopper that
+  killed the player sooner left no report for two sessions, and the file with that name was still an older session's
+  (check its time). The Player.log still carries every `type=StateHash` line, and the host compared on that.
+  Wait for `report-written` before you stop the player, and copy the report away before the next session, since the
+  same label overwrites it.
+- **`timeout` stops only the launcher.** `timeout -s TERM <n> python scripts/nightly/player_slots.py launch ...` (without
+  `--detach`) ended the python launcher and left `finalfactory.exe` running, and `ff-leftovers list` did not list it.
+  Launch with `--detach`, read `pid` from its JSON, and stop that pid yourself.
