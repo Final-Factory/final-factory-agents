@@ -1264,3 +1264,26 @@ From w3071 (2026-11-04), the client leg of a LothDesktop host / BEAST client pai
   writing its Player.log, and a `publish_attachment` of that log failed its SHA-256 check. Find the pid with
   `player_slots.py mine` and `taskkill //PID <pid>`. Check with `tasklist` that it is gone before you publish the log,
   and gzip it (57 MB down to 2.7 MB).
+
+## A fork that only a loading peer makes: RED needs a fixed host and a broken client {#load-asymmetry-red}
+
+w3278 (2026-11-06, an m5 Mac host and a BEAST Windows client, ret's 1.0.0.40 epoch save e8, PR #3282 against master
+765956344c). The bug forks a peer that has just loaded a save from one that kept running: on its first heartbeat
+after a load, a peer side-loads a restored hand-off into a circuit-stopped belt, and the long-running host does not.
+
+- **A broken-build host that loads the save cannot show it.** The host loads the save too, so it makes the same move
+  as every joiner and they agree. Master host, 2 joins, 4.5 min: 0 desyncs, though it served epochs e1 and e2. Right
+  after its load, the host's own belt showed the *client* side of ret's report: 1 item on (-73,-225), 2 on (-73,-226).
+- **The RED run is a fixed host plus a broken-build client.** Dev builds of the same version join each other. The
+  fixed host keeps the long-running peer's state, and the master client forks as ret's clients did: 5 beltItems
+  desyncs, one at heartbeat 8 after every served epoch, with the diff exactly as in ret's report. The GREEN run is
+  then fixed on both legs. Before you build, ask whether the bug needs a peer that did *not* just load. If it does,
+  plan this mixed leg from the start.
+- **Read a built player's state from outside** to show which side a peer is on. Launch it with `-ffAgentControl
+  -ffAgentControlDev`. Read `port` and `token` from `<data root>/AgentControl/session-<pid>.json`, then:
+  `curl -s -H "Authorization: Bearer $TOK" -H 'Content-Type: application/json' -d
+  '{"actor":"local-player","command":"ffauto:connector.items|100000"}' http://127.0.0.1:$PORT/v1/command`. The result
+  lists every connector that holds items, with tile and count; a tile that is missing holds nothing.
+  `connector.items` is DevOnly.
+- **`-ffAutomationRole host` writes autosaves** into the saves folder, `_automation_autosave_mp_<n>_<label prefix>.zip`
+  and `.jpg`, about every 5 minutes. Remove yours with your save copy when you are done.

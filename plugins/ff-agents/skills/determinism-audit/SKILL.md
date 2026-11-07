@@ -65,6 +65,8 @@ client with `-ffAutomationAutoQuit true` and no `-ffAutomationPostConnectDelayMs
 reconnect loop rejoins the host's restarted run during that run's setup; both cost w2491 two host runs, and both were
 already written there (w2326, w2432).
 
+**A fork that only a peer that just loaded a save makes needs a fixed host and a broken-build client for its RED run** (w3278, 2026-11-06): a broken host that loads the save makes the same move as its joiners, so they agree. The recipe, and how to read a built player's belts from outside: `gotchas.md` §load-asymmetry-red.
+
 **A pair run of a pull request reads the PR's head before it builds, and again when its run ends** (w2697, 2026-10-31). w2697's brief named eef79f3285 for PR #2917; while the host's first run went, the head moved to 764a9b753d, which added b1b9d0b3f4, a change to `CometMoverSystem.cs` (simulation). A run at the brief's commit cannot cover that, so a second pair was built and run at the new head (both passed, 221/221 and 222/222 compared). Before the build, `git fetch origin <branch>` and compare its head with the brief's sha; after the run, fetch again, and when `git diff --stat <built> <head>` names simulation files, run again at the new head and tell the other legs its full sha with `message_pair`. The report names both commits and which one the verdict covers.
 
 **Before a client leg builds or joins, prove its machine reaches the host** (w2259, 2026-10-26): from the client's
