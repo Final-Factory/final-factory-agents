@@ -114,6 +114,15 @@ never rewritten (`tools/check_snapshot_compat.sh BASE_REF` holds it in CI). No t
   07:34-07:39Z on 2026-11-06; lothdesktop at 100% CPU lost ffu-lothdesktop-2). Check `portal_logs` (journal, grep the
   machine), then re-run the failed jobs and say why: that is not a flaky-test rerun. `gh run rerun --failed` needs a
   finished run; one held open by queued macOS legs needs `gh run cancel`, then `force-cancel` (above).
+- **An artifact upload or download that fails on the network is biscuit's Wi-Fi, not ffu** (w3427, ffu #389's
+  `getaddrinfo EAI_AGAIN productionresultssa17.blob.core.windows.net` after `Request timeout: ... CreateArtifact`).
+  Biscuit is on Wi-Fi (`wlp194s0`, -66 dBm). A read-only probe leg measured 4% loss in 200 pings to its router, and 4 of
+  60 artifact-store lookups took over 5 s (2026-11-07). Since ffu #400 the diagnostic uploads (lavapipe-captures,
+  crosscheck-*, fuzz-artifacts) carry `continue-on-error: true`, so the check step is the job's verdict. A missing
+  crosscheck trace still fails `crosscompare`, which names the machine. To plant an upload network failure in a probe,
+  set the step's `https_proxy` to a host that can't resolve. The runner overrides a step's `ACTIONS_RESULTS_URL`: run
+  42399250233 uploaded anyway. Put probe workflows on a `probe/*` branch triggered on push, so `ci.yml` doesn't run.
+  A sandbox can't delete a remote branch, so hand the probe branch's deletion up.
 - **CI time on biscuit is compiling, not testing** (w3152, measured): the old single Linux `check` job took 11.8 min
   alone and 32.3 min with 4 copies at once, because every compile step slowed about 4x on the 16 cores while the tests
   barely moved. So Linux runs `lint`, `check` and `check-release` as separate jobs on separate runners (ffu #286). A
