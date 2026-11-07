@@ -349,17 +349,17 @@ class RealCaseTest(unittest.TestCase):
             Image = None
         with tempfile.TemporaryDirectory() as tmp:
             classic, window = Path(tmp) / "classic.png", Path(tmp) / "after.png"
-            real_sample = ul.sample
+            real_fills = ul.fills
             if Image:
                 Image.new("RGB", (1280, 800), classic_rgb).save(classic)
                 Image.new("RGB", (1280, 800), window_rgb).save(window)
             else:
-                ul.sample = lambda shot, rect: classic_rgb if str(shot).endswith("classic.png") else window_rgb
+                ul.fills = lambda shot, rect: [classic_rgb if str(shot).endswith("classic.png") else window_rgb]
             try:
                 code, out = Cmd.run(hud(), hud(blueprint_backdrop=True), closed=hud(),
                                     extra=["--touched", "BlueprintPanelChild", "--shot", str(window), "--ref-shot", str(classic)])
             finally:
-                ul.sample = real_sample
+                ul.fills = real_fills
         self.assertEqual(code, 1)
         self.assertRegex(the_line(out, "Style"), r"delta E 23\.\d \(on screen\)")
         self.assertIn("0 new, 0 kept", the_line(out, "Overlaps"))
@@ -1619,6 +1619,33 @@ class SamplePanelFillTest(unittest.TestCase):
             tinted.save(path)
             before = ul.sample(self.FIXTURES / "w1475-station-grid-1280-before.png", [0, 0, 567, 432])
             self.assertGreater(ul.delta_e(ul.sample(path, [0, 0, 567, 432]), before), 10)
+
+    PANEL, CARDS = (44, 82, 108), (18, 52, 76)   # w3237: the Information window's two fills
+
+    def two_fills(self, d, name, panel_rows, rgb=None):
+        from PIL import Image  # noqa: PLC0415
+        image = Image.new("RGB", (400, 400), rgb or self.CARDS)
+        image.paste(Image.new("RGB", (400, panel_rows), self.PANEL if rgb is None else tuple(min(255, v + 40) for v in self.PANEL)))
+        path = Path(d) / name
+        image.save(path)
+        return path
+
+    def test_a_window_with_two_near_equal_fills_does_not_flip_its_colour(self):
+        # w3237: the fix's crop had more panel pixels, HEAD's more card pixels; the largest bucket flipped and the
+        # Style line read delta E 12.6 for a window that only moved
+        with tempfile.TemporaryDirectory() as d:
+            before, after = self.two_fills(d, "head.png", 180), self.two_fills(d, "fix.png", 220)
+            self.assertGreater(ul.delta_e(ul.sample(before, [0, 0, 400, 400]), ul.sample(after, [0, 0, 400, 400])), 10)
+            code, out = Cmd.run(hud(), hud(blueprint_backdrop=True), closed=hud(),
+                                extra=["--touched", "BlueprintPanelChild", "--shot", str(after), "--ref-shot", str(before)])
+        self.assertRegex(the_line(out, "Style"), r"delta E 0\.\d \(on screen\)")
+
+    def test_a_recoloured_two_fill_window_still_reads_far_off(self):
+        with tempfile.TemporaryDirectory() as d:
+            before = self.two_fills(d, "head.png", 180)
+            after = self.two_fills(d, "fix.png", 220, rgb=(60, 100, 140))
+            near = min(ul.delta_e(a, b) for a in ul.fills(after, [0, 0, 400, 400]) for b in ul.fills(before, [0, 0, 400, 400]))
+        self.assertGreater(near, 10)
 
 
 class SampleWithoutPillowTest(unittest.TestCase):
