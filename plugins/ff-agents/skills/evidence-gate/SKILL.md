@@ -550,6 +550,8 @@ One file each under `lessons/`: the rule, why (the incident, dated), how to appl
   `$TMPDIR/<leg>-<timestamp>` (w1097); only when the disk is short mid-task, an `rm -rf` under `$TMPDIR`; low disk is
   fixed by the harness or by filed clean-up work, never by asking a person (w596/w626).
   Measure Windows folders with robocopy `/L` on the install drive only, never Git Bash `du`, and look for your own tool processes that a stopped shell left running ([section](lessons/clean-up-after-yourself.md#measure-windows-folders-with-robocopy-l-not-git-bash-du-w1561), w1561).
+  Hunt a disk writer with single-link files: the daemon's hardlinks give every clone one shared mtime, so `find -mmin`
+  and per-folder `du` show untouched clones as written ([section](lessons/clean-up-after-yourself.md#a-deduped-file-looks-freshly-written-in-every-clone-hunt-a-writer-with-single-link-files-w3389), w3389).
   Same lesson, deletes (w896): only inside the machine's worker install folder (`$FF_WORKER_ROOT`); outside it you measure, report
   sizes and list what makes FF Factory write there, whatever the brief says (w876 cleared dotnet temp, the Unity Hub installer,
   Temp, test output and old transcripts on LothDesktop's C:; lothsahn: "in general we should only be clearing data in the

@@ -209,6 +209,24 @@ Measured on BEAST at 7eb465e2: 5166 files linked, 14 downloaded, 2 MB of LFS dat
 Git checkout and Unity's importers replace the file instead, which breaks the link safely. Copy the Library
 (`--library`) only when build time matters: on Windows it is a full copy, about 32 GB from a sandbox.
 
+## A deduped file looks freshly written in every clone: hunt a writer with single-link files (w3389)
+
+**Rule.** To find what is filling a disk, add up only the recent files that have one link
+(`find <dirs> -xdev -type f -links 1 -mmin -<n> -printf '%s %p\n'`), or dedupe by inode (`-printf '%i %s %p\n'` and count
+each inode once). Size the folders with one `du` call over all of them (`du -s tmp/*/`), never one call per folder: `du`
+counts a hardlinked file once per call, so separate calls count it in every folder. Report what `df` gained, not what a
+listed size promised. `ff-leftovers remove-slot` already says that hardlinked slots free less than their size.
+
+**Why.** 2026-11-07, BEAST (w3389, F: at 11 GB free). FF Factory's daemon hardlinks identical files across worker clones.
+One Assets/Audio wav in ffa-932935f8/clone-before, ffa-4c0fdc7a/clone-3307 and ffa-7f09f9cd/clone-3340 was one inode
+with 5 links. Linked files share one mtime, so when one copy is touched every clone looks freshly written. `find -mmin
+-15` showed about 9.2 GB "new" in each of five clones that wrote nothing (measured). The real writer was a cargo target:
+ffa-c2dfe71a/ffu/target/debug wrote 17.7 GB in those 15 minutes. `ff-leftovers folders` listed the orphan ffa-932935f8 at
+38.4 GB. Most of that was links, and deleting it freed far less (df).
+
+**How to apply.** Run every write hunt with `-links 1` or an inode dedupe before naming a writer. When a folder size looks
+too big, check one large file's link count (`stat -c '%h %i' <file>`) before you trust it.
+
 ## A clean-up never takes the folders of a request that has not closed (w1379)
 
 **Rule.** Before you delete a folder that is not yours (another worker's `tmp/ffa-<session>`, a `scratch/` or review folder named for a
