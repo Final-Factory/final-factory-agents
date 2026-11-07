@@ -1287,3 +1287,33 @@ after a load, a peer side-loads a restored hand-off into a circuit-stopped belt,
   `connector.items` is DevOnly.
 - **`-ffAutomationRole host` writes autosaves** into the saves folder, `_automation_autosave_mp_<n>_<label prefix>.zip`
   and `.jpg`, about every 5 minutes. Remove yours with your save copy when you are done.
+
+## A post-join research scenario in a built pair: devunlock, not learnTech; paste by hold and click {#post-join-research-pair}
+
+w3286 (2026-11-06, a BEAST Windows host and a LothDesktop Windows client, direct IP, PR #3290 head a14faca74e). The
+scenario: paste a blueprint whose recipe is not researched yet, prove both peers hold it, research the recipe, and prove
+both release it on the same heartbeat. A rehearsal on one machine found six traps before the real pair ran clean
+(4,135 heartbeats, 0 divergences).
+
+- **The console `learnTech` is refused in multiplayer** (`QuantumCommandInterface.cs`, `RefuseLocalOnlyCheatInMultiplayer`).
+  Research after the join with `ffauto:player.devunlock`, the networked DeveloperUnlock op. It researches every tech,
+  so it suits a scenario about a single locked recipe only when nothing else in it depends on research.
+- **`ffauto:blueprint.place` works only before the join.** After it, paste the way a player does:
+  `blueprint.hold|<bp>`, `pointer.moveto|x|z`, `pointer.click`, `blueprint.drop`. That route goes through the
+  BlueprintPlacement op. A "WARNING: outside the view" from `pointer.moveto` still placed the ghosts.
+- **The automation new game (`flatMap false`) has no construction bots.** Ghosts sit at "no free construction bot"
+  until you send `spawn.ships|Construction Bot|2`.
+- **Item names are exact.** The Capacitor recipe takes 8 Low Density Structure and 4 "AI Controller Circuit", not
+  "AI Controller Unit"; the wrong name throws a KeyNotFoundException.
+- **A Solar Panel powers a building only through its connection slot.** A panel that is merely next to the building
+  forms a grid of its own, and `rotate.abs` on a built panel did not join them. For an Assembler at (-2,-10), these
+  placements gave satisfaction 1: a direction-1 panel at (-4,-10), and direction-0 panels at (-2,-12) and (-1,-12).
+  Make the panel blueprints with `scripts/deck_audit/build_audit_world.blueprint(name, direction)`.
+- **`observe.state|structure` does not list components such as a marker.** Read `activeTask` and `craftProgress`
+  instead. At satisfaction 1 progress rises exactly 1/128 per heartbeat, so a craft that started at heartbeat S reads
+  `(H - S)/128` at heartbeat H. Peers that sample at different heartbeats can still compare S: the host's 0.1734375 at
+  hb 2753 and the client's 0.2515625 at hb 2763 both give S = 2730.8. A marker in an `FF*` namespace is also in the
+  fingerprint's census hash, so removing it on different heartbeats would show as a divergence there.
+- **On `audit.write` checkpoint reports, `compare_determinism_reports.sh` sees only the tail** (2,397 heartbeats here,
+  and it warns so). `scripts/audit/compare_audit_records.py` compares the typed records over the whole window (all
+  4,135 heartbeats, 28 fields), together with the DesyncVerdict counts. Run both.
