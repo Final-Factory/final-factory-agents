@@ -248,6 +248,11 @@ screen; on desktop three labels stopped fitting, the two windows left their defa
       `--brief` alone is not the gate: the PR's `Brief (Ben): "..."` line must hold every quote its `Moved:` and
       `Window overlaps:` lines use, and the last check before you push runs without `--brief` (w3258: #3283 passed with
       `--brief` and the pilot refused it on green CI, its Brief line quoting half of Ben's sentence).
+    - A critic finding that stands on master too fails `'Critic:' ... N standing` until the line names its filed request
+      (wNNN). A handed-up follow-up has no number until its orchestrator files it, and it may go to the person first, so
+      ask that orchestrator before you push which line to write, rather than waiting for green CI and then for the filing
+      (w3280: #3293 sat green until Ben's orchestrator answered "Write the Critic line as \"docked bottom gap (8 px, a
+      standing issue on master too) handed up; Ben decides whether to file it\", and merge PR #3293 now").
     - A pinned element that only got taller or shorter is resized, not moved: its left and right edges within 1 px and
       its anchored edge (the bottom, over the abilities or the minimap) within 5 px (the census's 4 px plus the printed
       rounding). Its line still carries the requester's words from the brief that approved the change, but they need not
