@@ -1296,10 +1296,20 @@ def reference(census: dict, fragment: str):
 
 
 def sample(shot, rect):
-    """The panel's own colour in a screenshot inside a rect (image pixels, top-left origin): the most common colour (the
+    """The panel's most common colour in a screenshot inside a rect (fills()'s first), or None."""
+    found = fills(shot, rect)
+    return found[0] if found else None
+
+
+def fills(shot, rect, share: float = 0.6):
+    """The panel's own colours in a screenshot inside a rect (image pixels, top-left origin): the most common colour (the
     mean of the largest bucket of pixels that agree within 8 levels a channel), which is the window's fill wherever its
-    rows and text sit. w1475: the median pixel moved with the content, so two new rows in the Station Grid window read
-    delta E 12.1 against its before at 1280x800 while its fill was #133754 against #123654 (delta E 0.8)."""
+    rows and text sit, then every other bucket at least `share` of its size, largest first. w1475: the median pixel moved
+    with the content, so two new rows in the Station Grid window read delta E 12.1 against its before at 1280x800 while
+    its fill was #133754 against #123654 (delta E 0.8). w3237: the Information window has two fills of nearly equal
+    area, its panel (44,82,108) and its row cards (18,52,76); one crop had more card pixels and the other more panel
+    pixels, so the largest bucket flipped and a window that only moved read delta E 12.6 against its before at 1280x800
+    (0.4 and 0.5 fill for fill). style() compares every near-tie fill with the reference's and keeps the closest pair."""
     try:
         from PIL import Image  # noqa: PLC0415
     except ImportError:
@@ -1311,13 +1321,14 @@ def sample(shot, rect):
         x0, y0 = max(0, x0), max(0, y0)
         x1, y1 = min(image.width, x1), min(image.height, y1)
         if x1 - x0 < 2 or y1 - y0 < 2:
-            return None
+            return []
         crop = image.convert("RGB").crop((x0, y0, x1, y1)).resize((max(1, (x1 - x0) // 4), max(1, (y1 - y0) // 4)))
         buckets: dict[tuple, list] = {}
         for p in crop.getdata():
             buckets.setdefault((p[0] >> 3, p[1] >> 3, p[2] >> 3), []).append(p)
-        fill = max(buckets.values(), key=len)
-        return tuple(round(sum(c[i] for c in fill) / len(fill)) for i in range(3))
+        ranked = sorted(buckets.values(), key=len, reverse=True)
+        return [tuple(round(sum(c[i] for c in fill) / len(fill)) for i in range(3))
+                for fill in ranked if len(fill) >= share * len(ranked[0])]
 
 
 def style(before: dict | None, after: dict, ref_fragment: str, shot=None, ref_shot=None, ref_census: dict | None = None,
@@ -1354,8 +1365,8 @@ def style(before: dict | None, after: dict, ref_fragment: str, shot=None, ref_sh
         name = short(e["path"])
         da = e.get("alpha", 1) - ref.get("alpha", 1)
         if shot and ref_shot:
-            mine, theirs = sample(shot, e.get("visible") or e["rect"]), sample(ref_shot, ref.get("visible") or ref["rect"])
-            de = delta_e(mine, theirs) if mine and theirs else float("nan")
+            mine, theirs = fills(shot, e.get("visible") or e["rect"]), fills(ref_shot, ref.get("visible") or ref["rect"])
+            de = min((delta_e(a, b) for a in mine for b in theirs), default=float("nan"))
             how = "on screen"
         else:
             de = delta_e(rgba(e["color"]), rgba(ref["color"]))
