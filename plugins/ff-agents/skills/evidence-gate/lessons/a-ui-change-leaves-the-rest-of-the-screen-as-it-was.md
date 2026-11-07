@@ -372,7 +372,9 @@ since its temporary").
 
 - Two elements of the same layer over each other: two windows, or two always-on HUD blocks (hotbar and minimap
   buttons, Objectives and minimap).
-- A lower layer drawn over a higher one: a HUD piece or a hover card over a window.
+- A lower layer drawn over a higher one: a HUD piece over a window. A hover card or tooltip over a window is not
+  one: it shows only while the pointer is on something (Ben, 2026-11-07, w3344, of the Low power card over the open Player Inventory's title bar: "It's fine that the low power hover panel covers text. It's a temporary world space panel that appears on hover."); two pieces one hover shows over each other
+  still are.
 - Text cut off, by the screen edge or by whatever covers it inside its own layer.
 - A combination a player cannot reach is no layout at all. The Inventory/Crafting window and a structure's window are
   mutually exclusive (Ben, 2026-10-24): both open at once is a regression to report, not a layout to judge or fix.

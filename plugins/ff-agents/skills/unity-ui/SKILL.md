@@ -521,8 +521,9 @@ A new overlap or one kept between windows you moved fails; never measure rects b
 Objectives card and the tutorial, its Skip button included); station and structure windows and the panels the player
 opens; temporary chat lines may cover a window, and the Objectives card (Ben, 2026-11-03, w2984: "It can appear over stuff because it's not always showing though"; hud-clusters.json allows the pair, and `ui_layout.py check` prints it ALLOWED, w2996), never Station Info (w2975: Loth reported Station Info under the chat as a regression). Chat rows show only for seconds after a line arrives, so a census with no line just posted checked nothing (w2975: w2920's and w2952's tours never posted one and missed Station Info under the chat; post with `ffauto:chat.send|<line>` right before each still, the game repo's `specs/w2975-chat-station-info/make_tour.py`). A higher layer over a lower one is not a finding and not a fix (Ben,
 2026-10-25: "Station UI is a higher layer than tutorial or station info. You don't need to fix this"); the tool
-allow-lists those pairs by layer. Two windows over each other, a lower layer over a higher one (a hover card over a
-window) and cut-off text still fail. Lesson: evidence-gate `lessons/a-ui-change-leaves-the-rest-of-the-screen-as-it-was.md#ui-overlaps-follow-the-layer-order-higher-over-lower-is-by-design-w2150-2026-10-25`.
+allow-lists those pairs by layer. A hover card or tooltip over a window is accepted too, title bar and text included
+(Ben, 2026-11-07, w3344, of the Low power card over the open Player Inventory's title bar: "It's fine that the low power hover panel covers text. It's a temporary world space panel that appears on hover."; hud-clusters.json `transient`). Two windows over each other, two pieces one hover shows over each other,
+a HUD piece over a window and cut-off text still fail. Lesson: evidence-gate `lessons/a-ui-change-leaves-the-rest-of-the-screen-as-it-was.md#ui-overlaps-follow-the-layer-order-higher-over-lower-is-by-design-w2150-2026-10-25`.
 
 **Then list what moved, and check the pins, on every screen and layout** (w826, w894). **Move only what the person
 asked to move**: never move, re-anchor, restack or regroup an existing panel, HUD element or hover panel unless the brief
