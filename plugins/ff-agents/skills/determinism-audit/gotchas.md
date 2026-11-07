@@ -967,6 +967,16 @@ w2797 (2026-11-01, an m5 Mac host of a BEAST Windows client, PR #2989) launched 
   and its new position was never found (`HaulerCommandNetworkOperation.cs` matches `Placeable.GridTile`). A flight
   over two planets needs a station whose pieces really join (a save, or construction by bots), or else one
   movenow per grid, with the grid's tile read again with `observe.state|nearby` before each flight.
+- **Reading a building on a flying station from outside** (w3326, 2026-11-07, a LothDesktop Windows client of an m5
+  host, PR #3316, Abduction Machine heat). `ffauto:observe.state|structure|<x>|<z>` finds the building at its TAKEOFF
+  tile for the whole flight (game repo `PlaytestStateSnapshot.cs:751-757`, the `TryResolveLiveEntityIncludingFlying`
+  fallback). Looking it up at the station's live tile hit the planet below instead. `ffauto:charge.inspect|<tile>`
+  does not resolve after takeoff, so a heat building's `temperatureRaw` (raw / 2^32 = °C) is read only while landed;
+  in flight the fingerprint is the check (it folds `HeatProducer.CurrentTemperature`). `observe.state`'s
+  `heat.production` is not the live output: it read 1.5 on an idle machine whose `charge.inspect` `heatProductionRaw`
+  read 0. Sample every 30 s, not 10 s: r3, sampling every 10 s with `charge.inspect` on a busy LothDesktop, had
+  client frames of 5 to 16 s and three rejoins (cause unproven); r2 and r4b at 30 s stayed in one epoch, worst frames
+  304 and 269 ms.
   **The cause was the layout, not the blueprint** (w3325, 2026-11-06, an m5 Mac host of a LothDesktop client, PR
   #3319). A Standard connection meets another Standard one only through a Connector
   (`StationConnectionsSystem.cs:1179-1180`, game repo). The Abduction Machine and the Station Core are both Standard,
