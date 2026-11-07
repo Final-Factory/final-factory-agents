@@ -134,6 +134,30 @@ never rewritten (`tools/check_snapshot_compat.sh BASE_REF` holds it in CI). No t
   `peers.rs` saw 93 of 100 (measured, ffu #209). Pace such a server from the test (the peers test's `Gate` lets the
   relays the test owns forward only while it is watching). Prove the fix with a planted stall that fails before and
   passes after, plus a loop of 50.
+- **BEAST can freeze as a whole machine for 20 to 100 s, and a test's wall-clock wait then runs out with nothing wrong in
+  the code** (w3341, ffu #357 probe, ffu #358 fix).
+  - It happens when other work on BEAST runs it short of memory and it pages: soaks, extra Unity editors, every
+    sandbox busy.
+  - On 2026-11-07 four ffu-beast runners stalled for the same 22-23 s at 09:14:47Z. Counters: CPU 100 %, run queue up
+    to 65, 6.4 GB free, up to 37,000 pages/s (measured).
+  - A new owner's start line took 103 s (CI run 42349485056). BEAST's daemon lost its portal link for about a minute,
+    six times, with no ffu job running.
+  - The signs:
+    - reds in unrelated multi-process tests on several BEAST runners within seconds of each other;
+    - an empty start line after `recv_timeout`;
+    - 10060 or 10054 on a connection that was healthy.
+  - Measure it with `tools/probe_stall.sh <minutes> <dir>` (branch w3341-probe-stall, never merged). It runs a 200 ms
+    sleep clock that prints `STALL` for a gap of 1.5 s or more, typeperf every 2 s, and a read of the System, Defender
+    and Application logs. Run it as a `shell: cmd` step calling `"%ProgramFiles%\Git\bin\bash.exe"` in 5 matrix copies.
+    The same stall time on every copy means the whole machine froze.
+  - A wait that only checks that a process is alive (a start line, a client read, `resubscribe_within`, a standby's
+    `hold`) uses `stall::ALIVE` (180 s) from `crates/ffu-server/tests/support/stall.rs`. Every wait's panic appends
+    `stall::note()`. That is a longer timeout with the measured stall as its evidence, not a loosened claim; never
+    lengthen a latency or ordering check this way.
+  - Prove it with a planted slow start: an env var makes the Nth child of a kind sleep 40 s before `main`. ffu #358:
+    main failed 9 of 9, the fix passed 9 of 9, and then 30 of 30 rounds in 10 copies on BEAST.
+  - The product's own timers (gateway `WRITE_TIMEOUT` 10 s, a 1 s `--takeover-after-ms`, the follower's 5 s read)
+    still lose to a longer freeze. The real fix is BEAST's load, which needs Ben.
 - **A count a test reads once the far end has the bytes is counted before the write, never after** (w3167, ffu #300).
   `proxy.rs`'s `pipe` did `write_all` and then `fetch_add`: the test's client read its last 4-byte echo and the test
   read `stats()` while the down thread sat between the two, so it saw `(160, 156)` on ffu-biscuit-3. A count that is
