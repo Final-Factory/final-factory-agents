@@ -244,6 +244,10 @@ screen; on desktop three labels stopped fitting, the two windows left their defa
       Information on the left of center", which nobody said), a Deck quote on a desktop line, a pinned element whose quote
       does not name it, a line that folds several elements together, and a `Moved:` or `Pinned:` line that leaves out a
       screen or the docked layout.
+    - `ff-pr merge` and the merge-on-green pilot run `pr_evidence.py --repo --pr` with no `--brief`, so a PASS with
+      `--brief` alone is not the gate: the PR's `Brief (Ben): "..."` line must hold every quote its `Moved:` and
+      `Window overlaps:` lines use, and the last check before you push runs without `--brief` (w3258: #3283 passed with
+      `--brief` and the pilot refused it on green CI, its Brief line quoting half of Ben's sentence).
     - A pinned element that only got taller or shorter is resized, not moved: its left and right edges within 1 px and
       its anchored edge (the bottom, over the abilities or the minimap) within 5 px (the census's 4 px plus the printed
       rounding). Its line still carries the requester's words from the brief that approved the change, but they need not
