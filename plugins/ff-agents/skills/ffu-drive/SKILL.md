@@ -85,6 +85,10 @@ $B/ffu --start factory:250000:1 --frames 600 --stats frames.json              # 
 space pauses, `[` and `]` slow and speed the clock, F12 saves `ffu-shot-N.png` in the working folder, 1 to 5 pick
 belt, miner, crafter, sink and remove (Tab the next), R rotates, a left click places and a right click removes.
 `--pack DIR` draws each kind that has a baked model in DIR's `*.ffpack` (`ffu-bake` writes them). Always give a window `--seconds N` so nothing you start outlives your work.
+A still of a live window on Windows (a `--connect` client, a launcher check): run `window_shot.ps1 -Out shot.png`
+(beside this file) while the window runs. Never use a desktop grab: on BEAST other sandboxes' editors sit on top, and in
+w3321 the grab showed slot2's Unity and none of the client. The script uses PrintWindow on the window itself, which drew
+the client while it was covered (measured).
 `ffu --headless <cmd>` is `ffu-headless <cmd>`. Judge motion from a clip, not a still (`/ff-agents:watch-video`'s
 viewing rules hold; its recorder is for Unity players).
 
