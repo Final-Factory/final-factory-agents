@@ -199,6 +199,13 @@ never rewritten (`tools/check_snapshot_compat.sh BASE_REF` holds it in CI). No t
 - Before writing an ffu fix, list the open PRs on the same files (`gh pr list -R Final-Factory/ffu --state open
   --json number,title,files`): w3096 and w3101 each wrote the same kept-connection helper at the same time, and the
   second had to rebuild on the first (ffu #229, #235).
+- **A wire decoder that checks exact lengths takes every form that main and the open PRs send**. Before such a
+  decoder merges, list each sender's frame lengths on main and in the open PRs on the same file. Read a trailing flag
+  through the decoder, by length, never by byte position (w2895, ffu #280). P0.14b's exact `replica::Hello` and
+  `HelloAnswer` decoders first knew only the 4- and 8-byte forms, missing the 16- and 20-byte owner forms. They then
+  refused M2.30's trailing `LIVE` keepalive byte from ffu #277 (merged first), and a peer that sent it would have been
+  dropped. The fix was `split_live`: strip the flag when `len % 4 == 1`, refuse any other odd last byte, then match the
+  lengths. A test then loops over every form with and without the flag, plus a bad extra byte.
 - Before blaming your change for a Windows flake, run the same probe on unchanged `main` (a probe PR with main's code
   and the same loop): w3096's #229 looked like it failed 31 of 50, and main failed 32 of 50 the same way.
 - `tools/sim_switch.sh` builds sim build A from the working tree, but its planted build B from a `git worktree` of
