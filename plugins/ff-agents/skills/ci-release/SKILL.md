@@ -488,6 +488,13 @@ old way still works on a machine with the ffdiscord config (LothDesktop): `ffdis
 posting step open. Never finish a release report without one of the two: the message link, or that
 open step.
 
+**A request chained after this release starts from that report, not from your DONE** (w3289, lothsahn: "Please fix
+that so that when we chain releases in the future you don't wait like this"). End the turn that has the build live and
+the notes posted with a report that says both, even while an after-check (the 24-hour look at player reports) keeps
+your request open, and give it a line `For wNNN: <version> live on <branch>, notes posted: <link>` for every request
+FF Factory told you waits on your report. w3246 (the pre-1.0 release) waited a day behind w3245 (1.0.0.40) because
+w3245's live-with-notes report had no `For w3246:` line.
+
 ## 4. The first check, within an hour of live
 
 A release is not done at the upload notice (`evidence-gate`, `checklists/release.md`). "Live" is the landing
