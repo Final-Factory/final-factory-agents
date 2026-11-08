@@ -211,6 +211,10 @@ Not verified: the Bats' slot lag (simulation, follow-up PR)
   heartbeat each required event lands at (a latch flip, a crossing), and the leg after the join runs to the latest plus a
   margin, not just the stated minimum; it dumps the checked state at intervals and on every leg at the end
   ([lesson](../lessons/verify-simulation-at-a-slow-hosts-frame-rate.md#a-pair-run-is-sized-to-its-slowest-required-event-not-the-briefs-minimum-w2570-2026-10-29)).
+- **A pair run's compared count is samples, not heartbeats** (w3541, 2026-11-08): `desync.stats` "N compared" counts
+  fingerprints, one per 8 heartbeats (`RuntimeDesyncDetection.SampleIntervalHeartbeats`), while a scenario's "300+
+  heartbeats" counts heartbeats run: 92/92 compared is about 736 run. The report and the PR's `Determinism audit:` line
+  give both (samples, heartbeats run and their range), so a reviewer does not read 92 samples as 92 heartbeats.
 - **A pair run is filed only on a commit that compiles** (w2125): before `request_pair`, the head the legs run has a
   green `Test in editmode` run, or your own editor's `refresh_unity` at that head logged no `error CS`; a red or
   unfinished CI run is not a go
