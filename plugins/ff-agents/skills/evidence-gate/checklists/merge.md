@@ -74,6 +74,19 @@ MASTER_BATCH_VERDICT`: if it names a pull request your branch holds, wait for (o
 `BlueprintPasteBefore2334DigestTest` twice with the same hash; batch 40494217033 had named #2682 (w2375, three
 `ValidationScenarios` blueprint files), already reverted by #2695, and the rerun cost a 30-minute CI cycle.
 
+**A revert of a simulation PR carries the full simulation Evidence** (w3644, 2026-11-08, PR #3426): `ff-pr merge` runs
+`pr_evidence.py` on a revert too, and it refused `Kind: revert`. Write `Kind: simulation`, a claims table (MEASURED:
+the batch verdict's run id; MEASURED: the diff over the culprit's files is empty against its parent, `git diff
+<merge>^1 <revert head> -- <its files>`), `Tests:` with the revert PR's counts, `Determinism audit: not needed: <that
+empty diff>`, `Save compatibility:` and `Not verified:`.
+
+**A culprit whose test asserts a value is unknown may only clash with a neighbour** (w3644, 2026-11-08): a PR's fast
+gate ran on the master of its last push, so a PR merged in between can make its test wrong without its code being
+wrong. #3401's test called circuit set mode 3 unknown; #3406, merged just before it, had made 3..27 packed modes. Before
+you change the culprit's code, `git log <culprit PR's CI base>..<its merge> -- <the validator's file>`; if a neighbour
+widened the rule, the test moves to the new boundary (still refusing the first value past it), and the code re-lands
+unchanged.
+
 **After a removal merges, look for the removed names on master** (w1572, 2026-10-21, PR #2089): a PR that deletes or
 renames a type, member, package or asmdef reference is checked against the master it merged in, and so is every PR
 that merged minutes before it. Once yours merges, `git fetch origin && git grep -n -E '<removed names>' origin/master
