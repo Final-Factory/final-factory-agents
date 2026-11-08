@@ -40,7 +40,7 @@ load-bearing for future runs even where the original defect is fixed.
 - [A Linux client leg on biscuit: build, headless launch, a scripted paste](#linux-client-leg) (w2133, w2326, w3029: an item into hand)
 - [A Linux host leg on biscuit: console commands and detector counts from a headless host](#linux-host-leg) (w2281)
 - [A host-only scenario with a remote client: pause on join, tower spawns, flow control](#host-scenario-remote-client) (w2586)
-- [A hand-launched built host: TargetClients counts the host, and turn the audit on](#hand-launched-host) (w2797; every post-ready segment needs `ffauto:`, a new label per relaunch, w2861; pin the agent channel to your pid, blueprint pieces stay separate grids (a Standard piece needs a Connector), w3292, w3325; a flying Abduction Machine's aggro from `AttackScheduleDetail`, w3325; `inventory.remove` sends no op, a report holds ~2600 heartbeats, w3317; a Leech raid goes pre-join and from far away, w3323; a flying machine's craft at its takeoff centre tile, no flying temperature reader, a station 50 tiles out, w3326)
+- [A hand-launched built host: TargetClients counts the host, and turn the audit on](#hand-launched-host) (w2797; every post-ready segment needs `ffauto:`, a new label per relaunch, w2861; pin the agent channel to your pid, blueprint pieces stay separate grids (a Standard piece needs a Connector), w3292, w3325; a flying Abduction Machine's aggro from `AttackScheduleDetail`, w3325; `inventory.remove` sends no op, a report holds ~2600 heartbeats, w3317; a Leech raid goes pre-join and from far away, w3323; a flying machine's craft at its takeoff centre tile, no flying temperature reader, a station 50 tiles out, w3326; devunlock fills the inventory, the Circuit tab path and a clean still, w3592)
 - [An ffnightly Linux host for a remote client: its port, its audit, its station builds](#ffnightly-linux-host) (w2824)
 - [An editor pair with presentation checks: no Audit ids in the config, a healthy host, a client machine without bench rounds](#editor-pair-presentation) (w2399)
 - [An Oracle shop pair: host buys first, `near` is tier 1, price is derived](#oracle-shop-pair) (w2518)
@@ -1086,6 +1086,17 @@ w2797 (2026-11-01, an m5 Mac host of a BEAST Windows client, PR #2989) launched 
   (`leech=(x,z) phase=N ... carried=N`; phase 0 seek, 1 latched, 2 home). `compare_audit_records.py` read all 6001
   shared heartbeats of that run's final reports (the typed records keep up to 16384), not only the ~2600 of the text
   mirror above.
+- **`player.devunlock|8` fills the inventory; the Circuit tab and a clean still from a built player** (w3592,
+  2026-11-08, m5 Mac host of a BEAST Windows client, PR #3405 for w3580). `devunlock|8` fills all 21 inventory slots, so
+  an `inventory.add` after it applies its AddItem op (it shows in the audit log) but the items never appear, and
+  `construction.placeitem` then leaves a ghost with "no free construction bot, or the item fetch from the player's
+  inventory failed". Free slots with `inventory.remove` first (pre-join only: it sends no op), then add. A crafter's
+  Circuit tab is the RecipeSelector header's button: `ffauto:ui.selecttile|x|z`, then
+  `ffauto:ui.click|hud|AssemblerEntityPanel/Parent/RecipeSelector/HeaderContent/Header/CircuitButtonIcon` (a bare
+  `CircuitButtonIcon` is ambiguous and the Production one is inactive); its window title stays "Select Recipe". For a
+  still, `GET /v1/screenshot?maxedge=1600` on the agent channel returns the PNG (no `screencapture` needed); a
+  development build's Debug Info read-out covers centred panels, so hide it with `ffauto:ui.hide|true`, then
+  `ffauto:console.run|HideUi false` and `ffauto:console.close` (`ui.hide|false` brings the read-out back).
 
 ## A host-only scenario with a remote client: pause on join, tower spawns, flow control {#host-scenario-remote-client}
 
