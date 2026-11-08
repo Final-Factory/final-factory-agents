@@ -18,10 +18,13 @@ holds, or the report says what is left instead of DONE.
 3. **Steps after the merge.** Each step the brief asks for after the merge (a paired audit, a
    release's first-hour check, the patch notes posted) ran, and the report says how it went
    ([say DONE per request](../lessons/say-done-per-request.md)).
-4. **Nothing to clean up (w913).** You made your files in `$TMPDIR` and left them: the daemon removes the temp folder, the
-   sandbox's build and capture output and the rest ([workers do not clean up](../lessons/clean-up-after-yourself.md)). There
-   is no `rm`, `Remove-Item` or `player_slots.py prune` in the work and no "removed N GB" in the report. What the report links
-   is published (`publish_review`, `specs/<NNN>/proofs/`) and every clone you need is pushed.
+4. **Your temp files are cleaned up (w3686).** Before DONE, and before ending a long turn, you deleted the temp files, test
+   data, build outputs and repeat-run artefacts you created, and left no GBs in tmp. Each one went with a plain
+   `rm -rf "$TMPDIR/<name>"` with every path written out, so nobody was asked. `du -sh "$TMPDIR"` reads a few hundred MB at
+   most, and the report gives that number ([delete the big things you made](../lessons/clean-up-after-yourself.md); Ben,
+   2026-11-08: "Please address this problem with a harness update so you're cleaning up after yourself"). Make your files
+   in `$TMPDIR` only, and never run `player_slots.py prune`. What the report links is published first (`publish_review`,
+   `specs/<NNN>/proofs/`), and every clone you need is pushed before you delete it.
    No runtime of yours ran from `$TMPDIR` while listening (a node or python copy unpacked there): everything you started
    bound 127.0.0.1 or ran from a stable path such as PATH's node and the player slots, so no firewall prompt was raised
    ([lesson](../lessons/clean-up-after-yourself.md#a-listener-binds-127001-or-runs-from-a-stable-path-never-from-tmpdir-w1742), w1742).

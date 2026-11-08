@@ -1,15 +1,47 @@
 ---
 name: clean-up-after-yourself
-description: "On Windows, disk work stays on the install drive, never C:, not even to measure (w1755). Workers do NOT clean up (w913): leave everything you make in your own $TMPDIR (clones, logs, builds, tour output, scratch); the daemon removes it a few minutes after no request waits for you any more (closed, or moved to another worker; a wait for CI or a person, a stop or a pause keeps it whole, since w1097) and your sandbox's build and capture output when it is released, so no rm, no player_slots prune and no clean-up step before DONE, and no rm mid-task to reuse a folder: each test leg writes to a new $TMPDIR/<leg>-<timestamp> (w1097). The one delete left to a worker (a huge build mid-task, disk short) is a plain rm -rf under $TMPDIR, which the session answers itself with no approval, and a save copy you put in the saves folder, named with your temp folder's name in front. Low disk on a machine is fixed by the harness or by filed clean-up work, never by asking a person. Every delete is strictly inside the machine's worker install folder (root.json's root, $FF_WORKER_ROOT); outside it a worker only measures and reports (w896). A clean-up deletes only the folders `ff-leftovers folders` marks DELETE (closed requests and orphans); the temp, build and review folders of a worker whose request is open, stalled or paused are kept whether or not its process runs (w1379), and a folder holding a git clone with uncommitted, unpushed or stashed work is kept whatever the ledger says: check its git state or the portal's clean-up log first (w1387). A -batchmode build you started is ended before DONE."
+description: "On Windows, disk work stays on the install drive, never C:, not even to measure (w1755). Workers delete the big things they made before DONE and before a long wait (w3686, Ben 2026-11-08: clones, cargo targets, builds, recordings, repeat output, runaway logs), each with a plain rm -rf '$TMPDIR/<name>' written out, which asks nobody; check du -sh '$TMPDIR'; FF Factory warns above 15 GB. Make everything in your own $TMPDIR; the daemon removes it a few minutes after no request waits for you any more (closed, or moved to another worker; a wait for CI or a person, a stop or a pause keeps it whole, since w1097) and your sandbox's build and capture output when it is released. Never player_slots prune, and never clear a folder mid-task to reuse it: each test leg writes to a new $TMPDIR/<leg>-<timestamp> (w1097). The one delete left to a worker (a huge build mid-task, disk short) is a plain rm -rf under $TMPDIR, which the session answers itself with no approval, and a save copy you put in the saves folder, named with your temp folder's name in front. Low disk on a machine is fixed by the harness or by filed clean-up work, never by asking a person. Every delete is strictly inside the machine's worker install folder (root.json's root, $FF_WORKER_ROOT); outside it a worker only measures and reports (w896). A clean-up deletes only the folders `ff-leftovers folders` marks DELETE (closed requests and orphans); the temp, build and review folders of a worker whose request is open, stalled or paused are kept whether or not its process runs (w1379), and a folder holding a git clone with uncommitted, unpushed or stashed work is kept whatever the ledger says: check its git state or the portal's clean-up log first (w1387). A -batchmode build you started is ended before DONE."
 date: 2026-10-10
 ---
 
-# Workers do not clean up; the harness does (w913)
+# Delete the big things you made before DONE; the harness sweeps the rest (w3686, w913)
 
 **Rule.** Put everything you make for a request in your own temp folder (`$TMPDIR`, also TMP and TEMP:
-`<install>/tmp/ffa-<session>`) and **leave it there**. Do not run `rm`, `Remove-Item`, `git worktree remove` or
-`player_slots.py prune` to clean up, do not write a clean-up step before `DONE`, and do not list what you removed in the
-report. Publish the proofs your report links (`publish_review`, `specs/<NNN>/proofs/`) before you end: the rest goes.
+`<install>/tmp/ffa-<session>`). **Before DONE, and before you end a long turn or start a long wait, delete the temp
+files, test data, build outputs and repeat-run artefacts you created; never leave GBs in tmp.** That means a scratch clone
+or Library copy you are done with, a cargo target you will not build in again, a player build, recordings, tour and repeat
+output, and a runaway log. Delete each with a plain `rm -rf "$TMPDIR/<name>"` with every path written out. That asks
+nobody (see "How to delete" below); a `$VAR`, glob or brace list in the path still asks a person, so never send one.
+Check it with `du -sh "$TMPDIR"`, and find what is biggest with `du -sm "$TMPDIR"/* | sort -rn | head`. FF Factory warns
+you, and the request log, when your folder passes 15 GB. Small files (notes, logs under a few MB, scripts) may stay.
+Publish the proofs your report links (`publish_review`, `specs/<NNN>/proofs/`) before you delete them. Never
+`player_slots.py prune` (the slots are shared), and never delete anything outside your own folder.
+
+**Why the rule turned (w3686, 2026-11-08).** Ben: "Please address this problem with a harness update so you're cleaning
+up after yourself". This was after FFU work had left about 166 GB in V:\ffw\tmp on LothDesktop and driven BEAST's F:
+critically low (lothsahn's warning). The sweep below only runs after a request closes, while a worker's folder fills
+during the request.
+
+Measured on V:\ffw\tmp, 2026-11-08 16:44 UTC, 102.6 GB, each hard-linked file counted once (`tmpshare.py`, w3686):
+
+| What | Size | Share |
+|---|---|---|
+| scratch game clones: the clone | 32.0 GB | 31% |
+| scratch game clones: their Library | 25.7 GB | 25% |
+| cargo targets | 19.3 GB | 19% |
+| other scratch | 9.8 GB | 9.5% |
+| player builds | 6.1 GB | 6% |
+| one runaway background shell output (a python REPL looping on an error) | 5.4 GB | 5% |
+| ffu clones | 4.2 GB | 4% |
+| ffu test data | ~0 | 0% |
+
+Two of 89 worker folders were above 15 GB (36.5 GB and 19.4 GB, both scratch clones); the next was 7.3 GB, a cargo target.
+That spread is where the 15 GB warning comes from.
+
+The section below is the earlier rule (w913): what the daemon sweeps, and how to delete without a prompt. Both still hold.
+Its "leave it there, no clean-up step before DONE" is replaced by the rule above.
+
+# What the harness sweeps (w913)
 
 **Not mid-task either: a test leg gets a new folder, never a cleared one** (w1097, 2026-10-12). w1079's worker ran its tour
 twice per screen size into `$TMPDIR/f1920` and `$TMPDIR/f1280` and, to rerun them, sent `rm -rf $TMPDIR/f1920
@@ -36,7 +68,7 @@ What removes it, and when (FF Factory `docs/self-recovery.md`, "Workers do not c
 Because the sweep waits for a process that names your folder, a build you leave running in it is not pulled from under it;
 and because a clone with unpushed work is kept, push before you leave.
 
-**The one delete left to a worker.** The disk is short in the middle of your task (a huge player build): free it with a plain
+**How to delete.** Whether you are done with it or the disk is short in the middle of your task (a huge player build), free it with a plain
 `rm -rf "$TMPDIR/<name>"` (PowerShell: `Remove-Item -Recurse -Force $env:TEMP\<name>`) with every path written out under
 `$TMPDIR`. The session answers that itself, with no approval (`server/tempDelete.ts`); anything else asks a person, so do
 not send it: the folder itself, `/tmp` (Git Bash's `/tmp` is not your folder), `..`, `~`, a variable that is not `$TMPDIR`, a
@@ -64,7 +96,7 @@ produced; the aim was a disk that stays free without him asking, which the daemo
 - Builds, recordings, tour output and test saves go under `$TMPDIR`, not the worktree, `/tmp` or a shared scratch folder
   (the sweep and the guard know your folder; a build left in a sandbox's `Builds/` is taken at release only when it is a
   cached build beyond the newest or a bench or capture folder).
-- Before you end: everything the report links is published; every clone you need is pushed.
+- Before you end: everything the report links is published, every clone you need is pushed, and then the big things you made are deleted (`du -sh "$TMPDIR"` reads a few hundred MB at most; w3686).
 - Never delete another agent's work in progress or a protected path (the main clone, the daemon's folder): the harness blocks
   those anyway.
 - Orchestrators and the dispatcher: low disk on a machine (a `[machine <id>] Clean-up cannot free enough disk space` notice,

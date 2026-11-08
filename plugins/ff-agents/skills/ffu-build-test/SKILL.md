@@ -54,6 +54,12 @@ whole verification. The repo's own `CLAUDE.md` is binding and longer; this skill
   while fresh targets were 3.3 to 3.6 GB (measured 2026-11-07). Count the copies with
   `ls target/debug/deps | sed -E 's/-[0-9a-f]{16}.*//' | sort | uniq -c | sort -rn | head`; when no cargo of yours
   runs, `rm -rf "$TMPDIR/ffu-target/debug/incremental"` is rebuildable and frees most of it.
+- **Delete your targets and clones before DONE** (Ben, 2026-11-08, w3686: "Please address this problem with a harness
+  update so you're cleaning up after yourself"). On 2026-11-08, cargo targets were 19% of the 102.6 GB in V:\ffw\tmp
+  (measured). Once your PR is merged, or before a long wait you will not build through, run
+  `rm -rf "$TMPDIR/ffu-target" "$TMPDIR/ffu-target-main" "$TMPDIR/ffu"` with every path written out, so it asks nobody.
+  Delete each leg's output folder the same way. Before that, publish anything your report links.
+  ([lesson](../evidence-gate/lessons/clean-up-after-yourself.md))
 
 ## 2. The checks, in CI's order
 
