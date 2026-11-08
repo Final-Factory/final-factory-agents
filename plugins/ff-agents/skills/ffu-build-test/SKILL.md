@@ -245,6 +245,8 @@ never rewritten (`tools/check_snapshot_compat.sh BASE_REF` holds it in CI). No t
   `timeout -s KILL 300 "$exe" $FILTER`. A hung run then fails the step and prints its last 60 lines, including libtest's
   "has been running for over 60 seconds" (probe/w3499-hang, bdd613e). The harness's process-kill guard refuses a Bash
   command holding `-s KILL`, so make that edit from a script that builds the word in pieces.
+  - repeat.yml on main now does this itself: every pass runs under `timeout -k 30 "${RUN_MINUTES}m"` (repeat.yml:92), so
+    set `-f run_minutes=<n>` instead of making a probe branch (w3658 made one before it saw this).
 - **An artifact upload or download that fails on the network is biscuit's Wi-Fi, not ffu** (w3427, ffu #389's
   `getaddrinfo EAI_AGAIN productionresultssa17.blob.core.windows.net` after `Request timeout: ... CreateArtifact`).
   Biscuit is on Wi-Fi (`wlp194s0`, -66 dBm). A read-only probe leg measured 4% loss in 200 pings to its router, and 4 of
@@ -372,6 +374,19 @@ never rewritten (`tools/check_snapshot_compat.sh BASE_REF` holds it in CI). No t
       `Writeback` from `/proc/meminfo`, `/proc/pressure/*`, and millisecond stamps from the server (Hello handled,
       Welcome encoded, any tick or WAL write of 100 ms or more) and from the follower's dial.
     - Before you blame a client for a Linux-only stall under load, stamp the server's tick and its disk writes.
+  - **An in-process `Server` in a client test, run free with `ticks: Some(N)`, can end before the test sends** (w3658,
+    ffu #472). `follow.rs`'s `build_tests` ran theirs at `tps: 200, ticks: Some(600)`, about 3 s. Under load on biscuit
+    the test thread took longer than that between A's Welcome and A's send, so the server had closed, A's follower was
+    redialling, and `Follower::send` answered `Err "reconnecting"` (10 of 20 legs of run 42486863162).
+    - Fix: `server.set_pace(pace)` right after `Server::open`, store the next pace only once the ops are sent, and raise
+      it to the end in a guard's `Drop` so a panicking test thread still lets the server finish and the panic shows.
+      A read that waits on the test's own paced server is a liveness wait (`stall::ALIVE`), not a product timeout.
+    - Proof: a plant (`FFU_FP11_HOLD_MS`) that holds the test thread before its send. Main failed with CI's exact error
+      at 4000 ms; the fix passed at 4000 and 12000 ms, then repeat.yml x50 on ffu-linux and ffu-windows.
+  - **`repeat.yml --ref <branch>` tests the branch as pushed, not merged with main** (w3658). Its Linux x50 at the fix's
+    first head failed at run 45 on another test's flake (`a_follower_rides_out_five_server_restarts`) that #466 had
+    already fixed on main. When a flake fix for a test in the same binary has just landed, merge `origin/main` into your
+    branch and push before you dispatch the repeat.
   - **repeat.yml's `run_minutes` ends a hung run and prints its output** (`timeout -k 30`). The exe pick takes only a
     test build (`"test":true`): run 42454469723 picked ffu-client's `ffu` game binary and ran it for 2.5 h (w3583).
   - **A lone shard takes `--paced` too** (w3437, ffu #405): the plain server's stdin `until T` lines, for a shard with
