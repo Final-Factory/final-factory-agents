@@ -82,6 +82,11 @@ cargo run --release -p ffu-headless -- crosscheck --threads 1,4,16 --golden gold
   `packs::tests::gpu` / `one_gpu_at_a_time`; a new crate with GPU tests adds one). Several devices made at once crash
   Mesa's Vulkan loader: a SIGSEGV with no Rust panic, in 25 of 200 parallel runs of `ffu-client`'s tests on biscuit
   without the lock and 0 of 200 with it (measured, w2895 M2.17b, probe ffu #226).
+- **The fuzz seeds and fuzz targets are compile-checked on every PR** in `ci.yml`'s Linux `lint` job, step "the fuzz
+  seeds and the fuzz targets compile (w3552)": `cargo check --manifest-path fuzz/seeds/Cargo.toml` and
+  `--manifest-path fuzz/Cargo.toml --bins`, on stable 1.94 with lint's `target/`. Only running them needs nightly
+  (libfuzzer-sys builds on stable). A struct change that leaves `fuzz/` unbuildable goes red there, not in the nightly
+  fuzz job (P0.12c's `slots` did, ffu #434). After changing a struct `fuzz/` sets, run both locally (ffu #441).
 - Fuzzing needs nightly and cargo-fuzz (`tools/fuzz.sh [seconds] [target ...]`); BEAST has neither. Run new targets on
   biscuit by dispatching the nightly job on your branch: `gh workflow run fuzz.yml -R Final-Factory/ffu --ref <branch>
   -f seconds=600 -f targets="a b"`. Each target's result is its `stat::number_of_executed_units` line in
@@ -206,7 +211,8 @@ never rewritten (`tools/check_snapshot_compat.sh BASE_REF` holds it in CI). No t
   (or `--job <id> --log`) answers "logs will be available when it is complete". Read a finished job anyway:
   `gh run view <id> -R Final-Factory/ffu --json jobs --jq '.jobs[]|"\(.databaseId) \(.name) \(.conclusion)"'`, then
   `gh api repos/Final-Factory/ffu/actions/jobs/<job id>/logs --allow-escape-sequences | sed 's/\x1b\[[0-9;]*m//g' > "$TMPDIR/job.log"`
-  (without the flag gh refuses the colour codes and writes nothing; w2895 leg D, ffu #257, 2026-11-06).
+  (without the flag gh refuses the colour codes and writes nothing; w2895 leg D, ffu #257, 2026-11-06). Biscuit's
+  gh 2.46.0 has no such flag ("unknown flag"); there the same command without it writes the whole log (w3552).
   To wait, use `blocked_on` with `ci:Final-Factory/ffu#<n>` and the head, never a poll loop.
   - **A `ci:` wait ends as soon as one leg fails** (w3272), even while the other legs are still queued. When that
     red is a test your PR doesn't touch, and you will merge over it (below), a second `ci:` wait on the same head
