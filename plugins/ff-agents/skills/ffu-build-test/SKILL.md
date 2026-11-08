@@ -119,6 +119,18 @@ never rewritten (`tools/check_snapshot_compat.sh BASE_REF` holds it in CI). No t
   rather than hard-coding a new number: `let mut w = ffu_sim::codec::Writer::new(); s.power().encode_state(&mut w);`
   gives its bytes. Assert those bytes, and the zeros after them, then cut the section out before comparing with the
   old file (`without_power` in `golden_snapshot.rs`, `power_sections` in `golden_world.rs`).
+- **When another PR takes your snapshot version while yours is open, renumber yours** (w3463, ffu #437: w3486 merged
+  v13 first). Take the next version and rename your own new fixture. Regenerate it: it was never on main, so it is not
+  an old fixture. Re-encode the older fixtures through one helper, `assert_reencodes_at_the_current_version` in
+  `golden_snapshot.rs`. It checks the header and body equal, then only your version's empty sections. The merged
+  PR's own fixture goes through that helper too.
+- **A change that holds state across ticks gets a reload-every-tick test**: save and load at every tick, and compare
+  with the straight run. In M1.21 (w3463) it found three pieces of state the snapshot did not hold:
+  - a pending rotate's old power direction;
+  - grid own-sums flags after a regrid;
+  - per-structure satisfaction between a rejoin and phase 5.
+
+  `assert_heavy_matches_over` in `ff1_belts_live.rs` reloads over a window of ticks.
 - **A new `Kind` or `Op` is matched outside `ffu-sim` too.** `cargo check --workspace --all-features --all-targets`
   finds the non-exhaustive matches:
   - `ffu-agent`'s `building_json`;
@@ -246,6 +258,12 @@ never rewritten (`tools/check_snapshot_compat.sh BASE_REF` holds it in CI). No t
     folder, and reach it from the tests through `use super::*`.
 - `docs/PLAN.md` is the shared board: mark your row "in progress: <session> (wNNN)" in a one-line PR before you start,
   and record its result, with measured numbers labelled, in a PR when it is done.
+  - **Find the next free row in one call**: `python tools/gate_status.py docs/PLAN.md --prs --free` reads the open and
+    merged PRs and prints `free rows: ...` or `free rows: none` (w3560). Without `--prs` it listed M1.24 and M2.16 as
+    free on main 8d4444c, though M1.24's live part was open as ffu #429 and M2.16 was held; hand-parsing PLAN.md's long
+    rows first cost w3560 about 12 calls (measured). It covers only rows a gate clause names (FP, G1, G2, G5): check an
+    R, M0 or P0 row by its own Task cell and `gh pr list --state all --search "<id>"`, since marks go stale (on that
+    commit M0.12c, M0.12d and FP.11 still read "in progress" after ffu #413, #414 and #418 merged).
 - **A multi-process `ffu-server` test that fails now and then on a shared machine: rule out a full disk first.**
   Grep every child's stderr (`FFU_FAILOVER_LOGS=<dir>`) for `os error 112` (Windows: disk full; Linux `ENOSPC`, "No
   space left on device"), and read the portal journal (`portal_logs`, grep the machine, `disk`) for that time. A child
