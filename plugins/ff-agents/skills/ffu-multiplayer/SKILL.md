@@ -88,6 +88,21 @@ on a mismatch, a ledger error, an unbalanced window or a short fleet). Measured 
   Read it again right before each leg starts its processes, not only before the tickets: in w3444 the world was
   redeployed again (a2bc925 to d25cb01, 21:04Z) while both legs queued, and the echoer died on start with
   `snapshot decode: unsupported version 11`. A rebuild at the new commit took 16 s, so rebuild, re-probe and go.
+  - **Confirm the world's snapshot version matches your commit before the pair run**, with the binary you built:
+    `$B/ffu-server enter --connect 100.98.100.42:7777 --ticks 16`. It decodes the world's Welcome and follows 16 ticks,
+    so a JSON line with `welcome_bytes` means your build reads what the world sends. `snapshot decode: unsupported
+    version N` means the world writes snapshot version N and your commit reads less (compare
+    `grep -n 'SNAPSHOT_VERSION: u32' crates/ffu-sim/src/snapshot.rs`): build the world's commit instead. In w3469
+    (2026-11-08, FP.6 on lothdesktop, ffu main eaf82b73) the world wrote v16 and the client read up to v11, and every
+    Welcome was refused.
+- **A window or clip you start in the background (`nohup ffu ... &`) can outlive its `--seconds`**: before ffu #469
+  (w3646), a `--connect ... --clip` run that never joined kept redialling for good. In w3469 it passed try 141 (about
+  5 min) past `--seconds 75`, wrote no clip and no JSON line, and `ff-leftovers list` did not show it, because `nohup
+  ... &` detached it from the session. Since #469 such a run ends at `--join-seconds`, else `--seconds` (a clip's
+  default: 10 s), prints `{"joined":false,"error":"snapshot decode: unsupported version N",...}` and exits 1; an older
+  build does not. Either way, record the PID when you start it (`$!`). When it has not ended by its time, end it by
+  that PID (`taskkill //PID <pid> //T //F` on Windows, `kill <pid>` elsewhere), then check that it is gone (`tasklist
+  //FI "PID eq <pid>"`, or `tasklist | grep -i ffu`), since ff-leftovers can miss it.
 - **Agree a pair start time as UTC and parse it as UTC** (`date -u -d '20:39:50' +%s`): plain `date -d` reads the
   time in the machine's zone (biscuit is -07:00), and w3444's scheduled echoer would have waited seven hours. An echo
   that must outlast the other leg's queue starts with a long `--seconds` (1500) on the other leg's go; `ffu-server
