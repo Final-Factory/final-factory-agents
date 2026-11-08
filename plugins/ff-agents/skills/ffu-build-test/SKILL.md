@@ -785,6 +785,18 @@ A number is MEASURED only with its machine, build profile, building count and ti
 bench ticket on FF Factory machines (ffu `CLAUDE.md`, "Timing claims"). `ffu-headless run ... --timings t.csv`,
 `ffu-headless phases --start ... --ticks N` and `ffu-headless fpbench` are the timing commands.
 
+- **`tools/world_range.sh` hangs on a world the shard refuses** (w3739, ffu 551fa2e). `world:N:2:3` makes a sector
+  2N+10 tall, and `MAX_SIDE` is 4096 (`crates/ffu-sim/src/sector.rs:80`), so N above 2043 exits at once with
+  `world:2048: bad sector size 24x4106` in `n<N>/server.err`. The script's `first_line` then waits forever on the empty
+  `server.out`, and the step takes the whole 5 min cap. Check `n<N>/server.err` a few seconds into each step, and pick
+  the top N within the cap (2043, not 2048).
+  - **Shard or client: read the shard's own tick rate from its snapshot files.** The shard writes
+    `world/shard-<tick>.bin` every 256 ticks; 256 divided by the gap between two files' mtimes is its tps. On BEAST the
+    shard ran 15.97 tps at N=1280 and 15.00 at N=1408, the same as the client's `slowest_ups`, so the shard was the
+    limit, not the client (measured).
+  - Run each N as its own tool call or give the background task a total timeout over all steps: a Bash
+    `run_in_background` timeout of 600000 is 10 min for the whole leg, and it stopped w3739's five-N run mid-way.
+
 ## Checking these skills
 
 `python3 check_ffu_skills.py [--ffu <ffu checkout>]` (beside this file) fails when an `ffu-*` skill names a Unity or
