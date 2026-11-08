@@ -249,6 +249,13 @@ never rewritten (`tools/check_snapshot_compat.sh BASE_REF` holds it in CI). No t
     and os (`gh workflow run repeat.yml -R Final-Factory/ffu -f target=owner_term ...`). A PR that changes repeat.yml
     runs it with its defaults. Keep the filter empty so the whole file repeats: ffu #383's first whole-file pass found
     a second flake, at run 24, that a filter on the fixed tests would have hidden.
+  - **A loop that must run on lothdesktop runs locally, with a watchdog** (w3453, ffu #408). repeat.yml cannot pick
+    lothdesktop alone (`ffu-windows` covers BEAST's runners too), and on 2026-11-07 two lothdesktop runner loops
+    (42410183429, 42410188310) passed every run they reached (9 and 12), then one run each sat silent until
+    repeat.yml's 150-minute job timeout cancelled the job; the runner's temp folder was gone, so the cause stayed
+    unknown. Build the test exe in your sandbox (`cargo test -p ffu-server --test sim_switch --no-run`) and run it N
+    times from a script, each run with its own TMP/TEMP/TMPDIR, stopping a run past 600 s after saving its process
+    list and temp folder. It passed 50/50 in a row there, 30-67 s a run (measured).
   - **A lone shard takes `--paced` too** (w3437, ffu #405): the plain server's stdin `until T` lines, for a shard with
     no peers and no standby (a standby or a peered shard still refuses it). `gateway_failover` keeps each owner one
     tick ahead of the client (`Proc::pace`). Free at `--tps 200`, a 1 s hold of the test thread let the owner run
