@@ -441,6 +441,21 @@ never rewritten (`tools/check_snapshot_compat.sh BASE_REF` holds it in CI). No t
     lengthen a latency or ordering check this way.
   - Prove it with a planted slow start: an env var makes the Nth child of a kind sleep 40 s before `main`. ffu #358:
     main failed 9 of 9, the fix passed 9 of 9, and then 30 of 30 rounds in 10 copies on BEAST.
+  - **A test that a killed parent's children are gone within N s measures the guard, not Windows' exit** (w3694, ffu
+    #493). A Job object's kill-on-close end is asynchronous: a process stays listed (Toolhelp, sysinfo) until its last
+    thread leaves the kernel, seconds on a stalled machine. `child_dies_with_test` failed once on LothDesktop at 100%
+    CPU with the server's own pid still listed 5 s after the kill, though the server was in the job. Check within N s
+    that each child is gone or marked `IsProcessDeleting` (`NtQueryInformationProcess(ProcessBasicInformation)` into
+    `PROCESS_EXTENDED_BASIC_INFORMATION`, Flags bit 2; `support/child.rs` `gone_or_ending`), then wait `stall::ALIVE`
+    for the exit itself.
+    - Plant a slow exit with a debugger: `DebugActiveProcess`, `DebugSetProcessKillOnExit(0)`, then sleep on
+      `EXIT_PROCESS_DEBUG_EVENT` before `ContinueDebugEvent` (`FFU_CHILD_TEST_PLANT_SLOW_REAP_MS`). Main's check failed
+      with CI's exact line; the fix passed and still failed a planted missing guard (`FFU_CHILD_TEST_PLANT_NO_JOB`).
+    - Create a Windows child `CREATE_SUSPENDED` and resume it (`NtResumeProcess`) only after
+      `AssignProcessToJobObject`: ffu-server's first act spawns its crash monitor, which could start outside the job.
+    - On Unix pass the parent's pid in `FFU_EXIT_WITH_PARENT`: a parent dead before the child read `parent_id()` left it
+      watching its new parent for good.
+    - A test whose panics append `stall::note()` must call `stall::start()` first, or the note never names a stall.
   - **Give `stall::ALIVE` to every liveness read in the file you touch, and sweep the others** (w3416, ffu #393).
     w3341 changed only the tests that had failed, and the next freeze broke the ones it left. At 16:41-16:45Z on
     2026-11-07, three BEAST runners went red on client reads with 10060:
