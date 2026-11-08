@@ -330,6 +330,25 @@ never rewritten (`tools/check_snapshot_compat.sh BASE_REF` holds it in CI). No t
     unknown. Build the test exe in your sandbox (`cargo test -p ffu-server --test sim_switch --no-run`) and run it N
     times from a script, each run with its own TMP/TEMP/TMPDIR, stopping a run past 600 s after saving its process
     list and temp folder. It passed 50/50 in a row there, 30-67 s a run (measured).
+  - **On biscuit, a test server's plain disk write can stall its tick for 3 s** (w3583, ffu #466). The test was
+    `follow.rs`'s `a_follower_rides_out_five_server_restarts`, which waits 3 s for the follower to follow again.
+    - The server writes each tick's sector-log (WAL) record on the tick thread with a plain `write_all` (no sync).
+      On ext4 (`/dev/nvme0n1p2`), while the kernel throttled a disk full of other jobs' dirty pages (0.1 to 1.7 GB
+      dirty, I/O pressure avg10 up to 85%), that write took up to 3024 ms. The Welcome and the ticks after it waited
+      with it (measured, probe run 42481375473).
+    - The fix puts the test's dirs in `/dev/shm` on Linux (`restart_dir()`). tmpfs pages are never throttled, and a
+      killed server still loses nothing it wrote. The 3 s wait is unchanged. Under the same load, the restart test's
+      servers then had 0 slow writes in 20 legs against 0 to 6 per leg for other tests on ext4. The test passed 20 of
+      20 (runs 42483627761, 42486863162).
+    - A probe that writes the test's `--nocapture` output to an ext4 file stalls the test process the same way: one
+      leg failed only because of that. Write a probe's output to `/dev/shm` too.
+    - How it was found: a `probe/*` branch whose workflow runs the test 20 times beside 6 cold `cargo build`s as load.
+      Each leg printed the kernel's TCP drop counters (they never moved, so it was not the network), `Dirty` and
+      `Writeback` from `/proc/meminfo`, `/proc/pressure/*`, and millisecond stamps from the server (Hello handled,
+      Welcome encoded, any tick or WAL write of 100 ms or more) and from the follower's dial.
+    - Before you blame a client for a Linux-only stall under load, stamp the server's tick and its disk writes.
+  - **repeat.yml's `run_minutes` ends a hung run and prints its output** (`timeout -k 30`). The exe pick takes only a
+    test build (`"test":true`): run 42454469723 picked ffu-client's `ffu` game binary and ran it for 2.5 h (w3583).
   - **A lone shard takes `--paced` too** (w3437, ffu #405): the plain server's stdin `until T` lines, for a shard with
     no peers and no standby (a standby or a peered shard still refuses it). `gateway_failover` keeps each owner one
     tick ahead of the client (`Proc::pace`). Free at `--tps 200`, a 1 s hold of the test thread let the owner run
