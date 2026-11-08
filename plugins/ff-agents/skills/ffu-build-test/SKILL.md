@@ -244,6 +244,12 @@ never rewritten (`tools/check_snapshot_compat.sh BASE_REF` holds it in CI). No t
     folder, and reach it from the tests through `use super::*`.
 - `docs/PLAN.md` is the shared board: mark your row "in progress: <session> (wNNN)" in a one-line PR before you start,
   and record its result, with measured numbers labelled, in a PR when it is done.
+  - **Find the next free row in one call**: `python tools/gate_status.py docs/PLAN.md --prs --free` reads the open and
+    merged PRs and prints `free rows: ...` or `free rows: none` (w3560). Without `--prs` it listed M1.24 and M2.16 as
+    free on main 8d4444c, though M1.24's live part was open as ffu #429 and M2.16 was held; hand-parsing PLAN.md's long
+    rows first cost w3560 about 12 calls (measured). It covers only rows a gate clause names (FP, G1, G2, G5): check an
+    R, M0 or P0 row by its own Task cell and `gh pr list --state all --search "<id>"`, since marks go stale (on that
+    commit M0.12c, M0.12d and FP.11 still read "in progress" after ffu #413, #414 and #418 merged).
 - **A multi-process `ffu-server` test that fails now and then on a shared machine: rule out a full disk first.**
   Grep every child's stderr (`FFU_FAILOVER_LOGS=<dir>`) for `os error 112` (Windows: disk full; Linux `ENOSPC`, "No
   space left on device"), and read the portal journal (`portal_logs`, grep the machine, `disk`) for that time. A child
