@@ -124,6 +124,18 @@ never rewritten (`tools/check_snapshot_compat.sh BASE_REF` holds it in CI). No t
   rather than hard-coding a new number: `let mut w = ffu_sim::codec::Writer::new(); s.power().encode_state(&mut w);`
   gives its bytes. Assert those bytes, and the zeros after them, then cut the section out before comparing with the
   old file (`without_power` in `golden_snapshot.rs`, `power_sections` in `golden_world.rs`).
+- **When another PR takes your snapshot version while yours is open, renumber yours** (w3463, ffu #437: w3486 merged
+  v13 first). Take the next version and rename your own new fixture. Regenerate it: it was never on main, so it is not
+  an old fixture. Re-encode the older fixtures through one helper, `assert_reencodes_at_the_current_version` in
+  `golden_snapshot.rs`. It checks the header and body equal, then only your version's empty sections. The merged
+  PR's own fixture goes through that helper too.
+- **A change that holds state across ticks gets a reload-every-tick test**: save and load at every tick, and compare
+  with the straight run. In M1.21 (w3463) it found three pieces of state the snapshot did not hold:
+  - a pending rotate's old power direction;
+  - grid own-sums flags after a regrid;
+  - per-structure satisfaction between a rejoin and phase 5.
+
+  `assert_heavy_matches_over` in `ff1_belts_live.rs` reloads over a window of ticks.
 - **A new `Kind` or `Op` is matched outside `ffu-sim` too.** `cargo check --workspace --all-features --all-targets`
   finds the non-exhaustive matches:
   - `ffu-agent`'s `building_json`;
@@ -238,6 +250,12 @@ never rewritten (`tools/check_snapshot_compat.sh BASE_REF` holds it in CI). No t
     folder, and reach it from the tests through `use super::*`.
 - `docs/PLAN.md` is the shared board: mark your row "in progress: <session> (wNNN)" in a one-line PR before you start,
   and record its result, with measured numbers labelled, in a PR when it is done.
+  - **Find the next free row in one call**: `python tools/gate_status.py docs/PLAN.md --prs --free` reads the open and
+    merged PRs and prints `free rows: ...` or `free rows: none` (w3560). Without `--prs` it listed M1.24 and M2.16 as
+    free on main 8d4444c, though M1.24's live part was open as ffu #429 and M2.16 was held; hand-parsing PLAN.md's long
+    rows first cost w3560 about 12 calls (measured). It covers only rows a gate clause names (FP, G1, G2, G5): check an
+    R, M0 or P0 row by its own Task cell and `gh pr list --state all --search "<id>"`, since marks go stale (on that
+    commit M0.12c, M0.12d and FP.11 still read "in progress" after ffu #413, #414 and #418 merged).
 - **A multi-process `ffu-server` test that fails now and then on a shared machine: rule out a full disk first.**
   Grep every child's stderr (`FFU_FAILOVER_LOGS=<dir>`) for `os error 112` (Windows: disk full; Linux `ENOSPC`, "No
   space left on device"), and read the portal journal (`portal_logs`, grep the machine, `disk`) for that time. A child
@@ -315,6 +333,15 @@ never rewritten (`tools/check_snapshot_compat.sh BASE_REF` holds it in CI). No t
     - `sim_switch`.
 
     Sweep with `grep -rn 'connect_station\|connect_gateway\|Client::connect\|set_timeout' crates/ffu-server/tests`.
+  - **A test gateway's own search for an owner is a liveness wait too** (w3526, ffu #439). `Options::default()` gives
+    `resubscribe_within` 30 s (`ffu-gateway/src/lib.rs`), counted from the owner's kill. It also covers the test's own
+    restart of that owner, a Windows process start with no bound. `gateway_failover`'s kill -9 test failed on BEAST with
+    `no owner answered within 30s: connect 127.0.0.1:N: connection timed out` and no `stall::note()`. The port is the
+    **dead** owner's: Windows refuses a loopback port with no listener only after about 2 s, and `CONNECT_TIMEOUT` is
+    2 s. So the lease had not moved yet, because the test was still starting the new owner. Give the gateway
+    `Options { resubscribe_within: stall::ALIVE, ..Options::default() }` and plant a sleep between the kill and the
+    restart (`FFU_GATEWAY_FAILOVER_RESTART_MS=40000`). Measured: RED failed in 224 s with CI's exact line, GREEN passed
+    in 46 s, and `repeat.yml` ran 50 of 50 on ffu-beast.
     That grep misses a liveness wait set as a literal in a struct's Options: sim_switch's two gateways kept
     `resubscribe_within: Duration::from_secs(60)`, and a 52 s BEAST freeze broke run 43 of a 50-run loop (w3446,
     ffu #406). Also grep `Duration::from_secs` in the Options of every test file you touch.
@@ -432,6 +459,8 @@ never rewritten (`tools/check_snapshot_compat.sh BASE_REF` holds it in CI). No t
   left about 18,500 `ffu-*` folders (11.3 GB) in biscuit's `/tmp`, which turned every biscuit job red (w3118, w3119).
   `tools/check_temp_leaks.sh <command>` runs every `cargo test` step in CI on an empty temp folder and fails on anything
   left there; run your test through it locally too (`tools/check_temp_leaks.sh cargo test -p <crate>`; ffu #248).
+- **Build a RED variant from a committed fix** (w3526). Commit the fix, then make the temporary RED edit, build it, and
+  undo it with `git checkout -- <file>`. On a fix that is not committed yet, that checkout also reverts the fix itself.
 - Before writing an ffu fix, list the open PRs on the same files (`gh pr list -R Final-Factory/ffu --state open
   --json number,title,files`): w3096 and w3101 each wrote the same kept-connection helper at the same time, and the
   second had to rebuild on the first (ffu #229, #235).
