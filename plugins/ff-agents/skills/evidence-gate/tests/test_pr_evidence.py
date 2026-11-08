@@ -1350,6 +1350,13 @@ class CloseUpTest(unittest.TestCase):
         self.assertIn("z-fight", claimed)
         self.assertIn("spaghettify", claimed)
 
+    def test_dragged_windows_on_a_ui_pr_is_no_pulled_in_claim(self):
+        """w3049 (FinalFactory #3436): "It stays on top of the Player Inventory and dragged windows" is a window the
+        player moved, not a ship pulled into a black hole."""
+        ui = "It stays on top of the Player Inventory and dragged windows. A dragged window keeps its place.\n"
+        self.assertNotIn("pulled in", pe.visual_claims(ui))
+        self.assertIn("pulled in", pe.visual_claims("The freighter is dragged into the core.\n"))
+
     def test_the_lance_pr_fails_for_its_missing_close_ups(self):
         body, files, changes = self.lance()
         found = self.closeup(pe.check(body, files, changes=changes)[0])

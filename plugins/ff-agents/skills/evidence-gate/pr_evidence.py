@@ -146,7 +146,7 @@ FIXED = re.compile(r"\b(no|not|never|without|gone|fixe[sd]|removed?|removes|no l
 EFFECTS = (
     ("spaghettify", r"\bspaghettif\w*|\bspag+et+if\w*"),
     ("stretch", r"\bstretch(es|ed|ing)?\s+(\w+\s+){0,2}?(into|toward|towards|along|out)\b|\bthin(s|ned|ning)?\s+out\b"),
-    ("pulled in", r"\bpull(s|ed|ing)?\s+(\w+\s+){0,3}?(in|into|to|toward|towards)\b|\bsuck(s|ed|ing)?\b|\bdragged\b|"
+    ("pulled in", r"\bpull(s|ed|ing)?\s+(\w+\s+){0,3}?(in|into|to|toward|towards)\b|\bsuck(s|ed|ing)?\b|\bdragged\b(?!\s+(\w+\s+)?windows?\b)|"
                   r"\bfall(s|ing)?\s+(in|into)\b|\bfell\s+into\b"),
     ("lensing", r"\blens(es|ed|ing)\b|\bbent\s+(sky|light|stars)\b|\bbends?\s+(the\s+)?(sky|light|stars)\b"),
     ("wraps over", r"\bwrap(s|ped|ping)?\s+(over|around|in front)\b"),
