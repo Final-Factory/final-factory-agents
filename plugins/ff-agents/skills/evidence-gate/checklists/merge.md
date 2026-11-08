@@ -283,6 +283,8 @@ Not verified: the Bats' slot lag (simulation, follow-up PR)
 
 ## Check it, then merge
 
+**Run it when the PR opens, not at the merge** (w3510, 2026-11-08). `ff-pr merge` refuses on a FAIL (w3088), and any file under `/UI/` (one new tooltip stat row was enough) brings the whole UI set: before and after players, censuses in three layouts, clips, a fresh critic. PR #3380 reached its merge with CI and the determinism pair green, holding the 1.0 release, and spent about 45 minutes more building that evidence. Plan its legs beside the build you already make. A draft PR is refused too (`Pull Request is still a draft`): `gh pr ready <n>` first.
+
 ```sh
 # The newest installed copy (sort -V: `ls | tail -1` picks 1.20.6 over 1.20.41; w712 posted a stale PASS that way).
 PE="$(ls -d ~/.claude/plugins/cache/final-factory-agents/ff-agents/*/ | sort -V | tail -1)skills/evidence-gate/pr_evidence.py"
