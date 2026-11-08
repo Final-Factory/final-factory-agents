@@ -230,6 +230,20 @@ never rewritten (`tools/check_snapshot_compat.sh BASE_REF` holds it in CI). No t
 - Merge on green: `gh pr merge <n> -R Final-Factory/ffu --merge --match-head-commit <sha>`. "Not mergeable" means
   another PR touched the same lines (often `docs/PLAN.md`): `git merge origin/main`, keep both sides, push, wait for CI
   again. Never force-push or rebase a pushed branch.
+  - **A PR whose CI queues for an hour behind busy runners goes stale while it waits** (w3487, ffu #428). #428 turned
+    CONFLICTING twice after its legs went green: main took snapshot version 13 (#425), then the agent API's new `set`
+    ops (#434). Each conflict cost a whole new CI run. Check `gh pr view <n> --json mergeable` (retry while `UNKNOWN`)
+    as soon as the run's last non-macOS leg finishes, not only before the merge. When it is `CONFLICTING`, merge
+    `origin/main` straight away, rerun the local checks and push. Then force-cancel the old run (above): its remaining
+    legs no longer count.
+  - When your PR renames or removes a constant (`HOLD_CAP` became `HOLD_MAX`), grep the code main just brought in for
+    the old name. Take main's side of the conflict hunk, then substitute the new name.
+- **A Windows test red that reads only `error: test failed, to rerun pass -p ffu-server --test dilation`, with no test
+  name and no panic, is a shard thread's panic swallowed by `or_exit`** (`crates/ffu-server/tests/dilation.rs:597`). It
+  calls `process::exit(101)`, so libtest never prints the captured stderr, and the leak check then lists the
+  `ffu-dilation-test-*` folders. On ffu #428 (CI job 128591100218, ffu-beast-3) the red came from a world with no
+  Cargo Hold. The same tests passed 5 of 5 on biscuit and the next run went green. A fix at the cause was handed up
+  from w3487. Check whether your diff reaches the test's world (`line()` there) before you call it yours.
 - A conflict in a feature-gated list (`mod` lines under `#[cfg(feature = ...)]`, as in `ffu-bake/src/lib.rs`) keeps
   each side's `#[cfg]` line, and the check after it builds the crate without the feature too (`cargo check -p <crate>`):
   `--all-features` passes locally while CI's featureless build fails (w2895: ffu #149's merge dropped the `bake` gate on
