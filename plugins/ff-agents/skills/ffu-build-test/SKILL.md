@@ -98,6 +98,21 @@ or unsafe code, and no panics in the tick (use `get`, `checked_*`, `saturating_*
 `SNAPSHOT_VERSION`, keeps the old decoder and adds a fixture in `crates/ffu-sim/tests/fixtures`; existing fixtures are
 never rewritten (`tools/check_snapshot_compat.sh BASE_REF` holds it in CI). No thread count may change a hash.
 
+- **Run a fixture writer by its exact name**: `FFU_WRITE_FIXTURE=1 cargo test -p ffu-sim --test golden_snapshot
+  <writer> -- --ignored --exact`. A bare `--ignored` runs every writer and rewrites the old fixtures, which
+  `check_snapshot_compat.sh` then refuses (w3489). A new `include_bytes!` fixture needs an empty placeholder file before
+  its writer can compile.
+- **A new FF1 build can move every item id** (w3489, ffu #436: FF1 1.0.0.41 added ids 9, 10, 11 and 15, so 1.0.0.30's
+  12 to 220 moved up 4). After re-running the exporter, compare both exports' names before anything else.
+  - A hardcoded id then breaks silently: write `ffu_sim::content::IRON_ORE`, never `110` or `ITEM_NAMES[32]`.
+  - Every stored format bumps its version and remaps old ids as it reads them, before any restore check (snapshot, op
+    log, world messages; `content::from_1_0_0_30`). A server WAL refuses an old segment instead, because it appends.
+  - Oracle replays keep the recording's build ids. They map puts in through `layout::from_build` and fingerprints out
+    through `layout::in_build`, with `replay::absent_items`; a belt fingerprint is rebuilt from `connector_groups()`.
+  - Expect re-pins of the hashes that hold ids: `golden_snapshot.rs`, `golden_world.rs`, `layout_is_pinned`,
+    `golden/hashcheck.txt`, and the factory and world crosscheck CSVs (`--write-golden`). Give each a reason line, and
+    check that every other scenario still matches.
+
 - **A snapshot section that is not empty for older saves breaks the old fixtures' length checks.** The golden tests
   assert that re-encoding an older fixture adds only empty sections. In w3459 (ffu #427, v12), the new power section
   holds the rebuilt power state of any powered sector, so those asserts failed. Compute the section's exact length
