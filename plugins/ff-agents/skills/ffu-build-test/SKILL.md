@@ -319,6 +319,12 @@ never rewritten (`tools/check_snapshot_compat.sh BASE_REF` holds it in CI). No t
       tick past the client's, and the client waits for a tick the test never allows (10060; seen once locally).
     - A repeat run's RED on BEAST may not reproduce a local plant: main with both 1 s holds failed locally and passed
       10 of 10 on ffu-windows (run 42405135217). Keep the local RED as the proof, and say in the PR which it was.
+    - **A paced fresh `world:` shard sits at tick 0, so a test sends no op until it has paced the shard to tick 1**
+      (w3574, ffu #455). `ffu_sim::world::demo` queues the layout's ops at tick 1 as sender 1, seq from 1 (world.rs:1174-1183).
+      The first connection's ops are sender 1 too (net.rs:603: connection ids start at 1). A client op stamped at
+      tick 1 repeats the key (1, 1, 1), and the shard ends with `submit: duplicate op (same tick, sender and seq)`. The
+      followers then read EOF. A free-running shard was always past tick 1 before anyone connected, so only `--paced`
+      shows it. `Followers::run_to` in shard.rs paces the shard to tick 1 first. The product bug is its own request.
   - **A failover test must not assume an owner stays owner until the test stops it** (w3417). A loaded runner
     can stop a process past the link timeout plus the takeover wait (1 s + 500 ms). Its standby then takes over
     legitimately, and a tell to the standby that lost hits a closed pipe. Check that round as you check a kill
@@ -332,6 +338,10 @@ never rewritten (`tools/check_snapshot_compat.sh BASE_REF` holds it in CI). No t
   (`gh api repos/<o>/<r>/actions/runs/<id>/attempts/1/jobs`): a `gh run cancel` also cancels jobs still queued, and
   #262's Linux `hashcheck`, queued 22 min behind busy biscuit runners, was cancelled that way without running: not
   green. Merge `origin/main` in and push for a fresh run instead, and wait for that leg however long it queues.
+  - **That red stops the workspace `cargo test` step, so your own crate's tests never ran in CI** (w3574, ffu #455).
+    In run 42455976949, ffu-content's stale `ff1.rs` test failed on main as well, and CI never reached `ffu-server`.
+    The CI evidence for your test is then repeat.yml on its target, 50 runs each on `ffu-windows` and `ffu-linux`. Link
+    both runs in the PR, then merge over the unrelated red.
 - **`LNK1171 ... (error code: 1455)`, "required to be available in rlib format" or "The paging file is too small" on
   BEAST is the whole machine out of commit (RAM plus page file), not a broken `target/`** (w3421, ffu #396).
   - Each warm workspace build at cargo's default 32 jobs added 14 to 23 GB of commit (32 rustc at 0.7 to 0.9 GB);
