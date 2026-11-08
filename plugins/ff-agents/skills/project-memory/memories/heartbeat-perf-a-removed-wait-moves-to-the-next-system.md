@@ -66,3 +66,21 @@ chunks changed while 6% of the items moved (measured, review w1739 `census-JustP
 bit-equal check (`AtRest`, `SameBits`) is what skips them.
 
 Seen again on JustPlay1003 (w2337, 2026-10-27, beast, development player at f3f76ac53b). The main thread waits 14.3 ms of a 27.6 ms heartbeat frame while 31 workers do about 10 ms of work each. The first site to complete the chain moves between captures: `LocalPlayerMotionSystem`'s `SystemAPI.GetComponent<LinearMotion>` paid 3.1 ms per heartbeat when idle, and `LeechSystem` paid 4.0 ms (with LocalPlayerMotion down to 0.25 ms) when flying. The total wait stayed the same.
+
+**w3408 (2026-11-07, LifeAsTwo, beast editor, bench tickets): cutting a job ON the chain does not move the wait either.**
+Ben's brief: LeechSystem takes 5-10 ms on 26-59% of heartbeats. Leech's own pass costs about 0.7 ms. The rest is its
+`CompleteDependency()` and structural changes waiting on about 60 fixed-group jobs. They run in series, mostly because
+59 systems up to Leech declare `LocalTransform` write access. The docking job's landing-zone check allocated a station set
+per heartbeat (68% of `StationDockingJob`). Fixing it cut that job 2.05/1.74 -> 1.38/1.25 ms, and its frames inside
+Leech's wait fell from 88/71 to 10/5. Leech's wait went 9.97/9.34 -> 10.39/10.89 ms mean: noise, because
+`SolarPanelPlacementJob` and others took the slot.
+- In the editor, `ProfilerRecorder` read 0 for the `System:Job (Burst)` markers on worker threads.
+- `ProfilerDriver.GetRawFrameDataView(frame, thread)` per worker thread, after a short capture, does see them: clip each
+  job's span to the wait and walk the latest-ending predecessor back.
+- Raw worker roots have an empty name. Count the top-level children under them.
+**How to apply:** before writing probes, look for the existing digests (`rawreader/WaitPaths.cs`, `CpuBudget.cs`,
+SyncPoints; I rewrote them). A brief that offers "an early-out, or removing the sync" for a waiting system is
+answered by this file: neither shortens the frame.
+- The lever is a shorter chain: fewer declared writers (w3408 found `ConstructionBotTransitSystem` asking RW for a
+  `[ReadOnly]` FleetShip lookup), or work moved off the chain's critical path.
+- Report the wait as unchanged when it is, beside the job you cut.

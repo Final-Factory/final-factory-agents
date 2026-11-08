@@ -82,6 +82,11 @@ cargo run --release -p ffu-headless -- crosscheck --threads 1,4,16 --golden gold
   `packs::tests::gpu` / `one_gpu_at_a_time`; a new crate with GPU tests adds one). Several devices made at once crash
   Mesa's Vulkan loader: a SIGSEGV with no Rust panic, in 25 of 200 parallel runs of `ffu-client`'s tests on biscuit
   without the lock and 0 of 200 with it (measured, w2895 M2.17b, probe ffu #226).
+- **The fuzz seeds and fuzz targets are compile-checked on every PR** in `ci.yml`'s Linux `lint` job, step "the fuzz
+  seeds and the fuzz targets compile (w3552)": `cargo check --manifest-path fuzz/seeds/Cargo.toml` and
+  `--manifest-path fuzz/Cargo.toml --bins`, on stable 1.94 with lint's `target/`. Only running them needs nightly
+  (libfuzzer-sys builds on stable). A struct change that leaves `fuzz/` unbuildable goes red there, not in the nightly
+  fuzz job (P0.12c's `slots` did, ffu #434). After changing a struct `fuzz/` sets, run both locally (ffu #441).
 - Fuzzing needs nightly and cargo-fuzz (`tools/fuzz.sh [seconds] [target ...]`); BEAST has neither. Run new targets on
   biscuit by dispatching the nightly job on your branch: `gh workflow run fuzz.yml -R Final-Factory/ffu --ref <branch>
   -f seconds=600 -f targets="a b"`. Each target's result is its `stat::number_of_executed_units` line in
@@ -98,12 +103,39 @@ or unsafe code, and no panics in the tick (use `get`, `checked_*`, `saturating_*
 `SNAPSHOT_VERSION`, keeps the old decoder and adds a fixture in `crates/ffu-sim/tests/fixtures`; existing fixtures are
 never rewritten (`tools/check_snapshot_compat.sh BASE_REF` holds it in CI). No thread count may change a hash.
 
+- **Run a fixture writer by its exact name**: `FFU_WRITE_FIXTURE=1 cargo test -p ffu-sim --test golden_snapshot
+  <writer> -- --ignored --exact`. A bare `--ignored` runs every writer and rewrites the old fixtures, which
+  `check_snapshot_compat.sh` then refuses (w3489). A new `include_bytes!` fixture needs an empty placeholder file before
+  its writer can compile.
+- **A new FF1 build can move every item id** (w3489, ffu #436: FF1 1.0.0.41 added ids 9, 10, 11 and 15, so 1.0.0.30's
+  12 to 220 moved up 4). After re-running the exporter, compare both exports' names before anything else.
+  - A hardcoded id then breaks silently: write `ffu_sim::content::IRON_ORE`, never `110` or `ITEM_NAMES[32]`.
+  - Every stored format bumps its version and remaps old ids as it reads them, before any restore check (snapshot, op
+    log, world messages; `content::from_1_0_0_30`). A server WAL refuses an old segment instead, because it appends.
+  - Oracle replays keep the recording's build ids. They map puts in through `layout::from_build` and fingerprints out
+    through `layout::in_build`, with `replay::absent_items`; a belt fingerprint is rebuilt from `connector_groups()`.
+  - Expect re-pins of the hashes that hold ids: `golden_snapshot.rs`, `golden_world.rs`, `layout_is_pinned`,
+    `golden/hashcheck.txt`, and the factory and world crosscheck CSVs (`--write-golden`). Give each a reason line, and
+    check that every other scenario still matches.
+
 - **A snapshot section that is not empty for older saves breaks the old fixtures' length checks.** The golden tests
   assert that re-encoding an older fixture adds only empty sections. In w3459 (ffu #427, v12), the new power section
   holds the rebuilt power state of any powered sector, so those asserts failed. Compute the section's exact length
   rather than hard-coding a new number: `let mut w = ffu_sim::codec::Writer::new(); s.power().encode_state(&mut w);`
   gives its bytes. Assert those bytes, and the zeros after them, then cut the section out before comparing with the
   old file (`without_power` in `golden_snapshot.rs`, `power_sections` in `golden_world.rs`).
+- **When another PR takes your snapshot version while yours is open, renumber yours** (w3463, ffu #437: w3486 merged
+  v13 first). Take the next version and rename your own new fixture. Regenerate it: it was never on main, so it is not
+  an old fixture. Re-encode the older fixtures through one helper, `assert_reencodes_at_the_current_version` in
+  `golden_snapshot.rs`. It checks the header and body equal, then only your version's empty sections. The merged
+  PR's own fixture goes through that helper too.
+- **A change that holds state across ticks gets a reload-every-tick test**: save and load at every tick, and compare
+  with the straight run. In M1.21 (w3463) it found three pieces of state the snapshot did not hold:
+  - a pending rotate's old power direction;
+  - grid own-sums flags after a regrid;
+  - per-structure satisfaction between a rejoin and phase 5.
+
+  `assert_heavy_matches_over` in `ff1_belts_live.rs` reloads over a window of ticks.
 - **A new `Kind` or `Op` is matched outside `ffu-sim` too.** `cargo check --workspace --all-features --all-targets`
   finds the non-exhaustive matches:
   - `ffu-agent`'s `building_json`;
@@ -179,7 +211,8 @@ never rewritten (`tools/check_snapshot_compat.sh BASE_REF` holds it in CI). No t
   (or `--job <id> --log`) answers "logs will be available when it is complete". Read a finished job anyway:
   `gh run view <id> -R Final-Factory/ffu --json jobs --jq '.jobs[]|"\(.databaseId) \(.name) \(.conclusion)"'`, then
   `gh api repos/Final-Factory/ffu/actions/jobs/<job id>/logs --allow-escape-sequences | sed 's/\x1b\[[0-9;]*m//g' > "$TMPDIR/job.log"`
-  (without the flag gh refuses the colour codes and writes nothing; w2895 leg D, ffu #257, 2026-11-06).
+  (without the flag gh refuses the colour codes and writes nothing; w2895 leg D, ffu #257, 2026-11-06). Biscuit's
+  gh 2.46.0 has no such flag ("unknown flag"); there the same command without it writes the whole log (w3552).
   To wait, use `blocked_on` with `ci:Final-Factory/ffu#<n>` and the head, never a poll loop.
   - **A `ci:` wait ends as soon as one leg fails** (w3272), even while the other legs are still queued. When that
     red is a test your PR doesn't touch, and you will merge over it (below), a second `ci:` wait on the same head
@@ -197,6 +230,20 @@ never rewritten (`tools/check_snapshot_compat.sh BASE_REF` holds it in CI). No t
 - Merge on green: `gh pr merge <n> -R Final-Factory/ffu --merge --match-head-commit <sha>`. "Not mergeable" means
   another PR touched the same lines (often `docs/PLAN.md`): `git merge origin/main`, keep both sides, push, wait for CI
   again. Never force-push or rebase a pushed branch.
+  - **A PR whose CI queues for an hour behind busy runners goes stale while it waits** (w3487, ffu #428). #428 turned
+    CONFLICTING twice after its legs went green: main took snapshot version 13 (#425), then the agent API's new `set`
+    ops (#434). Each conflict cost a whole new CI run. Check `gh pr view <n> --json mergeable` (retry while `UNKNOWN`)
+    as soon as the run's last non-macOS leg finishes, not only before the merge. When it is `CONFLICTING`, merge
+    `origin/main` straight away, rerun the local checks and push. Then force-cancel the old run (above): its remaining
+    legs no longer count.
+  - When your PR renames or removes a constant (`HOLD_CAP` became `HOLD_MAX`), grep the code main just brought in for
+    the old name. Take main's side of the conflict hunk, then substitute the new name.
+- **A Windows test red that reads only `error: test failed, to rerun pass -p ffu-server --test dilation`, with no test
+  name and no panic, is a shard thread's panic swallowed by `or_exit`** (`crates/ffu-server/tests/dilation.rs:597`). It
+  calls `process::exit(101)`, so libtest never prints the captured stderr, and the leak check then lists the
+  `ffu-dilation-test-*` folders. On ffu #428 (CI job 128591100218, ffu-beast-3) the red came from a world with no
+  Cargo Hold. The same tests passed 5 of 5 on biscuit and the next run went green. A fix at the cause was handed up
+  from w3487. Check whether your diff reaches the test's world (`line()` there) before you call it yours.
 - A conflict in a feature-gated list (`mod` lines under `#[cfg(feature = ...)]`, as in `ffu-bake/src/lib.rs`) keeps
   each side's `#[cfg]` line, and the check after it builds the crate without the feature too (`cargo check -p <crate>`):
   `--all-features` passes locally while CI's featureless build fails (w2895: ffu #149's merge dropped the `bake` gate on
@@ -217,6 +264,12 @@ never rewritten (`tools/check_snapshot_compat.sh BASE_REF` holds it in CI). No t
     folder, and reach it from the tests through `use super::*`.
 - `docs/PLAN.md` is the shared board: mark your row "in progress: <session> (wNNN)" in a one-line PR before you start,
   and record its result, with measured numbers labelled, in a PR when it is done.
+  - **Find the next free row in one call**: `python tools/gate_status.py docs/PLAN.md --prs --free` reads the open and
+    merged PRs and prints `free rows: ...` or `free rows: none` (w3560). Without `--prs` it listed M1.24 and M2.16 as
+    free on main 8d4444c, though M1.24's live part was open as ffu #429 and M2.16 was held; hand-parsing PLAN.md's long
+    rows first cost w3560 about 12 calls (measured). It covers only rows a gate clause names (FP, G1, G2, G5): check an
+    R, M0 or P0 row by its own Task cell and `gh pr list --state all --search "<id>"`, since marks go stale (on that
+    commit M0.12c, M0.12d and FP.11 still read "in progress" after ffu #413, #414 and #418 merged).
 - **A multi-process `ffu-server` test that fails now and then on a shared machine: rule out a full disk first.**
   Grep every child's stderr (`FFU_FAILOVER_LOGS=<dir>`) for `os error 112` (Windows: disk full; Linux `ENOSPC`, "No
   space left on device"), and read the portal journal (`portal_logs`, grep the machine, `disk`) for that time. A child
@@ -234,6 +287,13 @@ never rewritten (`tools/check_snapshot_compat.sh BASE_REF` holds it in CI). No t
     and os (`gh workflow run repeat.yml -R Final-Factory/ffu -f target=owner_term ...`). A PR that changes repeat.yml
     runs it with its defaults. Keep the filter empty so the whole file repeats: ffu #383's first whole-file pass found
     a second flake, at run 24, that a filter on the fixed tests would have hidden.
+  - **A loop that must run on lothdesktop runs locally, with a watchdog** (w3453, ffu #408). repeat.yml cannot pick
+    lothdesktop alone (`ffu-windows` covers BEAST's runners too), and on 2026-11-07 two lothdesktop runner loops
+    (42410183429, 42410188310) passed every run they reached (9 and 12), then one run each sat silent until
+    repeat.yml's 150-minute job timeout cancelled the job; the runner's temp folder was gone, so the cause stayed
+    unknown. Build the test exe in your sandbox (`cargo test -p ffu-server --test sim_switch --no-run`) and run it N
+    times from a script, each run with its own TMP/TEMP/TMPDIR, stopping a run past 600 s after saving its process
+    list and temp folder. It passed 50/50 in a row there, 30-67 s a run (measured).
   - **A lone shard takes `--paced` too** (w3437, ffu #405): the plain server's stdin `until T` lines, for a shard with
     no peers and no standby (a standby or a peered shard still refuses it). `gateway_failover` keeps each owner one
     tick ahead of the client (`Proc::pace`). Free at `--tps 200`, a 1 s hold of the test thread let the owner run
@@ -300,6 +360,33 @@ never rewritten (`tools/check_snapshot_compat.sh BASE_REF` holds it in CI). No t
     - `sim_switch`.
 
     Sweep with `grep -rn 'connect_station\|connect_gateway\|Client::connect\|set_timeout' crates/ffu-server/tests`.
+  - **A test gateway's own search for an owner is a liveness wait too** (w3526, ffu #439). `Options::default()` gives
+    `resubscribe_within` 30 s (`ffu-gateway/src/lib.rs`), counted from the owner's kill. It also covers the test's own
+    restart of that owner, a Windows process start with no bound. `gateway_failover`'s kill -9 test failed on BEAST with
+    `no owner answered within 30s: connect 127.0.0.1:N: connection timed out` and no `stall::note()`. The port is the
+    **dead** owner's: Windows refuses a loopback port with no listener only after about 2 s, and `CONNECT_TIMEOUT` is
+    2 s. So the lease had not moved yet, because the test was still starting the new owner. Give the gateway
+    `Options { resubscribe_within: stall::ALIVE, ..Options::default() }` and plant a sleep between the kill and the
+    restart (`FFU_GATEWAY_FAILOVER_RESTART_MS=40000`). Measured: RED failed in 224 s with CI's exact line, GREEN passed
+    in 46 s, and `repeat.yml` ran 50 of 50 on ffu-beast.
+    That grep misses a liveness wait set as a literal in a struct's Options: sim_switch's two gateways kept
+    `resubscribe_within: Duration::from_secs(60)`, and a 52 s BEAST freeze broke run 43 of a 50-run loop (w3446,
+    ffu #406). Also grep `Duration::from_secs` in the Options of every test file you touch.
+  - **A `refused == 0` assert that fails while every client of the test followed to the end: count strangers**
+    (w3446, ffu #406). On biscuit, run 29 of a 50-run loop of `sim_switch` saw `refused` 11. No client of the test can
+    be refused and still pass, because a follower dials once and never retries (`client.rs:132`). So the 11 were
+    connections from outside the test, most likely another program still dialling a port the gateway was given
+    later (a guess; not proven).
+    - Since #406, `ffu-gateway` counts a connection whose first frame is not a gateway Hello, or a Hello that does
+      not decode, as `StatsNow::strangers`. `refused` counts real clients only.
+    - Plant it with `FFU_SWITCH_PLANT_STRANGERS=<n>` (sim_switch.rs). Without the fix, 11 strangers reproduced CI's
+      `left: 11, right: 0` exactly. With it, the test passed (measured, lothdesktop).
+    - The gateway logs each refusal's reason (`ffu-gateway: refused ...: <why>`). Since ffu #444 (w3529) a failed
+      repeat.yml run prints `grep -nE "refused|ended:|panicked|fenced"` over its whole output (first 80 hits),
+      then its last 60 lines, so no probe branch is needed. Before #444 only the `tail -60` was printed, and it cut
+      those lines off.
+  - **A Windows `.cmd` plant run from Git Bash: call `C:\Windows\System32\findstr.exe` by its full path.** A bare
+    `find` there resolves to Git's Unix `find`, so the plant's check never matched (w3446).
   - **Tell a freeze from a code stall before you fix anything.** Read the portal journal (`portal_logs`, journal,
     grep `beast`) for `machine beast: no answer for N s` near the failure. Its times are in -07:00. Then list the
     BEAST jobs of other runs in the same minutes and look for 10060 reds in tests that do not share code (w3416:
@@ -310,6 +397,18 @@ never rewritten (`tools/check_snapshot_compat.sh BASE_REF` holds it in CI). No t
     cannot reach.
   - `gh workflow run repeat --ref <probe branch>` works before repeat.yml is on main, once the probe branch carries
     it: dispatch RED, GREEN and the fix alone in parallel (runs 42394090019, 42394092744, 42394095691).
+  - **A GREEN plant leg on repeat.yml shows nothing unless you ask** (w3504, ffu #433). repeat.yml hides a passing
+    run's output, so "3 of 3 passed" cannot tell a plant that fired from one that never did. The plant-only branch
+    sets the plant's env var in repeat.yml and greps its lines from each run (`grep "deploy_ops: froze\|took the
+    shard over outside"`), and the dispatch passes `-f filter=--nocapture` (`$FILTER` reaches the test binary
+    unquoted). The RED branch is the same plant with the fix's exception disabled. Neither branch merges.
+  - **On Windows a stall that freezes one ffu-server owner looks like a takeover; a freeze of every process does
+    not** (measured on BEAST, w3504). Suspending only shard 0's owner for 2.5 s let its standby fence it (`LINK_TIMEOUT`
+    1 s plus `--takeover-after-ms` 1000), and the deploy_ops test then saw 10054 from the owner it still asked.
+    Suspending every process together for 3 s fenced nobody. So a 10054 after a stall, with "fenced: a standby took
+    this shard over" in the owner's stderr, is the failover working. The test must name it, not hide it under a
+    longer timeout. Plant it with NtSuspendProcess (Windows) or `kill -STOP` (Unix), in deploy_ops.rs's
+    `FFU_DEPLOY_OPS_FREEZE_MS`.
   - The product's own timers (gateway `WRITE_TIMEOUT` 10 s, a 1 s `--takeover-after-ms`, the follower's 5 s read)
     still lose to a longer freeze. The real fix is BEAST's load, which needs Ben.
 - **A count a test reads once the far end has the bytes is counted before the write, never after** (w3167, ffu #300).
@@ -388,6 +487,8 @@ never rewritten (`tools/check_snapshot_compat.sh BASE_REF` holds it in CI). No t
   left about 18,500 `ffu-*` folders (11.3 GB) in biscuit's `/tmp`, which turned every biscuit job red (w3118, w3119).
   `tools/check_temp_leaks.sh <command>` runs every `cargo test` step in CI on an empty temp folder and fails on anything
   left there; run your test through it locally too (`tools/check_temp_leaks.sh cargo test -p <crate>`; ffu #248).
+- **Build a RED variant from a committed fix** (w3526). Commit the fix, then make the temporary RED edit, build it, and
+  undo it with `git checkout -- <file>`. On a fix that is not committed yet, that checkout also reverts the fix itself.
 - Before writing an ffu fix, list the open PRs on the same files (`gh pr list -R Final-Factory/ffu --state open
   --json number,title,files`): w3096 and w3101 each wrote the same kept-connection helper at the same time, and the
   second had to rebuild on the first (ffu #229, #235).

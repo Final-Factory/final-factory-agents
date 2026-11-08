@@ -1565,3 +1565,16 @@ w3395 (2026-11-07, BEAST host, LothDesktop client through `pair_relay.py`, six r
   not `w3258-station-hold.json`. `station.state`, `landspot` and `landaim` take the Command Core's tile.
 - A `do` that chains `ffauto` commands with `;` records only the last result in `commands.jsonl`: give each read its own
   step.
+
+## An event right after a save loads: the client joins during the host's load {#join-at-host-load}
+
+w3505 (2026-11-08, an m5 Mac host of a BEAST Windows client, PR #3375 at fab2a7a5, a Leech that Bats kill seconds after
+the save loads).
+- **The host simulates while it waits for peers.** Launched first, run 1's host ran 8,599 heartbeats before the client
+  joined. The Leech died at host heartbeat 31, so the 3,893 clean shared heartbeats never held it.
+- **Launch the client first, the host second.** The client retries its connect. The host's transport listens before
+  the save loads, so the client joined at host-ready: run 2 shared the Leech's whole life in epoch 1.
+- **Find the event in the census.** `CensusDetail` lines name the archetypes that hold the event's component, which
+  shows when it lives and dies on each peer. Check this before you claim a shared window held the event.
+- **desyncReports is shared on one Mac.** Other sessions write there too, so match a report by its `sessionGuid`, not by
+  its time.
