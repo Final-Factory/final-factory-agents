@@ -188,6 +188,11 @@ never rewritten (`tools/check_snapshot_compat.sh BASE_REF` holds it in CI). No t
     "no CI run exists". `gh run cancel` leaves the earlier run queued.
     `gh api -X POST repos/Final-Factory/ffu/actions/runs/<old id>/force-cancel` ends it, and the new run is queued
     within a minute (w3168, ffu #302, measured).
+  - **Never rerun a job of an older run once a newer one exists on the PR** (`gh run rerun <old> --failed` or
+    `--job`). The rerun re-enters the `ci-<ref>` group with `cancel-in-progress` and cancels the newer run's queued
+    and running jobs. In w3543 (ffu #442), a rerun of old run 42442283959's Windows hashcheck at 05:51:08Z cancelled
+    run 42450726658's Windows `test` and `clippy` in that same second, before they had a runner (measured from the
+    job times). The newer run then reads red as "cancelled". Rerun or wait on the newest run only.
 - **A PR that changes only `docs/` runs no CI**: `ci.yml` has `pull_request: paths-ignore: ['docs/**']` (ffu #297).
   A `ci:` wait on it ends after 10 min with "no CI run exists". Merge it straight away with `gh pr merge <n> --merge
   --match-head-commit <head>` (w3382: ffu #395, a PLAN row, sat 10 min in such a wait).
