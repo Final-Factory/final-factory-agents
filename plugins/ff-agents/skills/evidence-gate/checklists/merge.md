@@ -15,6 +15,8 @@ you open the PR. When w1137 retired `develop`, GitHub moved every open PR based 
 CLAUDE.md still said develop. `gh pr view <n> --json baseRefName`, and the rule from `git show origin/master:CLAUDE.md`,
 not from your branch's copy. A base you did not pick is a question to stop on, not a detail.
 
+**A person's "merge past the unrelated red" covers only that red** (w3488, 2026-11-08, ffu PR #423): Ben decided the failing ffu-server failover test was unrelated and to merge anyway; the worker merged with Windows `test` red while Linux `lint`, `check-release` and `hashcheck` and all of macOS were still queued, and the orchestrator reopened it: "covers merging past the unrelated failover red, not merging with legs unrun". Before `gh pr merge`, read every leg (`gh run view <run> --json jobs`): each other leg is completed success, or you wait for it. A leg that shows cancelled is unrun, not green: a failed leg makes the run cancel the rest (w3488's main run cancelled Linux `hashcheck` and all of macOS). Name each unrun leg in the report, and read the merge commit's run on trunk to its end.
+
 **Every repo's trunk takes your work only through a PR, from every clone** (w3111, 2026-11-04): a worker in a `$TMPDIR`
 clone of final-factory-agents committed on its local master and ran `git push origin HEAD`, which put ec77f376 and
 46605709 straight on master with no PR check. Before you push from a clone, `git branch --show-current`: on master or
