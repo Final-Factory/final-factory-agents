@@ -37,7 +37,7 @@ load-bearing for future runs even where the original defect is fixed.
 - [Reading a pair's witness-compare.txt: pose distance is the verdict](#witness-pose-distance) (w1555)
 - [A world-generation pair: drive the host post-join, compare lists, keep the client yours](#worldgen-pair) (w2271; world objects from saves, ffnightly deletes local saves, w2386; a `nearby` probe grid, rich asteroids by ore amount, UTC checkpoints, w2889)
 - [A live-driven built pair: reopen panels after a resync, overlap the report windows](#live-driven-pair) (w2238)
-- [A Linux client leg on biscuit: build, headless launch, a scripted paste](#linux-client-leg) (w2133, w2326, w3029: an item into hand)
+- [A Linux client leg on biscuit: build, headless launch, a scripted paste](#linux-client-leg) (w2133, w2326, w3029: an item into hand; w3719: check biscuit's ffu CI load first)
 - [A Linux host leg on biscuit: console commands and detector counts from a headless host](#linux-host-leg) (w2281)
 - [A host-only scenario with a remote client: pause on join, tower spawns, flow control](#host-scenario-remote-client) (w2586)
 - [A hand-launched built host: TargetClients counts the host, and turn the audit on](#hand-launched-host) (w2797; every post-ready segment needs `ffauto:`, a new label per relaunch, w2861; pin the agent channel to your pid, blueprint pieces stay separate grids (a Standard piece needs a Connector), w3292, w3325; a flying Abduction Machine's aggro from `AttackScheduleDetail`, w3325; `inventory.remove` sends no op, a report holds ~2600 heartbeats, w3317; a Leech raid goes pre-join and from far away, w3323; a flying machine's craft at its takeoff centre tile, no flying temperature reader, a station 50 tiles out, w3326; devunlock fills the inventory, the Circuit tab path and a clean still, w3592)
@@ -652,6 +652,18 @@ player's own ship is the host's pose before the ship is placed: leave it out. Qu
 distance per run, alongside the runtime detector's verdict.
 
 ## A Linux client leg on biscuit: build, headless launch, a scripted paste {#linux-client-leg}
+
+**Check biscuit's load before a big-save pair leg there, host or client** (w3719, 2026-11-08, PR #3457, the
+`LifeAsTwoMegaWave-0.50.0.54` fixture, a LothDesktop Windows peer). biscuit's ffu CI runners
+(`~/ffw/ffu-runners/ffu-biscuit-*`, up to 64 `rustc` processes) are not under the bench lock, so a shared bench ticket
+does not protect the leg: load average was 40-71 on 16 cores. The biscuit client was kicked `FlowControl:TooSlow` at
+about 95 s (r1) and about 3.5 min (r2; capping it at `FpsTarget` 60 did not help). With the roles swapped, the biscuit
+host itself ran 1840 heartbeats in 220 s (about 8.4 UPS) with gaps of 5.9, 10.8 and 26.4 s; the client's watchdog
+tripped 4 times and the host dropped it `FlowControl:HardDrift`. Three runs, no 5-minute window, an inconclusive
+verdict. Before you build, run `uptime` and `pgrep -c rustc`; with a load average above the core count (16), tell the
+other legs and ask for another machine instead of running. There is no `-ffMaxFps` flag: a Linux player's frame rate
+is `FpsTarget` in `LocalSettings/settings.json` (`game_data.py snapshot`, `put --local`, `restore`; see
+[linux-client-mod-hunt](#linux-client-mod-hunt)).
 
 w2133 (2026-10-25, the client of a LothDesktop-host pair for PR #2507) lost about 40 minutes to four traps:
 
