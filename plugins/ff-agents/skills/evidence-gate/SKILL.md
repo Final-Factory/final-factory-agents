@@ -627,6 +627,9 @@ One file each under `lessons/`: the rule, why (the incident, dated), how to appl
   pings the host from its own machine (`scripts/nightly/reach.py @<machine>`) and joins the first address that answers,
   Tailscale first, or stops naming each one tried; configs name the machine, never a LAN IP (w2252: LothDesktop could
   not reach the m3's 10.0.0.110 and waited out a 150 s join timeout; 100.104.235.48 worked).
+- [Wait for a kind of event, not one pull request](lessons/wait-for-a-kind-of-event-not-one-pr.md): a done-when that
+  names a kind of event (a merge that changes X) takes any such event; list recent merges and runs before blocked_on
+  someone else's PR (w3424: ~10 h blocked on ffu #397 while qualifying deploys ran).
 - [A digest is blind to fields its fixtures never carry](lessons/look-early-by-breakdown.md#a-digest-is-blind-to-fields-its-fixtures-never-carry-w2124-2026-10-25): a
   re-pinned digest proves nothing about a field no fixture sets or the hash leaves out; assert each excluded field, write
   old-file fixtures with the old tree's own serializer and read them at HEAD with mutant arms, and turn the feature
