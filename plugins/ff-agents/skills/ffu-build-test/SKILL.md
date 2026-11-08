@@ -119,6 +119,18 @@ never rewritten (`tools/check_snapshot_compat.sh BASE_REF` holds it in CI). No t
   rather than hard-coding a new number: `let mut w = ffu_sim::codec::Writer::new(); s.power().encode_state(&mut w);`
   gives its bytes. Assert those bytes, and the zeros after them, then cut the section out before comparing with the
   old file (`without_power` in `golden_snapshot.rs`, `power_sections` in `golden_world.rs`).
+- **When another PR takes your snapshot version while yours is open, renumber yours** (w3463, ffu #437: w3486 merged
+  v13 first). Take the next version and rename your own new fixture. Regenerate it: it was never on main, so it is not
+  an old fixture. Re-encode the older fixtures through one helper, `assert_reencodes_at_the_current_version` in
+  `golden_snapshot.rs`. It checks the header and body equal, then only your version's empty sections. The merged
+  PR's own fixture goes through that helper too.
+- **A change that holds state across ticks gets a reload-every-tick test**: save and load at every tick, and compare
+  with the straight run. In M1.21 (w3463) it found three pieces of state the snapshot did not hold:
+  - a pending rotate's old power direction;
+  - grid own-sums flags after a regrid;
+  - per-structure satisfaction between a rejoin and phase 5.
+
+  `assert_heavy_matches_over` in `ff1_belts_live.rs` reloads over a window of ticks.
 - **A new `Kind` or `Op` is matched outside `ffu-sim` too.** `cargo check --workspace --all-features --all-targets`
   finds the non-exhaustive matches:
   - `ffu-agent`'s `building_json`;
