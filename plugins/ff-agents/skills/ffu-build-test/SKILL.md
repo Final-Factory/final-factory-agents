@@ -376,6 +376,19 @@ never rewritten (`tools/check_snapshot_compat.sh BASE_REF` holds it in CI). No t
     (fenced old owner, one term, every message once) and plant it with SIGSTOP on the owner
     (`FFU_OWNER_TERM_PAUSE_OWNER_MS`). On failure, quote the child's start line, exit status and stderr tail
     (`Proc::state` in owner_term.rs): CI's temp folder is gone by the time anyone reads the log.
+  - **A link test counts reconnects and hellos from the link it checks, not from the start** (w3629, ffu #482). A
+    starved receiver can answer the first hello past `LINK_TIMEOUT` (1 s); the sender then rightly takes it as a far
+    end gone and dials again, before tick 1 and before the idle period the test checks. Under 24 busy threads on
+    lothdesktop the link-cut test failed 2 of 30 runs so ("out: answer read TimedOut after 1.0162944s"). Take
+    `(out.stats().1, inbox.hellos(shard))` once the link that carried tick 1 is up and assert no change after it. A late
+    answer is not a silence, so `freeze::silences` does not excuse it.
+    - A deterministic RED needs no load: plant a 1.2 s sleep before the first answer's `write_all` in `replica.rs`, or
+      `FFU_PLANT_STARVE=<ms>:<ms>:0`. The test-only `freeze::ended` / `freeze::link_ends` record (`#[cfg(test)]`; it
+      takes a closure, so other builds make no string) says which end of a link gave up and how; print it in asserts.
+    - A test that needs a clock bound only to show "this does not wait" can use a hook instead: `freeze::hold_dials`
+      holds every dial of a shard inside `dial()`, and the drop test checks the drops return while all are held.
+    - Load leg on lothdesktop: 24 busy-loop threads, frozen test exes (copy the server exe too: integration tests
+      start it), under the bench ticket; then `repeat.yml` count 50 on `ffu-windows` for the whole lib and the target.
 - **A red in a test your PR does not touch is not rerun and does not hold the PR** (w3412, ffu #262). Ben, on ffu #370's
   failover red: "Yes, merge it now; the failing test is unrelated and its fix is a separate request." Name the exact
   failing test and line from the red run, hand up its cause fix (or name the one in flight), and merge on every other
