@@ -211,6 +211,13 @@ never rewritten (`tools/check_snapshot_compat.sh BASE_REF` holds it in CI). No t
     and running jobs. In w3543 (ffu #442), a rerun of old run 42442283959's Windows hashcheck at 05:51:08Z cancelled
     run 42450726658's Windows `test` and `clippy` in that same second, before they had a runner (measured from the
     job times). The newer run then reads red as "cancelled". Rerun or wait on the newest run only.
+- **A red integration test on a PR that only changes a crate's `#[cfg(test)] mod tests` is not that PR's** (w3693,
+  ffu #498). `tests/*.rs` link the library built without `cfg(test)`, so they run none of the changed code. Check with
+  `git diff origin/main...<head>`: every hunk sits below the `mod tests {` line. Before calling a red unrelated, read
+  the panic's tail. ffu's process tests end it with `[the machine stalled: a 100 ms sleep ... came back N s late ...]`
+  when the runner starved them. #498's Windows job on ffu-lothdesktop-2 lost three failover.rs takeover tests to a
+  2.4 s stall. Hand up the cause-fix (`hand_up_requests`) with the job id and the panics, then merge on the run's other
+  green checks. Say so in a PR comment that names the red job and the follow-up. Never rerun it to green.
 - **A PR that changes only `docs/` runs no CI**: `ci.yml` has `pull_request: paths-ignore: ['docs/**']` (ffu #297).
   A `ci:` wait on it ends after 10 min with "no CI run exists". Merge it straight away with `gh pr merge <n> --merge
   --match-head-commit <head>` (w3382: ffu #395, a PLAN row, sat 10 min in such a wait).
