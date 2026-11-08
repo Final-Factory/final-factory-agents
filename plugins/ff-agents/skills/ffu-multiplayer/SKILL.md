@@ -164,6 +164,12 @@ $B/ffu-server replica --dir "$OUT/replica" --listen 127.0.0.1:0 --exit-on-stdin-
   `netsh advfirewall firewall show rule name=all dir=in verbose | grep -i -B12 ffu-server` for `Action: Block`, and
   test from the peer with `bash </dev/tcp/IP/PORT`. A non-admin worker cannot delete the rule: hand its removal, or an
   allow rule for the path, to ops before the timed run.
+  w3347 (LothLaptop, 2026-11-08) hit it again: the brief ordered the netsh check before the build, it showed
+  nothing, and the first launch added the Block rules; the pre-flight ended at tick 2 with no peer link. A plain
+  PowerShell `TcpListener` on `0.0.0.0:47102` (not ffu-server) got no connection from biscuit either (5 s timeout),
+  though `Tailscale-In` allows Domain,Private and the Tailscale profile is Private; outbound to biscuit:47100 worked.
+  So do the dry listen and the remote connect test before the pair is placed and the bench tickets are taken, and
+  when writing a pair brief with a Windows leg, put the firewall check after a first listen, never before the build.
 
 ## When two peers disagree
 
