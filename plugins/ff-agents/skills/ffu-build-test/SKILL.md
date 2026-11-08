@@ -210,6 +210,16 @@ never rewritten (`tools/check_snapshot_compat.sh BASE_REF` holds it in CI). No t
   07:34-07:39Z on 2026-11-06; lothdesktop at 100% CPU lost ffu-lothdesktop-2). Check `portal_logs` (journal, grep the
   machine), then re-run the failed jobs and say why: that is not a flaky-test rerun. `gh run rerun --failed` needs a
   finished run; one held open by queued macOS legs needs `gh run cancel`, then `force-cancel` (above).
+  - A job can also fail with no steps at all and no message. `gh run view --json jobs` lists no steps for it, and its
+    log (`gh api .../jobs/<id>/logs`) answers `BlobNotFound`. That job never ran: its machine dropped too. In w3499,
+    repeat run 42477727359 attempt 1 on ffu-beast-4 failed after 10 min. Over the same window, the journal showed
+    `machine beast disconnected` six times from 11:56 to 12:04Z. A rerun went 50/50.
+- **repeat.yml keeps nothing from a run that hangs**. A cancel at the job's timeout is not `failure()`, so no artifact
+  is uploaded and the job prints no run line. In w3499, run 1 of repeat run 42462948168 on ffu-lothdesktop-2 hung for
+  93 min, and nothing named the test. To name a hung test, dispatch repeat from a probe branch whose pass runs
+  `timeout -s KILL 300 "$exe" $FILTER`. A hung run then fails the step and prints its last 60 lines, including libtest's
+  "has been running for over 60 seconds" (probe/w3499-hang, bdd613e). The harness's process-kill guard refuses a Bash
+  command holding `-s KILL`, so make that edit from a script that builds the word in pieces.
 - **An artifact upload or download that fails on the network is biscuit's Wi-Fi, not ffu** (w3427, ffu #389's
   `getaddrinfo EAI_AGAIN productionresultssa17.blob.core.windows.net` after `Request timeout: ... CreateArtifact`).
   Biscuit is on Wi-Fi (`wlp194s0`, -66 dBm). A read-only probe leg measured 4% loss in 200 pings to its router, and 4 of
