@@ -317,6 +317,19 @@ never rewritten (`tools/check_snapshot_compat.sh BASE_REF` holds it in CI). No t
   (`gh api repos/<o>/<r>/actions/runs/<id>/attempts/1/jobs`): a `gh run cancel` also cancels jobs still queued, and
   #262's Linux `hashcheck`, queued 22 min behind busy biscuit runners, was cancelled that way without running: not
   green. Merge `origin/main` in and push for a fresh run instead, and wait for that leg however long it queues.
+- **`LNK1171 ... (error code: 1455)`, "required to be available in rlib format" or "The paging file is too small" on
+  BEAST is the whole machine out of commit (RAM plus page file), not a broken `target/`** (w3421, ffu #396).
+  - Each warm workspace build at cargo's default 32 jobs added 14 to 23 GB of commit (32 rustc at 0.7 to 0.9 GB);
+    `link.exe` took only 0.3 GB. Unity, Burst and agents held about 61 GB, and the system-managed page file moved the
+    limit between 77 and 111 GB within minutes (measured, 2026-11-07, CI run 42394339327).
+  - The rlibs it named were whole and the next job built on, so no clean-up follows such a red.
+  - Every Windows build step runs through `tools/ci-runners/build_gate.sh` (2 machine-wide named-mutex slots,
+    `CARGO_BUILD_JOBS=8`); a new build step goes through it too. Its log line shows the slot wait and the machine's
+    commit.
+  - Measure commit per runner by sampling `Win32_Process` `PrivatePageCount` and walking each rustc's parents to its
+    runner folder (cargo's `@argfile` hides the path in rustc's own command line). Never kill a process to test the
+    gate: the harness refuses killing PowerShell; a child that takes the mutex and exits without releasing proves the
+    abandoned-slot path.
 - **BEAST can freeze as a whole machine for 20 to 100 s, and a test's wall-clock wait then runs out with nothing wrong in
   the code** (w3341, ffu #357 probe, ffu #358 fix).
   - It happens when other work on BEAST runs it short of memory and it pages: soaks, extra Unity editors, every
