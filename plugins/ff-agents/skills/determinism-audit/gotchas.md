@@ -686,6 +686,17 @@ w2133 (2026-10-25, the client of a LothDesktop-host pair for PR #2507) lost abou
   - A host started from a shell that then exits is stopped by the bench queue about a minute after `host-ready`
     (w3372 run 3); the client sees only `MaxConnectionAttempts` and `join-timeout ... transport-level failure`
     while `reach.py` still pings. Run the host as a background job that outlives the call.
+- **A headless client's pointer warning does not mean the paste failed** (w3582, 2026-11-08, a biscuit client of an m5
+  host, PR #3401). After `movement.goto|-20|-20` and `camera.zoom|30`, `pointer.moveto|-30|-25` warned "outside the
+  640x480 view" and the `pointer.click` looked lost; `camera.focus|...|<pitch>` then made every moveto refuse ("projects
+  behind the camera"). Yet the host logged `BlueprintPlacementNetworkOperation DoOperation clientId=1 ... (-30,0,-25)`
+  and built it. Before you paste again, `circuit.dump|x|z` (or any read) at the target tile, or ask the host for its
+  log: a second paste stacks on the first.
+- **A background build's 2 h cap counts its Unity-slot queue wait** (w3582): a build started with the Bash tool's
+  `run_in_background` (max 7,200,000 ms) waited 6,475 s behind two builds for biscuit's one slot and was stopped seconds
+  after its grant, leaving `Temp/UnityLockfile` (no `lsof` holder: moved into `$TMPDIR`; the retry built in 19 min).
+  When `unity-slot status` shows builds ahead of yours, wait in an until loop on `unity-slot status` until you are next,
+  then start the build, so the cap covers the build and not the queue.
 - **End the client the moment the host says it ended or quit** (w2326, 2026-10-26). A client launched with
   `-ffAutomationRole Client` keeps its reconnect loop after the host goes (`[Reconnect] ReconnectAttempt(1..4)`,
   backoff 4-8 s, about 40 s in all), so it joins the host's NEXT run on the same address and port before that run's
