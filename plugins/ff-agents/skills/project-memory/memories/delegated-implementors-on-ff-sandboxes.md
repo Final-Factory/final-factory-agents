@@ -13,19 +13,19 @@ refused ("inside protected path ...") and it stopped. Instead, give an implement
 
 ```sh
 D="$(cygpath -m "$TMPDIR")/g4-clone"
-git clone -q --shared --no-checkout <your sandbox worktree> "$D"
+git clone -q --shared --sparse --no-checkout <your sandbox worktree> "$D"  # --sparse: the guard refuses a full clone of the game repo (w3703)
 MSYS_NO_PATHCONV=1 git -C "$D" sparse-checkout set --no-cone '/scripts/' '/docs/' '/Documentation/' '/Assets/Tests/Serialization/Fixtures/'
 git -C "$D" checkout -q -b w1037-g4 <sha>
 # afterwards, in your sandbox:
 git -C "$D" diff > "$TMPDIR/g4.patch" && git apply "$TMPDIR/g4.patch"
 ```
 
-- **A full checkout at another commit** (to build an old commit, an A/B arm or a bisect leg) comes from
-  `scripts/nightly/scratch_clone.sh <sandbox> <sha> $TMPDIR/<dir> [--library]` in the game repo, then `build_player.sh`
-  on it (w3180). It checks out with `GIT_LFS_SKIP_SMUDGE=1` and hardlinks each unchanged LFS file from the sandbox
-  (`cp -c` on macOS). Measured on BEAST: 5166 linked, 14 downloaded, 2 MB of its own LFS data. A plain clone or a
-  `cp -c` of each LFS file costs about 6 GB on Windows, where `cp -c` is a full copy (w3177: ten clones held about
-  180 GB). The sparse clone above checks out no LFS file at all, so it stays cheap.
+- **A player at another commit** (an old commit, an A/B arm or a bisect leg) is built in the sandbox, one commit at a
+  time: `switch_branch` with create_from (or `git checkout --detach <sha>` with the editor stopped), `build_player.sh`
+  on the sandbox, move the player out of the tree, then the next commit. Never a full clone of the game repo: the guard
+  refuses one, `scratch_clone.sh` is retired and `build_player.sh` refuses a project in a temp folder (w3703: w3683's
+  clone reached 43 GB on V:, w3682's `--library` clone 48 GB on F:; w3177: ten clones held about 180 GB). The sparse
+  clone above checks out no LFS file at all, so it stays cheap and the guard lets it through.
 - Without `MSYS_NO_PATHCONV=1`, Git Bash rewrites `/scripts/` to `C:/Program Files/Git/scripts/` and the checkout comes
   out empty ("0% of tracked files present").
 - The nightly runner needs only `scripts/` and the save fixtures, so a child can run scenarios from that clone. It

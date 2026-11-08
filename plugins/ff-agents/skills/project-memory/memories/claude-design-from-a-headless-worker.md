@@ -88,7 +88,7 @@ swept `$TMPDIR` within minutes; Ben's revision reopened it and every source part
 gone. Recovery worked from the delivered HTML (`DesignSync get_file`, or the copy committed on the branch): split it
 by `<section id=` into parts, edit, reassemble. Before DONE, commit or publish the **editable** sources, not only the
 rendered HTML (the review-folder zip is the cheap place). In a docs-only scratch clone of the game repo
-(`git clone --filter=blob:none --no-checkout --depth 1 -b <branch>` + `sparse-checkout`), do not pass your own
+(`git clone --sparse --filter=blob:none --no-checkout --depth 1 -b <branch>` + `sparse-checkout`; the guard refuses one without `--sparse`), do not pass your own
 `user.email`: GitHub refused a personal address with GH007 ("would publish a private email address"); use the
 author the branch already has (`481770+bryding@users.noreply.github.com`). Overwriting the same project path with
 `finalize_plan` + `write_files` replaces the file in place; the project link stays the same.
