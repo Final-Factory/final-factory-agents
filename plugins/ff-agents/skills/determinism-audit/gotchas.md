@@ -1552,6 +1552,15 @@ w3371 (2026-11-07, the LothDesktop client of a BEAST-host pair for PR #3344) hit
 - **`timeout` stops only the launcher.** `timeout -s TERM <n> python scripts/nightly/player_slots.py launch ...` (without
   `--detach`) ended the python launcher and left `finalfactory.exe` running, and `ff-leftovers list` did not list it.
   Launch with `--detach`, read `pid` from its JSON, and stop that pid yourself.
+- **On a lived-in save the audit gets the client dropped in under a minute** (w3612, 2026-11-08, a LothDesktop client of a
+  BEAST host, PR #3389, save w3408-LifeAsTwoMegaWave). With `-ffAutomationDeterminismAudit true` the client joined 9.8 s
+  behind (`[MP pacing] ... delayMs=10161 depthAvg=155.6`) and never caught up: it applied 155 heartbeats per 10 s at
+  `frameMs p50` 51-58 ms (74 MB of Player.log in 40 s). The host dropped it at client heartbeat 248
+  (`FlowControlDiag ... DroppedTooSlow`, `session-ended: kicked (FlowControl:TooSlow)`). A client that joins behind
+  needs headroom above 16 UPS to catch up, and the audit's logging takes it away. The rerun with the audit off on both
+  peers and `-ffFlowControlWaitForSlowPeers` on the host ran its whole 10 minutes: 9630 heartbeats at 16.05 UPS,
+  `frameMs p50` 4.6 ms, no kick, with the runtime desync detector as the verdict. On a lived-in save, plan a
+  LothDesktop client with the audit off from the start.
 
 ## Gatling firing and a held recipe: what the fingerprint and observe.state cannot show {#gatling-and-held-recipe-witness}
 
