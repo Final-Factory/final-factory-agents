@@ -123,6 +123,10 @@ or unsafe code, and no panics in the tick (use `get`, `checked_*`, `saturating_*
 `SNAPSHOT_VERSION`, keeps the old decoder and adds a fixture in `crates/ffu-sim/tests/fixtures`; existing fixtures are
 never rewritten (`tools/check_snapshot_compat.sh BASE_REF` holds it in CI). No thread count may change a hash.
 
+- **ffu-sim's clippy denies plain `+`, `-` and `*` on integers** (`clippy::arithmetic_side_effects`), and neither
+  `check_sim_rules.sh` nor `cargo test` catches it: only the workspace clippy step does. Write `saturating_*` or
+  `checked_*` from the start, even in a read-only helper whose values cannot overflow, and say in a comment why it
+  cannot saturate (w3728, ffu #507: four errors on the new `Sector::spawn_point`, found only after the tests passed).
 - **Run a fixture writer by its exact name**: `FFU_WRITE_FIXTURE=1 cargo test -p ffu-sim --test golden_snapshot
   <writer> -- --ignored --exact`. A bare `--ignored` runs every writer and rewrites the old fixtures, which
   `check_snapshot_compat.sh` then refuses (w3489). A new `include_bytes!` fixture needs an empty placeholder file before
