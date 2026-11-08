@@ -56,6 +56,16 @@ Lance prefab's hand-placed `StationDisplay` map plane; removing it passed that c
 Lance's own `SingularityLanceConfigTest` threw a NullReferenceException reading `Find("StationDisplay")`, and the
 editor builder that makes the prefab still set the plane's scale. One CI cycle was lost.
 
+**A test that ran and failed is fixed, never rerun to green** (Ben, relayed for w3476, 2026-11-08: "a flaky test gets
+its cause fixed. Never rerun it to get green, and never lengthen a timeout on its own."). `gh run rerun --failed` is for
+a job where no test ran (a runner, checkout or network failure): quote the log line that shows it. A test that failed
+gets its cause named and fixed, in your PR when small, else handed up as a request; a rerun's green is not merge
+evidence. There, PR #3403's run 42453750898 failed `test_unity_slot.test_two_runs_go_one_after_the_other` on a
+leftover `grant-*.json`; the rerun was wrong. The cause was the test's `FakeArbiter`: it read the requests once per
+round and checked grants later, so a client that released in between got its grant written again. A sleep widening
+that window reproduced it (old fake leaked within 150 runs, the fixed one none in 150). The ffu rule is the same
+(`ffu-build-test`).
+
 **A red test your diff cannot reach: read master's batch verdict before you rerun** (w2351, 2026-10-27, PR #2686): a
 PR's run tests the branch with master merged in, so a culprit already on master fails it too. Before `gh run rerun`,
 `gh run list --workflow master-batch.yml -L 10` and, for a red one, `gh run view <id> --log-failed | grep
