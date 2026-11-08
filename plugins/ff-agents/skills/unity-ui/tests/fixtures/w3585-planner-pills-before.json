@@ -1,0 +1,611 @@
+{
+ "screen": [
+  600,
+  240
+ ],
+ "elements": [
+  {
+   "path": "InGameScene/UI Canvas/ProductionPlannerPanel/Body/Left/LeftScroll/Viewport/Content/Recipes/Pill/Text (TMP)",
+   "kind": "TextMeshProUGUI",
+   "rect": [
+    147.0,
+    64.4,
+    281.7,
+    80.5
+   ],
+   "visible": [
+    147.0,
+    64.4,
+    281.7,
+    80.5
+   ],
+   "color": "#FFFFFFFF",
+   "alpha": 1.0,
+   "sprite": "",
+   "raycast": true,
+   "selectable": false,
+   "maskOnly": false,
+   "canvasOrder": -10,
+   "depth": 308,
+   "text": "Everything",
+   "textRect": [
+    197.4,
+    324.3,
+    271.3,
+    341.6
+   ],
+   "lines": 1,
+   "fontSize": 16.0
+  },
+  {
+   "path": "InGameScene/UI Canvas/ProductionPlannerPanel/Header/Units/Pill/Text (TMP)",
+   "kind": "TextMeshProUGUI",
+   "rect": [
+    460.3,
+    12.5,
+    521.3,
+    28.6
+   ],
+   "visible": [
+    460.3,
+    12.5,
+    521.3,
+    28.6
+   ],
+   "color": "#FFFFFFFF",
+   "alpha": 1.0,
+   "sprite": "",
+   "raycast": true,
+   "selectable": false,
+   "maskOnly": false,
+   "canvasOrder": -10,
+   "depth": 280,
+   "text": "/s",
+   "textRect": [
+    1123.4,
+    22.3,
+    1138.2,
+    39.7
+   ],
+   "lines": 1,
+   "fontSize": 16.0
+  },
+  {
+   "path": "InGameScene/UI Canvas/ProductionPlannerPanel/Header/Units/Pill/Text (TMP)",
+   "kind": "TextMeshProUGUI",
+   "rect": [
+    524.7,
+    12.5,
+    585.8,
+    28.6
+   ],
+   "visible": [
+    524.7,
+    12.5,
+    585.8,
+    28.6
+   ],
+   "color": "#FFFFFFFF",
+   "alpha": 1.0,
+   "sprite": "",
+   "raycast": true,
+   "selectable": false,
+   "maskOnly": false,
+   "canvasOrder": -10,
+   "depth": 284,
+   "text": "/h",
+   "textRect": [
+    1186.9,
+    22.3,
+    1203.6,
+    39.7
+   ],
+   "lines": 1,
+   "fontSize": 16.0
+  },
+  {
+   "path": "InGameScene/UI Canvas/ProductionPlannerPanel/Header/Units/Pill/ChosenMark",
+   "kind": "Image",
+   "rect": [
+    401.0,
+    29.0,
+    451.8,
+    31.5
+   ],
+   "visible": [
+    401.0,
+    29.0,
+    451.8,
+    31.5
+   ],
+   "color": "#E8F4FAFF",
+   "alpha": 1.0,
+   "sprite": "",
+   "raycast": false,
+   "selectable": false,
+   "maskOnly": false,
+   "canvasOrder": -10,
+   "depth": 277
+  },
+  {
+   "path": "InGameScene/UI Canvas/ProductionPlannerPanel/Body/Left/LeftScroll/Viewport/Content/Components/Tiers0/Pill/Panel",
+   "kind": "Image",
+   "rect": [
+    7.1,
+    207.2,
+    141.9,
+    232.6
+   ],
+   "visible": [
+    7.1,
+    207.2,
+    141.9,
+    232.6
+   ],
+   "color": "#FFFFFFFF",
+   "alpha": 1.0,
+   "sprite": "white-backdrop",
+   "raycast": true,
+   "selectable": false,
+   "maskOnly": false,
+   "canvasOrder": -10,
+   "depth": 318,
+   "spriteSize": [
+    512.0,
+    512.0
+   ],
+   "spriteBorder": [
+    20.0,
+    20.0,
+    20.0,
+    20.0
+   ],
+   "imageType": "Sliced",
+   "preserveAspect": true
+  },
+  {
+   "path": "InGameScene/UI Canvas/ProductionPlannerPanel",
+   "kind": "Image",
+   "rect": [
+    0,
+    0,
+    600,
+    240
+   ],
+   "visible": [
+    0,
+    0,
+    600,
+    240
+   ],
+   "color": "#080D17FF",
+   "alpha": 1.0,
+   "sprite": "",
+   "raycast": true,
+   "selectable": false,
+   "maskOnly": false,
+   "canvasOrder": -10,
+   "depth": 267
+  },
+  {
+   "path": "InGameScene/UI Canvas/ProductionPlannerPanel/Header/Units/Pill/Panel",
+   "kind": "Image",
+   "rect": [
+    395.9,
+    7.8,
+    456.9,
+    33.2
+   ],
+   "visible": [
+    395.9,
+    7.8,
+    456.9,
+    33.2
+   ],
+   "color": "#FFFFFFFF",
+   "alpha": 1.0,
+   "sprite": "white-backdrop",
+   "raycast": true,
+   "selectable": false,
+   "maskOnly": false,
+   "canvasOrder": -10,
+   "depth": 275,
+   "spriteSize": [
+    512.0,
+    512.0
+   ],
+   "spriteBorder": [
+    20.0,
+    20.0,
+    20.0,
+    20.0
+   ],
+   "imageType": "Sliced",
+   "preserveAspect": true
+  },
+  {
+   "path": "InGameScene/UI Canvas/ProductionPlannerPanel/Body/Left/LeftScroll/Viewport/Content/Components/Tiers0/Pill/ChosenMark",
+   "kind": "Image",
+   "rect": [
+    12.2,
+    228.4,
+    136.8,
+    230.9
+   ],
+   "visible": [
+    12.2,
+    228.4,
+    136.8,
+    230.9
+   ],
+   "color": "#E8F4FAFF",
+   "alpha": 1.0,
+   "sprite": "",
+   "raycast": false,
+   "selectable": false,
+   "maskOnly": false,
+   "canvasOrder": -10,
+   "depth": 320
+  },
+  {
+   "path": "InGameScene/UI Canvas/ProductionPlannerPanel/Body/Left/LeftScroll/Viewport/Content/Recipes/Pill/Panel",
+   "kind": "Image",
+   "rect": [
+    7.1,
+    59.7,
+    141.9,
+    85.1
+   ],
+   "visible": [
+    7.1,
+    59.7,
+    141.9,
+    85.1
+   ],
+   "color": "#FFFFFFFF",
+   "alpha": 1.0,
+   "sprite": "white-backdrop",
+   "raycast": true,
+   "selectable": false,
+   "maskOnly": false,
+   "canvasOrder": -10,
+   "depth": 303,
+   "spriteSize": [
+    512.0,
+    512.0
+   ],
+   "spriteBorder": [
+    20.0,
+    20.0,
+    20.0,
+    20.0
+   ],
+   "imageType": "Sliced",
+   "preserveAspect": true
+  },
+  {
+   "path": "InGameScene/UI Canvas/ProductionPlannerPanel/Header/Units/Pill/Panel",
+   "kind": "Image",
+   "rect": [
+    524.7,
+    7.8,
+    585.8,
+    33.2
+   ],
+   "visible": [
+    524.7,
+    7.8,
+    585.8,
+    33.2
+   ],
+   "color": "#FFFFFFFF",
+   "alpha": 1.0,
+   "sprite": "white-backdrop",
+   "raycast": true,
+   "selectable": false,
+   "maskOnly": false,
+   "canvasOrder": -10,
+   "depth": 283,
+   "spriteSize": [
+    512.0,
+    512.0
+   ],
+   "spriteBorder": [
+    20.0,
+    20.0,
+    20.0,
+    20.0
+   ],
+   "imageType": "Sliced",
+   "preserveAspect": true
+  },
+  {
+   "path": "InGameScene/UI Canvas/ProductionPlannerPanel/Body/Left/LeftScroll/Viewport/Content/Items/Tiers0/Pill/Panel",
+   "kind": "Image",
+   "rect": [
+    7.1,
+    149.6,
+    141.9,
+    175.0
+   ],
+   "visible": [
+    7.1,
+    149.6,
+    141.9,
+    175.0
+   ],
+   "color": "#FFFFFFFF",
+   "alpha": 1.0,
+   "sprite": "white-backdrop",
+   "raycast": true,
+   "selectable": false,
+   "maskOnly": false,
+   "canvasOrder": -10,
+   "depth": 313,
+   "spriteSize": [
+    512.0,
+    512.0
+   ],
+   "spriteBorder": [
+    20.0,
+    20.0,
+    20.0,
+    20.0
+   ],
+   "imageType": "Sliced",
+   "preserveAspect": true
+  },
+  {
+   "path": "InGameScene/UI Canvas/ProductionPlannerPanel/Body/Left/LeftScroll/Viewport/Content/Items/Tiers0/Pill/Text (TMP)",
+   "kind": "TextMeshProUGUI",
+   "rect": [
+    7.1,
+    154.2,
+    141.9,
+    170.3
+   ],
+   "visible": [
+    7.1,
+    154.2,
+    141.9,
+    170.3
+   ],
+   "color": "#FFFFFFFF",
+   "alpha": 1.0,
+   "sprite": "",
+   "raycast": true,
+   "selectable": false,
+   "maskOnly": false,
+   "canvasOrder": -10,
+   "depth": 314,
+   "text": "Assembler",
+   "textRect": [
+    60.5,
+    414.6,
+    128.5,
+    430.9
+   ],
+   "lines": 1,
+   "fontSize": 15.0
+  },
+  {
+   "path": "InGameScene/UI Canvas/ProductionPlannerPanel/Body/Left/LeftScroll/Viewport/Content/Components/Tiers0/Pill/Text (TMP)",
+   "kind": "TextMeshProUGUI",
+   "rect": [
+    7.1,
+    211.8,
+    141.9,
+    228.0
+   ],
+   "visible": [
+    7.1,
+    211.8,
+    141.9,
+    228.0
+   ],
+   "color": "#FFFFFFFF",
+   "alpha": 1.0,
+   "sprite": "",
+   "raycast": true,
+   "selectable": false,
+   "maskOnly": false,
+   "canvasOrder": -10,
+   "depth": 319,
+   "text": "Atomic Printer",
+   "textRect": [
+    47.7,
+    472.3,
+    141.3,
+    488.5
+   ],
+   "lines": 1,
+   "fontSize": 15.0
+  },
+  {
+   "path": "InGameScene/UI Canvas/ProductionPlannerPanel/Header/Units/Pill/Panel",
+   "kind": "Image",
+   "rect": [
+    460.3,
+    7.8,
+    521.3,
+    33.2
+   ],
+   "visible": [
+    460.3,
+    7.8,
+    521.3,
+    33.2
+   ],
+   "color": "#FFFFFFFF",
+   "alpha": 1.0,
+   "sprite": "white-backdrop",
+   "raycast": true,
+   "selectable": false,
+   "maskOnly": false,
+   "canvasOrder": -10,
+   "depth": 279,
+   "spriteSize": [
+    512.0,
+    512.0
+   ],
+   "spriteBorder": [
+    20.0,
+    20.0,
+    20.0,
+    20.0
+   ],
+   "imageType": "Sliced",
+   "preserveAspect": true
+  },
+  {
+   "path": "InGameScene/UI Canvas/ProductionPlannerPanel/Header/Units/Pill/Text (TMP)",
+   "kind": "TextMeshProUGUI",
+   "rect": [
+    395.9,
+    12.5,
+    456.9,
+    28.6
+   ],
+   "visible": [
+    395.9,
+    12.5,
+    456.9,
+    28.6
+   ],
+   "color": "#FFFFFFFF",
+   "alpha": 1.0,
+   "sprite": "",
+   "raycast": true,
+   "selectable": false,
+   "maskOnly": false,
+   "canvasOrder": -10,
+   "depth": 276,
+   "text": "/min",
+   "textRect": [
+    1049.3,
+    22.3,
+    1083.5,
+    39.7
+   ],
+   "lines": 1,
+   "fontSize": 16.0
+  },
+  {
+   "path": "InGameScene/UI Canvas/ProductionPlannerPanel/Body/Left/LeftScroll/Viewport/Content/Recipes/Pill/Panel",
+   "kind": "Image",
+   "rect": [
+    147.0,
+    59.7,
+    281.7,
+    85.1
+   ],
+   "visible": [
+    147.0,
+    59.7,
+    281.7,
+    85.1
+   ],
+   "color": "#FFFFFFFF",
+   "alpha": 1.0,
+   "sprite": "white-backdrop",
+   "raycast": true,
+   "selectable": false,
+   "maskOnly": false,
+   "canvasOrder": -10,
+   "depth": 307,
+   "spriteSize": [
+    512.0,
+    512.0
+   ],
+   "spriteBorder": [
+    20.0,
+    20.0,
+    20.0,
+    20.0
+   ],
+   "imageType": "Sliced",
+   "preserveAspect": true
+  },
+  {
+   "path": "InGameScene/UI Canvas/ProductionPlannerPanel/Body/Left/LeftScroll/Viewport/Content/Recipes/Pill/Text (TMP)",
+   "kind": "TextMeshProUGUI",
+   "rect": [
+    7.1,
+    64.4,
+    141.9,
+    80.5
+   ],
+   "visible": [
+    7.1,
+    64.4,
+    141.9,
+    80.5
+   ],
+   "color": "#FFFFFFFF",
+   "alpha": 1.0,
+   "sprite": "",
+   "raycast": true,
+   "selectable": false,
+   "maskOnly": false,
+   "canvasOrder": -10,
+   "depth": 304,
+   "text": "Researched",
+   "textRect": [
+    54.0,
+    324.3,
+    135.0,
+    341.6
+   ],
+   "lines": 1,
+   "fontSize": 16.0
+  },
+  {
+   "path": "InGameScene/UI Canvas/ProductionPlannerPanel/Body/Left/LeftScroll/Viewport/Content/Items/Tiers0/Pill/ChosenMark",
+   "kind": "Image",
+   "rect": [
+    12.2,
+    170.7,
+    136.8,
+    173.3
+   ],
+   "visible": [
+    12.2,
+    170.7,
+    136.8,
+    173.3
+   ],
+   "color": "#E8F4FAFF",
+   "alpha": 1.0,
+   "sprite": "",
+   "raycast": false,
+   "selectable": false,
+   "maskOnly": false,
+   "canvasOrder": -10,
+   "depth": 315
+  },
+  {
+   "path": "InGameScene/UI Canvas/ProductionPlannerPanel/Body/Left/LeftScroll/Viewport/Content/Recipes/Pill/ChosenMark",
+   "kind": "Image",
+   "rect": [
+    12.2,
+    80.9,
+    136.8,
+    83.4
+   ],
+   "visible": [
+    12.2,
+    80.9,
+    136.8,
+    83.4
+   ],
+   "color": "#E8F4FAFF",
+   "alpha": 1.0,
+   "sprite": "",
+   "raycast": false,
+   "selectable": false,
+   "maskOnly": false,
+   "canvasOrder": -10,
+   "depth": 305
+  }
+ ]
+}

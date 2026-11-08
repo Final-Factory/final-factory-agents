@@ -168,6 +168,8 @@ census (`<shot>.json`: small, clipped, off-screen and overlapping text, covered 
   failures, so check `tour.log` reached its last step. The chat lane (`deck_lane.py UI-w2975-chat-station-info`) has 3 standing broken
   Station Info pins, no Player Inventory and no docked leg, so a UI PR on that lane takes its `Pinned:` line from this tour. A small touched
   piece (one craft-queue slot) is measured by `ui_layout.py check --touched <it> --ref <it>`, against its own look before
+  (its twin is the element at the same path standing where it stands, so a chosen pill meets the chosen one, w3585; a touched
+  element with no twin before reads `new, no twin before, not measured` and does not fail)
   (evidence-gate, [lesson](../evidence-gate/lessons/verify-ui-with-full-content-like-a-player.md#a-tours-0-failures-is-not-a-census-read-its-log-and-take-the-pins-from-the-station-tour-w3050-2026-11-04)).
 - **A tour that ran `ffauto:console.run` has the dev console open over the bottom-left HUD (w1064).** A `record` clip then shows the console, not the
   queue or panel. Take a `shot` first (it closes the console); the frames of a tour clip at 1920x1080 ran at about 75 fps, so check
