@@ -446,6 +446,52 @@ class StyleTest(unittest.TestCase):
         _, failures = ul.style(queue("Wire"), queue("Gear"), "CraftQueuePanels", touched_fragments=["CraftQueuePanels"])
         self.assertTrue(any("art 'Gear' vs 'Wire'" in f for f in failures), failures)
 
+    W3585 = Path(__file__).resolve().parent / "fixtures" / "w3585-planner-pills-{}.json"
+
+    def planner(self, side, tint_chosen=False):
+        """w3315's production planner at 1280x800 (master f7a0996c before, the graph branch after), cut to its pills.
+        With tint_chosen, a pill with its ChosenMark inside reads #2E8FA6 and the others #1A3A5C, as on screen."""
+        census = json.loads(Path(str(self.W3585).format(side)).read_text(encoding="utf-8"))
+        if tint_chosen:
+            marks = [e["rect"] for e in census["elements"] if e["path"].endswith("Pill/ChosenMark")]
+            for e in census["elements"]:
+                if e["path"].endswith("Pill/Panel"):
+                    chosen = any(ul.area(ul.inter(e["rect"], m)) > 0 for m in marks)
+                    e["color"] = "#2E8FA6FF" if chosen else "#1A3A5CFF"
+        return census
+
+    def test_same_path_pills_are_matched_by_where_they_stand(self):
+        # w3585: the Units and Recipes switches are each pills at one path, one chosen and one not, and the censuses
+        # list them in another order; matched by path the chosen pill on the branch met the unchosen one on master
+        # (delta E 27.8 on screen for the same pills in the same states).
+        summaries, failures = ul.style(self.planner("before", True), self.planner("after", True),
+                                       "ProductionPlannerPanel", touched_fragments=["ProductionPlannerPanel"])
+        pills = [s for s in summaries if "Pill/Panel" in s and "no twin" not in s]
+        self.assertEqual(len(pills), 7, summaries)
+        self.assertTrue(all("delta E 0.0" in s for s in pills), pills)
+        self.assertEqual(failures, [])
+
+    def test_a_new_pill_with_no_twin_before_is_named_not_failed(self):
+        # w3585: the new Table/Graph switch was measured against the whole window's fill (delta E 36.7, its chosen
+        # mark 79.1), which failed the Style line unless it carried an 'intended' quote.
+        summaries, failures = ul.style(self.planner("before"), self.planner("after"), "ProductionPlannerPanel",
+                                       touched_fragments=["ProductionPlannerPanel"])
+        new = [s for s in summaries if s.startswith("View/Pill/")]
+        self.assertEqual(sorted(new), ["View/Pill/ChosenMark (touched): new, no twin before, not measured"] +
+                         ["View/Pill/Panel (touched): new, no twin before, not measured"] * 2)
+        self.assertEqual(failures, [])
+
+    @unittest.skipUnless(importlib.util.find_spec("PIL"), "needs Pillow (the CI runner has none)")
+    def test_the_planner_pills_read_the_same_on_screen(self):
+        shots = str(self.W3585).replace(".json", ".png")
+        summaries, failures = ul.style(self.planner("before"), self.planner("after"), "ProductionPlannerPanel",
+                                       shot=shots.format("after"), ref_shot=shots.format("before"),
+                                       touched_fragments=["ProductionPlannerPanel"])
+        for group in ("Units", "Recipes"):
+            mine = [s for s in summaries if s.startswith(f"{group}/Pill/Panel")]
+            self.assertTrue(mine and all("delta E 0.0 (on screen)" in s for s in mine), summaries)
+        self.assertEqual(failures, [])
+
     def test_tint_colour_and_alpha_on_the_same_art(self):
         after = hud()
         after["elements"].append(el("BlueprintPanelChild", [392, 68, 850, 444], color="#0D1724FF", alpha=0.98))

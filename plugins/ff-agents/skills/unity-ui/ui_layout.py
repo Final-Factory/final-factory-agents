@@ -1268,16 +1268,41 @@ def delta_e(a, b) -> float:
     return math.dist(lab(a), lab(b))
 
 
-def panels(census: dict, min_share: float = 0.02) -> dict:
+def panels(census: dict, min_share: float = 0.02) -> list[dict]:
+    """Every drawn panel at least `min_share` of the screen, in census order. Same-path twins are all kept (w3585: the
+    planner's Units and Recipes switches are each two `Pill/Panel`s at one path, one chosen and one not; a dict keyed by
+    path kept the last of each, and the two censuses list them in a different order, so the chosen pill on the branch
+    was measured against the unchosen one on master: delta E 27.8 for the same pills in the same states)."""
     w, h = screen_size(census.get("screen"), [1, 1])
-    out = {}
+    out = []
     for e in census["elements"]:
         if e.get("kind") not in ("Image", "RawImage") or e.get("alpha", 0) < 0.1 or e.get("maskOnly")                 or any(i in e["path"] for i in IGNORE):
             continue
         if area(e.get("visible") or e["rect"]) < min_share * w * h:
             continue
-        out[e["path"]] = e
+        out.append(e)
     return out
+
+
+def by_path(found: list[dict]) -> dict:
+    out: dict[str, list] = {}
+    for e in found:
+        out.setdefault(e["path"], []).append(e)
+    return out
+
+
+def twin(e: dict, cands: list[dict] | None):
+    """The element of `cands` (the same path in the other census) that stands where `e` stands: the largest rect
+    overlap, else the nearest centre. None when the other census has nothing at that path (a new element)."""
+    if not cands:
+        return None
+    rect = e.get("visible") or e["rect"]
+    centre = ((rect[0] + rect[2]) / 2, (rect[1] + rect[3]) / 2)
+
+    def score(c):
+        r = c.get("visible") or c["rect"]
+        return (-area(inter(rect, r)), math.dist(centre, ((r[0] + r[2]) / 2, (r[1] + r[3]) / 2)))
+    return min(cands, key=score)
 
 
 def changed_panels(before: dict | None, after: dict, touched: list[str] | None = None) -> list[dict]:
@@ -1286,28 +1311,28 @@ def changed_panels(before: dict | None, after: dict, touched: list[str] | None =
     pa = panels(after)
     # A panel the change names is measured whatever its size (w3050: the craft queue's slots are each under the 2 %
     # share, so `--touched CraftQueuePanels` printed "no --touched panel is open" with the queue on screen).
-    forced = [dict(e, why="touched") for p, e in panels(after, min_share=0).items()
-              if any(t.lower() in p.lower() for t in touched or [])]
+    forced = [dict(e, why="touched") for e in panels(after, min_share=0)
+              if any(t.lower() in e["path"].lower() for t in touched or [])]
     if before is None:
         return forced
-    pb = panels(before)
+    pb = by_path(panels(before))
     result = []
-    for path, e in pa.items():
-        old = pb.get(path)
+    for e in pa:
+        old = twin(e, pb.get(e["path"]))
         if old is None:
             result.append(dict(e, why="new"))
             continue
         if old.get("sprite") != e.get("sprite") or abs(old.get("alpha", 1) - e.get("alpha", 1)) > 0.05 or \
                 delta_e(rgba(old["color"]), rgba(e["color"])) > 2:
             result.append(dict(e, why=f"was {old['color']} alpha {old.get('alpha', 1):.2f} sprite '{old.get('sprite', '')}'"))
-    seen = {e["path"] for e in result}
-    return result + [e for e in forced if e["path"] not in seen]
+    seen = {(e["path"], tuple(e["rect"])) for e in result}
+    return result + [e for e in forced if (e["path"], tuple(e["rect"])) not in seen]
 
 
 def reference(census: dict, fragment: str):
     """The largest panel whose path contains the fragment, at any size (w3050: the craft queue's slots are under 0.5 % of
     the screen, so `--ref CraftQueuePanels` found nothing; the largest match is the same whenever a big one exists)."""
-    cands = [e for e in panels(census, 0).values() if fragment.lower() in e["path"].lower()]
+    cands = [e for e in panels(census, 0) if fragment.lower() in e["path"].lower()]
     return max(cands, key=lambda e: area(e.get("visible") or e["rect"])) if cands else None
 
 
@@ -1367,7 +1392,7 @@ def style(before: dict | None, after: dict, ref_fragment: str, shot=None, ref_sh
     # A touched panel that did not change is measured against its own look in the reference census (w3050: with
     # `--ref CraftQueuePanels` every slot image was compared with the queue's largest image, its progress fill,
     # delta E 52.6 for the same art as master).
-    own = panels(ref_from, min_share=0) if ref_from is not after else {}
+    own = by_path(panels(ref_from, min_share=0)) if ref_from is not after else {}
     # Clones share a path, so a list's item icons differ path for path: art the reference census already draws at that
     # path is content, not a new look.
     drawn = {(x["path"], x.get("sprite") or "") for x in ref_from.get("elements", [])} if own else set()
@@ -1375,10 +1400,17 @@ def style(before: dict | None, after: dict, ref_fragment: str, shot=None, ref_sh
         # The reference itself, in the same census: nothing to compare. The same panel taken from the before (or
         # --ref-census) census is its own look on master, which is the reference a spacing or layout change wants
         # (w1418: `--touched Tooltip(Clone) --ref Tooltip(Clone)` printed "Style: nothing checked").
-        if e["path"] == ref["path"] and ref_from is after:
+        if e["path"] == base["path"] and ref_from is after:
             continue
-        ref = own.get(e["path"], base) if e["why"] == "touched" else base
         name = short(e["path"])
+        ref = base
+        if e["why"] == "touched" and own:
+            ref = twin(e, own.get(e["path"]))
+            if ref is None:
+                # w3585: the planner's new Table/Graph switch (`View/Pill/Panel`) has no twin on master, and the window's
+                # fill is no measure of a pill (delta E 36.7, its chosen mark 79.1): say so rather than fail on it.
+                summaries.append(f"{name} (touched): new, no twin before, not measured")
+                continue
         da = e.get("alpha", 1) - ref.get("alpha", 1)
         if shot and ref_shot:
             mine, theirs = fills(shot, e.get("visible") or e["rect"]), fills(ref_shot, ref.get("visible") or ref["rect"])
