@@ -261,6 +261,14 @@ def backdrop_patterns(spec: dict | None) -> list[str]:
     return list(((spec or {}).get("backdrops") or {}).get("paths", []))
 
 
+def world_marker_patterns(spec: dict | None) -> list[str]:
+    """hud-clusters.json `worldMarkers`: overlays drawn at a spot in the world (the map search's rings on the selected
+    result), which follow the map camera and pulse. Their rect changes with the camera and the pulse's phase, not with the
+    layout, so `moves` lists them apart and does not count them (w3263: the rings' Pulse caught at another phase read as
+    four moves nobody asked for, and the PR gate had no mark for them)."""
+    return list(((spec or {}).get("worldMarkers") or {}).get("paths", []))
+
+
 def transient_patterns(spec: dict | None) -> list[str]:
     """hud-clusters.json `transient`: hover cards and tooltips, shown only while the pointer is on something. One may cover
     a panel the same hover does not show (lothsahn, 2026-11-02, w2885: "The user can stop hovering to see the card"); two
@@ -674,7 +682,8 @@ def keyed(census: dict) -> dict:
     return out
 
 
-def moves(before: dict, after: dict, move_px: float = 4.0, pins: list | None = None) -> dict:
+def moves(before: dict, after: dict, move_px: float = 4.0, pins: list | None = None,
+          markers: list[str] | None = None) -> dict:
     """What moved between two censuses of the same save, size and open screens (w826).
 
     Every element whose rect (the RectTransform's, not the clipped part) changed more than move_px on any edge is
@@ -685,7 +694,8 @@ def moves(before: dict, after: dict, move_px: float = 4.0, pins: list | None = N
     "after", "elements", "parts"}], "gone": [path], "new": [path], "covered": [(path, why)], "screen": "WxH"}; "gone"
     and "new" are blocks with no element on the other side. A gone block that a pin of `pins` (hud-pins.json) names and
     the game hides by design in the after census (pin_check 'covered', covered_by_window) is in "covered", not "gone"
-    (w3196: the hover card under a docked window, w2185, read as gone and asked the requester's words for it)."""
+    (w3196: the hover card under a docked window, w2185, read as gone and asked the requester's words for it). A moved
+    block that `markers` (world_marker_patterns) names is in "markers", not "moved" (w3263)."""
     old, now = keyed(before), keyed(after)
     common = [k for k in now if k in old]
     delta = {k: [now[k][i] - old[k][i] for i in range(4)] for k in common}
@@ -725,6 +735,9 @@ def moves(before: dict, after: dict, move_px: float = 4.0, pins: list | None = N
         blocks[block]["parts"].append(unit)
     for block in blocks.values():
         block["parts"].sort(key=lambda u: -max(abs(d) for d in u["delta"]))
+    marked = [b for b in blocks.values() if markers and opened_prefix(b["path"], markers)]
+    for b in marked:
+        del blocks[b["path"]]
     blocks_old = {block_of(k[0], 2) for k in old}
     blocks_new = {block_of(k[0], 2) for k in now}
     gone, new = sorted(blocks_old - blocks_new), sorted(blocks_new - blocks_old)
@@ -748,7 +761,7 @@ def moves(before: dict, after: dict, move_px: float = 4.0, pins: list | None = N
     if layout_of(before) != layout:
         raise ValueError(f"the before census is {layout_of(before)} and the after one {layout}: compare the same layout")
     return {"moved": sorted(blocks.values(), key=biggest), "gone": gone, "new": new, "reparented": reparented,
-            "covered": covered, "screen": f"{int(w)}x{int(h)} {layout}"}
+            "covered": covered, "markers": marked, "screen": f"{int(w)}x{int(h)} {layout}"}
 
 
 def reparent_target(block: str, old: dict, now: dict, same) -> str | None:
@@ -835,6 +848,9 @@ def moved_lines(results: list[dict], move_px: float, how: str) -> list[str]:
             lines.append(f"- {r['screen']} {under_canvas(path)}: gone from the screen: {MARK}")
         for path, why in r.get("covered", []):
             lines.append(f"  (covered at {r['screen']}, by design, not counted: {under_canvas(path)}: {why})")
+        for unit in r.get("markers", []):
+            lines.append(f"  (world marker at {r['screen']}, follows the map camera, not counted: {under_canvas(unit['path'])}: "
+                         f"{describe_move(unit)})")
         for old_path, new_path in r.get("reparented", []):
             lines.append(f"  (reparented at {r['screen']}, the same place, not counted: {under_canvas(old_path)} -> "
                          f"{under_canvas(new_path)})")
@@ -1791,7 +1807,8 @@ def run_check(args) -> int:
     failed |= broken > 0
 
     pins = json.loads(Path(args.pins or default_pins()).read_text(encoding="utf-8")).get("pins", [])
-    for line in moved_lines([moves(before, after, args.move_px, pins)], args.move_px, "ui_layout.py check"):
+    markers = world_marker_patterns(spec)
+    for line in moved_lines([moves(before, after, args.move_px, pins, markers)], args.move_px, "ui_layout.py check"):
         print(line)
     return 1 if failed else 0
 
@@ -1806,7 +1823,8 @@ def run_pins(args) -> int:
 
 def run_moves(args) -> int:
     pins = json.loads(Path(args.pins or default_pins()).read_text(encoding="utf-8")).get("pins", [])
-    results = [moves(load(b), load(a), args.move_px, pins) for b, a in args.pair]
+    markers = world_marker_patterns(json.loads(Path(args.clusters or default_clusters()).read_text(encoding="utf-8")))
+    results = [moves(load(b), load(a), args.move_px, pins, markers) for b, a in args.pair]
     for line in moved_lines(results, args.move_px, "ui_layout.py moves"):
         print(line)
     return 0
@@ -1900,6 +1918,7 @@ def main(argv=None) -> int:
                    help="a before and an after census at one size (repeat: 1920x1080, then 1280x800 at 0.8)")
     m.add_argument("--move-px", type=float, default=4.0)
     m.add_argument("--pins", default=None, help="hud-pins.json: a pinned block hidden by design is covered, not gone")
+    m.add_argument("--clusters", default=None, help="hud-clusters.json: its `worldMarkers` are listed apart, not counted")
     q = sub.add_parser("pins", help="every census against the places Ben fixed (hud-pins.json): the 'Pinned:' line (w894)")
     q.add_argument("census", nargs="+")
     q.add_argument("--pins", default=None)

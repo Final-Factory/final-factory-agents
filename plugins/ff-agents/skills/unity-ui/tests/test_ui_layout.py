@@ -492,6 +492,19 @@ class MovedTest(unittest.TestCase):
         self.assertEqual([u["path"] for u in grown["moved"][0]["parts"]], [f"{GP}/BuildInfoPanel/Parent"])
         self.assertIn("x +48, y +0 px, size +97 x +0 px", ul.describe_move(grown["moved"][0]))
 
+    def test_a_world_marker_is_listed_apart_not_counted(self):
+        # w3263: the map search's rings follow the map camera and pulse; at another phase they read as moves nobody asked for
+        rings = lambda r: [el("MapSearchRings/Ring/Pulse", [600 - r, 700 - r, 600 + r, 700 + r])]
+        result = ul.moves(self.census(rings(49)), self.census(rings(33)), markers=["GamePanels/MapSearchRings"])
+        self.assertEqual(result["moved"], [])
+        self.assertEqual([u["path"] for u in result["markers"]], [f"{GP}/MapSearchRings"])
+        lines = ul.moved_lines([result], 4.0, "test")
+        self.assertTrue(lines[0].startswith("Moved: 0 element move(s)"), lines[0])
+        self.assertTrue(any("world marker at" in s and "MapSearchRings" in s for s in lines[1:]), lines)
+        # without the list it is a move like any other
+        self.assertEqual([u["path"] for u in ul.moves(self.census(rings(49)), self.census(rings(33)))["moved"]],
+                         [f"{GP}/MapSearchRings"])
+
     def test_the_rest_of_the_hud_is_not_blamed_for_one_move(self):
         before = self.census(station_info(558, 515))
         after = self.census(station_info(540, 62))
