@@ -50,6 +50,7 @@ load-bearing for future runs even where the original defect is fixed.
 - [A cross-OS mod desync hunt from a Linux client: cap its fps, script its rejoins, wait out the outlive window](#linux-client-mod-hunt) (w2826)
 - [A 0.50 (pre-1.0) belt and drop-box pair: circuits need their toggle, stacked boxes by a lethal hit, bot pickup needs research](#pre10-belt-dropbox-pair) (w3295)
 - [A Windows built-player client with the audit on: a 3-minute log, the report at exit, a launcher that is not the player](#win-client-audit-log) (w3371)
+- [A kill-and-rebuild pair in a flat-map world: no bot, 20-tile range, a rebuild in 3 seconds, calcs refuse ghosts](#kill-rebuild-pair) (w3562)
 - [Gatling firing and a held recipe: what the fingerprint and observe.state cannot show](#gatling-and-held-recipe-witness) (w3371)
 - [A relay client that clicks the UI: a window, 1920x1080, a station with a Command Core](#relay-client-ui) (w3395)
 
@@ -1578,3 +1579,28 @@ the save loads).
   shows when it lives and dies on each peer. Check this before you claim a shared window held the event.
 - **desyncReports is shared on one Mac.** Other sessions write there too, so match a report by its `sessionGuid`, not by
   its time.
+
+## A kill-and-rebuild pair in a flat-map world: no bot, 20-tile range, a rebuild in 3 seconds, calcs refuse ghosts {#kill-rebuild-pair}
+
+w3562 (2026-11-08) checked that a structure killed through DeathSystem comes back from its rebuild ghost with its circuit,
+on a built host on BEAST with a Linux client on biscuit.
+
+- **A flat-map automation world has no construction bot, and bots build only within the player's action range.** In run 1 the ghost
+  sat unbuilt with "no free construction bot ... player in range". `player.devunlock|8` plus `spawn.ships|Construction
+  Bot|2` was not enough. The player stood at (0,0) and the ghost was 24 tiles away, past the 200-unit (20-tile) range. Put
+  `ffauto:player.devunlock|8;ffauto:spawn.ships|Construction Bot|2;ffauto:movement.goto|<x>|<z>` (world units, 10 per
+  tile) in the pre-connect chain, so the rebuild happens while the client is in.
+- **`structure.damage|x|z|kill` is the DeathSystem path.** It sends StructureDamageRequest, then StructureDamage with
+  kill=True, and leaves a ghost. With a bot nearby holding the item, the ghost is rebuilt within about 48 heartbeats (3 s).
+  An `observe.state` read 3 s after the kill then shows `built` at full health, which looks like a kill that never landed.
+  Read the kill's heartbeat (`StructureDamageNetworkOperation -> DoOperation`) and the ghost's archetype in `CensusDetail`
+  (OutOfPlay with ConstructionTaskData and your circuit components) in the host log. To dump the ghost itself, keep the
+  player out of range until you have read it, then `movement.goto` in.
+- **Test the parsed JSON, not a substring.** `observe.state|structure` always contains the key `ghost`. Use
+  `data.state == "built" and data.ghost is False`.
+- **A Circuit Module calculation needs research, and it refuses a ghost target.** "Payload validation failed for kind
+  CircuitCalculationConfig" came first from `researched:false` (devunlock before the calc), then from a target that was a
+  ghost (`CircuitCalculationApplier.cs` validation). Set the calc before the kill. It keeps reading the tile through the
+  rebuild.
+- **A multi-condition `circuit.set` goes as one agent-channel command** (`POST /v1/command`), not in a pre-connect file
+  chain: the chain splits on `;`, and so do the condition lists.
