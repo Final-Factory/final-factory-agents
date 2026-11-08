@@ -403,6 +403,17 @@ never rewritten (`tools/check_snapshot_compat.sh BASE_REF` holds it in CI). No t
       holds every dial of a shard inside `dial()`, and the drop test checks the drops return while all are held.
     - Load leg on lothdesktop: 24 busy-loop threads, frozen test exes (copy the server exe too: integration tests
       start it), under the bench ticket; then `repeat.yml` count 50 on `ffu-windows` for the whole lib and the target.
+  - **A test's link `Gate` starts held, not open** (w3633, ffu #454). owner_term's `Gate` began open, so on a loaded
+    runner a held test thread let A and B run all 1,200 ticks before `Run::reach` looked: three tests failed within
+    65 ms of each other with "the run ended before tick 304 (at 1200)" (CI run 42490882408, Windows). Hold it from the
+    start and open it for good only once the owner reached its tick. RED: `FFU_OWNER_TERM_LATE_REACH_MS=8000` (a sleep
+    in `Run::reach`) with the gate open failed 3 of 3; with it held, 4 of 4 passed (measured, BEAST).
+  - **An owner stuck past `LINK_TIMEOUT` must go quiet to its peers** (w3418, ffu #454's `Inbox::mute`). A stopped or
+    starved owner's link threads kept sending keepalives, so peer shard B stayed linked to it and never took the
+    taker's messages ("A took no message from B after its last takeover", failover.rs chain tests). Past `STUCK_AFTER`
+    the owner closes its peer links, refuses hellos and sends no keepalives until the replica acks again. Plant it with
+    `FFU_FAILOVER_CHAIN_PAUSE_STANDBY_MS`; a local RED may not reproduce on every seed, so keep the repeat.yml x50
+    on `ffu-windows` as the proof and say in the PR which it was.
 - **A red in a test your PR does not touch is not rerun and does not hold the PR** (w3412, ffu #262). Ben, on ffu #370's
   failover red: "Yes, merge it now; the failing test is unrelated and its fix is a separate request." Name the exact
   failing test and line from the red run, hand up its cause fix (or name the one in flight), and merge on every other
