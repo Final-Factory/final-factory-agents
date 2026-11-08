@@ -11,6 +11,14 @@ Mechanics: the game repo's `Documentation/Bench-Lock.md`.
       `bench_queue.py timed --what "<what>"` in the background across calls (`timed --release` after), `--bench
       exclusive` for a batch run. The report names the ticket beside its numbers; a number taken without one is a guess
       about a busy machine (w1892: an hour of editor micro-benchmarks on a LothDesktop at 100% CPU, none held).
+- [ ] **A ticket is held only by a turn or a background task you watch** (w3715, lothsahn: "make sure stuff holding
+      locks can continue doing stuff"; "it shouldn't be idle and hold the lock"; ff-factory PR #913). Run
+      `bench_queue.py timed` and the legs under it in this turn or in a Bash `run_in_background` task, never behind
+      `nohup`, `setsid` or a detached script, and release the ticket the moment the legs end. FF Factory lets a holder's
+      messages and wake_me through machine holds, the agent cap and the usage limit, and fires its wake_me as soon as its
+      last ticket goes. A holder with no turn and no background task running is warned after 2 minutes, and 10 minutes
+      after the warning its ticket is revoked (bench_queue.py's own revoke, then the helper's tree 90 s later): w3536's
+      probe held LothDesktop's ticket for about an hour on 2026-11-08 while its worker sat idle behind a hold.
 - [ ] **A whole-player A/B goes to a play-only timing machine when one is online** (w1946, lothsahn: "Can the portal do
       builds on one machine and then use this other with an exclusive lock for benchmarks?"; ff-factory PR #599). Two or
       more built Windows players timed on a save (probe_ab_win.sh's kind of run, numbers from `PerfSummary`): build them
