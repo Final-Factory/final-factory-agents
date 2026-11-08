@@ -89,11 +89,22 @@ Mechanics: the game repo's `Documentation/Bench-Lock.md`.
       the exclusive lock for at most 30 minutes. They should get a warning at 25 minutes. Once their turn is over, if
       they need more time they can apply for a new exclusive lock and they go to the back of the queue"). Plan each
       leg well inside 30 minutes and each build or shared job inside an hour, and give the lock back between legs.
-      The queue ends a turn only while another worker waits behind it: an exclusive turn at 30 minutes, a shared
+      For `bench_queue.py` tickets, the queue ends a turn only while another worker waits behind it (a `timed_run`
+      gives its lock back after 24 minutes regardless, w3711): an exclusive turn at 30 minutes, a shared
       group an hour after its newest ticket started once a timed leg waits. A warning always comes 5 minutes before,
       in the command output and as a message. At the deadline the ticket is revoked and the script and its players
       are stopped, and that leg is void. A re-request goes to the back of the queue. Exempt: the urgent release lane,
       the scheduled nightly, and a machine that hosts a single worker.
+- [ ] **A `timed_run` fits one lock: 10-minute legs, 2 rounds, then a new run** (w3711, 2026-11-08, lothsahn: "106
+      minutes is super long. It should do 10 minute samples and run no longer than 30m per lock"). w3639's
+      tr_dadec6ac06 asked for 4 builds x 2 rounds at sample_s 180; the tool answered "its bound is about 106 min" (every
+      leg at its timeout, plus 20) and the worker and orchestrator read that as how long it held the lock; it planned
+      about 31 min of legs (measured, about 233 s each). The tool now refuses a leg planned past 10 minutes (90 s launch
+      and load, settle, sample, dwell), and, unless `reason` says why in a sentence, more than 2 rounds or more legs
+      than one 24-minute turn plays. More samples are a NEW `timed_run` afterwards, which queues at the back. Quote its
+      answer's play time ("It plays about N min of legs"), never the bound. The timing daemon gives the ticket back
+      after 24 minutes of legs whether or not anyone waits (the queue's own "only while another worker waits" rule is
+      for `bench_queue.py` tickets, not `timed_run`), and queues the rest again at the back.
 - [ ] **Priority counts** (w1860, lothsahn: "If a higher priority job holds the lock and all jobs below it are lower
       priority, it should retain the lock until done"). Only a waiter of the holder's request priority or higher starts
       its clock; with only lower-priority work waiting the holder keeps the lock until it lets go. That is no reason to
