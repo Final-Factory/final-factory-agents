@@ -319,3 +319,40 @@ while ffu-biscuit-2 and ffu-biscuit-4 ran repeat jobs. The measurement was there
 **How to apply.** Before every `blocked_on` with `prs` for a measurement (not for a merge your own work depends on), run
 the two listings above. In the blocked_on `what`, write the kind ("any merge to main touching crates/ffu-server's
 dependencies"), so the person reading the ledger sees it is not that one PR.
+
+## One crash of a person's machine ends the runs there until they say yes (w3740, 2026-11-08)
+
+**The rule.** After a test crashes, hangs or reboots a person's own machine (m3, m5, BEAST, LothDesktop, LothLaptop, or
+any machine a person sits at), the worker runs no further crash, repro, player or bench run on that machine in that
+request. It collects the evidence (panic, gpuEvent, WindowServer and hang reports, each leg's settings and times),
+publishes it, reports what each leg did, and asks the machine's person with `waiting_on_person` before any run there
+again. Only that person's own yes, in their words, clears it. A brief that asks for a crash repro on such a machine
+states its budget: stop after one crash. Checklist: [crash repro](../checklists/crash-repro.md).
+
+**Why (w3704 for w3133, 2026-11-08).** The brief for w3704 asked for "3 to 6 crash tests" on Ben's m3 to bisect an M3
+Pro GPU fault. Every leg ran through `player_slots.py launch` with the guard on (FF_PLAYER_GUARD, game repo PR #3207).
+Measured from w3704's evidence (att_qftakpsaglos): the guard killed the player on a "Deny submissions … 2 GPURestarts"
+line in legs 1, 2, 3, 5 and 6, and 2 of those 5 faults still panicked the Mac (WindowServer's userspace watchdog, about 2
+and a half minutes after the fault, with the player already dead): leg 3 (start 19:46:02Z, panic 19:50:16Z) and leg 6
+(start 21:32:42Z, GPU fault 21:34:40Z, panic 21:37:08Z). Each next leg started just after the guard's 15-minute cool-down
+ran out (leg 3 15 m 43 s after leg 2's kill, leg 6 about 15 m 21 s after leg 5's fault), so the cool-down only spaced
+the faults. Between the crashes the orchestrator told the worker to limit its crash tests; it ran two more legs and the
+second took the m3 down. Ben, after the first: "m3 crashed yet again, i just logged in on it again"; after the second:
+"m3 crashed again. you really need to stop crashin git. just got it back up again".
+
+**How to apply.**
+- A guard that kills the player after a fault is not a safety margin for the next leg: it acts after the GPU restarted,
+  and the machine went down on 2 of 5 kills. A cool-down running out is not a yes. Count crashes per machine and per
+  request, and the first one stops you.
+- Before the first leg, write the budget into your plan and your brief ("stop after one crash of the machine"), and
+  look for a route that needs no crash: the evidence of a crash that already happened, a machine nobody sits at, a probe
+  that stops at the first stall sign.
+- After the crash: publish, report, `waiting_on_person` with the person, the machine, how many legs took it down
+  (measured) and what one more leg would answer. End the turn.
+- FF Factory holds it too (ff-factory#920): when a machine drops mid-turn, not by the portal's own doing, within 30
+  minutes of a worker's game player or exclusive timing ticket there, each open request that worker holds gets a crash
+  hold on that machine. The worker's guard refuses its game player launches there (`player_slots.py launch` or the
+  binary) and its resume says why. Only the person's own orchestrator clears it, in their turn with their words
+  (`clear_crash_hold`); a worker that ran on through the drop (a network blip) loses its hold with its gate. The hold
+  does not see a crash that leaves the machine online (a GPU restart it recovered from, a player that hung): that one is
+  yours to stop.

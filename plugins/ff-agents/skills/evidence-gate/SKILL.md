@@ -126,6 +126,7 @@ carried over ([lesson](lessons/research-the-decision-not-the-topic.md#name-the-p
   not what a title, a measurement table or a tool verdict implies.
 - A brief for consequential work lists the decisions the work must settle, and says the worker
   settles its own guesses.
+- **A crash-repro brief states its budget: stop after one crash** of a person's machine ([checklist](checklists/crash-repro.md), w3740).
 - When you pass on someone's report, keep its labels. A guess never becomes a recommendation on
   the way up.
 - **"How it always worked": read today's handler (and a year-old one) before changing it** ([lesson](lessons/settle-your-own-guesses.md#how-it-always-worked-read-todays-handler-before-you-change-it-w2097-2026-10-25)).
@@ -308,6 +309,9 @@ carried over ([lesson](lessons/research-the-decision-not-the-topic.md#name-the-p
   answers the question, the fewest rounds, early stop on and a decision once the signal is clear, at most one hour per
   exclusive hold, the exclusive ticket only for timed numbers (`bench_lock --shared` for untimed work, nothing for a
   build), nothing under the lock but the leg, and the lock time in the report.
+- [Crash repros on a person's machine](checklists/crash-repro.md) (w3740): the brief's "stop after one crash" budget;
+  after one crash, hang or reboot of m3, m5, BEAST, LothDesktop or LothLaptop no further run there in the request;
+  publish the evidence, report, ask the person (`waiting_on_person`) before any run there again.
 - [FFBox desync PRs](checklists/ffbox-desync-pr.md) (Lothsahn's standing policy, 2026-10-04): classify
   1 report generation only, 2 a game desync fix, 3 capture during play; tests, a 2-peer red/green
   check for 2, a before/after tick and frame measurement for 3 (under 1% merges, above escalates
@@ -637,6 +641,10 @@ One file each under `lessons/`: the rule, why (the incident, dated), how to appl
 - [Wait for a kind of event, not one pull request](lessons/a-person-wait-is-declared-not-polled.md#a-wait-for-a-kind-of-event-takes-any-such-event-not-one-pull-request-w3424-2026-11-08): a done-when that
   names a kind of event (a merge that changes X) takes any such event; list recent merges and runs before blocked_on
   someone else's PR (w3424: ~10 h blocked on ffu #397 while qualifying deploys ran).
+- [One crash of a person's machine ends the runs there](lessons/a-person-wait-is-declared-not-polled.md#one-crash-of-a-persons-machine-ends-the-runs-there-until-they-say-yes-w3740-2026-11-08):
+  after a test crashes, hangs or reboots m3, m5, BEAST, LothDesktop or LothLaptop, no further crash, repro or player run
+  there in that request: publish the evidence, report, `waiting_on_person` for the person's own yes; a crash-repro brief
+  says "stop after one crash" (w3704: two m3 panics in one request, the second after "limit your crash tests").
 - [A digest is blind to fields its fixtures never carry](lessons/look-early-by-breakdown.md#a-digest-is-blind-to-fields-its-fixtures-never-carry-w2124-2026-10-25): a
   re-pinned digest proves nothing about a field no fixture sets or the hash leaves out; assert each excluded field, write
   old-file fixtures with the old tree's own serializer and read them at HEAD with mutant arms, and turn the feature
