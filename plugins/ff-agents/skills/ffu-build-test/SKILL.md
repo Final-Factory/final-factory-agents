@@ -359,12 +359,17 @@ never rewritten (`tools/check_snapshot_compat.sh BASE_REF` holds it in CI). No t
       tick past the client's, and the client waits for a tick the test never allows (10060; seen once locally).
     - A repeat run's RED on BEAST may not reproduce a local plant: main with both 1 s holds failed locally and passed
       10 of 10 on ffu-windows (run 42405135217). Keep the local RED as the proof, and say in the PR which it was.
-    - **A paced fresh `world:` shard sits at tick 0, so a test sends no op until it has paced the shard to tick 1**
-      (w3574, ffu #455). `ffu_sim::world::demo` queues the layout's ops at tick 1 as sender 1, seq from 1 (world.rs:1174-1183).
-      The first connection's ops are sender 1 too (net.rs:603: connection ids start at 1). A client op stamped at
-      tick 1 repeats the key (1, 1, 1), and the shard ends with `submit: duplicate op (same tick, sender and seq)`. The
-      followers then read EOF. A free-running shard was always past tick 1 before anyone connected, so only `--paced`
-      shows it. `Followers::run_to` in shard.rs paces the shard to tick 1 first. The product bug is its own request.
+    - **Senders have a fixed layout in `ffu_sim::ops`, and a tick applies its ops by (sender, seq)** (w3649, ffu #473):
+      `EXCHANGE_SENDER` 0, `SEED_SENDER` 1 (`world::demo`'s layout ops at tick 1), `FIRST_CONNECTION_SENDER` 2 (net.rs
+      `connection_id`), and `RESERVED_SENDERS` 0xFFFF_FF00 and up (headless's rate and churn senders). The shard
+      stamps only `is_connection_sender` ids. Before #473 the first connection was sender 1 too, so its second op at
+      tick 1 repeated a seed op's key and the shard ended with `submit: duplicate op` (w3574's flake, 40% of paced
+      runs). A server-made op that must apply before players' ops needs a sender below `FIRST_CONNECTION_SENDER`: a
+      first try with the seed at 0xFFFF_FF00 sorted it after the clients' tick-1 ops, and
+      `world::tests::a_coalesced_burst_equals_its_sum` caught it (796 coalesced, not 800). w3574's pace-to-tick-1
+      step in `Followers::run_to` is gone; a test may send ops while a paced `world:` shard is at tick 0.
+    - **Commit the fix before a RED run that edits the same files** (w3649). Planting the old value with `sed` and
+      restoring with `git checkout -- <file>` also throws away every uncommitted fix edit in that file.
   - **A failover test must not assume an owner stays owner until the test stops it** (w3417). A loaded runner
     can stop a process past the link timeout plus the takeover wait (1 s + 500 ms). Its standby then takes over
     legitimately, and a tell to the standby that lost hits a closed pipe. Check that round as you check a kill
