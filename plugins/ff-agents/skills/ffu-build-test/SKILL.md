@@ -117,6 +117,21 @@ never rewritten (`tools/check_snapshot_compat.sh BASE_REF` holds it in CI). No t
   - Expect re-pins of the hashes that hold ids: `golden_snapshot.rs`, `golden_world.rs`, `layout_is_pinned`,
     `golden/hashcheck.txt`, and the factory and world crosscheck CSVs (`--write-golden`). Give each a reason line, and
     check that every other scenario still matches.
+  - **A PR that reads a generated table and a PR that re-exports FF1 can each pass CI and break main together**
+    (w3579, ffu #452). w3487 (#428) added `content::stack_limit` over `ff1.rs`'s `ITEM_STACKS` on 1.0.0.30's ids, and
+    w3489 (#436) renumbered the items. Main then read the wrong item's stack: 2 ffu-sim tests and 8 of 13
+    `ff1_belts_live` replays went red. After merging `origin/main` into either kind of PR, run
+    `cargo run -p ffu-content -- gen > crates/ffu-sim/src/content/ff1.rs` and `git diff` it. Any diff means the table
+    is stale; never hand-edit the file.
+    - Check a value that moved against FF1's own item config at the build's version commit: in the FF1 game repo,
+      find the commit that set `FFVersion` to that build (`git log -S` on its version line), then read the item's
+      config asset's `StackSizeLimit` at that commit with `git show`. In #452 that showed Gatling Rounds at 6000,
+      not 300 (FF1's w3205).
+    - To tell an id move from a value move in a pinned hash, put the old value back in the generated file, run the
+      test, and compare. In #452 the v11 hold fixture's hash was the same at 300 and at 6000, so only the ids moved it.
+    - CI's `cargo test --workspace` stops at the first crate that fails, and ffu-server comes before ffu-sim. An
+      ffu-server flake therefore hides ffu-sim's tests. Run the targets your change needs with
+      `gh workflow run repeat.yml -f package=ffu-sim -f target=<file> -f count=1 -f os=ffu-linux` (and `ffu-windows`).
 
 - **A snapshot section that is not empty for older saves breaks the old fixtures' length checks.** The golden tests
   assert that re-encoding an older fixture adds only empty sections. In w3459 (ffu #427, v12), the new power section
