@@ -548,11 +548,14 @@ One file each under `lessons/`: the rule, why (the incident, dated), how to appl
   `$TMPDIR`, run players only from their slot (`player_slots.py firewall` names a missing rule), and look at a frame of
   every clip for a firewall, UAC or crash dialog before publishing it (w1742: node copies in temp folders prompted on
   lothdesktop; a slot2-0 prompt covered all 12 of w1722's clips on BEAST).
-- [Workers do not clean up; the harness does](lessons/clean-up-after-yourself.md): leave builds, clones, logs and scratch in `$TMPDIR`
-  (the daemon sweeps it once no request waits for you, not on a pause or a wait for CI, w913 and w1097: "Random clean up commands take a lot of approvals"); no rm, no
-  `player_slots.py prune`, no clean-up step before DONE, and no rm to reuse a folder: each test leg writes to a new
-  `$TMPDIR/<leg>-<timestamp>` (w1097); only when the disk is short mid-task, an `rm -rf` under `$TMPDIR`; low disk is
-  fixed by the harness or by filed clean-up work, never by asking a person (w596/w626).
+- [Delete the big things you made before DONE](lessons/clean-up-after-yourself.md) (Ben, 2026-11-08, w3686: "Please address
+  this problem with a harness update so you're cleaning up after yourself"). Before DONE and before ending a long turn,
+  delete the temp files, test data, build outputs and repeat-run artefacts you created; never leave GBs in tmp. Use a plain
+  `rm -rf "$TMPDIR/<name>"` with every path written out, which asks nobody (w913: "Random clean up commands take a lot of
+  approvals"). Check with `du -sh "$TMPDIR"`; FF Factory warns above 15 GB. On 2026-11-08 V:\ffw\tmp held 102.6 GB, 56% of it
+  scratch game clones and 19% cargo targets (measured). Never `player_slots.py prune`; each test leg writes to a new
+  `$TMPDIR/<leg>-<timestamp>` (w1097). Low disk on a machine is fixed by the harness or by filed clean-up work, never by
+  asking a person (w596/w626).
   Measure Windows folders with robocopy `/L` on the install drive only, never Git Bash `du`, and look for your own tool processes that a stopped shell left running ([section](lessons/clean-up-after-yourself.md#measure-windows-folders-with-robocopy-l-not-git-bash-du-w1561), w1561).
   Hunt a disk writer with single-link files: the daemon's hardlinks give every clone one shared mtime, so `find -mmin`
   and per-folder `du` show untouched clones as written ([section](lessons/clean-up-after-yourself.md#a-deduped-file-looks-freshly-written-in-every-clone-hunt-a-writer-with-single-link-files-w3389), w3389).
