@@ -309,6 +309,23 @@ never rewritten (`tools/check_snapshot_compat.sh BASE_REF` holds it in CI). No t
     - `sim_switch`.
 
     Sweep with `grep -rn 'connect_station\|connect_gateway\|Client::connect\|set_timeout' crates/ffu-server/tests`.
+    That grep misses a liveness wait set as a literal in a struct's Options: sim_switch's two gateways kept
+    `resubscribe_within: Duration::from_secs(60)`, and a 52 s BEAST freeze broke run 43 of a 50-run loop (w3446,
+    ffu #406). Also grep `Duration::from_secs` in the Options of every test file you touch.
+  - **A `refused == 0` assert that fails while every client of the test followed to the end: count strangers**
+    (w3446, ffu #406). On biscuit, run 29 of a 50-run loop of `sim_switch` saw `refused` 11. No client of the test can
+    be refused and still pass, because a follower dials once and never retries (`client.rs:132`). So the 11 were
+    connections from outside the test, most likely another program still dialling a port the gateway was given
+    later (a guess; not proven).
+    - Since #406, `ffu-gateway` counts a connection whose first frame is not a gateway Hello, or a Hello that does
+      not decode, as `StatsNow::strangers`. `refused` counts real clients only.
+    - Plant it with `FFU_SWITCH_PLANT_STRANGERS=<n>` (sim_switch.rs). Without the fix, 11 strangers reproduced CI's
+      `left: 11, right: 0` exactly. With it, the test passed (measured, lothdesktop).
+    - The gateway logs each refusal's reason (`ffu-gateway: refused ...: <why>`). repeat.yml prints only `tail -60` of
+      a failed run, which cut those lines off, so `grep -nE "refused|ended:"` the whole output. A probe branch with
+      that grep is how to get them from CI.
+  - **A Windows `.cmd` plant run from Git Bash: call `C:\Windows\System32\findstr.exe` by its full path.** A bare
+    `find` there resolves to Git's Unix `find`, so the plant's check never matched (w3446).
   - **Tell a freeze from a code stall before you fix anything.** Read the portal journal (`portal_logs`, journal,
     grep `beast`) for `machine beast: no answer for N s` near the failure. Its times are in -07:00. Then list the
     BEAST jobs of other runs in the same minutes and look for 10060 reds in tests that do not share code (w3416:
