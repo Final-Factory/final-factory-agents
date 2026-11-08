@@ -33,6 +33,14 @@ whole verification. The repo's own `CLAUDE.md` is binding and longer; this skill
   queued. Check the first lines of a background job's log within seconds of starting it.
 - A wait loop `until ! pgrep -f "<pattern>"` matches its own shell's command line and never ends (w3432); bracket a
   letter (`pgrep -f "[e]cho-biscuit"`) or wait on a pid file.
+- **A wait loop on "no `cargo.exe` left" (`tasklist`) on a shared Windows machine never ends either** (w3687): other
+  workers' cargo and clippy runs match it. Wait on your own job's output (a marker line your script prints last, or
+  the background task's notice), never on a process name.
+- **An end-to-end test against a `--paced` server finishes the pacing before its first assert** (w3687, ffu #494). A
+  follower thread blocked on the paced shard keeps a `std::thread::scope` open, so a failing assert before
+  `server.pace(n)` waits on that thread: the RED run of `a_malformed_op_is_dropped_and_counted_and_every_client_follows_on`
+  took 722 s to fail. Receive what you need with `recv_timeout`, call `pace`, join the followers, then assert: RED then
+  failed in 2.18 s (measured, lothdesktop).
 - Put those exports in `$TMPDIR/rust.sh` and source it in every shell call: shell state does not persist.
 - **Keep one target per worker; never share a `CARGO_TARGET_DIR` across parallel workers** (w3396). Two builds on one
   target wait on cargo's build-directory lock ("Blocking waiting for file lock"): one rebuild alone took 44 s, two at
