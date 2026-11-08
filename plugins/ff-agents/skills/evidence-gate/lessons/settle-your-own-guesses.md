@@ -509,3 +509,28 @@ your skills so you can do this".
 tag from GetPublishedFileDetails; the GameVersion is not in the repo) and what to do without the app:
 project-memory [mod-source-through-app-gherik.md](../../project-memory/memories/mod-source-through-app-gherik.md).
 Read-only: nothing is pushed, opened or commented in the author's repositories.
+
+## A tool's "lost" and a subagent's file are guesses until checked (w3627, 2026-11-08)
+
+**Rule.** (1) A line `lost_lines.py` lists is lost only when it is **gone** on origin/master: the tool now says, for
+each line, gone, still there, or rewritten (every name it used still in the file). A rewritten line goes into its area's
+job as a behaviour check, never as "put it back"; a gone one is checked once by hand (`git show origin/master:<file> |
+grep -n <name>`) before a job calls it lost. (2) A read-only subagent (`code-analyst`, `Explore`, `scout`) gives its
+digest in its reply. Never ask one for a file and never wait on one: it has no Write tool, and its rules forbid report
+files.
+
+**Why.** In the nightly merge review of 2026-11-08 (w3627), five circuit PRs (#3397, #3400, #3405, #3406, #3407)
+edited `CircuitRules.cs` within hours. `lost_lines.py` reported each later merge's conflict rewrite as lost lines: #3406
+"deleted" `CircuitSetMode.ModuleLine` and `PackSetMode`, and #3407 "deleted" `LightColor = 54` and `KindCount = 55`. Every
+one of those names was still on master (`ModuleLine = 3`, `LightColor = 54`, `KindCount = 58`); only a grep on master
+showed it. In the same review, three `code-analyst` agents asked for a digest in `$TMPDIR/<area>.md` all replied inline
+("my rules forbid report files, and I have no Write tool"). The driver's loop waiting for the files ran its full 10
+minutes before it was stopped. Ben's standing ask (2026-10-09, w741): "If you learn something after struggling or figure
+out new ways to do things better, update the harness".
+
+**How to apply.**
+- Read `lost_lines.py`'s gone lines first; its summary line counts gone, rewritten and still there
+  (the game repo's `scripts/nightly/lost_lines.py`, its test `scripts/tests/test_lost_lines.py`, and
+  `scripts/nightly/merge-review.md`, "Someone else's recent lines deleted").
+- Name the fields you need in the subagent's brief, and read the answer from its reply. A scratch file path goes only to
+  a role that has Write (`implementor`, `implementor-sonnet`, `mech-executor`, `deep-thinker`).
