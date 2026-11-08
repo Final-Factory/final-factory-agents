@@ -446,13 +446,17 @@ never rewritten (`tools/check_snapshot_compat.sh BASE_REF` holds it in CI). No t
     thread leaves the kernel, seconds on a stalled machine. `child_dies_with_test` failed once on LothDesktop at 100%
     CPU with the server's own pid still listed 5 s after the kill, though the server was in the job. Check within N s
     that each child is gone or marked `IsProcessDeleting` (`NtQueryInformationProcess(ProcessBasicInformation)` into
-    `PROCESS_EXTENDED_BASIC_INFORMATION`, Flags bit 2; `support/child.rs` `gone_or_ending`), then wait `stall::ALIVE`
+    `PROCESS_EXTENDED_BASIC_INFORMATION`, Flags bit 2; `support/kernel.rs` `gone_or_ending`), then wait `stall::ALIVE`
     for the exit itself.
     - Plant a slow exit with a debugger: `DebugActiveProcess`, `DebugSetProcessKillOnExit(0)`, then sleep on
       `EXIT_PROCESS_DEBUG_EVENT` before `ContinueDebugEvent` (`FFU_CHILD_TEST_PLANT_SLOW_REAP_MS`). Main's check failed
       with CI's exact line; the fix passed and still failed a planted missing guard (`FFU_CHILD_TEST_PLANT_NO_JOB`).
-    - Create a Windows child `CREATE_SUSPENDED` and resume it (`NtResumeProcess`) only after
-      `AssignProcessToJobObject`: ffu-server's first act spawns its crash monitor, which could start outside the job.
+    - Put the test process itself in its kill-on-close job before its first child (win32job's safe
+      `assign_current_process`, once): every child is then in the job from creation. Assigning each child after
+      `CreateProcess` let ffu-server's first act, spawning its crash monitor, start outside the job.
+    - FFU allows `unsafe` only in files `tools/check_sim_rules.sh` names, and a new one needs Ben's or lothsahn's word
+      (ffu `CLAUDE.md`): CI's lint went red on #493's first push. Put the Win32 calls a test needs in one test-only
+      file and ask before pushing; Ben allowed `tests/support/kernel.rs` (2026-11-08).
     - On Unix pass the parent's pid in `FFU_EXIT_WITH_PARENT`: a parent dead before the child read `parent_id()` left it
       watching its new parent for good.
     - A test whose panics append `stall::note()` must call `stall::start()` first, or the note never names a stall.
