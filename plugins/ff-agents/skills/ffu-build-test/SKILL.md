@@ -309,6 +309,15 @@ never rewritten (`tools/check_snapshot_compat.sh BASE_REF` holds it in CI). No t
     - `sim_switch`.
 
     Sweep with `grep -rn 'connect_station\|connect_gateway\|Client::connect\|set_timeout' crates/ffu-server/tests`.
+  - **A test gateway's own search for an owner is a liveness wait too** (w3526, ffu #439). `Options::default()` gives
+    `resubscribe_within` 30 s (`ffu-gateway/src/lib.rs`), counted from the owner's kill. It also covers the test's own
+    restart of that owner, a Windows process start with no bound. `gateway_failover`'s kill -9 test failed on BEAST with
+    `no owner answered within 30s: connect 127.0.0.1:N: connection timed out` and no `stall::note()`. The port is the
+    **dead** owner's: Windows refuses a loopback port with no listener only after about 2 s, and `CONNECT_TIMEOUT` is
+    2 s. So the lease had not moved yet, because the test was still starting the new owner. Give the gateway
+    `Options { resubscribe_within: stall::ALIVE, ..Options::default() }` and plant a sleep between the kill and the
+    restart (`FFU_GATEWAY_FAILOVER_RESTART_MS=40000`). Measured: RED failed in 224 s with CI's exact line, GREEN passed
+    in 46 s, and `repeat.yml` ran 50 of 50 on ffu-beast.
     That grep misses a liveness wait set as a literal in a struct's Options: sim_switch's two gateways kept
     `resubscribe_within: Duration::from_secs(60)`, and a 52 s BEAST freeze broke run 43 of a 50-run loop (w3446,
     ffu #406). Also grep `Duration::from_secs` in the Options of every test file you touch.
@@ -426,6 +435,8 @@ never rewritten (`tools/check_snapshot_compat.sh BASE_REF` holds it in CI). No t
   left about 18,500 `ffu-*` folders (11.3 GB) in biscuit's `/tmp`, which turned every biscuit job red (w3118, w3119).
   `tools/check_temp_leaks.sh <command>` runs every `cargo test` step in CI on an empty temp folder and fails on anything
   left there; run your test through it locally too (`tools/check_temp_leaks.sh cargo test -p <crate>`; ffu #248).
+- **Build a RED variant from a committed fix** (w3526). Commit the fix, then make the temporary RED edit, build it, and
+  undo it with `git checkout -- <file>`. On a fix that is not committed yet, that checkout also reverts the fix itself.
 - Before writing an ffu fix, list the open PRs on the same files (`gh pr list -R Final-Factory/ffu --state open
   --json number,title,files`): w3096 and w3101 each wrote the same kept-connection helper at the same time, and the
   second had to rebuild on the first (ffu #229, #235).
