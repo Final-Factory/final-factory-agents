@@ -345,17 +345,18 @@ Then put the working tree back (`git checkout -- <files>`, delete the new files)
 made on master plus the checked-out branch plus the change, so say so in the PR; CI runs the
 suite on the branch as pushed.
 
-### The branch-switch hook also refuses `git checkout <branch>` in a scratch clone
+### The branch-switch hook also refuses `git checkout <branch>` in a temp clone
 
 In an FF Factory sandbox whose Unity editor runs, the PreToolUse hook refuses any Bash command
 holding `git checkout <branch>` or `git checkout -b`, even inside a one-off clone of another repo
 under `$TMPDIR`, and refuses the whole command line, so nothing before it runs either (w787, the
 m3: checking out a `final-factory-agents` PR branch in a temp clone was refused with "blocked
 while this sandbox's Unity editor is running"). `switch_branch` only moves the sandbox's own
-worktree. A scratch clone of the game repo at a commit (to build it or time an A/B arm) comes from the game repo's
-`scripts/nightly/scratch_clone.sh <sandbox> <sha> $TMPDIR/<dir>`: it hardlinks the sandbox's LFS files, where a plain
-`git clone` or `cp -c` writes about 6 GB of LFS copies on Windows (w3180; project-memory
-`delegated-implementors-on-ff-sandboxes.md`). In a scratch clone of another repo, start on the branch with
+worktree. The game repo at another commit (to build it or time an A/B arm) is never a clone: build it in the sandbox,
+one commit at a time (`switch_branch` with create_from, or `git checkout --detach <sha>` with the editor stopped). The
+guard refuses a full `git clone` of the game repo and the retired `scratch_clone.sh` (w3703: such clones reached 43 GB
+on V: and 48 GB on F:); a scripts-only clone is `--sparse` with `GIT_LFS_SKIP_SMUDGE=1` (project-memory
+`delegated-implementors-on-ff-sandboxes.md`). In a temp clone of another repo, start on the branch with
 `git clone -b <branch> <url> <dir>`, bring
 a pushed branch up to date with `git merge origin/<base>` (never a rebase), and open a new branch
 by pushing a refspec from wherever you are: `git push origin HEAD:refs/heads/<new-branch>`.

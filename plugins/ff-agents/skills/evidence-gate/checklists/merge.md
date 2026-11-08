@@ -201,6 +201,12 @@ Not verified: the Bats' slot lag (simulation, follow-up PR)
   Burst or IL2CPP codegen-sensitive code, platform APIs or file paths, the desync hash or its capture, or a desync
   reported only across OSes; the Evidence row says which applied, or "no cross-OS pair: <why>"
   ([any two free machines](../lessons/verify-simulation-at-a-slow-hosts-frame-rate.md#a-determinism-pair-is-any-two-free-machines-a-cross-os-pair-only-when-the-change-can-differ-by-platform-w1692-2026-10-21)).
+- **A single-machine MP scenario never runs on a Mac** (w3697): an `ffnightly.py` run of an `MP-*` scenario starts its
+  host and client on one computer, and `scripts/nightly/player_slots.py` `require_mac_client_ok` refuses any multiplayer
+  client on a Mac (`FF_MAC_GPU_HANG_OK=<request>` alone lifts it). A pair whose legs each run one alone asks for Windows
+  or Linux legs; only a pair lab or the relay (leg 1 hosts, the others join) lets a Mac host. w3669's m5 leg ended `env`
+  3 times in 20 s after a 10-minute build
+  ([lesson](../lessons/verify-simulation-at-a-slow-hosts-frame-rate.md#a-single-machine-mp-scenario-never-runs-on-a-mac-w3697-2026-11-08)).
 - **Each client leg proves it reaches the host before it builds or joins** (w2259): `python scripts/nightly/reach.py
   @<host machine>` run on the client's own machine ends `PICKED <ip>`, and the leg joins that IP; `UNREACHABLE` stops
   the leg at once with the addresses tried. A host address is a machine name (`@m3`, `lab_hosts.json`), never a copied

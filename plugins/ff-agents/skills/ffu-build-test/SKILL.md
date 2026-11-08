@@ -33,6 +33,14 @@ whole verification. The repo's own `CLAUDE.md` is binding and longer; this skill
   queued. Check the first lines of a background job's log within seconds of starting it.
 - A wait loop `until ! pgrep -f "<pattern>"` matches its own shell's command line and never ends (w3432); bracket a
   letter (`pgrep -f "[e]cho-biscuit"`) or wait on a pid file.
+- **A wait loop on "no `cargo.exe` left" (`tasklist`) on a shared Windows machine never ends either** (w3687): other
+  workers' cargo and clippy runs match it. Wait on your own job's output (a marker line your script prints last, or
+  the background task's notice), never on a process name.
+- **An end-to-end test against a `--paced` server finishes the pacing before its first assert** (w3687, ffu #494). A
+  follower thread blocked on the paced shard keeps a `std::thread::scope` open, so a failing assert before
+  `server.pace(n)` waits on that thread: the RED run of `a_malformed_op_is_dropped_and_counted_and_every_client_follows_on`
+  took 722 s to fail. Receive what you need with `recv_timeout`, call `pace`, join the followers, then assert: RED then
+  failed in 2.18 s (measured, lothdesktop).
 - Put those exports in `$TMPDIR/rust.sh` and source it in every shell call: shell state does not persist.
 - **Keep one target per worker; never share a `CARGO_TARGET_DIR` across parallel workers** (w3396). Two builds on one
   target wait on cargo's build-directory lock ("Blocking waiting for file lock"): one rebuild alone took 44 s, two at
@@ -115,6 +123,10 @@ or unsafe code, and no panics in the tick (use `get`, `checked_*`, `saturating_*
 `SNAPSHOT_VERSION`, keeps the old decoder and adds a fixture in `crates/ffu-sim/tests/fixtures`; existing fixtures are
 never rewritten (`tools/check_snapshot_compat.sh BASE_REF` holds it in CI). No thread count may change a hash.
 
+- **ffu-sim's clippy denies plain `+`, `-` and `*` on integers** (`clippy::arithmetic_side_effects`), and neither
+  `check_sim_rules.sh` nor `cargo test` catches it: only the workspace clippy step does. Write `saturating_*` or
+  `checked_*` from the start, even in a read-only helper whose values cannot overflow, and say in a comment why it
+  cannot saturate (w3728, ffu #507: four errors on the new `Sector::spawn_point`, found only after the tests passed).
 - **Run a fixture writer by its exact name**: `FFU_WRITE_FIXTURE=1 cargo test -p ffu-sim --test golden_snapshot
   <writer> -- --ignored --exact`. A bare `--ignored` runs every writer and rewrites the old fixtures, which
   `check_snapshot_compat.sh` then refuses (w3489). A new `include_bytes!` fixture needs an empty placeholder file before
@@ -199,6 +211,13 @@ never rewritten (`tools/check_snapshot_compat.sh BASE_REF` holds it in CI). No t
     and running jobs. In w3543 (ffu #442), a rerun of old run 42442283959's Windows hashcheck at 05:51:08Z cancelled
     run 42450726658's Windows `test` and `clippy` in that same second, before they had a runner (measured from the
     job times). The newer run then reads red as "cancelled". Rerun or wait on the newest run only.
+- **A red integration test on a PR that only changes a crate's `#[cfg(test)] mod tests` is not that PR's** (w3693,
+  ffu #498). `tests/*.rs` link the library built without `cfg(test)`, so they run none of the changed code. Check with
+  `git diff origin/main...<head>`: every hunk sits below the `mod tests {` line. Before calling a red unrelated, read
+  the panic's tail. ffu's process tests end it with `[the machine stalled: a 100 ms sleep ... came back N s late ...]`
+  when the runner starved them. #498's Windows job on ffu-lothdesktop-2 lost three failover.rs takeover tests to a
+  2.4 s stall. Hand up the cause-fix (`hand_up_requests`) with the job id and the panics, then merge on the run's other
+  green checks. Say so in a PR comment that names the red job and the follow-up. Never rerun it to green.
 - **A PR that changes only `docs/` runs no CI**: `ci.yml` has `pull_request: paths-ignore: ['docs/**']` (ffu #297).
   A `ci:` wait on it ends after 10 min with "no CI run exists". Merge it straight away with `gh pr merge <n> --merge
   --match-head-commit <head>` (w3382: ffu #395, a PLAN row, sat 10 min in such a wait).
@@ -395,6 +414,42 @@ never rewritten (`tools/check_snapshot_compat.sh BASE_REF` holds it in CI). No t
       holds every dial of a shard inside `dial()`, and the drop test checks the drops return while all are held.
     - Load leg on lothdesktop: 24 busy-loop threads, frozen test exes (copy the server exe too: integration tests
       start it), under the bench ticket; then `repeat.yml` count 50 on `ffu-windows` for the whole lib and the target.
+  - **A test's link `Gate` starts held, not open** (w3633, ffu #454). owner_term's `Gate` began open, so on a loaded
+    runner a held test thread let A and B run all 1,200 ticks before `Run::reach` looked: three tests failed within
+    65 ms of each other with "the run ended before tick 304 (at 1200)" (CI run 42490882408, Windows). Hold it from the
+    start and open it for good only once the owner reached its tick. RED: `FFU_OWNER_TERM_LATE_REACH_MS=8000` (a sleep
+    in `Run::reach`) with the gate open failed 3 of 3; with it held, 4 of 4 passed (measured, BEAST).
+    - **A new `Gate::new()` holds too.** ffu #474 (w3666) added `b_gate = Gate::new()` and expected it to start open.
+      Each PR passed CI alone, but with both on main, B's replica relay was held from the start. The fenced-owner test
+      then failed 3 of 3 on m5 ("read Welcome: Resource temporarily unavailable"). ffu #502 (w3713) opens it. Open
+      every new gate you don't hold on purpose.
+  - **When a PR's head passes and its merge commit fails, two PRs broke main together** (w3713). Bisect with a
+    `$TMPDIR` script. For each first-parent main merge between the PR's merge base and its merge, check out that merge,
+    merge the PR head into it, and run the one test (about 1 min a step with an incremental build). The first merge
+    that fails names the other PR. Then read both diffs for a shared helper whose default one of them changed.
+  - **m5 (macOS) has no `timeout`**. A loop script that wraps runs in `timeout` fails every run at once, and that can
+    read as a reproduction (w3713 nearly reported a hang in 60 of 60 runs). Use
+    `perl -e 'alarm shift; exec @ARGV' 300 <cmd>` there.
+  - **owner_term names every child when it runs out of time** (w3713, ffu #502). `Deadline::left`'s panic lists each
+    process the test started: its start line, whether its stdout is open, and its last 6 stderr lines. Without
+    `FFU_OWNER_TERM_LOGS` the children's stderr goes to a scratch folder. `FFU_OWNER_TERM_LOGS=<dir>` keeps it, and
+    repeat.yml sets it. A file the test reads gets a name per process and test: a shared `owner-stderr.txt` made 8 of
+    8 runs of the whole file fail under LOGS.
+  - **An owner starved past `TermWatch`'s give-up (3 s) exits "lost the directory at the barrier"**. That is a
+    takeover, not a failure: accept it where the test accepts "fenced" (w3681, ffu #500). For a RED,
+    `FFU_OWNER_TERM_PAUSE_DIRECTORY_MS` SIGSTOPs the directory group (Unix).
+  - **A process's last word on a peer link must reach the peer before the process exits** (w3713, ffu #502).
+    `Inbox::ack` writes only to the connection open at that moment. A shard acks its peer's last batch and then exits,
+    so after a barrier's mute or a reconnect the peer waited in `wait_acked` forever. `Peer::finish` now waits on
+    `Inbox::wait_told` until each peer has been written what this shard holds from it. The unit plant is
+    `a_shard_that_finishes_leaves_its_last_ack_with_its_peer_even_over_a_closed_link`: 5 of 5 runs failed without the
+    wait and 20 of 20 passed with it. A new last message before an exit needs the same delivery check.
+  - **An owner stuck past `LINK_TIMEOUT` must go quiet to its peers** (w3418, ffu #454's `Inbox::mute`). A stopped or
+    starved owner's link threads kept sending keepalives, so peer shard B stayed linked to it and never took the
+    taker's messages ("A took no message from B after its last takeover", failover.rs chain tests). Past `STUCK_AFTER`
+    the owner closes its peer links, refuses hellos and sends no keepalives until the replica acks again. Plant it with
+    `FFU_FAILOVER_CHAIN_PAUSE_STANDBY_MS`; a local RED may not reproduce on every seed, so keep the repeat.yml x50
+    on `ffu-windows` as the proof and say in the PR which it was.
 - **A red in a test your PR does not touch is not rerun and does not hold the PR** (w3412, ffu #262). Ben, on ffu #370's
   failover red: "Yes, merge it now; the failing test is unrelated and its fix is a separate request." Name the exact
   failing test and line from the red run, hand up its cause fix (or name the one in flight), and merge on every other

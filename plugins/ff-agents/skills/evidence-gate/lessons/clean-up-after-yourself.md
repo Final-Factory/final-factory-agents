@@ -211,10 +211,14 @@ folder's children) and prints the biggest children in GB, then run it once for e
 
 ## A scratch clone links its LFS files, and `du` is not what it costs (w3177, w3180)
 
-**Rule.** To get a full checkout of the game repo at another commit (to build an old commit, an A/B arm or a bisect leg),
-run the game repo's `scripts/nightly/scratch_clone.sh <sandbox> <sha> $TMPDIR/<dir> [--library]` and then
-`build_player.sh` on that clone. Do not use a plain `git clone`, do not copy each LFS file with `cp -c`, do not run
-`git add -u` over them, and do not make a `git worktree` of the main clone. To say what clones cost, compare `df` before
+**Rule.** Build a player of the game repo at another commit (an old commit, an A/B arm, a bisect leg) in your own
+sandbox, one commit at a time: check the commit out (`switch_branch` with create_from, or `git checkout --detach <sha>`
+with the editor stopped), run `build_player.sh` on the sandbox, move the player out of the tree, then check out the next
+commit. Never a clone of the game repo in a temp folder (w3703, lothsahn: "The worker put a whole clone of the repo in
+the temp directory. It should not be doing this."): `scratch_clone.sh` is retired, `build_player.sh` refuses a project
+in a temp folder (exit 68), and FF Factory's guard refuses a full `git clone` of the game repo. w3683's clone reached
+43 GB on LothDesktop's V: and w3682's `--library` clone 48 GB on BEAST's F:, after this lesson had sent them to
+scratch_clone.sh. Do not make a `git worktree` of the main clone either. To say what clones cost, compare `df` before
 and after deleting them, or add up only the files with one link (`find <dir> -type f -links 1`). Never add up `du` or
 robocopy's `Bytes :` over trees that hold hardlinks: both count every link again.
 
@@ -228,7 +232,7 @@ said each clone had "its own copy of the LFS store, ~14 GB". Both were wrong (me
 - A `git worktree` of the main clone wrote its LFS downloads and metadata into the protected main clone, so the
   harness could not remove it.
 
-scratch_clone.sh (w3180) does four things:
+scratch_clone.sh (w3180, retired by w3703) did four things:
 1. checks out with `GIT_LFS_SKIP_SMUDGE=1`;
 2. hardlinks every LFS file that matches the sandbox's (`cp -c` on macOS);
 3. marks the linked files `--assume-unchanged`, so `git status` never runs the LFS clean filter over them;
@@ -237,9 +241,9 @@ scratch_clone.sh (w3180) does four things:
 Measured on BEAST at 7eb465e2: 5166 files linked, 14 downloaded, 2 MB of LFS data with one link, 0 MB with one link in
 `.git/lfs`, 1829 MB of real disk for the whole tree (df), and a clean tree.
 
-**How to apply.** A hardlinked file shares its bytes with the sandbox, so never edit an LFS file in a clone in place.
-Git checkout and Unity's importers replace the file instead, which breaks the link safely. Copy the Library
-(`--library`) only when build time matters: on Windows it is a full copy, about 32 GB from a sandbox.
+**How to apply.** Linking the LFS files kept a clone near 2 GB, but its `--library` copy was a full copy on Windows
+(about 32 GB from a sandbox), and on a loaded machine the link loop took hours; those clones filled V: and F:. The
+sandbox already holds the Library and the LFS files, so build there.
 
 ## A deduped file looks freshly written in every clone: hunt a writer with single-link files (w3389)
 

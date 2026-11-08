@@ -22,8 +22,8 @@ For any `rm`, `Remove-Item`, `del`, `rd`, `git clean`, `shutil.rmtree` or clean-
 1b. **Does a size you report count hardlinks more than once?** (w3177) A scratch clone's `.git/lfs` and its linked LFS
    files share bytes with a sandbox. `du` and robocopy count them in every clone (w3177: 18 GB read per clone, about
    12 GB freed per clone by df). Report what `df` gained, or the size of files with one link
-   (`find <dir> -type f -links 1`). A full checkout at another commit comes from `scripts/nightly/scratch_clone.sh`,
-   not a plain clone or `cp -c` (about 6 GB of LFS copies per clone on Windows;
+   (`find <dir> -type f -links 1`). A build at another commit is made in the sandbox, one commit at a time, never in a
+   clone of the game repo: the guard refuses one and the retired `scratch_clone.sh` (w3703;
    [lesson](../lessons/clean-up-after-yourself.md#a-scratch-clone-links-its-lfs-files-and-du-is-not-what-it-costs-w3177-w3180)).
 1c. **Does the writer you name rest on single-link files?** (w3389) The daemon hardlinks identical files across
    worker clones, and linked files share one mtime, so `find -mmin` shows untouched clones as freshly written (w3389:

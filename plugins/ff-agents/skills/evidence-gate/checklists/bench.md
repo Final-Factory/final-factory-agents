@@ -11,6 +11,14 @@ Mechanics: the game repo's `Documentation/Bench-Lock.md`.
       `bench_queue.py timed --what "<what>"` in the background across calls (`timed --release` after), `--bench
       exclusive` for a batch run. The report names the ticket beside its numbers; a number taken without one is a guess
       about a busy machine (w1892: an hour of editor micro-benchmarks on a LothDesktop at 100% CPU, none held).
+- [ ] **A ticket is held only by a turn or a background task you watch** (w3715, lothsahn: "make sure stuff holding
+      locks can continue doing stuff"; "it shouldn't be idle and hold the lock"; ff-factory PR #913). Run
+      `bench_queue.py timed` and the legs under it in this turn or in a Bash `run_in_background` task, never behind
+      `nohup`, `setsid` or a detached script, and release the ticket the moment the legs end. FF Factory lets a holder's
+      messages and wake_me through machine holds, the agent cap and the usage limit, and fires its wake_me as soon as its
+      last ticket goes. A holder with no turn and no background task running is warned after 2 minutes, and 10 minutes
+      after the warning its ticket is revoked (bench_queue.py's own revoke, then the helper's tree 90 s later): w3536's
+      probe held LothDesktop's ticket for about an hour on 2026-11-08 while its worker sat idle behind a hold.
 - [ ] **A whole-player A/B goes to a play-only timing machine when one is online** (w1946, lothsahn: "Can the portal do
       builds on one machine and then use this other with an exclusive lock for benchmarks?"; ff-factory PR #599). Two or
       more built Windows players timed on a save (probe_ab_win.sh's kind of run, numbers from `PerfSummary`): build them
@@ -89,11 +97,22 @@ Mechanics: the game repo's `Documentation/Bench-Lock.md`.
       the exclusive lock for at most 30 minutes. They should get a warning at 25 minutes. Once their turn is over, if
       they need more time they can apply for a new exclusive lock and they go to the back of the queue"). Plan each
       leg well inside 30 minutes and each build or shared job inside an hour, and give the lock back between legs.
-      The queue ends a turn only while another worker waits behind it: an exclusive turn at 30 minutes, a shared
+      For `bench_queue.py` tickets, the queue ends a turn only while another worker waits behind it (a `timed_run`
+      gives its lock back after 24 minutes regardless, w3711): an exclusive turn at 30 minutes, a shared
       group an hour after its newest ticket started once a timed leg waits. A warning always comes 5 minutes before,
       in the command output and as a message. At the deadline the ticket is revoked and the script and its players
       are stopped, and that leg is void. A re-request goes to the back of the queue. Exempt: the urgent release lane,
       the scheduled nightly, and a machine that hosts a single worker.
+- [ ] **A `timed_run` fits one lock: 10-minute legs, 2 rounds, then a new run** (w3711, 2026-11-08, lothsahn: "106
+      minutes is super long. It should do 10 minute samples and run no longer than 30m per lock"). w3639's
+      tr_dadec6ac06 asked for 4 builds x 2 rounds at sample_s 180; the tool answered "its bound is about 106 min" (every
+      leg at its timeout, plus 20) and the worker and orchestrator read that as how long it held the lock; it planned
+      about 31 min of legs (measured, about 233 s each). The tool now refuses a leg planned past 10 minutes (90 s launch
+      and load, settle, sample, dwell), and, unless `reason` says why in a sentence, more than 2 rounds or more legs
+      than one 24-minute turn plays. More samples are a NEW `timed_run` afterwards, which queues at the back. Quote its
+      answer's play time ("It plays about N min of legs"), never the bound. The timing daemon gives the ticket back
+      after 24 minutes of legs whether or not anyone waits (the queue's own "only while another worker waits" rule is
+      for `bench_queue.py` tickets, not `timed_run`), and queues the rest again at the back.
 - [ ] **Priority counts** (w1860, lothsahn: "If a higher priority job holds the lock and all jobs below it are lower
       priority, it should retain the lock until done"). Only a waiter of the holder's request priority or higher starts
       its clock; with only lower-priority work waiting the holder keeps the lock until it lets go. That is no reason to
@@ -176,8 +195,9 @@ Mechanics: the game repo's `Documentation/Bench-Lock.md`.
       file, not the branch head, and the next arm silently times the wrong code. Reset every arm with
       `git read-tree -u --reset <head>` (restores, deletes and re-adds to the head's tree; `git read-tree -u --reset HEAD`
       at the end gives the sandbox back), and print each arm's `git diff --stat <head> -- Assets` into the run log.
-      An arm built from another commit's whole tree gets its checkout from `scripts/nightly/scratch_clone.sh`, never
-      from a plain clone (w3180: about 6 GB of LFS copies per clone on Windows; `delete.md` 1b).
+      An arm built from another commit's whole tree is built in the sandbox at that commit, one commit at a time
+      (`switch_branch` with create_from, build, move the player out, the next). Never a clone of the game repo: the
+      guard refuses one and the retired `scratch_clone.sh` (w3703: such clones reached 43 GB on V:).
 - [ ] **A script holding `bench_queue.py timed` in the background starts timing on `granted tNNN: time now`, never on
       "granted"** (w3158, 2026-11-06, biscuit). `bench queue: tNNN: granted (exclusive)` prints first, then the grant
       waits up to 20 min for CI jobs (w3112), and that wait counts against the 30-minute turn: a `grep -q granted` leg

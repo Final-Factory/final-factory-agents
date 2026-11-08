@@ -41,6 +41,7 @@ load-bearing for future runs even where the original defect is fixed.
 - [A Linux host leg on biscuit: console commands and detector counts from a headless host](#linux-host-leg) (w2281)
 - [A host-only scenario with a remote client: pause on join, tower spawns, flow control](#host-scenario-remote-client) (w2586)
 - [A hand-launched built host: TargetClients counts the host, and turn the audit on](#hand-launched-host) (w2797; every post-ready segment needs `ffauto:`, a new label per relaunch, w2861; pin the agent channel to your pid, blueprint pieces stay separate grids (a Standard piece needs a Connector), w3292, w3325; a flying Abduction Machine's aggro from `AttackScheduleDetail`, w3325; `inventory.remove` sends no op, a report holds ~2600 heartbeats, w3317; a Leech raid goes pre-join and from far away, w3323; a flying machine's craft at its takeoff centre tile, no flying temperature reader, a station 50 tiles out, w3326; devunlock fills the inventory, the Circuit tab path and a clean still, w3592)
+- [A client's load-time check line describes the served join snapshot, not the host's load](#served-snapshot-check) (w3521)
 - [An ffnightly Linux host for a remote client: its port, its audit, its station builds](#ffnightly-linux-host) (w2824)
 - [An editor pair with presentation checks: no Audit ids in the config, a healthy host, a client machine without bench rounds](#editor-pair-presentation) (w2399)
 - [An Oracle shop pair: host buys first, `near` is tier 1, price is derived](#oracle-shop-pair) (w2518)
@@ -1110,6 +1111,20 @@ w2797 (2026-11-01, an m5 Mac host of a BEAST Windows client, PR #2989) launched 
   development build's Debug Info read-out covers centred panels, so hide it with `ffauto:ui.hide|true`, then
   `ffauto:console.run|HideUi false` and `ffauto:console.close` (`ui.hide|false` brings the read-out back).
 
+## A client's load-time check line describes the served join snapshot, not the host's load {#served-snapshot-check}
+
+w3521 (2026-11-08, an m5 macOS host and a lothlaptop Windows client on PR #3384, w3353's grid repair) compared the
+check lines both peers log after a load (`[LandedBuildingGridRepair] check: ...placeableEntries=N,gridHash=...`). The
+host's line, logged just after it loaded the save, read 1168104 / 743cdbc7, and the client's line read 1168081 /
+b2a83cf0. The host keeps simulating between its own load and the join (about 23 s here), and the client loads the
+world the host *served* when the join began, so the client's line describes that world, not the host's load.
+
+Settle it from the host's own files: the served world is in `desyncReports/served/served-<time>-e<N>.zip` in the
+game's data folder. Copy it into the saves folder as `ffa-<session>-...-served.zip` and load it as a host
+(`-ffAutomationRole host` on a free port, `-ffAutomationSave` that name, a short quit-after). Its check line gave
+1168081 / b2a83cf0, the client's line exactly, and it logged no repair line, so nothing was lost in the transfer. For
+a stricter check, have the code log the check line again when the host captures the join snapshot.
+
 ## A host-only scenario with a remote client: pause on join, tower spawns, flow control {#host-scenario-remote-client}
 
 w2586 (2026-10-29: biscuit host, LothDesktop client, PR #2838 for w2575, an unpowered Construction Tower sends no
@@ -1165,9 +1180,13 @@ client "ffauto:..."`):
   `peer.py <exe> shot host <png>`, read the button's position, and click it with `pointer.moveto|<x>|<height-y>|screen`
   then `pointer.click`. Screen y counts from the bottom: Delete at image 902,518 in a 1600x900 player was screen
   902,382. Both legs clicked Delete that way.
-- **A host leg's build on a short disk** (w3296): `scratch_clone.sh --library` copies the sandbox's Library (23 GB on
-  lothdesktop slot4, with 30 GB free). Instead, `switch_branch` the sandbox (editor stopped) to a new branch created
-  from the PR's sha and run `build_player.sh` on the sandbox itself: it reused the Library and built in 9.5 minutes.
+- **A leg's builds go in its sandbox, one commit at a time** (w3296, w3703): `switch_branch` the sandbox (editor
+  stopped) to a new branch created from the PR's sha and run `build_player.sh` on the sandbox itself: it reused the
+  Library and built in 9.5 minutes. A baseline and a PR head: build one, move its player out of the tree, then the
+  other. Never a clone of the game repo in `$TMPDIR`: `scratch_clone.sh` is retired, `build_player.sh` refuses a project
+  in a temp folder (exit 68), and FF Factory's guard refuses a full `git clone` of the game repo (lothsahn: "The worker
+  put a whole clone of the repo in the temp directory. It should not be doing this."; w3683's clone reached 43 GB on
+  LothDesktop's V:, w3682's `--library` clone 48 GB on BEAST's F:).
 - `scripts/nightly/reach.py` is missing at PR heads older than w2259: run master's copy with
   `git show origin/master:scripts/nightly/reach.py > "$TMPDIR/reach.py"`.
 

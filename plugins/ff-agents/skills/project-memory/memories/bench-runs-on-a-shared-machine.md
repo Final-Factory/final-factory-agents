@@ -98,4 +98,9 @@ metadata:
    `ff-leftovers end` before you take the ticket or after you release it, never while a timed leg is due; end a stray
    player of a timed run by its pid instead.
 
+10. **An idle holder loses its ticket** (w3715, 2026-11-08, ff-factory PR #913). A ticket of yours with no turn and no
+   background task of yours running is warned after 2 minutes and revoked 10 minutes after the warning; a holder's
+   messages and wake_me get through machine holds, and its wake_me fires early when the ticket goes. Keep the timed
+   helper in a `run_in_background` task (never `nohup` or detached) and end the turn only with a wake_me for it.
+
 Related: [[beast-shared-machine-perf-ab-side-by-side]], [[profile-a-save-top-systems]].
