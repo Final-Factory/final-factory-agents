@@ -53,6 +53,7 @@ load-bearing for future runs even where the original defect is fixed.
 - [A kill-and-rebuild pair in a flat-map world: no bot, 20-tile range, a rebuild in 3 seconds, calcs refuse ghosts](#kill-rebuild-pair) (w3562)
 - [Gatling firing and a held recipe: what the fingerprint and observe.state cannot show](#gatling-and-held-recipe-witness) (w3371)
 - [A relay client that clicks the UI: a window, 1920x1080, a station with a Command Core](#relay-client-ui) (w3395)
+- [Comparing circuit.dump between peers: leave the alert's soundCooldown out](#circuit-sound-cooldown) (w3664)
 
 ## Full-window rule: never diagnose from a partial window {#full-window-rule}
 
@@ -1635,3 +1636,23 @@ on a built host on BEAST with a Linux client on biscuit.
   rebuild.
 - **A multi-condition `circuit.set` goes as one agent-channel command** (`POST /v1/command`), not in a pre-connect file
   chain: the chain splits on `;`, and so do the condition lists.
+
+## Comparing circuit.dump between peers: leave the alert's soundCooldown out {#circuit-sound-cooldown}
+
+w3632 (the two-machine check of PR #3399, circuits "Turn on when true", 2026-11-08): an `agree` on a whole
+`circuit.dump` disagreed on `alertState.soundCooldown` while 986 fingerprints over heartbeats 8 to 7888 matched. Not a
+desync: **pair tests leave the circuit alert's sound cooldown out of their state comparisons.**
+
+- **Why it differs.** `CircuitAlertState.SoundCooldown` (`Assets/Scripts/FFComponents/Circuits/CircuitAlertComponents.cs`)
+  counts down once per circuit evaluation, from 240 at 16 UPS (`CircuitAlertRules.SoundCooldownSeconds` = 60,
+  `CircuitAlertRules.Step`, called from `CircuitEvaluationSystem.cs` `ApplyJob`). Two peers read at different
+  heartbeats (agree's wall-clock retries, 3 s apart; a pair run's nearest client sample) see different values for
+  up to a minute after each notice.
+- **It is not local presentation.** It is `[Save]` simulation state written on the evaluation heartbeat on every peer,
+  and it gates `NoticeSerial` (the toast and the sound). The per-heartbeat fingerprint folds it
+  (`DeterminismStateFingerprintJobs.cs`, the `0x434153` record with `Raised` and `NoticeSerial`), so the fingerprint
+  compare is what checks it; a real divergence there still fails the run.
+- **How.** ffnightly's `agree` drops it by default (`scripts/nightly/ffnightly.py` `AGREE_IGNORE`, game PR #3431);
+  a step's `"ignore": ["<key>", ...]` drops other heartbeat counters at any depth below its `paths`, and a path that
+  names an ignored key still compares it. A comparator of your own (sampled client reads, w2136's split agree) drops
+  `soundCooldown` itself. Compare `raised` and `noticeSerial`; they settle within a retry.
