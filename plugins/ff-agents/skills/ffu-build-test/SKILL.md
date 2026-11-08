@@ -82,6 +82,11 @@ cargo run --release -p ffu-headless -- crosscheck --threads 1,4,16 --golden gold
   `packs::tests::gpu` / `one_gpu_at_a_time`; a new crate with GPU tests adds one). Several devices made at once crash
   Mesa's Vulkan loader: a SIGSEGV with no Rust panic, in 25 of 200 parallel runs of `ffu-client`'s tests on biscuit
   without the lock and 0 of 200 with it (measured, w2895 M2.17b, probe ffu #226).
+- **The fuzz seeds and fuzz targets are compile-checked on every PR** in `ci.yml`'s Linux `lint` job, step "the fuzz
+  seeds and the fuzz targets compile (w3552)": `cargo check --manifest-path fuzz/seeds/Cargo.toml` and
+  `--manifest-path fuzz/Cargo.toml --bins`, on stable 1.94 with lint's `target/`. Only running them needs nightly
+  (libfuzzer-sys builds on stable). A struct change that leaves `fuzz/` unbuildable goes red there, not in the nightly
+  fuzz job (P0.12c's `slots` did, ffu #434). After changing a struct `fuzz/` sets, run both locally (ffu #441).
 - Fuzzing needs nightly and cargo-fuzz (`tools/fuzz.sh [seconds] [target ...]`); BEAST has neither. Run new targets on
   biscuit by dispatching the nightly job on your branch: `gh workflow run fuzz.yml -R Final-Factory/ffu --ref <branch>
   -f seconds=600 -f targets="a b"`. Each target's result is its `stat::number_of_executed_units` line in
