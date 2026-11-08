@@ -199,7 +199,8 @@ never rewritten (`tools/check_snapshot_compat.sh BASE_REF` holds it in CI). No t
   (or `--job <id> --log`) answers "logs will be available when it is complete". Read a finished job anyway:
   `gh run view <id> -R Final-Factory/ffu --json jobs --jq '.jobs[]|"\(.databaseId) \(.name) \(.conclusion)"'`, then
   `gh api repos/Final-Factory/ffu/actions/jobs/<job id>/logs --allow-escape-sequences | sed 's/\x1b\[[0-9;]*m//g' > "$TMPDIR/job.log"`
-  (without the flag gh refuses the colour codes and writes nothing; w2895 leg D, ffu #257, 2026-11-06).
+  (without the flag gh refuses the colour codes and writes nothing; w2895 leg D, ffu #257, 2026-11-06). Biscuit's
+  gh 2.46.0 has no such flag ("unknown flag"); there the same command without it writes the whole log (w3552).
   To wait, use `blocked_on` with `ci:Final-Factory/ffu#<n>` and the head, never a poll loop.
   - **A `ci:` wait ends as soon as one leg fails** (w3272), even while the other legs are still queued. When that
     red is a test your PR doesn't touch, and you will merge over it (below), a second `ci:` wait on the same head
