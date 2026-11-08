@@ -179,6 +179,27 @@ at the top: hold the host near 20 fps whatever the OS).
 players, any free machines" and write "no cross-OS pair: <why>" in the Evidence row. One applies: ask for a Mac host
 and a Windows or Linux client, name the case, and say which machines you need and for how long.
 
+## A single-machine MP scenario never runs on a Mac (w3697, 2026-11-08)
+
+**Rule.** `ffnightly.py` starts every peer of an `MP-*` scenario on the computer it runs on, host and client side by
+side, unless a pair lab (`scripts/nightly/lab.pair-*.json`) or the pair relay (`scripts/nightly/pair_relay.py`) spreads
+them over two computers. The game repo's `scripts/nightly/player_slots.py` `require_mac_client_ok` refuses any
+multiplayer client on a Mac (w665's Metal GPU page fault hangs the whole Mac), so such a run cannot run on a Mac at all,
+not even as the "host" leg of a pair. Only `FF_MAC_GPU_HANG_OK=<request>` lifts the guard, for a w665 repro whose Mac's
+person agreed to unlock it afterwards.
+
+**Why.** w3669, the pair run for PR #3433 (w3642's MP-W1587-gatling-tiers scenario fix), said "The scenario runs both
+peers, host and client, on one computer, so every leg works on its own", and FF Factory still put leg 1 on m5, since its
+pair rule was "a Mac only as the host" (w2282). The m5 leg built a Mac player of 72d10b50d7 (about 10 minutes) and all 3
+runs ended `env` in about 20 s at the guard (2026-11-08 18:00 UTC): a whole leg, a build and a worker spent for no result.
+Ben: after a wasted run, the harness learns.
+
+**How to apply.** A pair run or a brief whose legs each run an MP scenario alone says so ("each leg runs host and client
+on its own computer") and asks for Windows or Linux legs only. FF Factory enforces it since w3697: a pair or request whose
+words name an `MP-*` scenario takes no Mac (`shared/capacity.ts` `macRefusedScenario`; `start_agent` refuses one too),
+unless it is cross-OS, its words name a pair lab or `pair_relay`, or they carry `FF_MAC_GPU_HANG_OK=<request>`. A real
+Mac-host pair (m5 hosts, BEAST joins through `lab.pair-m5-beast.json`) names its lab in the brief so a Mac may host it.
+
 ## A pair run is filed only on a commit that compiles (w2125, 2026-10-25)
 
 **Rule.** Before `request_pair` (a two-machine pair run), the commit its legs run must have compiled: a green
