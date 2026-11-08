@@ -336,6 +336,18 @@ never rewritten (`tools/check_snapshot_compat.sh BASE_REF` holds it in CI). No t
     cannot reach.
   - `gh workflow run repeat --ref <probe branch>` works before repeat.yml is on main, once the probe branch carries
     it: dispatch RED, GREEN and the fix alone in parallel (runs 42394090019, 42394092744, 42394095691).
+  - **A GREEN plant leg on repeat.yml shows nothing unless you ask** (w3504, ffu #433). repeat.yml hides a passing
+    run's output, so "3 of 3 passed" cannot tell a plant that fired from one that never did. The plant-only branch
+    sets the plant's env var in repeat.yml and greps its lines from each run (`grep "deploy_ops: froze\|took the
+    shard over outside"`), and the dispatch passes `-f filter=--nocapture` (`$FILTER` reaches the test binary
+    unquoted). The RED branch is the same plant with the fix's exception disabled. Neither branch merges.
+  - **On Windows a stall that freezes one ffu-server owner looks like a takeover; a freeze of every process does
+    not** (measured on BEAST, w3504). Suspending only shard 0's owner for 2.5 s let its standby fence it (`LINK_TIMEOUT`
+    1 s plus `--takeover-after-ms` 1000), and the deploy_ops test then saw 10054 from the owner it still asked.
+    Suspending every process together for 3 s fenced nobody. So a 10054 after a stall, with "fenced: a standby took
+    this shard over" in the owner's stderr, is the failover working. The test must name it, not hide it under a
+    longer timeout. Plant it with NtSuspendProcess (Windows) or `kill -STOP` (Unix), in deploy_ops.rs's
+    `FFU_DEPLOY_OPS_FREEZE_MS`.
   - The product's own timers (gateway `WRITE_TIMEOUT` 10 s, a 1 s `--takeover-after-ms`, the follower's 5 s read)
     still lose to a longer freeze. The real fix is BEAST's load, which needs Ben.
 - **A count a test reads once the far end has the bytes is counted before the write, never after** (w3167, ffu #300).
