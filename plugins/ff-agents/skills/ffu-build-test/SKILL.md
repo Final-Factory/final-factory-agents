@@ -587,6 +587,26 @@ never rewritten (`tools/check_snapshot_compat.sh BASE_REF` holds it in CI). No t
   check `portal_logs` (journal, grep `lothdesktop`) for its CPU and busy agents at that time before you read the
   tests. Ben picked load-gated runners for it (w3271 follow-up).
 
+- **A failover chain test treats the machine's takeover as the kill, for the new owner too** (w3420, ffu #397). Under
+  load a standby legitimately fences its owner before the test's kill, and it can fence a new owner before that owner
+  logs its first tick (repeat run 42427619319 run 2: "the new owner of A made no progress past tick 171", that owner
+  fenced). The progress wait ends when the new owner stops, and a fenced one with a standby after it is read as taken.
+  Plant it by pausing the process (SIGSTOP) past the link timeout. A sleep plant inside one process must stay under
+  `LINK_TIMEOUT` (1 s), or it plants a takeover rather than the race you meant.
+- **A test relay that dropped a body forwards nothing more on that connection** (ffu #397's `Valve`): passing a later
+  body over a gap delivers a stream the product never sends, and the test then chases a bug of its own.
+- **A no-progress or out-of-budget panic names every process's tick and state** (w3418, ffu #397, 703a016): B, B's
+  replica and each owner of A, not only the one that stalled. `FFU_FAILOVER_LOGS` does not answer this: a passing
+  `ffu-server` writes nothing to stderr, so a repeat artifact holds each child's argv line and nothing else, and cannot
+  tell a crawl from a hang (repeat run 42450805948 run 6: loose test out of its 420 s budget at "valve passed 580",
+  with BEAST at 7 of its 6 agents and its daemon silent 54 s; unexplained). Put the state in the panic.
+- **A 50-run loop on biscuit is a regression guard, not proof for BEAST** (w3418): ffu #397 passed 50 of 50 on biscuit
+  and on ffu-linux, then failed run 3 of the Windows repeat (42436123492) and run 6 of the next (42450805948).
+- **`ff-pr merge` counts a dispatched `repeat` run as the PR's CI** and answers "CI: red" when only that repeat failed
+  (ffu #397). When the request's merge rule is the `ci` workflow green on Linux and Windows, check that workflow's jobs
+  (`gh run view <ci run> --json jobs`) and merge with `gh pr merge <n> -R Final-Factory/ffu --merge
+  --match-head-commit <sha>`; the repeat's result is the request's own done-criterion, reported as such.
+
 ## 5. Timing claims
 
 A number is MEASURED only with its machine, build profile, building count and tick count beside it, and under the
