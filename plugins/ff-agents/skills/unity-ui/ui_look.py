@@ -565,10 +565,14 @@ def text_contrast(census: dict, still: Still, rects, label: str = "") -> tuple[l
     """Every text inside the regions against what is drawn behind it. Returns (fails under CONTRAST_FAIL, weak ones)."""
     fails, weak = [], []
     covers = covering_windows(census)
+    # Half or more of its drawn glyphs under an opaque element drawn above it, whichever window that element is in (w3603:
+    # an item picker opened inside the Circuit Module's own window hid its "Total Mass" pill, which drawn_under skips as
+    # the same window, and the pill read as low-contrast text in a still where it does not show).
+    hidden = {(f["path"], f["text"]) for f in ul.covered_text(census, ["*"], min_share=0.5)}
     for e in census.get("elements", []):
         if "Text" not in e.get("kind", "") or any(i in e["path"] for i in ul.IGNORE):
             continue
-        if drawn_under(e, covers):
+        if drawn_under(e, covers) or (e["path"], e.get("text")) in hidden:
             continue
         text = TAG.sub("", e.get("text") or "").strip()
         if not text or e.get("alpha", 1.0) < 0.2:

@@ -195,6 +195,24 @@ class ContrastTest(unittest.TestCase):
         fails, _ = uk.text_contrast(census, still(img), [(0, 0, 400, 300)])
         self.assertEqual(sorted(f["text"] for f in fails), ["0", "own"])
 
+    def test_text_under_a_picker_opened_in_its_own_window_is_not_counted(self):
+        # w3603: an item picker opened inside the Circuit Module's window covered its "Total Mass" pill; drawn_under
+        # skips a text of the same window, so the pill read as low-contrast text where it did not show.
+        img = canvas(400, 300)
+        fill(img, (0, 0, 400, 300), NAVY)
+        fill(img, (20, 20, 120, 34), (0x94, 0xBA, 0xCC))     # the picker's pale bar over the pill
+        census = {"screen": [400, 300], "elements": [
+            el("CalculationEntityPanel/MainPanel", (0, 0, 400, 300), color="#15374CFF", canvasOrder=-10, depth=0),
+            el("CalculationEntityPanel/MainPanel/Pill/Text", (10, 10, 130, 44), kind="TextMeshProUGUI", color="#FFFFFFFF",
+               text="Total Mass", textRect=[20, 20, 120, 34], canvasOrder=-10, depth=5),
+            el("CalculationEntityPanel/MainPanel/Picker/Bar", (0, 15, 400, 40), color="#94BACCFF", canvasOrder=-10, depth=9),
+        ]}
+        fails, _ = uk.text_contrast(census, still(img), [(0, 0, 400, 300)])
+        self.assertEqual(fails, [])
+        census["elements"][2]["depth"] = 1  # the bar drawn under the pill: the text shows on it, counted
+        fails, _ = uk.text_contrast(census, still(img), [(0, 0, 400, 300)])
+        self.assertEqual([f["text"] for f in fails], ["Total Mass"])
+
 
 class RealCaseTest(unittest.TestCase):
     """The stills Ben judged on 2026-10-16 (crops of them, at their own pixels): w1334's stop list in round 2 (#1817,
