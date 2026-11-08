@@ -53,6 +53,12 @@ Mechanics: the game repo's `Documentation/Bench-Lock.md`.
       compile timed the spawn system at 11.8 ms per heartbeat, against 175 us once Burst had compiled it. Read
       `BurstCompiler.Options` before the ticket, and after every recompile (an A/B arm's code swap too) run one
       discarded warm-up.
+- [ ] **A player A/B's first leg can be a warm-up outlier on a laptop** (w3335/w3638, 2026-11-08, LothLaptop, RTX 4070
+      Laptop, Wittlebase3 roam, ABBAAB). Run 1 (1.0.0.30) read median frame 6.4 ms / 135.8 fps; the five later runs of
+      BOTH builds read 8.9 to 9.2 ms / about 98 fps. Its main-thread p50 matched theirs (6.1 against 6.2 to 6.5 ms) and
+      its GPU p90 did not (2.9 against about 6 ms), so it was the GPU or power state, not the build. Pooled, it made
+      1.0.0.30 look 12 fps faster. Run one discarded warm-up leg first, or check leg 1 against the same side's later legs
+      and set it aside when it is out of line with both sides; say so in the report.
 - [ ] **A before/after: 1 or 2 samples per side, each run 5 to 10 minutes** (w2229, [lesson](../lessons/settle-your-own-guesses.md#decide-a-before-after-on-one-or-two-samples-per-side-w2229-2026-10-25);
       lothsahn: "workers should avoid more than 2 tests on each before/after unless there's a strong reason to suspect
       it's wrong. And each test should be short: 5-10 minutes at most"). A fix against master (fps, frame times, bench
