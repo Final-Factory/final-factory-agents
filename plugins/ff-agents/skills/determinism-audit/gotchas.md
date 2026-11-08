@@ -1180,9 +1180,13 @@ client "ffauto:..."`):
   `peer.py <exe> shot host <png>`, read the button's position, and click it with `pointer.moveto|<x>|<height-y>|screen`
   then `pointer.click`. Screen y counts from the bottom: Delete at image 902,518 in a 1600x900 player was screen
   902,382. Both legs clicked Delete that way.
-- **A host leg's build on a short disk** (w3296): `scratch_clone.sh --library` copies the sandbox's Library (23 GB on
-  lothdesktop slot4, with 30 GB free). Instead, `switch_branch` the sandbox (editor stopped) to a new branch created
-  from the PR's sha and run `build_player.sh` on the sandbox itself: it reused the Library and built in 9.5 minutes.
+- **A leg's builds go in its sandbox, one commit at a time** (w3296, w3703): `switch_branch` the sandbox (editor
+  stopped) to a new branch created from the PR's sha and run `build_player.sh` on the sandbox itself: it reused the
+  Library and built in 9.5 minutes. A baseline and a PR head: build one, move its player out of the tree, then the
+  other. Never a clone of the game repo in `$TMPDIR`: `scratch_clone.sh` is retired, `build_player.sh` refuses a project
+  in a temp folder (exit 68), and FF Factory's guard refuses a full `git clone` of the game repo (lothsahn: "The worker
+  put a whole clone of the repo in the temp directory. It should not be doing this."; w3683's clone reached 43 GB on
+  LothDesktop's V:, w3682's `--library` clone 48 GB on BEAST's F:).
 - `scripts/nightly/reach.py` is missing at PR heads older than w2259: run master's copy with
   `git show origin/master:scripts/nightly/reach.py > "$TMPDIR/reach.py"`.
 

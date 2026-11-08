@@ -243,7 +243,7 @@ Open it when the editor or bridge misbehaves:
 - A fresh editor boot with no scene looks wedged, not hung
 - A failed batch build leaves `Temp/UnityLockfile`: the next build says the project is open
 - An ffsb sandbox shared by two sessions: `switch_branch` refuses, and a commit without switching
-- The branch-switch hook also refuses `git checkout <branch>` in a scratch clone
+- The branch-switch hook also refuses `git checkout <branch>` in a temp clone
 - A pull while the editor starts rewrites `.meta` files: the boot fails and a new game throws missing singletons
 - Editing a file inside a native plugin `.bundle` with the editor open strands the bridge on `port_busy` (restore it, restart)
 
