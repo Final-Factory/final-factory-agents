@@ -368,9 +368,10 @@ never rewritten (`tools/check_snapshot_compat.sh BASE_REF` holds it in CI). No t
       not decode, as `StatsNow::strangers`. `refused` counts real clients only.
     - Plant it with `FFU_SWITCH_PLANT_STRANGERS=<n>` (sim_switch.rs). Without the fix, 11 strangers reproduced CI's
       `left: 11, right: 0` exactly. With it, the test passed (measured, lothdesktop).
-    - The gateway logs each refusal's reason (`ffu-gateway: refused ...: <why>`). repeat.yml prints only `tail -60` of
-      a failed run, which cut those lines off, so `grep -nE "refused|ended:"` the whole output. A probe branch with
-      that grep is how to get them from CI.
+    - The gateway logs each refusal's reason (`ffu-gateway: refused ...: <why>`). Since ffu #444 (w3529) a failed
+      repeat.yml run prints `grep -nE "refused|ended:|panicked|fenced"` over its whole output (first 80 hits),
+      then its last 60 lines, so no probe branch is needed. Before #444 only the `tail -60` was printed, and it cut
+      those lines off.
   - **A Windows `.cmd` plant run from Git Bash: call `C:\Windows\System32\findstr.exe` by its full path.** A bare
     `find` there resolves to Git's Unix `find`, so the plant's check never matched (w3446).
   - **Tell a freeze from a code stall before you fix anything.** Read the portal journal (`portal_logs`, journal,
