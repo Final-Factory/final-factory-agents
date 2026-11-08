@@ -412,6 +412,31 @@ never rewritten (`tools/check_snapshot_compat.sh BASE_REF` holds it in CI). No t
     65 ms of each other with "the run ended before tick 304 (at 1200)" (CI run 42490882408, Windows). Hold it from the
     start and open it for good only once the owner reached its tick. RED: `FFU_OWNER_TERM_LATE_REACH_MS=8000` (a sleep
     in `Run::reach`) with the gate open failed 3 of 3; with it held, 4 of 4 passed (measured, BEAST).
+    - **A new `Gate::new()` holds too.** ffu #474 (w3666) added `b_gate = Gate::new()` and expected it to start open.
+      Each PR passed CI alone, but with both on main, B's replica relay was held from the start. The fenced-owner test
+      then failed 3 of 3 on m5 ("read Welcome: Resource temporarily unavailable"). ffu #502 (w3713) opens it. Open
+      every new gate you don't hold on purpose.
+  - **When a PR's head passes and its merge commit fails, two PRs broke main together** (w3713). Bisect with a
+    `$TMPDIR` script. For each first-parent main merge between the PR's merge base and its merge, check out that merge,
+    merge the PR head into it, and run the one test (about 1 min a step with an incremental build). The first merge
+    that fails names the other PR. Then read both diffs for a shared helper whose default one of them changed.
+  - **m5 (macOS) has no `timeout`**. A loop script that wraps runs in `timeout` fails every run at once, and that can
+    read as a reproduction (w3713 nearly reported a hang in 60 of 60 runs). Use
+    `perl -e 'alarm shift; exec @ARGV' 300 <cmd>` there.
+  - **owner_term names every child when it runs out of time** (w3713, ffu #502). `Deadline::left`'s panic lists each
+    process the test started: its start line, whether its stdout is open, and its last 6 stderr lines. Without
+    `FFU_OWNER_TERM_LOGS` the children's stderr goes to a scratch folder. `FFU_OWNER_TERM_LOGS=<dir>` keeps it, and
+    repeat.yml sets it. A file the test reads gets a name per process and test: a shared `owner-stderr.txt` made 8 of
+    8 runs of the whole file fail under LOGS.
+  - **An owner starved past `TermWatch`'s give-up (3 s) exits "lost the directory at the barrier"**. That is a
+    takeover, not a failure: accept it where the test accepts "fenced" (w3681, ffu #500). For a RED,
+    `FFU_OWNER_TERM_PAUSE_DIRECTORY_MS` SIGSTOPs the directory group (Unix).
+  - **A process's last word on a peer link must reach the peer before the process exits** (w3713, ffu #502).
+    `Inbox::ack` writes only to the connection open at that moment. A shard acks its peer's last batch and then exits,
+    so after a barrier's mute or a reconnect the peer waited in `wait_acked` forever. `Peer::finish` now waits on
+    `Inbox::wait_told` until each peer has been written what this shard holds from it. The unit plant is
+    `a_shard_that_finishes_leaves_its_last_ack_with_its_peer_even_over_a_closed_link`: 5 of 5 runs failed without the
+    wait and 20 of 20 passed with it. A new last message before an exit needs the same delivery check.
   - **An owner stuck past `LINK_TIMEOUT` must go quiet to its peers** (w3418, ffu #454's `Inbox::mute`). A stopped or
     starved owner's link threads kept sending keepalives, so peer shard B stayed linked to it and never took the
     taker's messages ("A took no message from B after its last takeover", failover.rs chain tests). Past `STUCK_AFTER`
