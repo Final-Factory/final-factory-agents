@@ -297,6 +297,13 @@ never rewritten (`tools/check_snapshot_compat.sh BASE_REF` holds it in CI). No t
     and running jobs. In w3543 (ffu #442), a rerun of old run 42442283959's Windows hashcheck at 05:51:08Z cancelled
     run 42450726658's Windows `test` and `clippy` in that same second, before they had a runner (measured from the
     job times). The newer run then reads red as "cancelled". Rerun or wait on the newest run only.
+  - **FF Factory's guard refuses a rerun of a job that failed in a step, except one rerun of an out-of-resource runner
+    fault** (w3784, w3836; ff-factory `server/rerunGuard.ts`). It reads the failed job's log. When the log shows the runner
+    ran out of a resource (os error 1453 "Insufficient quota", 1455 or "The paging file is too small", LNK1171 with
+    1455, os error 112 or 28 "no space", out of memory) and no rustc `error[E....]`, failed test or panic, the rerun
+    passes at attempt 1 only. The machine failed, not the code: ffu run 42608839428's `clippy (ffu-windows)` on
+    ffu-beast-3 died writing an .rmeta with os error 1453, while the same code passed clippy on macOS and the Windows
+    test job beside it. A second fault in a row is the machine's to fix (BEAST's commit memory: w3421), not to rerun.
 - **A red integration test on a PR that only changes a crate's `#[cfg(test)] mod tests` is not that PR's** (w3693,
   ffu #498). `tests/*.rs` link the library built without `cfg(test)`, so they run none of the changed code. Check with
   `git diff origin/main...<head>`: every hunk sits below the `mod tests {` line. Before calling a red unrelated, read
