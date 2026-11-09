@@ -1739,3 +1739,9 @@ other work running on the same machines:
   waiting, kept going to `:7777`: bash had already read the old line. After any change to a port or flag, stop the armed
   script and start it again, and check the flags in the running process (`ps -o args`, or Windows
   `Get-CimInstance Win32_Process`) before HOST WAITING.
+  The client leg's cause (w3785, LothDesktop): it was armed as `bench_queue.py run --mode shared -- bash client.sh`, and
+  `sed -i` on `client.sh` writes a new file and renames it, so the running bash kept reading the old one. Better than a
+  restart (which gives up the ticket's place in line): arm the script to `source` a small params file (host, port) only
+  after the `go` flag, and write that file instead.
+- **LothDesktop as the client stays loaded by ffu CI.** Its bounded wait ran out: 03:22 to 03:57Z, CPU 43-100%, 4 to 18
+  rustc/cargo processes, 15 to 19 ffu runs not completed. It went ahead only because the m5 host was unloaded.
