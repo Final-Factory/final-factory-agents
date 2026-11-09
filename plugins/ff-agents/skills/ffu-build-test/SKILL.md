@@ -218,6 +218,8 @@ never rewritten (`tools/check_snapshot_compat.sh BASE_REF` holds it in CI). No t
   when the runner starved them. #498's Windows job on ffu-lothdesktop-2 lost three failover.rs takeover tests to a
   2.4 s stall. Hand up the cause-fix (`hand_up_requests`) with the job id and the panics, then merge on the run's other
   green checks. Say so in a PR comment that names the red job and the follow-up. Never rerun it to green.
+- **`gh pr edit --body-file` fails on ffu with "Projects (classic) is being deprecated"** (w3751): set the body with
+  `gh api -X PATCH repos/Final-Factory/ffu/pulls/<n> -F body=@<file>`.
 - **A PR that changes only `docs/` runs no CI**: `ci.yml` has `pull_request: paths-ignore: ['docs/**']` (ffu #297).
   A `ci:` wait on it ends after 10 min with "no CI run exists". Merge it straight away with `gh pr merge <n> --merge
   --match-head-commit <head>` (w3382: ffu #395, a PLAN row, sat 10 min in such a wait).
@@ -356,6 +358,21 @@ never rewritten (`tools/check_snapshot_compat.sh BASE_REF` holds it in CI). No t
     and os (`gh workflow run repeat.yml -R Final-Factory/ffu -f target=owner_term ...`). A PR that changes repeat.yml
     runs it with its defaults. Keep the filter empty so the whole file repeats: ffu #383's first whole-file pass found
     a second flake, at run 24, that a filter on the fixed tests would have hidden.
+    - **A lib unit test (`src/*.rs`'s `mod tests`) repeats with `-f target=ffu_server`**, the lib's crate name with an
+      underscore, plus `-f filter=<test name>` (w3751, ffu #522: runs 42541128753 and 42541131259, 50/50 each, `1 passed;
+      73 filtered out` per run). Check one run's line says `1 passed`: a filter that matches nothing passes 50/50 too.
+  - **A peered-shard stat is counted on one side and its cause on the other: assert across the pair** (w3751, ffu
+    #522). `batch_repeats` is counted by the shard that receives a batch, `resent` by the shard that sends it. A
+    replica silent past `STUCK_AFTER` (1 s) makes `barrier()` mute the inbox and drop the link. The other shard
+    reconnects and resends from the hello's `held`. Between `mute(false)` and `ack_peers()` a batch the muted shard took
+    but had not acked then arrives again as a repeat. The per-shard `batch_repeats <= resent` failed on correct runs
+    with `[{resent: 1, reconnects: 7}, {batch_repeats: 1, resent: 0}]`; the fix asserts `a.batch_repeats <= b.resent
+    && b.batch_repeats <= a.resent`. The plant is two `cfg(test)` hooks: `Replica::hold_acks(shard, key, hold)` and
+    `Inbox::pause_after_unmute(d)`. With the old assertion it passed 0/10, with the fix 20/20.
+    - **Load the resource the stall comes from.** 16 CPU busy loops on biscuit never tripped it (old assertion 40/40).
+      Four `dd if=/dev/zero of=$TMPDIR/burn-N.bin bs=1M count=64 oflag=dsync` loops beside them did (5/30 red, the fix
+      0/30 red), because the replica fsyncs every record. Bound each burner with `timeout`, run it under the bench
+      ticket, and delete the `burn-N.bin` files after.
   - **A loop that must run on lothdesktop runs locally, with a watchdog** (w3453, ffu #408). repeat.yml cannot pick
     lothdesktop alone (`ffu-windows` covers BEAST's runners too), and on 2026-11-07 two lothdesktop runner loops
     (42410183429, 42410188310) passed every run they reached (9 and 12), then one run each sat silent until
