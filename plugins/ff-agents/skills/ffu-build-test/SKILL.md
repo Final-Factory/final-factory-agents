@@ -622,6 +622,16 @@ never rewritten (`tools/check_snapshot_compat.sh BASE_REF` holds it in CI). No t
       42573210238). Reach the cut with `reach_or_gone`; on an early takeover assert the old owner's exit says fenced and
       check the new owner as usual, and keep "answered while cut off" for a group that still names the old owner. RED:
       `FFU_OWNER_TERM_CUTOFF_STOP_OWNER_MS=6000`, 0 of 3 on the old test.
+      The fenced-owner test failed the same way two days later (w3856, ffu #586: repeat run 42647313116, run 42,
+      "fenced: ... written nothing to its replica for 7674 ms" at tick 65). Read "written nothing for N s" with both
+      standbys' logs: when both bid in the same second and both stay alive, the owner's process was starved. Each link
+      has its own keepalive thread, and the test's `stall::note()` cannot see one starved child. **Any owner_term test
+      with standbys that calls `run.reach` before its cut has this flake**: reach the cut with `reach_or_gone` from the
+      start, and plant it with `suspend_for` before the reach (`FFU_OWNER_TERM_FENCED_STOP_OWNER_MS=3000`, 0 of 3 on
+      the old test, 3 of 3 fixed, BEAST).
+  - **The directory's simulated `Group` seeds its rng with `seed | 1`**, so seeds `2k` and `2k+1` are one run (w3849,
+    ffu #577). Sweep odd seeds (`(1..600).step_by(2)` is 300 distinct runs). A sim sweep with `set_delay` reproduced in
+    seconds an election stall (1,489 ticks at delay 25) that about 30 local process legs did not.
   - **An `Outbox` that must refuse a stale owner wants its term before its first dial** (w3810, ffu #558). The probe
     called `want_term(took)` after `start_as`; the link thread read the fenced owner's hello answer `Holds{held}` first
     and set `acked = held` (B's durable ticks, 304), so `probe.acked() == 0` failed with `stale 1` though nothing reached
