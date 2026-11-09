@@ -137,6 +137,24 @@ on a mismatch, a ledger error, an unbalanced window or a short fleet). Measured 
   follower read frames between ticks, so a held one waits up to 62.5 ms a hop at 16 tps. ffu #392 (`Client::chat_to`)
   sends each chat frame to a channel on read; `chat.rs`'s
   `a_line_is_handed_on_as_it_is_read_without_waiting_for_the_next_tick` holds it (w3383).
+- **The second world, the FF1 factory (`ffu-world-ff1`, 100.98.100.42:7778; FP.12, w3679)** is deployed by the same
+  `world.yml` run after the first world (`-f world=ff1`). Its start is the `TrailerStaging-0.50.0.54` golden fixture
+  imported by `deploy.sh`. Lessons:
+  - **A main change that alters what an old snapshot decodes to, without a `SNAPSHOT_VERSION` bump, blocks every
+    deploy of a kept world**: `the new build cannot load a copy of the kept world. Deploy refused`. ffu #485 (the 2x1
+    power footprint) did that: restoring the ff1 world hit `power_unplaced` and returned `BadParam`. To find the cause,
+    build main's merge commits between the world's running build and main, and run `ffu-server --dir <a copy of the
+    kept dir>` on each one; the first build that refuses is the culprit. The ff1 world can start afresh with
+    `gh workflow run world.yml -f action=reimport -f world=ff1`. Hand up a compat fix for the culprit.
+  - **A reimport stops the server before it moves `sector/` aside.** The running server writes
+    `snap-<tick>.bin` by path every 256 ticks and recreates `sector/`, and the check then loads the old snapshots.
+    That happened in world run 42557618673. ffu #537 stops the unit first and puts the old world back if the reimport
+    is refused.
+  - **A world run on a push to main that is red on the ff1 step still deployed the first world.** Read its
+    `deploy: before ... after` line before calling the first world broken.
+  - **The release client's `--connect --clip` end line carries `"buildings"` and `"buildings_joined"`** (since ffu
+    e521738). Check a clip's count against the import's `placedCount` from that line. Measured at main 99427e7: both
+    read 3776, with 0 resyncs.
 
 ## A world shard: stations, peers, standbys
 
