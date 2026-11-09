@@ -116,6 +116,15 @@ whole verification. The repo's own `CLAUDE.md` is binding and longer; this skill
   - **Run the whole lib in the Windows loop, not only your test** (w3792): `gh workflow run repeat.yml -f
     package=ffu-server -f target=ffu_server -f count=50 -f os=ffu-windows`. A filtered loop passed 50 of 50. The
     whole-lib loop found a second flake in a neighbouring test at run 10. The loop stops at its first failure.
+  - **A loop of a test that skips itself proves nothing: read each run's seconds before you count it** (w3839).
+    connect.rs's clip test returns early without ffmpeg, and biscuit has none: repeat run 42616832946 on ffu-linux
+    "passed" 50 of 50 in 0.6 s a run. With `-f ffmpeg=true` (a static ffmpeg on PATH, Linux only; ffu #571) run
+    42622969036 really ran it, 4.1 to 5.7 s a run. ffu-windows (beast) has ffmpeg.
+  - **A run that ends on a frame or tick count must not end with work still waiting on another thread** (w3839, ffu
+    #571). The connected clip paced its autoplace clicks by wall time but stopped after seconds x 30 frames. On a
+    starved Windows runner (119 of 120 frames late) the last click's answer came after the last frame: "2 shown, 0
+    refused, 3 clicked". Draw on while answers are pending, capped by a limit the run already has. Plant RED by
+    holding the other thread's output past the end.
 - Put those exports in `$TMPDIR/rust.sh` and source it in every shell call: shell state does not persist.
 - **Keep one target per worker; never share a `CARGO_TARGET_DIR` across parallel workers** (w3396). Two builds on one
   target wait on cargo's build-directory lock ("Blocking waiting for file lock"): one rebuild alone took 44 s, two at
