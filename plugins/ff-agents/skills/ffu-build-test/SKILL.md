@@ -185,6 +185,14 @@ never rewritten (`tools/check_snapshot_compat.sh BASE_REF` holds it in CI). No t
     - CI's `cargo test --workspace` stops at the first crate that fails, and ffu-server comes before ffu-sim. An
       ffu-server flake therefore hides ffu-sim's tests. Run the targets your change needs with
       `gh workflow run repeat.yml -f package=ffu-sim -f target=<file> -f count=1 -f os=ffu-linux` (and `ffu-windows`).
+  - **Two PRs that change one shared test helper can also each pass CI and break main together** (w3672, ffu #490).
+    In `owner_term.rs`, w3666 (#474) added a second gate, `b_gate`, at a time when a new `Gate` started open. Then
+    w3633 (#454) made every `Gate` start held until the first `Run::reach`, which attended and opened only `gate`.
+    Main at 8516d1c then failed `after_a_takeover_a_fenced_owner_kept_alive_...` in 1 of 1 runs, with "read Welcome
+    ... (os error 10060)". The fix was for `reach` to attend and open `b_gate` as well, and for the early client to
+    connect inside `b_gate.attending` (63ac741, w3725). After merging `origin/main`, list what main changed in your
+    own test files with `git log ORIG_HEAD..origin/main -- <your test files>`. If it names any commit, run those test
+    targets locally before you push.
 
 - **A snapshot section that is not empty for older saves breaks the old fixtures' length checks.** The golden tests
   assert that re-encoding an older fixture adds only empty sections. In w3459 (ffu #427, v12), the new power section
