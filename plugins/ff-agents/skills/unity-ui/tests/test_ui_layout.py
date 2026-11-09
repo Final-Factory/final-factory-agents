@@ -321,6 +321,48 @@ class OpenedPanelTest(unittest.TestCase):
         code, out = Cmd.run(hud(), hud(slideout=True))
         self.assertIn("HUD restored on close: not checked", the_line(out, "Opened panels"))
 
+    # w3803: a docked window HIDES the HUD (the elements vanish from the open census) instead of covering it; the check
+    # once printed "yes (0 covered ...)" there, having compared nothing.
+    @staticmethod
+    def hidden_case(closed_hotbar):
+        before = hud(inventory=False)
+        after = hud(inventory=False)
+        after["elements"] = [e for e in after["elements"] if "ActionBarParent" not in e["path"]]
+        after["elements"].append(el("StationGridWindow/Window", [450, 300, 700, 600]))
+        closed = hud(inventory=False)
+        closed["elements"] = [e for e in closed["elements"] if "ActionBarParent" not in e["path"]]
+        closed["elements"] += closed_hotbar
+        return before, after, closed
+
+    def test_a_hidden_hud_element_still_missing_after_close_fails(self):
+        before, after, closed = self.hidden_case([])
+        code, out = Cmd.run(before, after, closed=closed)
+        self.assertEqual(code, 1, out)
+        line = the_line(out, "Opened panels")
+        self.assertIn("HUD restored on close: no (0 covered, 2 hidden, checked", line)
+        self.assertIn("ItemSlot (7)", out)
+        self.assertIn("NOT RESTORED", out)
+
+    def test_a_hidden_hud_element_back_within_2_px_passes(self):
+        back = [el("ActionBarParent/Hotbars/BuildBar/ItemSlot (7)/Background", [736, 689, 771, 724]),
+                el("ActionBarParent/Hotbars/BuildBar/ItemSlot (8)/Background", [795, 688, 830, 723])]
+        before, after, closed = self.hidden_case(back)
+        code, out = Cmd.run(before, after, closed=closed)
+        self.assertNotIn("NOT RESTORED", out)
+        self.assertIn("HUD restored on close: yes (0 covered, 2 hidden, checked", the_line(out, "Opened panels"))
+
+    def test_a_hidden_hud_element_back_more_than_2_px_off_fails(self):
+        back = [el("ActionBarParent/Hotbars/BuildBar/ItemSlot (7)/Background", [745, 688, 780, 723]),
+                el("ActionBarParent/Hotbars/BuildBar/ItemSlot (8)/Background", [795, 688, 830, 723])]
+        before, after, closed = self.hidden_case(back)
+        code, out = Cmd.run(before, after, closed=closed)
+        self.assertEqual(code, 1, out)
+        self.assertIn("not where it was", out)
+
+    def test_nothing_covered_or_hidden_is_not_checked_and_pr_evidence_(self):
+        code, out = Cmd.run(hud(inventory=False), hud(inventory=False), closed=hud(inventory=False))
+        line = the_line(out, "Opened panels")
+        self.assertIn("HUD restored on close: not checked (0 covered, 0 hidden", line)
 
 class RealCaseTest(unittest.TestCase):
     """The two real misses of 2026-10-08 (w733), on the rects the lesson records (1280x800, UI scale 0.9, classic layout)

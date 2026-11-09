@@ -657,3 +657,6 @@ multiplayer Esc menu, before and after the fix (FinalFactory PR #3267).
   `UI.UiPauseHold` struct) by reflection, box it, invoke `Request(hasRemotePeers: true, alreadyPaused: false)` on the
   box, and write the box back with `FieldInfo.SetValue(null, box)`. That gives `IsGameplayBlocked` true and `IsPaused`
   false, so the simulation runs on. The menu itself is not drawn. Clear the hold with `UiController.SetUiPause(false)`.
+- **A station's grid entity index changes between loads of the same save (w3776, 2026-11-09).** Station 203132 of
+  bigAmazingSaveForTrailer was grid entity 209992 in one load (its 528 items and 1138 Sprawl tiles matched). Never carry
+  an entity index from one load to the next: find the station again by its station id, its items or a tile it owns.
