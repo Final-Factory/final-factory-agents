@@ -118,7 +118,7 @@ whole verification. The repo's own `CLAUDE.md` is binding and longer; this skill
     whole-lib loop found a second flake in a neighbouring test at run 10. The loop stops at its first failure.
   - **A loop of a test that skips itself proves nothing: read each run's seconds before you count it** (w3839).
     connect.rs's clip test returns early without ffmpeg, and biscuit has none: repeat run 42616832946 on ffu-linux
-    "passed" 50 of 50 in 0.6 s a run. With `-f ffmpeg=true` (a static ffmpeg on PATH, Linux only; ffu #571) run
+    "passed" 50 of 50 in 0.6 s a run. With `-f ffmpeg=true` (a static ffmpeg on PATH, Linux only; ffu #575) run
     42622969036 really ran it, 4.1 to 5.7 s a run. ffu-windows (beast) has ffmpeg.
   - **A run that ends on a frame or tick count must not end with work still waiting on another thread** (w3839, ffu
     #571). The connected clip paced its autoplace clicks by wall time but stopped after seconds x 30 frames. On a
