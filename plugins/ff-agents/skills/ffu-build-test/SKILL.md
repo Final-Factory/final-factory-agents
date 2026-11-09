@@ -125,6 +125,17 @@ whole verification. The repo's own `CLAUDE.md` is binding and longer; this skill
     starved Windows runner (119 of 120 frames late) the last click's answer came after the last frame: "2 shown, 0
     refused, 3 clicked". Draw on while answers are pending, capped by a limit the run already has. Plant RED by
     holding the other thread's output past the end.
+  - **Random process suspends find failover flakes that a CPU hog or one planted pause miss** (w3872, ffu #601).
+    failover.rs's loose mid-tick test read "kill 1: the run ended before tick 870" on ffu-beast-3 (w3774). A loaded
+    repeat (`load=4`) passed 50 of 50, and 12 owner-pause plants all passed. A PowerShell loop failed it 5 of 18 on
+    lothdesktop (measured). The loop calls `NtSuspendProcess` on a random `ffu-server` child of the test's pid, or 1
+    time in 4 on every child plus the test, for 0.3-4 s, then waits up to 1.5 s and goes again. Run the test exe
+    directly, not under `timeout`, so the pid you suspend is the test's own. Read each failure's
+    `FFU_FAILOVER_LOGS`: there the machine had stopped the *middle* standby, and the standby after it took A over (as
+    standby.rs's "A second failure" designs). The test read only `machines[k+1]`. Fix: follow the takeover to any
+    later standby. A deterministic plant then pinned it: `FFU_FAILOVER_PAUSE_STANDBY_KILL/_MS` failed 3 of 3 before
+    the fix and passed 30 of 30 after; the chaos loop passed 18 of 18. ffu's CI test step has run `--no-fail-fast`
+    since #598, so one red test no longer hides the rest of its crate.
 - **The Write tool cannot make a new file in an ffu slot** (w3831): a worker's Write may create files only in its game sandbox and its `$TMPDIR`, so a new `src/sector/comets.rs` in `$FFU_DIR` was refused. Write the new file in `$TMPDIR` and `cp` it into `$FFU_DIR`; edit existing files with Edit or a script file in `$TMPDIR`.
 - Put those exports in `$TMPDIR/rust.sh` and source it in every shell call: shell state does not persist.
 - **Keep one target per worker; never share a `CARGO_TARGET_DIR` across parallel workers** (w3396). Two builds on one
