@@ -483,6 +483,15 @@ never rewritten (`tools/check_snapshot_compat.sh BASE_REF` holds it in CI). No t
       2026-11-09; that load itself failed 25 times); the job's passes went from 26-30 s to 82-161 s. A sibling's LOAD
       makes it a loaded result, not an idle one. Since ffu #500 the job prints `copies of <test exe> running on <host>`
       before its runs and on a failure.
+    - **That `copies of` line counts only its own build's binary** (w3713): another branch's repeat or a workspace
+      `cargo test` job on the same PC reads 0. Repeat run 42607148149 failed (a 2.7 s stall, a 25 s start) with the line
+      at 0 while ci job 42607299553 ran the whole workspace test on the sibling runner. List every job on that host's
+      runners over the failure's minutes: `gh api "repos/Final-Factory/ffu/actions/runs?created=>$T"` and each run's
+      jobs (`runner_name`, `started_at`, `completed_at`).
+    - **Before you blame your change for a repeat failure, look for the same assertion in another branch's repeat that
+      lacks your commits** (w3713): twenty-kills' "both standbys answer within 60s: [None, None]" failed on ffu #502's
+      head and also in repeat run 42614241738 at 07b66a5, which held none of #502's commits (`git merge-base
+      --is-ancestor <commit> <sha>` for each of yours), so it came from main's code and got its own request.
   - **A peered-shard stat is counted on one side and its cause on the other: assert across the pair** (w3751, ffu
     #522). `batch_repeats` is counted by the shard that receives a batch, `resent` by the shard that sends it. A
     replica silent past `STUCK_AFTER` (1 s) makes `barrier()` mute the inbox and drop the link. The other shard
