@@ -515,6 +515,17 @@ never rewritten (`tools/check_snapshot_compat.sh BASE_REF` holds it in CI). No t
     (fenced old owner, one term, every message once) and plant it with SIGSTOP on the owner
     (`FFU_OWNER_TERM_PAUSE_OWNER_MS`). On failure, quote the child's start line, exit status and stderr tail
     (`Proc::state` in owner_term.rs): CI's temp folder is gone by the time anyone reads the log.
+    - **A takeover can come before the test's cut, too** (w3810, ffu #558). In
+      `a_standby_cut_off_from_the_directory_majority_never_takes_over` a starved owner was fenced at tick 168, before the
+      test cut the standby off at 304, and `run.reach` ended "the run ended before tick 304 (at 167)" (repeat run
+      42573210238). Reach the cut with `reach_or_gone`; on an early takeover assert the old owner's exit says fenced and
+      check the new owner as usual, and keep "answered while cut off" for a group that still names the old owner. RED:
+      `FFU_OWNER_TERM_CUTOFF_STOP_OWNER_MS=6000`, 0 of 3 on the old test.
+  - **An `Outbox` that must refuse a stale owner wants its term before its first dial** (w3810, ffu #558). The probe
+    called `want_term(took)` after `start_as`; the link thread read the fenced owner's hello answer `Holds{held}` first
+    and set `acked = held` (B's durable ticks, 304), so `probe.acked() == 0` failed with `stale 1` though nothing reached
+    the fenced owner (repeat run 42571646271). Use `Outbox::start_wanting(addr, hello, shard, owner, term)`. RED:
+    `FFU_OWNER_TERM_PROBE_LATE_MS=300` between start and `want_term`, 0 of 3.
   - **A link test counts reconnects and hellos from the link it checks, not from the start** (w3629, ffu #482). A
     starved receiver can answer the first hello past `LINK_TIMEOUT` (1 s); the sender then rightly takes it as a far
     end gone and dials again, before tick 1 and before the idle period the test checks. Under 24 busy threads on
