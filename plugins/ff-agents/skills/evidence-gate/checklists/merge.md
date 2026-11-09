@@ -190,7 +190,7 @@ Not verified: the Bats' slot lag (simulation, follow-up PR)
   before the bump and says it ran green. With it, the bump merges without a person (a newer save
   refused by an older build is fine); without it, writing it is the work. Only a change that breaks
   loading existing saves goes to a person.
-- **A runtime-added `[Save]` buffer is kept or has a verdict** ([lesson](../lessons/runtime-added-save-buffers-kept-empty.md);
+- **A runtime-added `[Save]` buffer is kept or has a verdict** ([lesson](../lessons/verify-simulation-at-a-slow-hosts-frame-rate.md#a-runtime-added-save-buffer-is-kept-empty-or-says-why-it-need-not-be-w3850-2026-11-09);
   w3850): a new `AddBuffer`/`AddComponent` of a `[Save]` buffer on an entity whose prefab does not bake it adds the type
   to `ColumnarWorldCapture.KeepsEmptyBuffer` or to `EmptySaveBufferGuardTest`'s allow-list with the reason; the PR's
   Save compatibility line says which. A generic-parameter add escapes the guard's scan: check it by hand.
