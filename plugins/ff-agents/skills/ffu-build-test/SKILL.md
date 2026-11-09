@@ -136,6 +136,20 @@ whole verification. The repo's own `CLAUDE.md` is binding and longer; this skill
     later standby. A deterministic plant then pinned it: `FFU_FAILOVER_PAUSE_STANDBY_KILL/_MS` failed 3 of 3 before
     the fix and passed 30 of 30 after; the chaos loop passed 18 of 18. ffu's CI test step has run `--no-fail-fast`
     since #598, so one red test no longer hides the rest of its crate.
+  - **A follower or bot must not give up sooner than a player's client** (w3869, ffu #600). A plain `ffu-server follow`
+    of the shared world failed with os error 10060 after 5 s with no tick, while the client waits 30 s
+    (`client::READ_TIMEOUT`). The world was alive but silent. Its tick thread fdatasyncs every tick (`Sync::EveryTick`,
+    the default `--sync`), and on biscuit's ext4 that waits for the jbd2 journal commit behind CI's dirty pages. A
+    30-minute probe next to the world measured this (run 42664700007): 5 tick gaps of 1.03-1.87 s, each with the
+    server's threads in D state at `jbd2_log_wait_commit`; the 2026-11-08 silences ran 5 s or more. Name the wait
+    before changing any number. Put a probe beside the server that logs tick arrivals, runs its own 16 Hz
+    200-byte fdatasync and samples `/proc/<pid>/task/*/stat` and `wchan` at 20 Hz. `FOLLOW_READ` is now the client's
+    constant, and `follow` prints `max_gap_ms`. The server-side stall was handed up as its own request.
+  - **A red `crosscompare` that says `<os>: no runs (... runs.tsv: No such file)` and `"runs":0` compared nothing**
+    (w3869). List the run's jobs (`gh api "repos/Final-Factory/ffu/actions/runs/<id>/jobs?filter=all"`). If the
+    hashcheck, test and clippy jobs do not exist at all, nothing was tested. On 2026-11-09, during GitHub incident
+    tp8cghg7tlc4, run 42674382318 created 2 of its 12 jobs. Push an empty commit for a fresh `pull_request` run. The
+    harness refuses `gh run rerun` of it, and a `workflow_dispatch` run on the same commit is not the PR's run.
 - **The Write tool cannot make a new file in an ffu slot** (w3831): a worker's Write may create files only in its game sandbox and its `$TMPDIR`, so a new `src/sector/comets.rs` in `$FFU_DIR` was refused. Write the new file in `$TMPDIR` and `cp` it into `$FFU_DIR`; edit existing files with Edit or a script file in `$TMPDIR`.
 - Put those exports in `$TMPDIR/rust.sh` and source it in every shell call: shell state does not persist.
 - **Keep one target per worker; never share a `CARGO_TARGET_DIR` across parallel workers** (w3396). Two builds on one
