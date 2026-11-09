@@ -25,6 +25,9 @@ holds, or the report says what is left instead of DONE.
    2026-11-08: "Please address this problem with a harness update so you're cleaning up after yourself"). Make your files
    in `$TMPDIR` only, and never run `player_slots.py prune`. What the report links is published first (`publish_review`,
    `specs/<NNN>/proofs/`), and every clone you need is pushed before you delete it.
+   No background script you stopped left children or commits behind: `ff-leftovers list` shows none of its processes,
+   and `git log origin/<base>..HEAD` held only your commits at every push. A new version of a running script went to a
+   new file name ([lesson](../lessons/never-rewrite-a-running-script.md), w3826).
    No runtime of yours ran from `$TMPDIR` while listening (a node or python copy unpacked there): everything you started
    bound 127.0.0.1 or ran from a stable path such as PATH's node and the player slots, so no firewall prompt was raised
    ([lesson](../lessons/clean-up-after-yourself.md#a-listener-binds-127001-or-runs-from-a-stable-path-never-from-tmpdir-w1742), w1742).
