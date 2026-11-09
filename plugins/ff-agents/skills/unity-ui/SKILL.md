@@ -293,6 +293,17 @@ census (`<shot>.json`: small, clipped, off-screen and overlapping text, covered 
   --ref-census <the before census>` compared it with its own before (0.0). (6) `ui_layout.py check` reported 3
   covered texts "before" even for HEAD against itself: compare the covered-text counts of both censuses, not its
   "before" number. And never run `ff-leftovers end` while a queued leg script runs: it ends the script.
+- **Three evidence traps of a window that got shorter (w3802, FinalFactory #3478, Windows development player, BEAST).**
+  (1) `ui_layout.py check --touched <window> --ref <window>` samples a translucent window's pixels, world included: after
+  the Station Grid sat 16 px lower, its title icon read delta E 14.3 with the same icon pixels, and at 1280x800 the list
+  showed one more row, so row icons differed (26.4, content). Pass the part the change touches (`--touched
+  GridData/Production --ref GridData/Production`) and paste that line; crop the flagged element in both stills before you
+  call a delta E real. (2) `pr_evidence.py`'s `Moved:` mark needs `asked (who): "..."` of 8+ characters found inside the
+  brief's quotation marks; a brief that quotes only "+130 %" has none. Carry the brief's sentence in a PR line `Brief (who):
+  "<the sentence>"` (and the person's answer as a second `Brief` line, for the `Picked` words) and quote from it, word for
+  word. (3) `HUD restored on close: yes` needs a census after closing the window: one more tour step after the shot,
+  `{"key": "escape"}, {"wait": 4}, {"shot": "closed"}` and a census to `closed-layout.json`, passed as `--closed`
+  (game repo `specs/w3802-sprawl-colour/make_tour.py --closed`).
 - **Four traps of a hub (M menu) tour and its evidence (w2934, FinalFactory #3081, Windows development player, BEAST).**
   (1) `-ffAutomationRole solo` on a new-game tour ends the session with its automation dwell: the stills showed the
   loading screen. Leave it off. (2) `waitFor text:<label>` passes on a hidden prefab's text before the HUD is up: follow
