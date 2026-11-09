@@ -373,6 +373,16 @@ never rewritten (`tools/check_snapshot_compat.sh BASE_REF` holds it in CI). No t
     log (`gh api .../jobs/<id>/logs`) answers `BlobNotFound`. That job never ran: its machine dropped too. In w3499,
     repeat run 42477727359 attempt 1 on ffu-beast-4 failed after 10 min. Over the same window, the journal showed
     `machine beast disconnected` six times from 11:56 to 12:04Z. A rerun went 50/50.
+- **Dispatch the repeat.yml runs your PR links only after `ff-pr push`** (w3842, ffu #573). `ff-pr push` merges
+  origin/main into the branch, so the head moves. Four ×50 runs at f8fb0d0 went stale when the merge brought in main's
+  changes to `shard.rs`, `replica.rs` and `owner_term.rs`, and they were cancelled and dispatched again at c1d5253.
+  Push with ff-pr first, then dispatch on the branch, so the runs test what merges.
+- **To reproduce a stall flake on BEAST, suspend one child process at a time, not the whole tree** (w3842). Stopping
+  station_move's whole process tree for 1 to 25 s passed every time (the gaps were even). Suspending single children
+  (`NtSuspendProcess` through ctypes, a 5 to 8% chance per child every 0.5 to 1 s, 1 to 6 s each) left two of the
+  three directory replicas silent together. The owner then gave up on the first seed: "lost the directory at the
+  barrier of tick 244". The cause was an owner giving up although no standby held its world (`TermWatch::gate`'s
+  `handed`, ffu #573).
 - **repeat.yml keeps nothing from a run that hangs**. A cancel at the job's timeout is not `failure()`, so no artifact
   is uploaded and the job prints no run line. In w3499, run 1 of repeat run 42462948168 on ffu-lothdesktop-2 hung for
   93 min, and nothing named the test. To name a hung test, dispatch repeat from a probe branch whose pass runs
