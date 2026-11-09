@@ -595,6 +595,11 @@ A completion notification alone is insufficient for long silent phases. A single
 the underlying log's last meaningful line. Silence must not be able to mean that the process
 crashed.
 
+**Start any build or `unity-slot run` in the background with `timeout` 7200000** (w3852, w3845 on biscuit, 2026-11-09).
+Claude Code kills a `run_in_background` Bash task at its default 30 minutes, and the time spent waiting in the slot
+queue counts: `run_build_multiplayer_audit.sh --build-only` queued 24 min for biscuit's single Unity slot and was killed
+just after the grant, costing ~30 min and leaving a stale `Temp/UnityLockfile` to delete before the retry.
+
 **Stopping a background task does not stop what it started** (w3198, lothdesktop 2026-11-06). Claude Code's
 `TaskStop` on a `run_in_background` Bash task that runs a looping script (a sweep launching one player per leg under
 `timeout ... player_slots.py launch`) left the loop and its players running: after two restarts three sweeps drove one
