@@ -78,6 +78,11 @@ whole verification. The repo's own `CLAUDE.md` is binding and longer; this skill
     had stopped held no world yet, and a standby with no world never takes over (`Standby::follow`), so it sat silent
     for 180 s ("standby 4 did not take over: \"\""). Wait for `holds_world` before the kill, bounded by the run's
     `Deadline`; plant `FFU_FAILOVER_CHAIN_PAUSE_WORLD_MS`: RED in 191 s on main, GREEN in 27 s.
+  - **A test of a standby must expect one that lost its bid to be gone** (w3681, ffu #500). With no directory leader for
+    its give-up time while the group elected, a new owner gives the shard up, its standbys bid at once, and the loser
+    exits before the test tells it the restarted replica's port. A failed tell asserts the standby exited; the next
+    round reads it gone. repeat.yml passes `FFU_OWNER_TERM_LOGS` (a native path on Windows) so a failed run keeps every
+    child's stderr (run 42546772832 kept none).
   - A worker's process-kill hook refuses any Bash command whose text holds the word "kill", a commit message included:
     write the message to a file and `git commit -F` it (w3798).
   - **A raw-socket test of a peer link reads past the receiver's ACKs** (w3792, ffu #542). The inbox's `keep_alive`
@@ -451,7 +456,17 @@ never rewritten (`tools/check_snapshot_compat.sh BASE_REF` holds it in CI). No t
     a second flake, at run 24, that a filter on the fixed tests would have hidden.
     - **A lib unit test (`src/*.rs`'s `mod tests`) repeats with `-f target=ffu_server`**, the lib's crate name with an
       underscore, plus `-f filter=<test name>` (w3751, ffu #522: runs 42541128753 and 42541131259, 50/50 each, `1 passed;
-      73 filtered out` per run). Check one run's line says `1 passed`: a filter that matches nothing passes 50/50 too.
+      73 filtered out` per run). Check one run's line says `1 passed`.
+    - **`filter` matches test names, never the target's name** (w3681): `-f target=owner_term -f filter=owner_term`
+      ran 0 tests per run and passed 50/50. Since ffu #500 repeat.yml fails a run that ran no test; on an older branch
+      read the `N passed` yourself.
+    - **ffu-lothdesktop-1 and ffu-lothdesktop-2 are one PC, Loth2800** (w3681). Before you read a repeat failure there,
+      list what ran on the other runner over the same minutes (`gh run list -R Final-Factory/ffu -L 30 --json
+      databaseId,createdAt,updatedAt` and each job's `runnerName`). Run 14 of repeat run 42575114685 failed on
+      lothdesktop-2 while repeat run 42573213571 ran `load: 32` copies of owner_term on lothdesktop-1 (07:01-07:26Z,
+      2026-11-09; that load itself failed 25 times); the job's passes went from 26-30 s to 82-161 s. A sibling's LOAD
+      makes it a loaded result, not an idle one. Since ffu #500 the job prints `copies of <test exe> running on <host>`
+      before its runs and on a failure.
   - **A peered-shard stat is counted on one side and its cause on the other: assert across the pair** (w3751, ffu
     #522). `batch_repeats` is counted by the shard that receives a batch, `resent` by the shard that sends it. A
     replica silent past `STUCK_AFTER` (1 s) makes `barrier()` mute the inbox and drop the link. The other shard
