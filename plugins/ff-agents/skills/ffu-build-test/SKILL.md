@@ -554,7 +554,15 @@ never rewritten (`tools/check_snapshot_compat.sh BASE_REF` holds it in CI). No t
     `stale()` never rises and the probe only redials (`stats().1`). The owner_term probe waited for `stale` alone. It
     passed on m5, where the probe came 0.68 s after the cut, and ran out of budget on the M3. It now accepts a muted
     owner (a reconnect, plus the owner's "peers are turned away" stderr line) and still asserts nothing was acked.
-    RED: `FFU_OWNER_TERM_STALL_MS=1500`. A test that waits for a fenced owner's answer must accept both.
+    RED: `FFU_OWNER_TERM_STALL_MS=1500`. A test that waits for a fenced owner's answer must accept both. Main got
+    the same wait from w3605's a1f5d0e7 (#488) while #531 was open: merge `origin/main` into a flaky-test fix before
+    its proof runs, and read a red repeat against main's newest fixes first (#531's run 37 was #488's cause 8).
+  - **Prove a "fails under load" flake with repeat.yml's `load` input** (w3793, ffu #531): `-f load=workspace` loops
+    the workspace tests beside the runs, `-f load=N` loops N copies of the test binary. At the end the job prints
+    the load's passes and failures, and each panic with its message. On biscuit, workspace and 8 copies were too
+    light: main's old owner_term wait passed 10 of 10 at an unchanged 8.8 s. 32 copies (`-f count=20 -f
+    run_minutes=10`) hung it 480 s at run 12 (run 42569590700), and the fix passed 20 of 20 on biscuit and Loth2800
+    (measured). Read the load copies' own failures too: they are the same binary under the same load.
   - **owner_term names every child when it runs out of time** (w3713, ffu #502). `Deadline::left`'s panic lists each
     process the test started: its start line, whether its stdout is open, and its last 6 stderr lines. Without
     `FFU_OWNER_TERM_LOGS` the children's stderr goes to a scratch folder. `FFU_OWNER_TERM_LOGS=<dir>` keeps it, and
