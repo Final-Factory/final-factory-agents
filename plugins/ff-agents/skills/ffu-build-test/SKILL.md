@@ -10,8 +10,17 @@ whole verification. The repo's own `CLAUDE.md` is binding and longer; this skill
 
 ## 1. Get a checkout and a toolchain
 
-- Clone into your `$TMPDIR`: `git clone https://github.com/Final-Factory/ffu.git "$TMPDIR/ffu"`. Branch from `main`
-  (ffu's trunk is `main`, not `master`). Commit as `Final Factory <481770+bryding@users.noreply.github.com>`.
+- **Take an ffu slot: a checkout with a warm cargo target** (w3764, lothsahn: "Can we have ffu sandboxes like final
+  factory sandboxes but in a different folder?"): `eval "$(ffu-slot take --branch <your branch>)"` sets `FFU_SLOT`,
+  `FFU_DIR` and `CARGO_TARGET_DIR` and cds into `<install>/ffu-sandboxes/slot<N>/ffu`, a worktree of the machine's one
+  ffu clone. Its target is the last worker's, kept warm: on BEAST a cold `cargo test --workspace --all-features --no-run`
+  took 221 s, warm 0.6 s unchanged, 60 s after an edit, 92 s after a switch 5 commits away (measured, w3764 r176). Run
+  `eval "$(ffu-slot where)"` at the top of every later shell call (shell state does not persist); `ffu-slot list` shows
+  every slot. A new branch is made from `origin/main`; a branch another slot has comes detached at its tip (push with
+  `git push origin HEAD:<branch>`). Exit 3 (every slot held, or the drive short) or no `ffu-slot` command (a machine
+  without w3764): clone into `$TMPDIR` as before, `git clone https://github.com/Final-Factory/ffu.git "$TMPDIR/ffu"`,
+  with `CARGO_TARGET_DIR="$TMPDIR/ffu-target"`. Branch from `main` (ffu's trunk is `main`, not `master`). Commit as
+  `Final Factory <481770+bryding@users.noreply.github.com>`.
 - `rust-toolchain.toml` pins Rust 1.94.0 with clippy and rustfmt; `cargo` picks it up by itself.
 - When `cargo` is not on PATH, look for the machine's shared toolchain before installing one. On lothdesktop it is
   under `V:/ffw/tools` (measured, w2895):
@@ -19,7 +28,7 @@ whole verification. The repo's own `CLAUDE.md` is binding and longer; this skill
   ```sh
   export RUSTUP_HOME=V:/ffw/tools/rustup CARGO_HOME=V:/ffw/tools/cargo
   export PATH=/v/ffw/tools/cargo/bin:/v/ffw/tools/cmake-4.4.5-windows-x86_64/bin:$PATH
-  export CARGO_TARGET_DIR="$TMPDIR/ffu-target"   # builds stay in your temp folder
+  # in an ffu slot, CARGO_TARGET_DIR is the slot's (ffu-slot where); without one: "$TMPDIR/ffu-target"
   ```
 
   `ffu-client` (the `ffu` binary) builds SDL3 from source and needs cmake on PATH: without it the build stops with
@@ -45,7 +54,7 @@ whole verification. The repo's own `CLAUDE.md` is binding and longer; this skill
 - **Keep one target per worker; never share a `CARGO_TARGET_DIR` across parallel workers** (w3396). Two builds on one
   target wait on cargo's build-directory lock ("Blocking waiting for file lock"): one rebuild alone took 44 s, two at
   once 48 s and 71 s (measured, BEAST). A shared target is also never idle, so FF Factory's clean-up can never prune it.
-- **Use the one target `CARGO_TARGET_DIR="$TMPDIR/ffu-target"` for every leg; never a new target per leg** (w3617). One
+- **Use the one target (your slot's, else `CARGO_TARGET_DIR="$TMPDIR/ffu-target"`) for every leg; never a new target per leg** (w3617). One
   worker on biscuit made a target per leg (`ffu-target`, `ffu-target-m13`, `ffu-target-g10`, ...): 12 of them held 22 GB
   together (measured, 2026-11-08), each a cold build's worth of deps. A leg on the same checkout reuses the target and
   builds in seconds; a new target rebuilds everything. The only second target is a second checkout's (next bullet,
@@ -62,7 +71,11 @@ whole verification. The repo's own `CLAUDE.md` is binding and longer; this skill
   while fresh targets were 3.3 to 3.6 GB (measured 2026-11-07). Count the copies with
   `ls target/debug/deps | sed -E 's/-[0-9a-f]{16}.*//' | sort | uniq -c | sort -rn | head`; when no cargo of yours
   runs, `rm -rf "$TMPDIR/ffu-target/debug/incremental"` is rebuildable and frees most of it.
-- **Delete your targets and clones before DONE** (Ben, 2026-11-08, w3686: "Please address this problem with a harness
+- **Never delete an ffu slot's checkout or target, and `ffu-slot release` once your work is pushed** (w3764): the target
+  is the next worker's warm build; FF Factory's clean-up caps it at 16 GB (incremental first) and drops a slot's target
+  after 7 days unheld (rule `ffu-slot-target`, ff-factory docs/ffu-sandboxes.md). A slot with uncommitted or unpushed
+  work stays yours while you are stopped. sccache is not used: it got 0 Rust cache hits (measured, BEAST, w3764).
+- **Delete your temp-folder targets and clones before DONE** (Ben, 2026-11-08, w3686: "Please address this problem with a harness
   update so you're cleaning up after yourself"). On 2026-11-08, cargo targets were 19% of the 102.6 GB in V:\ffw\tmp
   (measured). Once your PR is merged, or before a long wait you will not build through, run
   `rm -rf "$TMPDIR/ffu-target" "$TMPDIR/ffu-target-main" "$TMPDIR/ffu"` with every path written out, so it asks nobody.
