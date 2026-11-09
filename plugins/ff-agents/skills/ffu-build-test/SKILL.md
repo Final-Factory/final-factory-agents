@@ -96,6 +96,13 @@ whole verification. The repo's own `CLAUDE.md` is binding and longer; this skill
     turns a hang into a failed assert. For RED, delay the other side deterministically: an inbox that slept 600 ms
     before answering each hello while unmuted failed the old plant 5 of 5. A redial delay alone did not (5 of 5
     passed), because dials that landed during the mute were closed and retried.
+  - **A test thread that follows a server ends at its last tick, never on a stop flag** (w3809, ffu #560; w3761).
+    station_move set a stop flag the moment the shards exited, and a follower a few ticks behind still had its last
+    ticks in the gateway: CI stopped one at tick 895 of 900 (m3, 66166f2). Each follower now reads until `until` or a
+    failed read (read timeout `stall::ALIVE`), and the test waits for every follower, the late ones included, under
+    its `Deadline`. A 48-loop hog did NOT reproduce it (main 12 of 12 green, lothdesktop); a planted 5 s lag 5 ticks
+    short of the end (`FFU_STATION_MOVE_PLANT_LAG_MS`) failed main 3 of 3 with CI's message. Before you push a flake
+    fix, run `git log origin/main -- <test file>` again: w3761 fixed the same race in parallel while #560 waited on CI.
   - **Run the whole lib in the Windows loop, not only your test** (w3792): `gh workflow run repeat.yml -f
     package=ffu-server -f target=ffu_server -f count=50 -f os=ffu-windows`. A filtered loop passed 50 of 50. The
     whole-lib loop found a second flake in a neighbouring test at run 10. The loop stops at its first failure.
