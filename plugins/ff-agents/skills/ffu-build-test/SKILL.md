@@ -507,7 +507,7 @@ never rewritten (`tools/check_snapshot_compat.sh BASE_REF` holds it in CI). No t
   - **owner_term names every child when it runs out of time** (w3713, ffu #502). `Deadline::left`'s panic lists each
     process the test started: its start line, whether its stdout is open, and its last 6 stderr lines. Without
     `FFU_OWNER_TERM_LOGS` the children's stderr goes to a scratch folder. `FFU_OWNER_TERM_LOGS=<dir>` keeps it, and
-    repeat.yml sets it from ffu #502 or #531, whichever merges first (main before them did not). A file the test reads gets a name per process and test: a shared `owner-stderr.txt` made 8 of
+    repeat.yml sets it only from ffu #502, which names the file per process; never set it for a whole-file run before that (w3775: repeat run 42551313809 failed at `owner_term.rs:1713`, two tests truncating one `owner-stderr.txt`). A file the test reads gets a name per process and test: a shared `owner-stderr.txt` made 8 of
     8 runs of the whole file fail under LOGS.
   - **An owner starved past `TermWatch`'s give-up (3 s) exits "lost the directory at the barrier"**. That is a
     takeover, not a failure: accept it where the test accepts "fenced" (w3681, ffu #500). For a RED,
