@@ -65,6 +65,10 @@ leftover `grant-*.json`; the rerun was wrong. The cause was the test's `FakeArbi
 round and checked grants later, so a client that released in between got its grant written again. A sleep widening
 that window reproduced it (old fake leaked within 150 runs, the fixed one none in 150). The ffu rule is the same
 (`ffu-build-test`).
+A worker's `gh run rerun` (`--failed`, `--job`, or the API's rerun) of a job that failed in a step is refused by FF
+Factory's guard (w3784, ff-factory#927, `server/rerunGuard.ts`): only a runner loss may be rerun, a failed job with zero
+steps or the annotation "The self-hosted runner lost communication with the server". Refused: fix the cause, or, when the
+fix has its own request, merge past the unrelated red and name that request (wNNN) in the PR.
 
 **A red test your diff cannot reach: read master's batch verdict before you rerun** (w2351, 2026-10-27, PR #2686): a
 PR's run tests the branch with master merged in, so a culprit already on master fails it too. Before `gh run rerun`,
