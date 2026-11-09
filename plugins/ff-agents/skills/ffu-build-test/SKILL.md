@@ -525,6 +525,17 @@ never rewritten (`tools/check_snapshot_compat.sh BASE_REF` holds it in CI). No t
   - **Open a draft PR the moment you take a kind, op tag or section number** (`tools/row_numbers.py next ... --prs`): a
     number held only in a branch is no claim. ffu #567 committed op tags at 06:40Z and opened at 09:47Z; ffu #566,
     opened at 09:14Z, kept them and #567 had to renumber (w3844).
+  - **A row adds a kind, an op or a snapshot section at its name, never at a list's end** (w3864, ffu #602, #607). The
+    shared code lists sit between `// keep-sorted start` and `// keep-sorted end` markers in name order. One variant
+    per arm, catch-alls after the end marker. `Kind::ALL` and `SECTIONS` are sorted by number at compile time, so
+    hashes and snapshot bytes do not move. A new section gets its own `snapshot/<name>.rs`. The lint
+    (`tools/keep_sorted.py`) fails an unsorted list; `--fix` sorts it. Re-running the main merges of the 91 PRs after
+    ffu #470: 215 of 487 conflict hunks were two inserts at one spot (measured, w3844).
+  - **Merge main with conflicted .rs files by `python3 tools/keep_sorted.py --remerge <files>`**, then
+    `cargo fmt --all` and `python3 tools/keep_sorted.py`. It redoes the merge from git's stages, merging each marked
+    list by entry name, and keeps both rows' items appended at one end of a file (two tests after the last test of
+    the agent `tests.rs`). Two synthetic rows each adding a kind conflicted in 13 hunks; `--remerge` left 0. Four
+    real main merges into #602 left 0 each (measured). A hunk it leaves is a real edit-edit conflict: resolve it by hand.
   - **Find the next free row in one call**: `python tools/gate_status.py docs/PLAN.md --prs --free` reads the open and
     merged PRs and prints `free rows: ...` or `free rows: none` (w3560). Without `--prs` it listed M1.24 and M2.16 as
     free on main 8d4444c, though M1.24's live part was open as ffu #429 and M2.16 was held; hand-parsing PLAN.md's long
