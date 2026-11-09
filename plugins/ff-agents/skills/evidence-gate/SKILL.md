@@ -648,6 +648,10 @@ One file each under `lessons/`: the rule, why (the incident, dated), how to appl
   after a test crashes, hangs or reboots m3, m5, BEAST, LothDesktop or LothLaptop, no further crash, repro or player run
   there in that request: publish the evidence, report, `waiting_on_person` for the person's own yes; a crash-repro brief
   says "stop after one crash" (w3704: two m3 panics in one request, the second after "limit your crash tests").
+- [A runtime-added [Save] buffer is kept empty, or says why it need not be](lessons/runtime-added-save-buffers-kept-empty.md):
+  a new runtime `AddBuffer` of a `[Save]` type goes in `ColumnarWorldCapture.KeepsEmptyBuffer` or gets a verdict in
+  `EmptySaveBufferGuardTest`; the writers drop empty buffers and the census counts presence (w3850: four player-found
+  join desyncs, nine more found by the guard).
 - [A digest is blind to fields its fixtures never carry](lessons/look-early-by-breakdown.md#a-digest-is-blind-to-fields-its-fixtures-never-carry-w2124-2026-10-25): a
   re-pinned digest proves nothing about a field no fixture sets or the hash leaves out; assert each excluded field, write
   old-file fixtures with the old tree's own serializer and read them at HEAD with mutant arms, and turn the feature

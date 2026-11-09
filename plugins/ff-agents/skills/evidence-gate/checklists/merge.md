@@ -190,6 +190,10 @@ Not verified: the Bats' slot lag (simulation, follow-up PR)
   before the bump and says it ran green. With it, the bump merges without a person (a newer save
   refused by an older build is fine); without it, writing it is the work. Only a change that breaks
   loading existing saves goes to a person.
+- **A runtime-added `[Save]` buffer is kept or has a verdict** ([lesson](../lessons/runtime-added-save-buffers-kept-empty.md);
+  w3850): a new `AddBuffer`/`AddComponent` of a `[Save]` buffer on an entity whose prefab does not bake it adds the type
+  to `ColumnarWorldCapture.KeepsEmptyBuffer` or to `EmptySaveBufferGuardTest`'s allow-list with the reason; the PR's
+  Save compatibility line says which. A generic-parameter add escapes the guard's scan: check it by hand.
 - **A re-pinned digest or golden test says what its fixtures don't carry** ([lesson](../lessons/look-early-by-breakdown.md#a-digest-is-blind-to-fields-its-fixtures-never-carry-w2124-2026-10-25);
   w2124): the Tests line names each field the digest excludes and the assertion that pins its value, any feature the
   change touches that no fixture sets and the test that now sets it, and the mutant arm that went red.
