@@ -631,6 +631,24 @@ never rewritten (`tools/check_snapshot_compat.sh BASE_REF` holds it in CI). No t
     runner folder (cargo's `@argfile` hides the path in rustc's own command line). Never kill a process to test the
     gate: the harness refuses killing PowerShell; a child that takes the mutex and exits without releasing proves the
     abandoned-slot path.
+- **A wall-clock test that counts outcomes breaks on a stall, not on the code** (w3780, ffu #535). Examples of such
+  outcomes: stations loaded, drawn or dropped, or entered unloaded. near.rs's camera flight failed three ways on
+  BEAST and CI with nothing wrong in the client:
+  - frame gaps of 2.5 s and 2.7 s;
+  - Welcomes of up to 9.4 s with 0 failed dials;
+  - servers at 6.4 UPS, and one 18 s suite run took 441 s.
+
+  A longer timeout does not help, because the outcome depends on how far the clock moved between frames. The fix:
+  - **Record the stall in the test's own output:** the longest frame gap, failed dials, the slowest join.
+  - **Judge those outcomes only within the code's promise.** Here that is slowest Welcome + longest frame gap <=
+    `LEAD_FACTOR * JOIN_FLOOR`. Outside it, print "not judged" with the numbers.
+  - **Put the unconditional check in a twin test that steps its own clock:**
+    `a_camera_flying_across_world_16_drops_the_stations_it_left_behind`.
+  - **Print the numbers in every assert message** (the fleet's JSON). An output filter lost the first failure's
+    message, and main's `drops > 0` assert had none.
+  - **Look on origin/main for a parallel fix of the same test before you merge.** w3753 landed `MAX_FRAME_STEP` while
+    #535 was open. Keep both. The cap stops a stall jumping the camera past stations, but it also shortens the flight,
+    so coverage stays a wall-clock measure.
 - **BEAST can freeze as a whole machine for 20 to 100 s, and a test's wall-clock wait then runs out with nothing wrong in
   the code** (w3341, ffu #357 probe, ffu #358 fix).
   - It happens when other work on BEAST runs it short of memory and it pages: soaks, extra Unity editors, every
