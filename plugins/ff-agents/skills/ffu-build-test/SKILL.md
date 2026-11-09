@@ -224,6 +224,12 @@ never rewritten (`tools/check_snapshot_compat.sh BASE_REF` holds it in CI). No t
 - **A Windows test job red with every test passed and `temp leak check: ... MSBuildTemp`** was the build, not a test:
   SDL3's `-sys` crates build through cmake and MSBuild when a runner rebuilds its target. The test jobs build with
   `cargo test ... --no-run` before `check_temp_leaks.sh` since ffu #249 (w2895); keep any new checked step that way.
+- **A test job red with `temp leak check` naming your own test's folders is a test that leaves its scratch behind**
+  (w3726, ffu #513: `ffu-near-fly-*` and `ffu-near-linked-*` from `near.rs`'s `shard()` failed run 42535840123 on Linux
+  and Windows). Make every scratch folder with `ffu_testdir::tempdir("<prefix>-")`, a `tempfile::TempDir`, and keep it
+  in the fixture as a field declared after (so dropped after) anything that still writes there, such as a server thread
+  joined in `Drop`. Never make one by hand under `std::env::temp_dir()`. Check locally that the temp folder is empty
+  after the test.
 - **A Windows test job red with `LNK1171: unable to load mspdbcore.dll (error code: 1455)`, then "required to be
   available in rlib format" errors, ran no test**: error 1455 is "the paging file is too small", so BEAST ran out
   of commit memory while linking (w3385, ffu #373, CI run 42394339327 on ffu-beast-3). That is the machine, not the
