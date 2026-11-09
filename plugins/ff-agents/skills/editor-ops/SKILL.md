@@ -605,6 +605,11 @@ did not show the orphaned players, whose launcher had died; `player_slots.py min
   (`Get-CimInstance Win32_Process`), and end what is yours (PowerShell `Stop-Process` on your own pids; the Bash hook
   refuses `Stop-Process`);
 - a script that picks "my player's pid" refuses when `player_slots.py mine` lists more than one, never takes the first.
+- a `run_in_background` task stopped at its own time limit (the "killed" notice) is the same case (w3777, BEAST
+  2026-11-08): its `bash run.sh` load-and-dump loop ran on, the restarted loop shared one editor and one
+  `dev_loadsave.trigger` with it, and two different saves dumped to one identical file (flajoBig20 and justinAuto both
+  `grids=726`). Before restarting, look for the old loop (`ps -ef | grep <script>`) and end it; give a multi-save editor
+  loop a `timeout` of 3600000 or more from the start (the 600000 default stops it mid-run).
 
 **A timed-out synchronous `execute_code` build may still be running.** A long call that times out
 has been seen to leave the build running and produce repeated invocations and completion markers.
