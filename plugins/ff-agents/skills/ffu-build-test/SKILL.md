@@ -66,6 +66,20 @@ whole verification. The repo's own `CLAUDE.md` is binding and longer; this skill
     join (run 42551634569). Assert the logic instead (the load was asked for in time: `entered_unrequested`), report
     the latency as a measure, and check it in a timed flight. A CPU hog of 48 busy loops raised the max join from tens
     of ms to 1.8-2.6 s locally (measured, lothdesktop): use one to see a test's timing dependence before CI does.
+  - **A raw-socket test of a peer link reads past the receiver's ACKs** (w3792, ffu #542). The inbox's `keep_alive`
+    writes `ACK(held)` every `IDLE` (100 ms) into every link it has answered, so on a loaded ffu-windows runner an ack
+    came before `BUILD_REFUSED` and the test, which read one frame, got `(35, Some(0))`. Read frames in a loop past
+    the ACKs, then assert the reply. Plant a sender wait longer than `IDLE` so that order comes on every run.
+  - **A test plant holds an order by waiting for the event, never for a fixed time** (w3792). A 300 ms pause after
+    the unmute was meant to keep B from acking before A's new link came back. A loaded runner dialled back later; the
+    hello answer then named the newer `held`, and the planted repeat never came (`resent: 2, batch_repeats: 0`, repeat
+    run 42559845478). Wait until the link is answered (`Inbox::hold_unmute_until_relinked`), with a cap that only
+    turns a hang into a failed assert. For RED, delay the other side deterministically: an inbox that slept 600 ms
+    before answering each hello while unmuted failed the old plant 5 of 5. A redial delay alone did not (5 of 5
+    passed), because dials that landed during the mute were closed and retried.
+  - **Run the whole lib in the Windows loop, not only your test** (w3792): `gh workflow run repeat.yml -f
+    package=ffu-server -f target=ffu_server -f count=50 -f os=ffu-windows`. A filtered loop passed 50 of 50. The
+    whole-lib loop found a second flake in a neighbouring test at run 10. The loop stops at its first failure.
 - Put those exports in `$TMPDIR/rust.sh` and source it in every shell call: shell state does not persist.
 - **Keep one target per worker; never share a `CARGO_TARGET_DIR` across parallel workers** (w3396). Two builds on one
   target wait on cargo's build-directory lock ("Blocking waiting for file lock"): one rebuild alone took 44 s, two at
