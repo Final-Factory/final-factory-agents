@@ -42,7 +42,7 @@ load-bearing for future runs even where the original defect is fixed.
 - [A host-only scenario with a remote client: pause on join, tower spawns, flow control](#host-scenario-remote-client) (w2586)
 - [A hand-launched built host: TargetClients counts the host, and turn the audit on](#hand-launched-host) (w2797; every post-ready segment needs `ffauto:`, a new label per relaunch, w2861; pin the agent channel to your pid, blueprint pieces stay separate grids (a Standard piece needs a Connector), w3292, w3325; a flying Abduction Machine's aggro from `AttackScheduleDetail`, w3325; `inventory.remove` sends no op, a report holds ~2600 heartbeats, w3317; a Leech raid goes pre-join and from far away, w3323; a flying machine's craft at its takeoff centre tile, no flying temperature reader, a station 50 tiles out, w3326; devunlock fills the inventory, the Circuit tab path and a clean still, w3592)
 - [A client's load-time check line describes the served join snapshot, not the host's load](#served-snapshot-check) (w3521)
-- [A peer on a machine loaded by non-game work fails as client and as host: check the load before you say ready](#loaded-peer) (w3719)
+- [A peer on a machine loaded by non-game work fails as client and as host: check the load before you say ready](#loaded-peer) (w3719; w3757: BEAST/LothDesktop ffu runners, bound the wait)
 - [An ffnightly Linux host for a remote client: its port, its audit, its station builds](#ffnightly-linux-host) (w2824)
 - [An editor pair with presentation checks: no Audit ids in the config, a healthy host, a client machine without bench rounds](#editor-pair-presentation) (w2399)
 - [An Oracle shop pair: host buys first, `near` is tier 1, price is derived](#oracle-shop-pair) (w2518)
@@ -1708,3 +1708,13 @@ Before a leg says ready (TICKET GRANTED or HOST WAITING), read its machine's loa
 tell the other legs at once and end the leg with the request re-paired on another machine (or after the load drops),
 instead of running it: the runs show no desync, but they also prove nothing for a brief that asks for a continuous
 window.
+
+**BEAST and LothDesktop host ffu CI runners too; check the ffu queue and bound the wait** (w3757, 2026-11-09, the
+rerun of that pair, a BEAST host and a LothDesktop client). BEAST runs five ffu runners (`F:\ffw\ffu-runners\ffu-beast-2`
+to `-5` and `~/ffu-runner`). From 00:01Z to 02:45Z it never had 60 s with no `Runner.Worker`, `cargo` or `rustc`
+process and CPU under 25% (checks read 11% to 99% CPU, up to 37 such processes), while 12 ffu runs sat queued or
+pending; the host never launched and the pair ended unrun after 2 h 45 min. A runner picks its next job at once, so a
+deep queue keeps the machine loaded for hours. Count the queue first:
+`gh run list -R Final-Factory/ffu --limit 40 --json status --jq '[.[]|select(.status!="completed")]|length'`. On a leg
+machine with ffu runners and a queue above a handful, wait at most about 15 min, then tell the other legs and report so
+the request is re-paired on machines without ffu runners (the m5 Mac may host; a Mac client may not).
