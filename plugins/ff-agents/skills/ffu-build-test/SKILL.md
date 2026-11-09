@@ -450,11 +450,22 @@ never rewritten (`tools/check_snapshot_compat.sh BASE_REF` holds it in CI). No t
     that fails names the other PR. Then read both diffs for a shared helper whose default one of them changed.
   - **m5 (macOS) has no `timeout`**. A loop script that wraps runs in `timeout` fails every run at once, and that can
     read as a reproduction (w3713 nearly reported a hang in 60 of 60 runs). Use
-    `perl -e 'alarm shift; exec @ARGV' 300 <cmd>` there.
+    `perl -e 'alarm shift; exec @ARGV or die "exec: $!\n"' 300 <cmd>` there. Without `or die`, perl exits 0 when the
+    exe path is wrong, and the loop reports passes: w3775 counted 10 "passes" against a mangled path (measured on m5:
+    exit 0 without it, exit 2 with it). Check that each run took as long as the test does. CI's macOS runners lack
+    `timeout` and `gtimeout` too, and BSD `du` has no `-b`. In a workflow use ffu's
+    `tools/ci-runners/run_limited.sh <minutes> <cmd>` (timeout, else gtimeout, else perl; exit 124 on time-out) and
+    `du -sk`. repeat.yml died at run 1 with exit 64 on `ffu-macos` until ffu #531.
+  - **A fenced owner answers peer links only for its first second** (w3775, ffu #531). After `replica::STUCK_AFTER`
+    (1 s) its barrier calls `Inbox::mute`. From then on, a link ends after its hello with no answer, so a probe's
+    `stale()` never rises and the probe only redials (`stats().1`). The owner_term probe waited for `stale` alone. It
+    passed on m5, where the probe came 0.68 s after the cut, and ran out of budget on the M3. It now accepts a muted
+    owner (a reconnect, plus the owner's "peers are turned away" stderr line) and still asserts nothing was acked.
+    RED: `FFU_OWNER_TERM_STALL_MS=1500`. A test that waits for a fenced owner's answer must accept both.
   - **owner_term names every child when it runs out of time** (w3713, ffu #502). `Deadline::left`'s panic lists each
     process the test started: its start line, whether its stdout is open, and its last 6 stderr lines. Without
     `FFU_OWNER_TERM_LOGS` the children's stderr goes to a scratch folder. `FFU_OWNER_TERM_LOGS=<dir>` keeps it, and
-    repeat.yml sets it. A file the test reads gets a name per process and test: a shared `owner-stderr.txt` made 8 of
+    repeat.yml sets it from ffu #502 or #531, whichever merges first (main before them did not). A file the test reads gets a name per process and test: a shared `owner-stderr.txt` made 8 of
     8 runs of the whole file fail under LOGS.
   - **An owner starved past `TermWatch`'s give-up (3 s) exits "lost the directory at the barrier"**. That is a
     takeover, not a failure: accept it where the test accepts "fenced" (w3681, ffu #500). For a RED,
