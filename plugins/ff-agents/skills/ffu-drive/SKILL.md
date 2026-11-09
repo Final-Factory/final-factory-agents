@@ -89,6 +89,12 @@ A still of a live window on Windows (a `--connect` client, a launcher check): ru
 (beside this file) while the window runs. Never use a desktop grab: on BEAST other sandboxes' editors sit on top, and in
 w3321 the grab showed slot2's Unity and none of the client. The script uses PrintWindow on the window itself, which drew
 the client while it was covered (measured).
+Each call takes about 5 s and returns a half-size grab (640x360 for a 1280x720 window, measured w3754), so a
+dozen stills need about a minute of window. Copy `ffu.exe` to a name of your own (`ffu-wNNN.exe`) and pass
+`-ProcessName ffu-wNNN`, so the grab never picks another sandbox's `ffu` window. Stills of `ffu --world --window` need
+a zoomed-out view (`--view x,y,8`): a world:N:2:3 station keeps its buildings in a strip at one corner, so the default
+zoom 24 at a station's centre shows empty floor (w3754: three blank stills). `--autopilot --fly-speed 10` flies
+world:16's 534-tile tour in about 53 s.
 `ffu --headless <cmd>` is `ffu-headless <cmd>`. Judge motion from a clip, not a still (`/ff-agents:watch-video`'s
 viewing rules hold; its recorder is for Unity players).
 
