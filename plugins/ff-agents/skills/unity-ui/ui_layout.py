@@ -384,6 +384,11 @@ def opened_over_hud(census: dict, patterns: list[str], depth: int = 2, min_px: f
     if w and h:
         for e, label in panel:
             r, v = e["rect"], e.get("visible") or e["rect"]
+            # A text is cut where its drawn glyphs are, not its box: TMP pads a box past the glyphs (w3846; w3827's
+            # stability-count box reached x 1313 on a 1280 screen while the drawn frame ended at x 1276).
+            if e.get("textRect"):
+                r = e["textRect"]
+                v = inter(r, v)
             over = max(-r[0], -r[1], r[2] - w, r[3] - h)
             clipped = [max(r[0], 0), max(r[1], 0), min(r[2], w), min(r[3], h)]
             if over > 2 and max(abs(x - y) for x, y in zip(clipped, v)) <= 1:
