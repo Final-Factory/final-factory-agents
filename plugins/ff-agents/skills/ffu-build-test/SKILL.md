@@ -598,6 +598,11 @@ never rewritten (`tools/check_snapshot_compat.sh BASE_REF` holds it in CI). No t
   (`gh api repos/<o>/<r>/actions/runs/<id>/attempts/1/jobs`): a `gh run cancel` also cancels jobs still queued, and
   #262's Linux `hashcheck`, queued 22 min behind busy biscuit runners, was cancelled that way without running: not
   green. Merge `origin/main` in and push for a fresh run instead, and wait for that leg however long it queues.
+  - **A leg still queued or running is not green: never merge over the red with one left** (w3790, ffu #546). After the
+    first-failure `ci:` wake, #546 merged with Linux `check` and `hashcheck (ffu-linux)` still queued behind biscuit, and
+    Ben's orchestrator sent it back to read both legs. Right before `gh pr merge`, list the legs not yet finished and
+    merge only when it prints nothing; otherwise set `wake_me` for them:
+    `gh run view <id> -R Final-Factory/ffu --json jobs --jq '.jobs[]|select(.status!="completed")|.name'`.
   - **That red stops the workspace `cargo test` step, so your own crate's tests never ran in CI** (w3574, ffu #455).
     In run 42455976949, ffu-content's stale `ff1.rs` test failed on main as well, and CI never reached `ffu-server`.
     The CI evidence for your test is then repeat.yml on its target, 50 runs each on `ffu-windows` and `ffu-linux`. Link
