@@ -319,6 +319,9 @@ never rewritten (`tools/check_snapshot_compat.sh BASE_REF` holds it in CI). No t
     resumes you at once. In w3459 it resumed twice, with all four biscuit runners busy and the Linux legs queued.
     Hand up the fix for the cause, then set `wake_me` for the legs still to run. Read them by job:
     `gh run view <id> --json jobs`.
+  - **A `ci:` wake can come while every run is still queued** (w3605, ffu #488 on FF Factory d24c7e7, 2026-11-09:
+    three wakes saying "cleared (3 of 3 workflow runs ... still running)"). Read the runs by id before acting; when
+    they are still queued or running, set one `wake_me` for about the time they need rather than a fourth `ci:` wait.
 - A PR that adds or changes art (`art/`), or the code that draws the image (`crates/ffu-bake/src`, `crates/ffu-render/src`
   and `effects/`, `crates/ffu-client/src/fx.rs`, any `.wgsl`; w3097, ffu #222's baked sky), runs the evidence-gate's `pr_evidence.py --repo Final-Factory/ffu --pr <n>`
   before Ben is asked and before it merges: it wants `Reference capture:` and `Art language:` in `## Evidence`
@@ -516,6 +519,14 @@ never rewritten (`tools/check_snapshot_compat.sh BASE_REF` holds it in CI). No t
   - **An owner starved past `TermWatch`'s give-up (3 s) exits "lost the directory at the barrier"**. That is a
     takeover, not a failure: accept it where the test accepts "fenced" (w3681, ffu #500). For a RED,
     `FFU_OWNER_TERM_PAUSE_DIRECTORY_MS` SIGSTOPs the directory group (Unix).
+  - **`TermWatch` gives up only on a failed lookup, never on time alone** (w3605, ffu #488). An owner on a stalled
+    machine exited "lost the directory ... for 8.05 s ()" with the directory healthy (repeat run 42556327951 run 28,
+    ffu-beast-5, "a 100 ms sleep came back 2.6 s late"). The `()` means no lookup of the watch's own had failed: its
+    lookup was simply held (a shared `DirClient` lock, a starved thread), and the clock since the last word ran past
+    `give_up`. The gate now errs only when a lookup *sent* `give_up` after the last confirmation has failed
+    (`WatchState::failed`). Plant: `a_term_watch_whose_lookup_is_held_past_its_give_up_keeps_the_term` in
+    `tests/directory.rs` holds `d.watch` past `give_up + lease`; age the bid past the lease or the plant passes
+    against the old code. A deadline in a watcher counts from a failed attempt, not from the last success.
   - **A process's last word on a peer link must reach the peer before the process exits** (w3713, ffu #502).
     `Inbox::ack` writes only to the connection open at that moment. A shard acks its peer's last batch and then exits,
     so after a barrier's mute or a reconnect the peer waited in `wait_acked` forever. `Peer::finish` now waits on
