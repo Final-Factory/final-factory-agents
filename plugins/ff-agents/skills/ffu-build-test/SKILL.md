@@ -55,6 +55,13 @@ whole verification. The repo's own `CLAUDE.md` is binding and longer; this skill
   paced by `Instant` crossed in 26 ticks of both stations' logs where the test asked for 32 (run 42550917935). Pace a
   move by the ticks the follower saw (advance per followed tick), and prove it by running the test with the shard's
   `tps` set low: it passed at 6.
+  - **A functional test never asserts that a network join beat the clock** (w3753, ffu #533). near.rs's flight test
+    asserted that no station reached the screen before its Welcome. On a Linux runner whose CPU lavapipe's renderer
+    tests share, one join took 3,120 ms against a p50 of 16 ms. The near-set's lead adapts to the slowest join seen so
+    far (`lead_tiles` 187.2 = 30 x 3.12 x 2, read from the failure's JSON), so it could not foresee that first slow
+    join (run 42551634569). Assert the logic instead (the load was asked for in time: `entered_unrequested`), report
+    the latency as a measure, and check it in a timed flight. A CPU hog of 48 busy loops raised the max join from tens
+    of ms to 1.8-2.6 s locally (measured, lothdesktop): use one to see a test's timing dependence before CI does.
 - Put those exports in `$TMPDIR/rust.sh` and source it in every shell call: shell state does not persist.
 - **Keep one target per worker; never share a `CARGO_TARGET_DIR` across parallel workers** (w3396). Two builds on one
   target wait on cargo's build-directory lock ("Blocking waiting for file lock"): one rebuild alone took 44 s, two at
