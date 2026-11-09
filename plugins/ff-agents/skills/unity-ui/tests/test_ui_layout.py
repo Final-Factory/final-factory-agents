@@ -290,6 +290,26 @@ class OpenedPanelTest(unittest.TestCase):
         code, out = Cmd.run(hud(), after, closed=hud())
         self.assertNotIn("CUT OFF", out)
 
+    def test_a_text_whose_padded_box_passes_the_edge_but_whose_glyphs_do_not_is_not_cut_off(self):
+        # w3827: Station Core's stability-count box reached x 1313 on a 1280 screen; its drawn glyphs (textRect) ended
+        # inside the window, whose frame ended at x 1276.
+        after = hud(blueprint_window=True, window_rect=[900, 68, 1276, 444])
+        after["elements"].append(el("BlueprintPanelChild/Stability/Count", [1200, 100, 1313, 130], kind="TextMeshProUGUI",
+                                    depth=1200, canvasOrder=0, text="98%", textRect=[1230, 104, 1268, 126],
+                                    visible=[1200, 100, 1280, 130], raycast=False))
+        code, out = Cmd.run(hud(), after, closed=hud())
+        self.assertNotIn("CUT OFF", out)
+        self.assertIn("0 cut off by the screen edge", the_line(out, "Opened panels"))
+
+    def test_a_text_whose_glyphs_pass_the_edge_is_cut_off(self):
+        after = hud(blueprint_window=True, window_rect=[900, 68, 1276, 444])
+        after["elements"].append(el("BlueprintPanelChild/Stability/Count", [1200, 100, 1313, 130], kind="TextMeshProUGUI",
+                                    depth=1200, canvasOrder=0, text="98% stable", textRect=[1230, 104, 1300, 126],
+                                    visible=[1200, 100, 1280, 130], raycast=False))
+        code, out = Cmd.run(hud(), after, closed=hud())
+        self.assertIn("CUT OFF: ", out)
+        self.assertIn("reaches 20 px past the screen edge", out)
+
     def test_closing_must_restore_the_hud(self):
         closed = hud()
         for e in closed["elements"]:

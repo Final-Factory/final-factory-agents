@@ -496,11 +496,12 @@ def moved_problems(section: str, brief: str | None = None) -> tuple[list[str], l
     you to move around"). The `Moved:` line is `ui_layout.py moves` at 1920x1080, 1280x800 undocked and 1280x800 docked;
     each list line names one element and carries `asked (who): "their words"`, found word for word inside the brief's
     quotations (--brief, or the PR's 'Brief (who):' lines), naming the element when it is pinned (hud-pins.json), unless
-    the pinned element only changed height in place (resized_in_place, w1824). There
+    the pinned element only changed height in place (resized_in_place, w1824). The line may be a `- ` / `* ` list item,
+    as field() reads every other field (w3846). There
     is no other way to pass: `not asked: justified` was used for every unasked move it let through (#1397 moved Station
     Info and the hover card in the dock and passed). `not asked: reverted` does not count: re-take the after census."""
     lines = section.split("\n")
-    head = next((i for i, l in enumerate(lines) if re.match(r"^\s*Moved\s*:", l, re.IGNORECASE)), None)
+    head = next((i for i, l in enumerate(lines) if re.match(r"^\s*(?:[-*]\s+)?Moved\s*:", l, re.IGNORECASE)), None)
     if head is None:
         return (["UI change with no 'Moved:' line: census before and after at 1920x1080, 1280x800 (UI 0.8) and 1280x800 "
                  "docked, run ui_layout.py moves with the three pairs, paste its lines and mark every move asked (who): "

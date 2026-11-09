@@ -96,6 +96,14 @@ class CheckTest(unittest.TestCase):
         self.assertEqual(pe.field("* Intended look (ben): \"wrap\"", "Intended look"), ("ben", '"wrap"'))
         self.assertEqual(pe.field("Content: x", "Content"), ("", "x"))
 
+    def test_a_bulleted_moved_line_is_read(self):
+        # w3846 (w3827's fix pack): `- Moved: 0 element move(s) ...` read as no Moved line at all, unlike field()
+        line = ("Moved: 0 element move(s) over 4 px at 1920x1080 undocked, 1280x800 undocked, 1280x800 docked "
+                "(ui_layout.py moves, the same save and screens before and after)")
+        self.assertEqual(pe.moved_problems(line), ([], []))
+        for bullet in ("- ", "* ", "  - "):
+            self.assertEqual(pe.moved_problems("Shape: 0 stretched\n" + bullet + line), ([], []), bullet)
+
     def test_a_measurement_table_in_the_section_is_named(self):
         # w1648: a before/after table inside ## Evidence was read as claims, one "basis" problem per row
         table = "| leg | fps | CPU ms a second |\n|---|---|---|\n| before | 62 | 2530 |\n| after | 66 | 2357 |\n"

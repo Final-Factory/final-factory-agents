@@ -135,6 +135,14 @@ census (`<shot>.json`: small, clipped, off-screen and overlapping text, covered 
   re-serializes a few `.mat` files (DysonBot, Lance), and `build_player.sh` refuses a tree with tracked changes: restore
   them with `git checkout -- <those files>` before the build. A dev player's title census counts as `title` since w3768
   (its Graphy counter no longer makes pins "not shown").
+- **Fix-pack traps (w3827, fixed or recorded by w3846; checklists/ui.md item 41).** A census from a player built before
+  w3846 counts slots in rows a RectMask2D hides (InventoryGridFit's view) as clipped, overlapping and unreachable (w3827's
+  core-open at 1280x720: 30, 4 and 4, all masked); the census skips them now (`DeckTourChecks.MaskedOut`). `ui_layout.py
+  check`'s "cut off by the screen edge" measures a text's drawn glyphs (`textRect`) since w3846, not its padded box
+  (stability-count: box at x 1313 on 1280, frame drawn to x 1276). Commit before `build_player.sh`: it restores tracked
+  changes when it ends (w3827 lost a doc edit; the diff waits in `restored.patch` in the build's cache entry). For a fix
+  pack, the critic's and `moves`' before is the commit before the regressing merge, not master (against master w3827's
+  critic called the restored layout 6 "moves"). `pr_evidence.py` reads a bulleted `- Moved:` line since w3846.
 - **Debug Info in a tour (w3309).** `{"setup": "debuginfo:on"}` keeps the development read-out up in `shot` stills and
   logs `rect debug info` in `tour.log`. Its drawn lines are wider than its own RectTransform (284 against 243 px at
   1280x720): measure the union of its TMP lines' rects, not the panel's. A `record` clip does not show it (absent from all

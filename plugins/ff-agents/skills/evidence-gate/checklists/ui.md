@@ -477,6 +477,26 @@ control, and a redesign goes out as 2 or 3 clearly different options built from 
 39. **Tour the before build again after a merge that moves a neighbour, and check the edge of a scroll area (w2929).** w2920 (moving Station Info) merged in the middle of w2929, which was making the Command Core window fit at 1280x720. Its stills, taken before the merge, showed a clean window. After the merge, a fresh ui-critic found the window covering the station controls players see (BROKEN). Build `origin/master` at the merge, tour it as the new before, and tour your branch again; the Window overlaps line then reads 1 before, 0 after. A window must stop above the controls players see, not only above the strip that draws over the windows (`SelectionColumn`: `AboveDrawnStrip` with `StationPanel.Column`). The critic flagged the scroll area too. Its edge cut a stop through its text, and a cut row sat flush on the button under it (UGLY, twice). The fix: end the viewport at the top of a row it would cut (`WindowFitRows`), and keep a gap above a footer pinned under it (`WindowFit.FooterGap`). Look at the row at the bottom edge of every scrolling still before the critic does.
 40. **Tour a HUD strip that grows at runtime at its fullest, against its neighbours, at every UI scale (w2952).** #3074 (w2923) let the alert row (`AttackWarnings`, inside the hotbar's `ActionBarParent`) widen left as alert kinds came up. Its tour showed one alert, so it passed; the nightly merge review toured every alert kind up at UI 0.9, 1.0 and 1.25 and at 1280x720, 1280x800, 1920x1080 and 2560x1440, and the last tile covered the Space badge in 16 of 30 stills (every 1920 and 2560 one) and ran under the station controls or Station Info in 9 at 1280 wide. For a strip whose width comes from content (alerts, a queue, a tab row, chips), tour it full: every kind or the most items the game can show, at those three scales and four sizes, and measure it against each neighbour, not only against the screen edge. The fix places the row from its neighbours' rects (`AttackWarningPanel.Place`: stop short of the ability row, start right of the controls and Station Info, wrap to two rows, else stand above). **A piece nested inside another block turns that block's standing overlaps into "kept":** `ui_layout.py check` counts every overlap of `ActionBarParent` with its neighbours as "kept between blocks the change moved" once `AttackWarnings` moves inside it, though none of them is new. Compare each kept pair's area with the before build's and say on the `Overlaps:` line that each is the same or smaller (w2952: Station Info 124,613 to 54,725 px², the controls 204,114 to 204,114); a kept pair that grew is this change's.
 
+41. **Five census and build traps of one fix pack (w3827, recorded and fixed by w3846).** w3827 restored the UI that the
+    11-07..09 merges broke (the Player Inventory's height at 1280x720), and five of its checks misled it:
+    - **A row a RectMask2D hides is not a finding.** The fix's core-open at 1280x720 counted clipped 30, overlaps 4,
+      unreachable 4: every one an inventory slot in a row scrolled out of InventoryGridFit's view, a RectMask2D with no
+      ScrollRect, and the still showed nothing there. The Deck tour census (`DeckTour.IsVisible`, which `ui_check.py shots`
+      reads) now skips anything whose centre an enclosing RectMask2D or Mask hides (`DeckTourChecks.MaskedOut`). A player
+      built before that change still counts them: check a flagged path against the still before you chase it.
+    - **"Cut off by the screen edge" is where the glyphs are.** `ui_layout.py check` called Station Core cut off 33 px:
+      stability-count's padded TMP box reached x 1313 on a 1280 screen, while the drawn frame ended at x 1276. It now
+      measures a text's `textRect` (drawn glyph bounds) where the census has one.
+    - **Commit before you build, and edit nothing tracked while it runs.** `build_player.sh` restores every tracked file it
+      finds changed when the build ends, so w3827's uncommitted doc edit was reverted; the diff is kept as
+      `restored.patch` in the build's cache entry beside the player. `git apply` it from there if it happens.
+    - **A fix pack's before is the commit before the regressing merge, not master.** Give ui-critic (and `ui_layout.py
+      moves`) the true before: w3827's run 2 against master flagged the restored layout as 6 "moves", each the fix itself
+      (the inventory's title back on top, equal to the true before 36616e3c54). Name the before's commit in `Critic:` and
+      `Moved:`. Item 22's "current master" holds for a change; for a restore, master is the broken state.
+    - **`pr_evidence.py` reads a bulleted `Moved:` line.** It read `Moved:` only as a bare line, unlike every other field
+      (`field()`, w3050), so `- Moved: 0 element move(s) ...` read as no Moved line at all; it accepts `- ` and `* ` now.
+
 19. **The Deck tour is a stand-in (w770).** It forces its own window size and a scripted Deck, so it cannot show Steam's
     layout choice, the Proton first-frame resolution, the Steam client version or touch. A Deck UI change says "verified on
     a real Deck" or "not verified on a real Deck" ([deck.md](deck.md)). For a stored bad size use `-ffDeckTourSize none
