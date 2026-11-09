@@ -42,6 +42,10 @@ whole verification. The repo's own `CLAUDE.md` is binding and longer; this skill
   queued. Check the first lines of a background job's log within seconds of starting it.
 - A wait loop `until ! pgrep -f "<pattern>"` matches its own shell's command line and never ends (w3432); bracket a
   letter (`pgrep -f "[e]cho-biscuit"`) or wait on a pid file.
+- **Timing builds** (w3764): a build time is shared work, `bench_queue.py run --what "<what>" -- <cmd>`; `timed` refuses a
+  name with "build" in it, and a loop `until grep -q granted` on its log then waits forever (w3764 lost 10 min). Stop a
+  wait loop on `refused` too. Git Bash on Windows has no `bc`: subtract times with `awk "BEGIN{print $t1 - $t0}"`
+  (w3764's first run printed 0.0 for every leg).
 - **A wait loop on "no `cargo.exe` left" (`tasklist`) on a shared Windows machine never ends either** (w3687): other
   workers' cargo and clippy runs match it. Wait on your own job's output (a marker line your script prints last, or
   the background task's notice), never on a process name.
