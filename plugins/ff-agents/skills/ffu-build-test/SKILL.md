@@ -50,6 +50,11 @@ whole verification. The repo's own `CLAUDE.md` is binding and longer; this skill
   `server.pace(n)` waits on that thread: the RED run of `a_malformed_op_is_dropped_and_counted_and_every_client_follows_on`
   took 722 s to fail. Receive what you need with `recv_timeout`, call `pace`, join the followers, then assert: RED then
   failed in 2.18 s (measured, lothdesktop).
+- **A served-shard test that moves something by wall time and then counts ticks fails on a loaded runner** (w3755,
+  ffu #530). A loaded CI runner (biscuit, swap 100 % full) runs the shard under 16 ticks a second, so a ship flight
+  paced by `Instant` crossed in 26 ticks of both stations' logs where the test asked for 32 (run 42550917935). Pace a
+  move by the ticks the follower saw (advance per followed tick), and prove it by running the test with the shard's
+  `tps` set low: it passed at 6.
 - Put those exports in `$TMPDIR/rust.sh` and source it in every shell call: shell state does not persist.
 - **Keep one target per worker; never share a `CARGO_TARGET_DIR` across parallel workers** (w3396). Two builds on one
   target wait on cargo's build-directory lock ("Blocking waiting for file lock"): one rebuild alone took 44 s, two at
