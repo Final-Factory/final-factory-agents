@@ -66,6 +66,20 @@ whole verification. The repo's own `CLAUDE.md` is binding and longer; this skill
     join (run 42551634569). Assert the logic instead (the load was asked for in time: `entered_unrequested`), report
     the latency as a measure, and check it in a timed flight. A CPU hog of 48 busy loops raised the max join from tens
     of ms to 1.8-2.6 s locally (measured, lothdesktop): use one to see a test's timing dependence before CI does.
+  - **The stall-free clock (`stall::awake()`) sees only the test process's own stalls, not a child's** (w3798, ffu
+    #550). follow.rs's restart test judged "following 3 s after the server was up" on it and still failed: the server
+    child's own sleeps came back 374, 1117 and 2381 ms late while the test process saw one 2.5 s stall (repeat run
+    42565510541 run 28, ffu-lothdesktop-1). Time on the awake clock only the step this process sees of the code under
+    test (the follower's dial reaching the test's front, `Front::relayed`), and wait for the child's answer as an event
+    bounded by `stall::ALIVE`. Plant a child-only stall with `NtSuspendProcess` on the child's new pid: wait for a pid
+    that was not there before, since its log file appears before the spawn and a pid read then is another process.
+  - **Before a test ends a process that is the only route of state to another, wait until the state arrived** (w3798,
+    ffu #561). failover.rs's chain killed an early taker right after opening its valve; a standby that a loaded runner
+    had stopped held no world yet, and a standby with no world never takes over (`Standby::follow`), so it sat silent
+    for 180 s ("standby 4 did not take over: \"\""). Wait for `holds_world` before the kill, bounded by the run's
+    `Deadline`; plant `FFU_FAILOVER_CHAIN_PAUSE_WORLD_MS`: RED in 191 s on main, GREEN in 27 s.
+  - A worker's process-kill hook refuses any Bash command whose text holds the word "kill", a commit message included:
+    write the message to a file and `git commit -F` it (w3798).
   - **A raw-socket test of a peer link reads past the receiver's ACKs** (w3792, ffu #542). The inbox's `keep_alive`
     writes `ACK(held)` every `IDLE` (100 ms) into every link it has answered, so on a loaded ffu-windows runner an ack
     came before `BUILD_REFUSED` and the test, which read one frame, got `(35, Some(0))`. Read frames in a loop past
