@@ -384,6 +384,8 @@ never rewritten (`tools/check_snapshot_compat.sh BASE_REF` holds it in CI). No t
   `gh api repos/Final-Factory/ffu/actions/jobs/<job id>/logs --allow-escape-sequences | sed 's/\x1b\[[0-9;]*m//g' > "$TMPDIR/job.log"`
   (without the flag gh refuses the colour codes and writes nothing; w2895 leg D, ffu #257, 2026-11-06). Biscuit's
   gh 2.46.0 has no such flag ("unknown flag"); there the same command without it writes the whole log (w3552).
+  Its lines can be megabytes long (a panic's process dump): never `grep -o '.{0,6000}'` on it, which ran for minutes
+  twice in w3633. Slice it with a few lines of Python (`t.find(...)`, then `t[i:i+12000]`) from a script in `$TMPDIR`.
   To wait, use `blocked_on` with `ci:Final-Factory/ffu#<n>` and the head, never a poll loop.
   - **A `ci:` wait ends as soon as one leg fails** (w3272), even while the other legs are still queued. When that
     red is a test your PR doesn't touch, and you will merge over it (below), a second `ci:` wait on the same head
@@ -613,6 +615,14 @@ never rewritten (`tools/check_snapshot_compat.sh BASE_REF` holds it in CI). No t
     RED: `FFU_OWNER_TERM_STALL_MS=1500`. A test that waits for a fenced owner's answer must accept both. Main got
     the same wait from w3605's a1f5d0e7 (#488) while #531 was open: merge `origin/main` into a flaky-test fix before
     its proof runs, and read a red repeat against main's newest fixes first (#531's run 37 was #488's cause 8).
+    - **Second case, failover.rs `chain_run`** (w3633, ffu #565): at announce step 0 the valve drops the taker's first
+      body, the taker mutes after 1 s, and the test waited for `taps[o + 1].answered() > 0`, which a muted taker never
+      gives once B's dial comes later than that. CI run 42579387597 hung to the 420 s budget ("2 connections, 0
+      answered"; the taker's stderr "acknowledged nothing for 1046 ms; peers are turned away until it does"). It now
+      ends on `answered() > 0 || taker.said(TURNED_AWAY)`. RED: `FFU_FAILOVER_CHAIN_SILENCE_TAKER_MS=3000` (the tap
+      holds B's dials unanswered from the takeover). The check before you merge a peer-link test: `grep -n
+      'answered()\|stale()' crates/ffu-server/tests/*.rs`, and each wait that can meet a muted owner also ends on its
+      "peers are turned away" line.
   - **Prove a "fails under load" flake with repeat.yml's `load` input** (w3793, ffu #531): `-f load=workspace` loops
     the workspace tests beside the runs, `-f load=N` loops N copies of the test binary. At the end the job prints
     the load's passes and failures, and each panic with its message. On biscuit, workspace and 8 copies were too
