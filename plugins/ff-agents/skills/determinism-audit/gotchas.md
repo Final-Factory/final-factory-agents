@@ -43,6 +43,7 @@ load-bearing for future runs even where the original defect is fixed.
 - [A hand-launched built host: TargetClients counts the host, and turn the audit on](#hand-launched-host) (w2797; every post-ready segment needs `ffauto:`, a new label per relaunch, w2861; pin the agent channel to your pid, blueprint pieces stay separate grids (a Standard piece needs a Connector), w3292, w3325; a flying Abduction Machine's aggro from `AttackScheduleDetail`, w3325; `inventory.remove` sends no op, a report holds ~2600 heartbeats, w3317; a Leech raid goes pre-join and from far away, w3323; a flying machine's craft at its takeoff centre tile, no flying temperature reader, a station 50 tiles out, w3326; devunlock fills the inventory, the Circuit tab path and a clean still, w3592)
 - [A client's load-time check line describes the served join snapshot, not the host's load](#served-snapshot-check) (w3521)
 - [A peer on a machine loaded by non-game work fails as client and as host: check the load before you say ready](#loaded-peer) (w3719; w3757: BEAST/LothDesktop ffu runners, bound the wait)
+- [A Mac built host shares the m5 with other workers' players: GPU restarts, a taken port, a script edited while it runs](#mac-host-shared) (w3785)
 - [An ffnightly Linux host for a remote client: its port, its audit, its station builds](#ffnightly-linux-host) (w2824)
 - [An editor pair with presentation checks: no Audit ids in the config, a healthy host, a client machine without bench rounds](#editor-pair-presentation) (w2399)
 - [An Oracle shop pair: host buys first, `near` is tier 1, price is derived](#oracle-shop-pair) (w2518)
@@ -1718,3 +1719,23 @@ deep queue keeps the machine loaded for hours. Count the queue first:
 `gh run list -R Final-Factory/ffu --limit 40 --json status --jq '[.[]|select(.status!="completed")]|length'`. On a leg
 machine with ffu runners and a queue above a handful, wait at most about 15 min, then tell the other legs and report so
 the request is re-paired on machines without ffu runners (the m5 Mac may host; a Mac client may not).
+
+## A Mac built host shares the m5 with other workers' players: GPU restarts, a taken port, a script edited while it runs {#mac-host-shared}
+
+w3785 (2026-11-08, the PR #3457 pair, m5 host and LothDesktop client) never joined, for three reasons that all came from
+other work running on the same machines:
+
+- **GPU restarts.** The m5's GPU restarted three times in 35 minutes while other workers' players ran (03:33Z, 03:51Z under
+  someone else's player, 04:06:46Z under the host). `player_slots.py launch` refused the first launch during its 15-minute
+  cool-down (exit 6), then killed the host 28 s after HOST WAITING (`the GPU restarted under it (2 GPURestartBegin)`,
+  exit 247). Before you launch a Mac host, run `pgrep -fl 'finalfactory|Final Factory'` and check `gpu-fault.json` in
+  the player-slot folder. If another player is running or a fault is under an hour old, say so to the other legs: a
+  second player beside yours is the likeliest trigger (a guess; not measured). After a restart under your player, the
+  crash rule ends your launches on that machine for the request (`evidence-gate`, `checklists/crash-repro.md`).
+- **A taken port.** Another worker's solo player held UDP 7777, so the host failed with `Unable to start localhost host on
+  port 7777`. Pick a port that `lsof -nP -iUDP:<port>` shows is free (7790 was), and send it to the client before
+  HOST WAITING.
+- **A script edited while it runs.** The client's launch script, edited for the new port while it was already armed and
+  waiting, kept going to `:7777`: bash had already read the old line. After any change to a port or flag, stop the armed
+  script and start it again, and check the flags in the running process (`ps -o args`, or Windows
+  `Get-CimInstance Win32_Process`) before HOST WAITING.
