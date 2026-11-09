@@ -379,6 +379,12 @@ never rewritten (`tools/check_snapshot_compat.sh BASE_REF` holds it in CI). No t
   in the fixture as a field declared after (so dropped after) anything that still writes there, such as a server thread
   joined in `Drop`. Never make one by hand under `std::env::temp_dir()`. Check locally that the temp folder is empty
   after the test.
+- **A repeat run red with every run passed and `left ... ffu-crash-<pid>-<ms>.sock` in its temp folder** was the
+  crash monitor, not the test (w3871, ffu #594: run 23 of repeat run 42663520008, Linux). Every ffu binary starts a
+  monitor that binds that socket, and on Unix it sees its app gone only within 50 ms (`watch_app`), while repeat.yml
+  lists the folder the moment the test binary exits. Since #594 the app removes the path once connected
+  (`try_attach`); `crates/ffu-crash/tests/monitor.rs`'s `no-socket-file-once-attached` holds it. Seen again: look for
+  another path a child makes in the temp folder before blaming the test.
 - **A Windows test job red with `LNK1171: unable to load mspdbcore.dll (error code: 1455)`, then "required to be
   available in rlib format" errors, ran no test**: error 1455 is "the paging file is too small", so BEAST ran out
   of commit memory while linking (w3385, ffu #373, CI run 42394339327 on ffu-beast-3). That is the machine, not the
@@ -649,6 +655,9 @@ never rewritten (`tools/check_snapshot_compat.sh BASE_REF` holds it in CI). No t
       with standbys that calls `run.reach` before its cut has this flake**: reach the cut with `reach_or_gone` from the
       start, and plant it with `suspend_for` before the reach (`FFU_OWNER_TERM_FENCED_STOP_OWNER_MS=3000`, 0 of 3 on
       the old test, 3 of 3 fixed, BEAST).
+      Since w3871 (ffu #594) `Run::reach(owner, standbys, target, deadline)` takes the standbys itself, returns `Option`
+      and is `#[must_use]`: a test with standbys handles a None as a takeover, and only a test with none (`&mut []`)
+      panics there. RED for the last such test: `FFU_OWNER_TERM_CUT_OWNER_STOP_MS=3000`, 0 of 3, 3 of 3 fixed.
   - **The directory's simulated `Group` seeds its rng with `seed | 1`**, so seeds `2k` and `2k+1` are one run (w3849,
     ffu #577). Sweep odd seeds (`(1..600).step_by(2)` is 300 distinct runs). A sim sweep with `set_delay` reproduced in
     seconds an election stall (1,489 ticks at delay 25) that about 30 local process legs did not.
