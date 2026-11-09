@@ -345,6 +345,15 @@ never rewritten (`tools/check_snapshot_compat.sh BASE_REF` holds it in CI). No t
   - A flake that never shows locally (324 runs of peers.rs did not) is proved by a plant that forces its cause:
     `FFU_PLANT_SPAWN_FAIL=<first>:<count>` fails link threads `first..first+count-1` of each process. RED with the
     old panic put back (out of time in 63 s, "A at 1, B at 0", B's crash report present), GREEN with the fix.
+- **A ci run that concludes `failure` with every listed job green, or a `crosscompare` that fails on `Found 0
+  artifact(s)` / `no runs (... runs.tsv: No such file ...)`, is GitHub losing jobs, not a test or a desync** (w3882).
+  During GitHub's Actions incident tp8cghg7tlc4 (2026-11-09 from 18:12Z), three PR runs (ffu #595, #597, w3871's
+  branch) never got their `crosscompare` job created after the last hashcheck ended (18:22-18:28Z): the jobs API lists
+  none and no annotation says why. Two more got jobs dropped the other way: ffu #600's run 42674382318 created no
+  hashcheck job at all and #590's 42672555412 no Linux hashcheck, yet `crosscompare` (`if: always()`) ran and failed on
+  missing traces. Check `curl -s https://www.githubstatus.com/api/v2/incidents.json` and compare each `needs` job's
+  end time with the incident window, then push a fresh commit once the incident is resolved (no test ran, so this is
+  not a rerun of a flake). The gate fails closed both ways, so nothing went green by mistake.
 - **`gh pr edit --body-file` fails on ffu with "Projects (classic) is being deprecated"** (w3751): set the body with
   `gh api -X PATCH repos/Final-Factory/ffu/pulls/<n> -F body=@<file>`.
 - **A PR that changes only `docs/` runs no CI**: `ci.yml` has `pull_request: paths-ignore: ['docs/**']` (ffu #297).
