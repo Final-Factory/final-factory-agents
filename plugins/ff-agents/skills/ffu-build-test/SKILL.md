@@ -241,6 +241,15 @@ never rewritten (`tools/check_snapshot_compat.sh BASE_REF` holds it in CI). No t
 
   (w3459.)
 
+- **After merging `origin/main`, a red test you did not touch is main's until a run shows otherwise** (w3797, ffu #551).
+  A PR merged while its CI was still queued can leave main red, and a new test can miss what another PR made live.
+  #524 broke `the_trailer_save_powers_every_mass_driver` and #557 fixed it; #557's new
+  `the_trailer_save_draws_ff1s_crafting_need` did not list #546's 70 Advanced Mining Stations, and #564 fixed that.
+  Run that one test on main in your slot (`git checkout --detach origin/main`,
+  `cargo test --release -p <crate> --test <file> <name>`, then `git checkout <your branch>`), and look for a fix in flight
+  (`gh pr list -R Final-Factory/ffu`) before editing the test yourself, which would conflict with it. Then wait on that
+  PR with `blocked_on`, not on your own CI.
+
 ## 4. Land it: PR, CI with gh, merge your own
 
 - Push your branch, `gh pr create -R Final-Factory/ffu --base main --title ... --body-file ...`, with
