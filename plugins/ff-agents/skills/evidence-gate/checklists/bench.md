@@ -19,6 +19,14 @@ Mechanics: the game repo's `Documentation/Bench-Lock.md`.
       last ticket goes. A holder with no turn and no background task running is warned after 2 minutes, and 10 minutes
       after the warning its ticket is revoked (bench_queue.py's own revoke, then the helper's tree 90 s later): w3536's
       probe held LothDesktop's ticket for about an hour on 2026-11-08 while its worker sat idle behind a hold.
+- [ ] **The background task that holds a ticket outlives the run under it** (w3736, 2026-11-08). A Bash
+      `run_in_background` call ends at its own `timeout`, 30 min by default (2 h at most), and its end lets the ticket go:
+      runners the queue parked start again in the middle of your run. w3736's ticket lapsed one minute before a 1 h FFU
+      soak on m3; parked ffu CI jobs (a leak check with dozens of ffu-server processes) ran beside it, and both shard
+      servers failed with EAGAIN (os error 35). Give the holder `timeout: 7200000` and plan the timed legs inside it (take
+      a new ticket for anything longer), and check `tail -1` of its log still says `granted` right before you start.
+      macOS has no `timeout` command: wrap a bounded run in
+      `perl -e '$p=fork; if(!$p){exec @ARGV} $SIG{ALRM}=sub{kill TERM=>$p}; alarm N; waitpid $p,0; exit $?>>8' cmd ...`.
 - [ ] **A whole-player A/B goes to a play-only timing machine when one is online** (w1946, lothsahn: "Can the portal do
       builds on one machine and then use this other with an exclusive lock for benchmarks?"; ff-factory PR #599). Two or
       more built Windows players timed on a save (probe_ab_win.sh's kind of run, numbers from `PerfSummary`): build them
