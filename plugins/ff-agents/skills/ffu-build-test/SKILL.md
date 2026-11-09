@@ -103,6 +103,16 @@ whole verification. The repo's own `CLAUDE.md` is binding and longer; this skill
     its `Deadline`. A 48-loop hog did NOT reproduce it (main 12 of 12 green, lothdesktop); a planted 5 s lag 5 ticks
     short of the end (`FFU_STATION_MOVE_PLANT_LAG_MS`) failed main 3 of 3 with CI's message. Before you push a flake
     fix, run `git log origin/main -- <test file>` again: w3761 fixed the same race in parallel while #560 waited on CI.
+  - **A "no tick skipped" guarantee never rests on a wall-clock wait** (w3833, ffu #572). In `rolling_deploy` the
+    restarted shard waited its 5 s `--handoff-wait-ms`, printed "0 of 2 clients back within 5s; running on", and a
+    gateway that came back after tick 603 got its Welcome there: the client went 602 -> 604 (CI job 129126409173, a
+    loaded Windows runner). The fix is in the product, not the timeout. The shard keeps each station as it was at the
+    handoff tick, plus every frame since (`Backlog`, at most `OUT_QUEUE / 2` = 512 ticks), and gives a late Hello that
+    Welcome and those frames. Plant the lateness where the test controls it: `FFU_DEPLOY_PLANT_LATE_ROUTE_MS=7000`
+    tells the gateway shard 2's address late. Main failed with CI's own assert (left 735, right 607) and the fix passed;
+    repeat.yml x50 was then green on ffu-windows and ffu-linux. When your PR's CI then fails in an unrelated test
+    (there: `station_move`, the directory group re-electing), Ben's 2026-11-07 rule below applies: hand up a request to
+    fix its cause, name the red run and that request in the PR, and merge on the other green checks without a rerun.
   - **Run the whole lib in the Windows loop, not only your test** (w3792): `gh workflow run repeat.yml -f
     package=ffu-server -f target=ffu_server -f count=50 -f os=ffu-windows`. A filtered loop passed 50 of 50. The
     whole-lib loop found a second flake in a neighbouring test at run 10. The loop stops at its first failure.
