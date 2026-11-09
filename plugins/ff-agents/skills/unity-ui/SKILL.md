@@ -129,6 +129,12 @@ census (`<shot>.json`: small, clipped, off-screen and overlapping text, covered 
   draw in a development player and show up as overlaps and flicker; `ui_layout.py` ignores them,
   `ui_check.py` does not. Hold keys by `seconds`, not frames: a frame count is gone in a blink at
   200 fps (#1258).
+- **Tools outside this folder, and two traps before a player build (w3768).** The flicker check is the game repo's
+  `scripts/deck_audit/ui_check.py flicker <clip folder>` (not under `$FF_SKILLS`); `ui_layout.py` and `pr_evidence.py`
+  find the game repo's hud data through `FF_GAME_REPO` (`export FF_GAME_REPO=<your worktree>`). Quitting the editor
+  re-serializes a few `.mat` files (DysonBot, Lance), and `build_player.sh` refuses a tree with tracked changes: restore
+  them with `git checkout -- <those files>` before the build. A dev player's title census counts as `title` since w3768
+  (its Graphy counter no longer makes pins "not shown").
 - **Debug Info in a tour (w3309).** `{"setup": "debuginfo:on"}` keeps the development read-out up in `shot` stills and
   logs `rect debug info` in `tour.log`. Its drawn lines are wider than its own RectTransform (284 against 243 px at
   1280x720): measure the union of its TMP lines' rects, not the panel's. A `record` clip does not show it (absent from all
