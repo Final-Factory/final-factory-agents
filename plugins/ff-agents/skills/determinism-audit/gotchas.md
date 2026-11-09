@@ -57,6 +57,7 @@ load-bearing for future runs even where the original defect is fixed.
 - [Gatling firing and a held recipe: what the fingerprint and observe.state cannot show](#gatling-and-held-recipe-witness) (w3371)
 - [A relay client that clicks the UI: a window, 1920x1080, a station with a Command Core](#relay-client-ui) (w3395)
 - [Comparing circuit.dump between peers: leave the alert's soundCooldown out](#circuit-sound-cooldown) (w3664)
+- [A host script run right after launch: the agent channel answers before the world exists](#agent-channel-before-world) (w3853)
 
 ## Full-window rule: never diagnose from a partial window {#full-window-rule}
 
@@ -1745,3 +1746,18 @@ other work running on the same machines:
   after the `go` flag, and write that file instead.
 - **LothDesktop as the client stays loaded by ffu CI.** Its bounded wait ran out: 03:22 to 03:57Z, CPU 43-100%, 4 to 18
   rustc/cargo processes, 15 to 19 ffu runs not completed. It went ahead only because the m5 host was unloaded.
+
+## A host script run right after launch: the agent channel answers before the world exists {#agent-channel-before-world}
+
+A pair host's agent channel (`AgentControl/session-<pid>.json`) answers HTTP before the new game's world and player
+exist, so a host script that reads the player right after `player_slots.py launch --detach` fails. w3853 (lothdesktop,
+2026-11-09): `pair_scene.py prejoin` died at `px, pz = ch.player_xz()` with `KeyError: 'x'`
+(`scripts/feel/run_fleet_motion.py:206`): `/v1/snapshot/player` had no `world` yet. The same script, unchanged, run
+once the host's `-logFile` showed `[LocalMultiplayerAutomation] status host-ready` (then
+`waiting-host-peers-connected`), printed `prejoin ok`.
+
+- Before driving a hand-launched host, wait for `status host-ready` in its `-logFile` (`until grep -q 'status host-ready' "$LOG"; do sleep 5; done`).
+- The host's peer timeout (`HostPeerConnectTimeoutSeconds = 900`, `LocalMultiplayerAutomationBootstrap.cs:159`) runs
+  from the start, so launch the host only once the client's player is built and ready, then prejoin, then send `go`.
+  w3853 did that: build done on both, host up, prejoin, client joined within about 3 minutes.
+- A first run that fails this way is a timing slip of the runner, not a script bug: rerun it unmodified and say so.
