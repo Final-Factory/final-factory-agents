@@ -15,7 +15,7 @@ not deterministic or not fully encoded breaks recovery as well as peers.
 | Step | File | What |
 |---|---|---|
 | 1 | `ops.rs`, `pub enum Op` | The variant, with a doc comment: what it does and who may send it (players, or only the world's exchange as `EXCHANGE_SENDER`). Fields are small integers (`u16` tiles, ids); no floats. |
-| 2 | `ops.rs`, `StampedOp::encode` / `decode` | A new tag number after the last one, and its fields in a fixed order. Never reuse or renumber a tag: op logs on disk hold them. |
+| 2 | `ops.rs`, `StampedOp::encode` / `decode` | A new tag number after the last one, and its fields in a fixed order. Never reuse or renumber a merged tag: op logs on disk hold them. Two open PRs can take the same next tag (w3797: ffu #551 and #557 both took 25 and 26): before you push, look at the tags open PRs claim (`tools/row_numbers.py next op --prs`), and when another PR takes yours first, renumber your unmerged one, including a test that probes the first unused tag (`op_body_len(N).is_err()`). |
 | 3 | `ops.rs`, `op_body_len` | The body length for the new tag, or streamed op logs (`ffu_headless::stream`) cannot skip it. |
 | 4 | `ops.rs` tests | Add it to the round-trip list of every variant. |
 | 5 | `sector.rs`, `fn apply` | Apply it. Return a `SimError` to refuse (a missing building, a wrong kind, an out-of-range value): a refused op moves `ops_rejected`, not the state. Use `get`, `checked_*` or `saturating_*`; no `unwrap`, indexing or unchecked arithmetic in the tick. |
