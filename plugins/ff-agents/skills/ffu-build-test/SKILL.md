@@ -247,6 +247,20 @@ never rewritten (`tools/check_snapshot_compat.sh BASE_REF` holds it in CI). No t
   when the runner starved them. #498's Windows job on ffu-lothdesktop-2 lost three failover.rs takeover tests to a
   2.4 s stall. Hand up the cause-fix (`hand_up_requests`) with the job id and the panics, then merge on the run's other
   green checks. Say so in a PR comment that names the red job and the follow-up. Never rerun it to green.
+- **A panicking ffu-server thread leaves the process alive and deaf, and says so only in its crash report** (w3787,
+  ffu #545). `ffu_crash::install` writes the report to `FFU_CRASH_DIR` (default `%LOCALAPPDATA%\FinalFactoryUniverse\
+  crashes`, the runner account's), and the panic ends only that thread. `std::thread::spawn` panics when a loaded
+  runner has no room for a thread: in `replica.rs`'s `accept_loop` that left a shard deaf to every peer that dialled
+  after it, and the peers test ran out of time with "A at 929, B at 930" (one shard a tick ahead of the other).
+  - Start a server's threads with `std::thread::Builder::spawn` and handle its `Err`, dropping only that connection
+    (`spawn_link` in `replica.rs`, the client accept loop in `net.rs`).
+  - A test that runs ffu-server children gives each its own stderr file and `FFU_CRASH_DIR`, and prints their status,
+    stderr tail and crash reports when it fails (`Proc::state` in `tests/peers.rs`). With `Stdio::null` a child's
+    panic is invisible.
+  - CI failure-report lines arriving about 5 s apart mean a stalled runner.
+  - A flake that never shows locally (324 runs of peers.rs did not) is proved by a plant that forces its cause:
+    `FFU_PLANT_SPAWN_FAIL=<first>:<count>` fails link threads `first..first+count-1` of each process. RED with the
+    old panic put back (out of time in 63 s, "A at 1, B at 0", B's crash report present), GREEN with the fix.
 - **`gh pr edit --body-file` fails on ffu with "Projects (classic) is being deprecated"** (w3751): set the body with
   `gh api -X PATCH repos/Final-Factory/ffu/pulls/<n> -F body=@<file>`.
 - **A PR that changes only `docs/` runs no CI**: `ci.yml` has `pull_request: paths-ignore: ['docs/**']` (ffu #297).
