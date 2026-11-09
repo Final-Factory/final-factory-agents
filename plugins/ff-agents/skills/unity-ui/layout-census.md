@@ -393,6 +393,11 @@ It prints the lines the pull request carries (`Overlaps:`, `Opened panels:`, `Al
   - **not restored**: with `--closed closed.json`, a census taken after closing the panel again, every HUD element the
     panel covered must be there and within 2 px of where it was. Without `--closed` the line says `not checked`, and
     `pr_evidence.py` does not accept that for a PR with opened-panel pairs.
+    A panel can also **hide** the HUD instead of covering it (w3803: the docked Station Grid window at 1280x800 took 108
+    elements, the hotbar, minimap, quick buttons and craft queue, out of the open census): they are not "covered", so the
+    tool once compared nothing and printed `yes (0 covered ...)`. It now counts the elements in `--before` that are missing
+    from `--after` as **hidden**, requires each in `--closed` within 2 px, and prints `yes (0 covered, 108 hidden, checked
+    ...)`. With 0 covered and 0 hidden it prints `not checked`, and `pr_evidence.py` rejects that and a bare yes with 0 checked.
 
   The census only sees what draws (alpha 0.02 and up). An invisible full-screen raycast catcher under a panel is
   invisible to it: with a panel open over the hotbar, also run the event-system probe (`DeckTour` `hud` block in PR

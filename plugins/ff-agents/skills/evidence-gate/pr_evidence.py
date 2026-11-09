@@ -397,6 +397,13 @@ def opened_panel_problems(section: str, pairs: int) -> list[str]:
     if not re.search(r"restored on close:\s*yes", text, re.IGNORECASE):
         problems.append("'Opened panels:' does not show the HUD restored on close ('HUD restored on close: yes'): take a "
                         "census after closing the panel and pass it as --closed")
+    else:
+        # w3803: a yes that compared no element proves nothing (the docked Station Grid window hid the HUD, so the tool
+        # checked 0 covered elements and still printed yes).
+        counts = re.search(r"restored on close:\s*yes\s*\((\d+)\s+covered(?:,\s*(\d+)\s+hidden)?", text, re.IGNORECASE)
+        if counts and int(counts.group(1)) + int(counts.group(2) or 0) == 0:
+            problems.append("'Opened panels:' says 'HUD restored on close: yes' but checked 0 covered and 0 hidden HUD "
+                            "elements, so it compared nothing: take the after census with the panel open over the HUD")
     return problems
 
 

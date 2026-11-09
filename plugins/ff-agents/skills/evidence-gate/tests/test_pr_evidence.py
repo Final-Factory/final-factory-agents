@@ -387,6 +387,17 @@ class LayoutTest(unittest.TestCase):
             line = self.OPENED_LINE.replace(bad, what) + ' intended (Ben): "anything"'
             self.assertIn("a panel the player opens may cover the HUD but must draw on top", self.reasons(self.opened_body(line)))
 
+    def test_a_restore_that_checked_no_hud_element_is_not_a_pass(self):
+        # w3803: the docked Station Grid window hid the HUD, so ui_layout.py checked 0 covered elements and printed yes.
+        yes = "restored on close: yes (3 covered HUD element(s) checked in closed.json)"
+        for text in ("restored on close: yes (0 covered HUD element(s) checked in c-closed.json)",
+                     "restored on close: yes (0 covered, 0 hidden, checked in c.json)",
+                     "restored on close: not checked (0 covered, 0 hidden HUD elements: nothing to compare in c.json)"):
+            self.assertIn("HUD restored on close", self.reasons(self.opened_body(self.OPENED_LINE.replace(yes, text))))
+        for text in ("restored on close: yes (0 covered, 108 hidden, checked in c.json)",
+                     "restored on close: yes (2 covered, 0 hidden, checked in c.json)"):
+            self.assertEqual(self.reasons(self.opened_body(self.OPENED_LINE.replace(yes, text))), "")
+
     def test_an_opened_panel_must_show_the_hud_back_on_close(self):
         line = self.OPENED_LINE.replace("restored on close: yes (3 covered HUD element(s) checked in closed.json)",
                                         "restored on close: not checked: pass --closed, a census taken after closing the panel")

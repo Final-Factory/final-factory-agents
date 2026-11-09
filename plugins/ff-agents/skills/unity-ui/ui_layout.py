@@ -451,6 +451,19 @@ def restored(closed: dict, covered: dict, tolerance: float = 2.0) -> list[str]:
     return problems
 
 
+def hidden_hud(before: dict, after: dict, patterns: list[str]) -> dict:
+    """HUD elements the opened panel HID rather than covered (w3803): solid in the before census, absent from the after
+    census (a docked window at 1280x800 hides the hotbar, minimap, quick buttons and craft queue). They are not in
+    opened_over_hud()'s covered set, so without them the restore check compares nothing. Maps a path to its before
+    rects, for restored()."""
+    now = {e["path"] for e in after["elements"] if solid(e)}
+    out: dict[str, list] = {}
+    for e in before["elements"]:
+        if solid(e) and e["path"] not in now and not opened_prefix(e["path"], patterns):
+            out.setdefault(e["path"], []).append(e.get("visible") or e["rect"])
+    return out
+
+
 def moved_blocks(before: dict, after: dict, depth: int = 2, tolerance: float = 2.0) -> set[str]:
     """Blocks with an element (matched by path, present on both sides) whose visible rect moved more than tolerance.
     An overlap the change leaves between blocks it moved is the change's to fix, even if it was there before
@@ -1783,13 +1796,21 @@ def run_check(args) -> int:
 
     (under, under_s), (blocked, blocked_s), (cut, cut_s) = split("under"), split("blocked"), split("cut")
     if args.closed:
-        gone_all = restored(load(args.closed), over["covered"], args.tolerance) if over["covered"] else []
+        hidden = hidden_hud(before, after, patterns)
+        to_check = {**over["covered"], **hidden}
+        n_covered = sum(len(r) for r in over["covered"].values())
+        n_hidden = sum(len(r) for r in hidden.values())
+        gone_all = restored(load(args.closed), to_check, args.tolerance) if to_check else []
         gone_before = set()
         if args.closed_before and over_before["covered"]:
             gone_before = set(restored(load(args.closed_before), over_before["covered"], args.tolerance))
         gone, gone_s = [x for x in gone_all if x not in gone_before], [x for x in gone_all if x in gone_before]
-        back = (f"{'no' if gone else 'yes'} ({sum(len(r) for r in over['covered'].values())} covered HUD element(s) checked in "
-                f"{Path(args.closed).name}" + (f"; {len(gone_s)} standing" if gone_s else "") + ")")
+        if not n_covered and not n_hidden:
+            back = (f"not checked (0 covered, 0 hidden HUD elements: nothing to compare in {Path(args.closed).name}; "
+                    f"take the after census with the panel open over the HUD)")
+        else:
+            back = (f"{'no' if gone else 'yes'} ({n_covered} covered, {n_hidden} hidden, checked in "
+                    f"{Path(args.closed).name}" + (f"; {len(gone_s)} standing" if gone_s else "") + ")")
     else:
         gone, gone_s, back = [], [], "not checked: pass --closed, a census taken after closing the panel"
     problems = under + blocked + cut + gone

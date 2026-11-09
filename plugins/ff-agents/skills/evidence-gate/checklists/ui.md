@@ -490,7 +490,7 @@ Full content: every tab's grid/list/tree whole or scrolling, fill 78-96 % (ui_ch
 Style: BlueprintPanelChild (touched) vs InvAndCraft/InventoryPanel: delta E 2.1 (on screen), alpha 1.00 vs 1.00, same art
 Overlaps: 4 block pairs before, 4 after, 0 new, 0 kept between blocks the change moved (ui_layout.py, whole screen, block depth 2); 1 opened-panel pair(s) over the HUD, not counted here
 Window overlaps: 0 not allowed after, 0 before, 0 new, 0 kept between windows the change moved, 0 standing; 1 allow-listed with the requester's words (hud-clusters.json windowOverlaps) (ui_layout.py, whole screen, open windows against the HUD and each other)
-Opened panels: 1 opened panel pair(s) over the HUD (allowed: Ben, w732 and w742), 0 under the HUD, 0 not clickable, 0 cut off by the screen edge, HUD restored on close: yes (3 covered HUD element(s) checked in closed.json)
+Opened panels: 1 opened panel pair(s) over the HUD (allowed: Ben, w732 and w742), 0 under the HUD, 0 not clickable, 0 cut off by the screen edge, HUD restored on close: yes (3 covered, 0 hidden, checked in closed.json)
 Alignment: max drift 0 px over the clusters (bottom-right HUD, top-left HUD); tolerance 2 px
 Moved: 1 element move(s) over 4 px at 1920x1080 undocked, 1280x800 undocked, 1280x800 docked (ui_layout.py moves, the same save and screens before and after); ...
 - 1280x800 undocked GamePanels/BlueprintPanelChild: x +0, y +40 px (was 392,68 458x376, now 392,108 458x376): asked (Ben): "move the blueprint window down so it clears the top bar on the deck"
