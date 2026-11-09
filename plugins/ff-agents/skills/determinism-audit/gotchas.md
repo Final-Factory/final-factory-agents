@@ -1718,3 +1718,15 @@ deep queue keeps the machine loaded for hours. Count the queue first:
 `gh run list -R Final-Factory/ffu --limit 40 --json status --jq '[.[]|select(.status!="completed")]|length'`. On a leg
 machine with ffu runners and a queue above a handful, wait at most about 15 min, then tell the other legs and report so
 the request is re-paired on machines without ffu runners (the m5 Mac may host; a Mac client may not).
+
+**A client armed under its ticket reads the host's address and port from a file at launch, never from its own script**
+(w3785, 2026-11-09, the m5-host / LothDesktop-client rerun of that pair). The client held its shared ticket with
+`bench_queue.py run --mode shared -- bash client.sh`, where `client.sh` waited for a `go` flag file and then launched
+the player. The host then moved from port 7777 to 7790 (another worker's solo player held 7777 on the m5). `sed -i` on
+`client.sh` did not reach the running bash: `sed -i` writes a new file and renames it, and bash keeps reading the old
+one. So the client launched with `-ffAutomationPort 7777` (seen in its command line and its `status joining-localhost`
+line). Write the host, port and other values the host may still change to a small file that the script reads (`source`)
+after the `go` flag, and check the running player's command line after every launch. LothDesktop also stayed loaded
+by ffu CI for that whole leg (03:22 to 03:57Z: CPU 43-100%, 4 to 18 rustc/cargo processes, 15 to 19 ffu runs queued),
+so a LothDesktop client leg should expect the bounded wait to run out. The host leg then ended on two m5 GPU restarts
+before any join.
