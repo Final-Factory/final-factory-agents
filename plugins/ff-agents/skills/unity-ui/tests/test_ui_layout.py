@@ -773,7 +773,12 @@ class PinTest(unittest.TestCase):
         self.assertIn("(1280x800 title): 0 broken, 0 not shown, 8 on the title screen", out.getvalue())
         loaded = json.loads(census.read_text(encoding="utf-8"))
         self.assertEqual(ul.layout_of(loaded), "title")
+        # w3768: a development player's fps counter and the tour's own "layout" key do not make it a game screen.
+        loaded["elements"].append(el("PersistentObjects/[Graphy]/FPS/Text", [10, 10, 80, 30]))
+        loaded["layout"] = "docked"
+        self.assertEqual(ul.layout_of(loaded), "title")
         loaded["elements"].append(el("PersistentObjects/Canvas/GamePanels/TopInfoPanel", [0, 0, 1280, 40]))
+        del loaded["layout"]
         self.assertEqual(ul.layout_of(loaded), "undocked", "a menu over a game lists the HUD too")
 
     def test_a_hover_card_under_the_docked_window_is_covered_when_another_census_measures_it(self):
