@@ -125,6 +125,7 @@ whole verification. The repo's own `CLAUDE.md` is binding and longer; this skill
     starved Windows runner (119 of 120 frames late) the last click's answer came after the last frame: "2 shown, 0
     refused, 3 clicked". Draw on while answers are pending, capped by a limit the run already has. Plant RED by
     holding the other thread's output past the end.
+- **The Write tool cannot make a new file in an ffu slot** (w3831): a worker's Write may create files only in its game sandbox and its `$TMPDIR`, so a new `src/sector/comets.rs` in `$FFU_DIR` was refused. Write the new file in `$TMPDIR` and `cp` it into `$FFU_DIR`; edit existing files with Edit or a script file in `$TMPDIR`.
 - Put those exports in `$TMPDIR/rust.sh` and source it in every shell call: shell state does not persist.
 - **Keep one target per worker; never share a `CARGO_TARGET_DIR` across parallel workers** (w3396). Two builds on one
   target wait on cargo's build-directory lock ("Blocking waiting for file lock"): one rebuild alone took 44 s, two at
