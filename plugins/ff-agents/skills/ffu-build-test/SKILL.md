@@ -430,7 +430,7 @@ never rewritten (`tools/check_snapshot_compat.sh BASE_REF` holds it in CI). No t
   no HDR accent and no bloom change. Run the newest `pr_evidence.py` (`sort -V` over the plugin cache): the merge hook
   refuses an older copy.
 - Merge on green: `gh pr merge <n> -R Final-Factory/ffu --merge --match-head-commit <sha>`. "Not mergeable" means
-  another PR touched the same lines (often `docs/PLAN.md`): `git merge origin/main`, keep both sides, push, wait for CI
+  another PR touched the same lines (now mostly code lists: `Kind` arms, op encode/decode, `SECTIONS`): `git merge origin/main`, keep both sides, push, wait for CI
   again. Never force-push or rebase a pushed branch.
   - **A PR whose CI queues for an hour behind busy runners goes stale while it waits** (w3487, ffu #428). #428 turned
     CONFLICTING twice after its legs went green: main took snapshot version 13 (#425), then the agent API's new `set`
@@ -464,8 +464,16 @@ never rewritten (`tools/check_snapshot_compat.sh BASE_REF` holds it in CI). No t
     so CI's Linux `lint` and `check` went red at 7bef972.
   - Declare the module at the file's top level under `#[cfg(test)]`, where the path is relative to the file's own
     folder, and reach it from the tests through `use super::*`.
-- `docs/PLAN.md` is the shared board: mark your row "in progress: <session> (wNNN)" in a one-line PR before you start,
-  and record its result, with measured numbers labelled, in a PR when it is done.
+- **A row writes only files of its own, never a `docs/PLAN.md` table line or `docs/ff1-oracle.md`** (w3844, ffu #574).
+  Take a row by merging `docs/rows/<Id>.md` holding `in progress: <session> (wNNN)` in a docs-only PR before you start
+  (a row PLAN.md does not list: its table line `| <Id> | Task | Passes when | Runs | Stream |` first); finish it by
+  replacing that line with `Done (wNNN, ffu #N): ...`, numbers labelled. FF1 notes go in `docs/oracle/<Id>.md`. CI's
+  lint (`tools/check_row_docs.py`) fails a PR that adds a PLAN.md table line or any ff1-oracle.md line unless its body
+  says `Plan-edit: <why>`. Re-running the main merges of the 91 PRs after ffu #470: 85 conflicted, PLAN.md in 18 and
+  ff1-oracle.md in 5, from rows writing "Done" into their table lines and appending notes at one spot (measured).
+  - **Open a draft PR the moment you take a kind, op tag or section number** (`tools/row_numbers.py next ... --prs`): a
+    number held only in a branch is no claim. ffu #567 committed op tags at 06:40Z and opened at 09:47Z; ffu #566,
+    opened at 09:14Z, kept them and #567 had to renumber (w3844).
   - **Find the next free row in one call**: `python tools/gate_status.py docs/PLAN.md --prs --free` reads the open and
     merged PRs and prints `free rows: ...` or `free rows: none` (w3560). Without `--prs` it listed M1.24 and M2.16 as
     free on main 8d4444c, though M1.24's live part was open as ffu #429 and M2.16 was held; hand-parsing PLAN.md's long
