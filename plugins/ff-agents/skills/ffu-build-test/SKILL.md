@@ -442,6 +442,14 @@ never rewritten (`tools/check_snapshot_compat.sh BASE_REF` holds it in CI). No t
     first head failed at run 45 on another test's flake (`a_follower_rides_out_five_server_restarts`) that #466 had
     already fixed on main. When a flake fix for a test in the same binary has just landed, merge `origin/main` into your
     branch and push before you dispatch the repeat.
+  - **"Every test's servers ended at once" is read from the children's stderr before anyone blames FF Factory or the
+    machine** (w3805). `gh run view <run> --log --job <job> | grep -o 'stderr ".\{0,900\}'` prints what each child
+    said. Repeat run 42561563725 run 37 (ffu-lothdesktop-1, all four owner_term tests red) looked like a kill; the
+    children had exited status 2 with "lost the directory ... ()" beside the test's own "[the machine stalled: a 100 ms
+    sleep came back 2.6 s late]", and the other runner's 2 s test took 84 s and 106 s in the same minutes: a machine
+    stall meeting a head (259d00b) that lacked #488. FF Factory's daemon.log logs every process it ends or suspends
+    ("leftovers: ended", "ci load gate: ... suspended"); no line, no kill. Check the head holds main's newest flake
+    fix: `gh api repos/Final-Factory/ffu/compare/<fix merge sha>...<head> -q .behind_by` (non-zero, `diverged`: no).
   - **repeat.yml's `run_minutes` ends a hung run and prints its output** (`timeout -k 30`). The exe pick takes only a
     test build (`"test":true`): run 42454469723 picked ffu-client's `ffu` game binary and ran it for 2.5 h (w3583).
   - **A lone shard takes `--paced` too** (w3437, ffu #405): the plain server's stdin `until T` lines, for a shard with
