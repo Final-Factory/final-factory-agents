@@ -90,6 +90,12 @@ Never print, echo or log either; check them by name only.
   and authorises the computer; later runs need the password alone. Do not run `preflight` again before the code
   arrives: each try emails a new code.
 - `steam-login` is only the fallback for a computer that cannot have the vault's values.
+- `preflight` says `steam login: ModuleNotFoundError` (or any other import error from an ffbox script): ffbox's own
+  master is broken on Windows, not the login (w3888, 1.0.0.44: ffbox bc00779, w3747, added a top-level `import grp` to
+  `scripts/ci_lane.py`, which `ffsteam.py` loads through `ffwatch`; `grp` exists only on Unix). Do not wait for the fix:
+  clone ffbox into `$TMPDIR`, find the breaking commit (`git log -3 -- scripts/ci_lane.py scripts/ffsteam.py
+  scripts/ffwatch.py`), `git checkout <it>^`, and pass `--ffbox <that clone>` to `preflight` and to `run`. Hand up the
+  ffbox fix with `hand_up_requests`. 1.0.0.44 said READY that way and landed 62 minutes after its bump.
 
 ## 2. The bump, with the claim
 
