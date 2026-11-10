@@ -536,6 +536,20 @@ never rewritten (`tools/check_snapshot_compat.sh BASE_REF` holds it in CI). No t
     list by entry name, and keeps both rows' items appended at one end of a file (two tests after the last test of
     the agent `tests.rs`). Two synthetic rows each adding a kind conflicted in 13 hunks; `--remerge` left 0. Four
     real main merges into #602 left 0 each (measured). A hunk it leaves is a real edit-edit conflict: resolve it by hand.
+  - **Check every file `--remerge` touched against the PR's own diff; it can merge a file wrongly with no marker
+    left** (w3800, ffu #568, reopened by Ben). On a 2-day-old row it doubled `match` arms in `sector.rs` and left a
+    `let` at item level and a duplicate const in `ff1import.rs` and `ff1save.rs`. Compare
+    `git diff --numstat MERGE_HEAD -- <file>` (the merge against main) with
+    `git diff --numstat $(git merge-base HEAD MERGE_HEAD) HEAD -- <file>` (the PR's own); a file whose counts differ is
+    rebuilt from `git show MERGE_HEAD:<file>` plus the PR's hunks. Then renumber: `row_numbers.py check --prs` found
+    the PR's op tags 30 and 31 given to two other ops on main.
+  - **After each merge of main run the PR's own unit tests and the trailer import suite, not only clippy**: rows that
+    landed meanwhile move what its tests assume. M1.33 made passive params 0 and 1 their own kinds, so the PR's
+    tests' plain passive at param 0 was refused (`NoBuilding` at the second building); newer main asserts (not-live
+    list, placed and passive counts) counted the PR's kind as missing. Update a count only by the row's own measured
+    delta (5394 + 8 = 5402) and say so in the PR.
+  - `git merge ... | tail -2 && git push` pushes after a conflicted merge: the pipe's exit is `tail`'s. Write merge
+    output to a file and test `git merge`'s own exit (w3800).
   - **Find the next free row in one call**: `python tools/gate_status.py docs/PLAN.md --prs --free` reads the open and
     merged PRs and prints `free rows: ...` or `free rows: none` (w3560). Without `--prs` it listed M1.24 and M2.16 as
     free on main 8d4444c, though M1.24's live part was open as ffu #429 and M2.16 was held; hand-parsing PLAN.md's long
