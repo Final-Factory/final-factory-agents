@@ -1081,6 +1081,18 @@ never rewritten (`tools/check_snapshot_compat.sh BASE_REF` holds it in CI). No t
     -AMFilter `CFEB0608-…`); `wpr -start CPU` (the kernel logger) is refused. Stop the trace as soon as a run fails,
     because 2 GB holds only a few minutes. `tracerpt x.etl -of CSV`, then pair each Engine `Start`/`Stop` by its scan
     id: an AMFilter `OnClose` event raised in the ffu process itself means that thread is waiting on the scan.
+  - **Not every slow start is Defender** (w3182, 2026-11-08). After Ben excluded the runner, player and Temp folders,
+    `sim_switch` still failed 3 of 140 on BEAST. A traced 3.35 s start had no Defender event until its
+    `BmProcessCreate` (the kernel's create notification), with Defender's scan queue empty and 60 other processes
+    starting meanwhile: the hold came before the kernel created the process. Without admin a trace holds no kernel
+    events, so it cannot say what that thread waited on. Prove an exclusion took with a probe-file check (200 new exe
+    files in the folder; Defender's AMFilter events mark each excluded) against a folder that is not excluded, and read
+    what was added from the Defender Operational log's event 5007, which needs no admin. For a kernel trace, send the
+    person one admin line that starts `wpr` in memory and stops it when a file appears, and drop that file from a
+    watcher on the test's spawn probes (`wpr -start CPU -start FileIO`, a `Test-Path` loop, `wpr -stop`).
+  - After BEAST's reboot with a 64 GB fixed page file (w3421), 288 of 288 runs passed with the worst start 1.3 s,
+    against 4 starts over 3 s in 140 runs before it (measured, 2026-11-10, debug build), so the admin trace caught
+    nothing. A reboot can clear this stall: compare a loop right after one before calling a fix proven.
 - **A BEAST-only flake whose runs take 2.5 times their normal time means a loaded machine** (w3173). w3167's three
   `sim_switch` failures ran 54 s against a normal 21 s while w3168's disk-hog writers ran in another sandbox. Check the
   other sandboxes' transcripts (`~/.claude/projects/F--ffw-sandboxes-slot*/*.jsonl`, the tool calls at the failure's
