@@ -21,6 +21,12 @@ whole verification. The repo's own `CLAUDE.md` is binding and longer; this skill
   without w3764): clone into `$TMPDIR` as before, `git clone https://github.com/Final-Factory/ffu.git "$TMPDIR/ffu"`,
   with `CARGO_TARGET_DIR="$TMPDIR/ffu-target"`. Branch from `main` (ffu's trunk is `main`, not `master`). Commit as
   `Final Factory <481770+bryding@users.noreply.github.com>`.
+- **Check the slot is still yours before every commit** (w3962): run `ffu-slot where` and `git branch --show-current`.
+  While w3962 waited for a bench ticket, w3965's session held slot3 and switched it to `w3965-churn-local`. `ffu-slot
+  where` printed nothing, and w3962's three commits and a main merge landed on w3965's unpushed branch. If the slot is
+  gone, use a worktree of your own in `$TMPDIR` (`git -C <install>/ffu-sandboxes/repo worktree add ...`). Cherry-pick
+  your commits onto `git checkout -B <your branch> origin/main` there. Then put the other branch back with `git reset
+  --keep <its last own commit>` (from its reflog), but only while its tree is clean.
 - `rust-toolchain.toml` pins Rust 1.94.0 with clippy and rustfmt; `cargo` picks it up by itself.
 - When `cargo` is not on PATH, look for the machine's shared toolchain before installing one. On lothdesktop it is
   under `V:/ffw/tools` (measured, w2895):
@@ -42,6 +48,14 @@ whole verification. The repo's own `CLAUDE.md` is binding and longer; this skill
   queued. Check the first lines of a background job's log within seconds of starting it.
 - A wait loop `until ! pgrep -f "<pattern>"` matches its own shell's command line and never ends (w3432); bracket a
   letter (`pgrep -f "[e]cho-biscuit"`) or wait on a pid file.
+- **Time only after `time now`, not after `granted`** (w3962): `bench_queue.py timed` first prints `granted
+  (exclusive)`. It may then wait up to 20 min for CI jobs on the machine ("granted, but 2 CI job(s) run here"), and only
+  `granted <ticket>: time now` starts your turn. A loop on `grep granted` began timing beside two CI jobs. Wait with
+  `until grep -qiE "time now|refused" "$log"`.
+- **Pin a run on Windows through a one-line `.cmd` file** (w3962, ffu `tools/bench/p4.sh`). With `MSYS_NO_PATHCONV=1`,
+  `cmd //c "start "" /wait /b /affinity 4 ..."` keeps `//c`. cmd then opens an interactive shell, runs nothing and
+  exits 0, so the log holds only cmd's banner. Instead, `printf 'start "" /wait /b /affinity %s "%s" %s\r\n' ... >
+  run.cmd`, then `cmd //c "$(cygpath -w run.cmd)"`; the child's stdout comes through.
 - **Timing builds** (w3764): a build time is shared work, `bench_queue.py run --what "<what>" -- <cmd>`; `timed` refuses a
   name with "build" in it, and a loop `until grep -q granted` on its log then waits forever (w3764 lost 10 min). Stop a
   wait loop on `refused` too. Git Bash on Windows has no `bc`: subtract times with `awk "BEGIN{print $t1 - $t0}"`
