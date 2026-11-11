@@ -58,6 +58,7 @@ load-bearing for future runs even where the original defect is fixed.
 - [A relay client that clicks the UI: a window, 1920x1080, a station with a Command Core](#relay-client-ui) (w3395)
 - [Comparing circuit.dump between peers: leave the alert's soundCooldown out](#circuit-sound-cooldown) (w3664)
 - [A host script run right after launch: the agent channel answers before the world exists](#agent-channel-before-world) (w3853)
+- [A beam that links or unlinks on a station move: read the heartbeat from the power fingerprint](#beam-link-heartbeat) (w3972)
 
 ## Full-window rule: never diagnose from a partial window {#full-window-rule}
 
@@ -1761,3 +1762,23 @@ once the host's `-logFile` showed `[LocalMultiplayerAutomation] status host-read
   from the start, so launch the host only once the client's player is built and ready, then prejoin, then send `go`.
   w3853 did that: build done on both, host up, prejoin, client joined within about 3 minutes.
 - A first run that fails this way is a timing slip of the runner, not a script bug: rerun it unmodified and say so.
+
+## A beam that links or unlinks on a station move: read the heartbeat from the power fingerprint {#beam-link-heartbeat}
+
+(w3972, 2026-11-11, the pair run of w3960's transmitter re-aim fix, PR #3537.) The brief's pass criterion was "the
+transmitter links within 2 heartbeats after takeoff and unlinks within 2 after touchdown, on both peers".
+
+- **Use the typed report, not an agent-channel sampler, for the link heartbeat.** The `power` field of each typed
+  `Fingerprint` record (`DeterminismStateFingerprintJobs.cs`, `PowerJob`) folds each transmitter's tile, its edge's
+  receiver tile, its power and `IsEdgeAlignedWithReceiver`. Its first change after a move therefore marks the link or
+  unlink, on every peer and every heartbeat. A `power.inspect|x|z` sampler on the receiver, started after the join,
+  first answered at hb 431, 11 heartbeats after takeoff, so it could not settle the 2-heartbeat criterion alone. The
+  power hash stayed the same from hb 410 to 419 and changed at 420 on both peers.
+- **Takeoff and touchdown come from `HaulersDetail`** (the plain `[DeterminismAudit]` lines in each `-logFile`). The
+  station's entry goes `flying=1` on its first `UndockLift` heartbeat and `flying=0` on touchdown. Read the station's
+  `|t:x,0,z` entry per heartbeat and print only the changes.
+- **Compare typed reports with `compare_audit_records.py`.** `compare_determinism_reports.sh` on the same files
+  compared only the plain-line tail (2264 of 6266 heartbeats) and says so in a WARNING. The typed comparator covered
+  hb 1..6266.
+- A sampler is still the direct witness of `powerOutputRaw`. If you want one, start it before the move command.
+
