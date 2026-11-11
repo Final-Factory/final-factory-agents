@@ -4,7 +4,7 @@ description: A mod's source code (Gherik's mods, TowBot among them) comes throug
 metadata:
   node_type: memory
   type: project
-  modified: 2026-11-01T06:00:00.000Z
+  modified: 2026-11-11T19:00:00.000Z
 ---
 
 # A mod's source: through app-gherik, before the Workshop
@@ -86,3 +86,25 @@ A mod's version lives in its code, not in a tag (TowBot has no tags):
   (TowBot 1.50.0.0 in the 0.50.0.114 crash reports: HEAD deda05d, 2026-10-15, is the last commit before the
   2026-10-30 upload). Label it sourced, not measured: the author may build from uncommitted edits. A claim about the
   bytes that ran (a layout, an unsafe write) still rests on the shipped DLL; the source tells you where to look.
+
+## Proposing a mod fix: push, PR, compile check
+
+lothsahn (2026-11-11, w3950): "If so and a mod you have access to with Gherikmodaccessor, please propose a PR to fix
+it". Done that day as Gherik1/Cruiser#2 (w3950, wreck loot roll) and #1 (w3948, hidden squadron marker); both measured
+working on BEAST.
+
+- **The app can push and open a PR.** Branch from the current branch (Cruiser has no `develop`: `main` is current; check
+  `git branch -r` and compare dates before assuming), commit, `git push -u origin <branch>` (the credential helper uses
+  the app), then `GH_REPO=Gherik1/Cruiser gh pr create -R Gherik1/Cruiser --base main --head <branch> --body-file f`.
+  Your own `GH_TOKEN` has `push:false` there; the app does not. Never merge: Gherik reviews. Before you write a fix,
+  look for another worker's open PR there (`GH_REPO=Gherik1/Cruiser gh pr list`) and link it as related.
+- **Compile check without the editor's project:** copy the game's `Library/ScriptAssemblies/` `FFComponents`,
+  `FFConfiguration`, `FFCore`, `FFNetcode`, `FFSystems`, `FFTechnology`, `QFSW.QC` dlls into the mod's
+  `Assets/FinalFactoryDlls/`, plus `Unity.InputSystem.dll` (same folder) and `Assets/Plugins/Modding/System.*.dll`
+  into `Assets/FinalFactoryDlls/Dependencies/`. Then `unity-slot run --label ... -- Unity.exe -batchmode -quit
+  -nographics -projectPath <mod> -logFile <log>` (in the background, timeout 7200000). Pass: 0 `error CS` in the log
+  and a fresh `Cruiser.dll` in the mod's `Library/ScriptAssemblies/` (w3950: about 4 minutes, first import included).
+  The import rewrites `ProjectSettings/` files: `git checkout -- ProjectSettings` before you commit.
+- **The mod's files are UTF-8 with BOM and CRLF.** Edit them with a Python script written with the Write tool
+  (`io.open(p, encoding='utf-8-sig', newline='')`, replace strings joined with `chr(13)+chr(10)`); a sed or inline
+  heredoc edit in Git Bash mangles the escapes.
