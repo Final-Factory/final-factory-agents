@@ -508,7 +508,14 @@ your skills so you can do this".
 **How to apply.** The recipe, matching a commit to the Workshop item (ModVersion in the code, the item's update date and
 tag from GetPublishedFileDetails; the GameVersion is not in the repo) and what to do without the app:
 project-memory [mod-source-through-app-gherik.md](../../project-memory/memories/mod-source-through-app-gherik.md).
-Read-only: nothing is pushed, opened or commented in the author's repositories.
+
+**A desync caused by a Gherik1 mod gets a fix pull request.** Base it on the mod's `develop` when that is ahead of
+`master` (`git log origin/develop..origin/master` and the reverse), and open it with `gh pr create` on the mod's repo
+(the shim uses the App's token). The description gives the desync report ids, what differs between peers, and why the
+fix is deterministic. Propose only: never merge, Gherik reviews; no person's permission is needed. A Modding-Support doc
+note alone is not enough (one may go alongside). If the App cannot open the PR, attach the patch to your report with
+`publish_attachment` and say so. lothsahn: "for mods owned by Gherik we can always propose fixes for his
+desyncs". Every other write to the author's repositories stays off.
 
 ## A tool's "lost" and a subagent's file are guesses until checked (w3627, 2026-11-08)
 

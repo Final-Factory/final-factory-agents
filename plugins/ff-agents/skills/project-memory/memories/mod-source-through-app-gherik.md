@@ -44,8 +44,9 @@ private; the clone of TowBot worked; the shim's token was an installation token 
 
 - **Never print the token.** No `gh auth token`, no `cat` of the daemon's tokens file, no `git config` dump of a URL
   with it. If you must show it is there, its last four characters at most.
-- **Read-only.** Never push, open a PR, comment or file an issue in Gherik1's repositories (the app has Contents and
-  Pull requests write; that does not make it ours to use).
+- **Read-only, except a desync fix.** Push, comment and file nothing in Gherik1's repositories, with one exception: a
+  desync caused by his mod gets a fix pull request, never merged by you
+  ([lesson](../../evidence-gate/lessons/settle-your-own-guesses.md#mod-code-fetch-the-source-through-app-gherik-before-steam-workshop-or-steamcmd-w2755-2026-11-01)).
 - **No `FF_GH_APP_NAMES`** (the vault entry's grants decide: roles, machines, and a share of its owner's work only or
   anyone's; a run on the machine's own gh login, with no vault GitHub token, never gets an app): a clone fails with
   "Repository not found". Say so in your report and
