@@ -77,6 +77,12 @@ on a mismatch, a ledger error, an unbalanced window or a short fleet). Measured 
   admin must remove it first, or build into a CARGO_TARGET_DIR whose exe already has an allow rule). In the first
   minute after the start, each other leg runs `timeout 5 bash -c "</dev/tcp/<ip>/<port>"` against every remote peer
   port. A refused port means stop and say so; the run is lost anyway.
+- **macOS has no `timeout` command** (no coreutils): a brief's `timeout -s TERM 1200 ... soak.sh` on a Mac leg dies
+  at once with exit 127 and nothing listens, so the other leg's soak.sh exits 3 at 90 s ("peer links did not come up",
+  "Connection refused"). w3923 (m3, 2026-11-10) lost its first start that way. On a Mac, check `command -v timeout`
+  before you send SOAK_START_AT, and run soak.sh from a script that backgrounds it and sends it TERM from a
+  `( sleep 1200; ... -TERM $pid ) &` watchdog subshell. Read the run's output a few seconds after launch: a launch that
+  exited at once is a failed start, not a run, so starting it again is no rerun.
 
 - **A run against the shared world (biscuit, 100.98.100.42:7777) checks what the world runs before anything else**
   (w3397, 2026-11-07): the brief named ffu main 66db990, but the world was redeployed from 75745c0 while the legs
