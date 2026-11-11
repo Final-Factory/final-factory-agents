@@ -508,7 +508,8 @@ your skills so you can do this".
 **How to apply.** The recipe, matching a commit to the Workshop item (ModVersion in the code, the item's update date and
 tag from GetPublishedFileDetails; the GameVersion is not in the repo) and what to do without the app:
 project-memory [mod-source-through-app-gherik.md](../../project-memory/memories/mod-source-through-app-gherik.md).
-Read-only: nothing is pushed, opened or commented in the author's repositories.
+Reading is the default; the one write is a desync fix PR
+([a desync in Gherik's mod gets a fix PR](a-desync-in-gheriks-mod-gets-a-fix-pr.md)).
 
 ## A tool's "lost" and a subagent's file are guesses until checked (w3627, 2026-11-08)
 

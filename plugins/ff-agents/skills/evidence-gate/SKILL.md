@@ -139,6 +139,10 @@ carried over ([lesson](lessons/research-the-decision-not-the-topic.md#name-the-p
 - **Mod code: fetch the source through app-gherik before Steam Workshop or steamcmd** ([lesson](lessons/settle-your-own-guesses.md#mod-code-fetch-the-source-through-app-gherik-before-steam-workshop-or-steamcmd-w2755-2026-11-01)).
   List the installation's repos (`GH_REPO=Gherik1/TowBot gh api installation/repositories`) and clone the mod from there; the
   token is never printed; a mod not in the list goes to the Workshop or steamcmd, and the report says so (w2755).
+- **A desync in Gherik's mod gets a fix PR on the mod's repo** ([lesson](lessons/a-desync-in-gheriks-mod-gets-a-fix-pr.md)).
+  Source through app-gherik, based on `develop` when ahead of `master`, the PR names the report ids, what differs between
+  peers and why the fix is deterministic; never merged by you, no permission needed, a doc note alone is a miss; patch
+  attached with `publish_attachment` if the App cannot open a PR.
 - **A tool's "lost" and a subagent's file are guesses until checked** ([lesson](lessons/settle-your-own-guesses.md#a-tools-lost-and-a-subagents-file-are-guesses-until-checked-w3627-2026-11-08)).
   A `lost_lines.py` line is lost only when it is gone on origin/master (the tool says gone, still there or rewritten); a
   read-only subagent (`code-analyst`, `Explore`, `scout`) answers in its reply, so never wait on a file from it (w3627).

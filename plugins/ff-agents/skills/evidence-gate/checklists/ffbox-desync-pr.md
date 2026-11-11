@@ -80,6 +80,10 @@ changed code runs) in your first report and in the PR description.
 - Mods loaded on a peer: read each mod's source through app-gherik before any Workshop or steamcmd download
   (`GH_REPO=Gherik1/TowBot gh api installation/repositories`, then `git clone`; never print the token)
   ([lesson](../lessons/settle-your-own-guesses.md#mod-code-fetch-the-source-through-app-gherik-before-steam-workshop-or-steamcmd-w2755-2026-11-01)).
+- [ ] The cause is in a Gherik1 mod: a fix PR is open on the mod's repo (based on `develop` if ahead of `master`; report ids,
+      what differs between peers, why deterministic; never merged by you), or the patch is attached with `publish_attachment`
+      and the report says why. A Modding-Support note alone fails this line
+      ([lesson](../lessons/a-desync-in-gheriks-mod-gets-a-fix-pr.md)).
 
 ## 2. Class 1: safe to merge
 
