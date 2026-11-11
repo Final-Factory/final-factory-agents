@@ -67,6 +67,29 @@ The client's attempt counter resets only after the 60 s probation (`ReconnectEng
 `DesyncRecovery.cs:217` `ReconnectProbationSeconds`). Rounds 30-45 s apart share one budget of 4
 attempts, and a fifth reconnect inside that window ends the session as terminal.
 
+## Joining from the Steam friends list (w3851, 2026-11-11)
+
+The friend side of a re-host check (PR #3414) joins through Steam, not the game's menu. On lothdesktop (Steam
+`lothsahn`) BEAST's `slims20` is a friend under the nickname "Ben Ryding*"; it shows under In Game "Final Factory" once
+the host's player runs, which is how to tell which row is the host.
+
+- Open the list with `Start-Process steam://open/friends`. Read it with PrintWindow on the `steamwebhelper` process whose
+  `MainWindowTitle` is "Friends List" (the ffu-drive `window_shot.ps1` with `Get-Process -Id`); scroll with
+  `mouse_event(0x0800, ..., delta)` over it.
+- lothdesktop runs at 200% scaling: after `SetProcessDPIAware`, screen pixels are twice the PrintWindow picture's. A
+  desktop grab (`CopyFromScreen`) of the window's area shows the popup menu, which PrintWindow does not.
+- Right-click the friend row, then left-click "Join Game" in the popup. Do not focus the friends window again between
+  the two clicks: that closes the menu. A running player at the title menu (or on the "Session Ended" dialog) then
+  joins by itself; no click in the game is needed. The log shows `Joined relay <id> in region <r>`; a re-hosted
+  session gets a new relay id (w3851: us-west1, then us-central1), which proves the join reached the new session.
+- The game's lobby browser is on the title menu only (Multiplayer > Browse Games; Back on the "Session Ended" dialog
+  opens it too). From in game: Esc > Exit to Menu > Exit. Each refresh logs
+  `[Lobby] List refresh: N lobbies from Steam, M listed, K older lobbies of the same host hidden`
+  (`LobbyController.cs:208`): K > 0 means the per-host dedupe hid a stale lobby; N = 1 means Steam no longer returned
+  the old one at all (what w3851 saw on 0276f6c5e8).
+- The harness refuses a Bash command whose text holds the s-word for powering off (even a grep pattern for Netcode's
+  "transport was shut-down" line) as a machine restart; grep for "Disconnect" instead.
+
 ## Disk
 
 While you wait on a person, your temp folder's builds, helper scripts and `game_data.py snapshot`s can be
