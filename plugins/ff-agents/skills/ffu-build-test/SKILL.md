@@ -52,6 +52,17 @@ whole verification. The repo's own `CLAUDE.md` is binding and longer; this skill
   (exclusive)`. It may then wait up to 20 min for CI jobs on the machine ("granted, but 2 CI job(s) run here"), and only
   `granted <ticket>: time now` starts your turn. A loop on `grep granted` began timing beside two CI jobs. Wait with
   `until grep -qiE "time now|refused" "$log"`.
+- **Stopping a background task leaves its children running: `ff-leftovers list` before the next bench ticket** (w3963,
+  ffu #655). A bench wrapper stopped with TaskStop left its `tools/bench/p4.sh` loop going. That loop timed beside the
+  next ticketed leg and appended to the same `runs.jsonl` and log. It was still running after that ticket was released.
+  The report then showed spreads up to 128 points and a half-finished variant set, so the whole leg was rerun. After
+  any stop, run `ff-leftovers list` and `ff-leftovers end` until it prints nothing. Give each leg a fresh output
+  folder, since `p4.sh time` appends to `runs.jsonl`.
+- **Judge a cost cut by the whole tick, not only the stub share** (w3963). M1.6c kept each building's hash and copied
+  and compared every whole building each tick to find what changed. The hash share fell from 25.8 % to 5.4 %, but the
+  tick only went from 2670 to 2634 us (MEASURED, 250k, 1 thread): the compare cost what the hashes saved. With
+  `update_local` returning whether it changed anything, the tick fell 16 % (2594 to 2168 us) at 1 thread and 21 %
+  (2517 to 1987 us) at 2 (ticket t00006861). Report the main-variant tick before and after beside every share.
 - **Pin a run on Windows through a one-line `.cmd` file** (w3962, ffu `tools/bench/p4.sh`). With `MSYS_NO_PATHCONV=1`,
   `cmd //c "start "" /wait /b /affinity 4 ..."` keeps `//c`. cmd then opens an interactive shell, runs nothing and
   exits 0, so the log holds only cmd's banner. Instead, `printf 'start "" /wait /b /affinity %s "%s" %s\r\n' ... >
