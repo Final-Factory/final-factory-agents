@@ -59,6 +59,7 @@ load-bearing for future runs even where the original defect is fixed.
 - [Comparing circuit.dump between peers: leave the alert's soundCooldown out](#circuit-sound-cooldown) (w3664)
 - [A host script run right after launch: the agent channel answers before the world exists](#agent-channel-before-world) (w3853)
 - [A beam that links or unlinks on a station move: read the heartbeat from the power fingerprint](#beam-link-heartbeat) (w3972)
+- [A portal hop in a scenario: the 100 u range is to the portal's centre, and a refusal is silent](#portal-hop-range) (w3994)
 
 ## Full-window rule: never diagnose from a partial window {#full-window-rule}
 
@@ -1782,3 +1783,25 @@ transmitter links within 2 heartbeats after takeoff and unlinks within 2 after t
   hb 1..6266.
 - A sampler is still the direct witness of `powerOutputRaw`. If you want one, start it before the move command.
 
+## A portal hop in a scenario: the 100 u range is to the portal's centre, and a refusal is silent {#portal-hop-range}
+
+(w3994, 2026-11-12, the m5 host and LothDesktop client pair run of PRs #3537 and #3539: a ridden mobile station through
+a portal.) The first pair run failed at its hop step: the station had not moved.
+
+- **The host measures the range to the portal entity, not to the tile you spawned it at.** `PortalTravelClientRequest`
+  (`Assets/Scripts/NetworkOperations/PortalTravel/PortalTravelClientRequest.cs:56-62`) compares the player's
+  `SimulationPosition` with the source portal's `LocalTransform` against `PortalTravelResolver.MaxRequestDistance`
+  (100 u). An Ancient Portal is big: with `portal.spawn|Near|204|-291|1` the rider was 56 u from the tile's
+  world point (2040,-2910) (measured with `player.assertnear|204|-291|0`, which prints the position when it fails), but
+  the host logged `Reject:out-of-range:167.5`. That fits a centre about 80 u past the tile on x and z (inferred from
+  this one rejection; an accepted hop with the centre computed at 82 u agreed). Put the source portal so that
+  `tile*10 + 80` is within 100 u of the rider, or check the distance in a solo dry run first.
+- **A refused hop is silent.** `portal.travel` answers `accepted` either way, and the reason exists only as
+  `PortalTravelClientRequest -> Reject:<reason>` in the audit lines of `host.log`, which a run with the per-heartbeat
+  audit off never writes. Follow the hop with a check that fails: `assert moved` on `station.state` before and after
+  (w3994: `atLeast` 200; the hop moved the station about 760 u), or `player.assertnear` on the destination portal. To
+  read the reason, dry-run the host half alone on a flat map with `-ffAutomationDeterminismAudit true` and grep its
+  `host.log` for `Reject:` with `LC_ALL=C /usr/bin/grep -a` (ugrep refuses long `.{0,N}` patterns).
+- **The life save `w1440-lifesave-0.50.0.105` hangs a host with the audit on** (HangWatchdog: 10.1 s with no main loop
+  near heartbeat 4, m5, commit e251cd57), so dry-run the audit legs on a flat map and the life-save legs with the audit
+  off, as in the join-pair rule in SKILL.md (w3635).
