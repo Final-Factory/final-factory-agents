@@ -56,6 +56,13 @@ cargo test --release -p ffu-ui
 - A new panel gets the same: lay it out with `layout_in(spec, width, height, locale)` for each locale (the
   inspector's spec is `inspector_in`), run `tests/bounds.rs`'s `check_tree`, `check_focus` and `check_access` helpers
   on it at the three sizes, and give each button a press test.
+- **A disabled control is a Row, not a dimmed Button** (w3968, ffu #656). `tests/gate.rs`'s
+  `every_panel_passes_the_ui_gate` holds every `Role::Button` to taking focus. A pager arrow at the last page drawn as
+  a dimmed, unfocusable Button failed it 66 times ("button hold.prev takes no focus"). Draw it with `role = Role::Row`,
+  `focusable = false`, fill `BAR_BACK` and `ink(.., MUTED)` (the shared `wreck::pager`), and make its press return
+  `None`.
+- **Example stills use real items** (`ffu_sim::content` constants), never made-up ids: the wreck example's ids `100 +
+  slot * 5` drew whatever items those ids happen to be, which a critic reads as a wrong panel (w3968).
 - New visible text goes into `crates/ffu-ui/src/locale.rs` with every locale's string. A CJK character outside the
   cut fonts means re-cutting them with `tools/subset_cjk_fonts.py`.
 
