@@ -1,0 +1,1619 @@
+{
+ "screen": [
+  680,
+  460
+ ],
+ "elements": [
+  {
+   "path": "InGameScene/UI Canvas/GamePanels/FilterEntityPanel/MainPanel/Content/CircuitView/ListPage/Status/VerdictText",
+   "kind": "TextMeshProUGUI",
+   "rect": [
+    430.9,
+    186.8,
+    665.0,
+    207.2
+   ],
+   "visible": [
+    430.9,
+    186.8,
+    665.0,
+    207.2
+   ],
+   "color": "#FFFFFFFF",
+   "alpha": 1.0,
+   "sprite": "",
+   "raycast": false,
+   "selectable": false,
+   "maskOnly": false,
+   "canvasOrder": -10,
+   "depth": 379,
+   "text": "Conditions true",
+   "textRect": [
+    565.7,
+    188.9,
+    665.0,
+    205.1
+   ],
+   "lines": 1,
+   "fontSize": 15.0
+  },
+  {
+   "path": "InGameScene/UI Canvas/GamePanels/FilterEntityPanel/MainPanel/Content/CircuitView/ListPage/ActionPills2/Pill/Panel",
+   "kind": "Image",
+   "rect": [
+    449.1,
+    122.4,
+    665.0,
+    146.2
+   ],
+   "visible": [
+    449.1,
+    122.4,
+    665.0,
+    146.2
+   ],
+   "color": "#FFFFFFFF",
+   "alpha": 1.0,
+   "sprite": "white-backdrop",
+   "raycast": true,
+   "selectable": false,
+   "maskOnly": false,
+   "canvasOrder": -10,
+   "depth": 363,
+   "spriteSize": [
+    512.0,
+    512.0
+   ],
+   "spriteBorder": [
+    20.0,
+    20.0,
+    20.0,
+    20.0
+   ],
+   "imageType": "Sliced",
+   "preserveAspect": true
+  },
+  {
+   "path": "InGameScene/UI Canvas/GamePanels/FilterEntityPanel/MainPanel/Content/CircuitView/ListPage/FilterRow/FilterSlot0",
+   "kind": "Image",
+   "rect": [
+    228.1,
+    154.6,
+    251.8,
+    178.4
+   ],
+   "visible": [
+    228.1,
+    154.6,
+    251.8,
+    178.4
+   ],
+   "color": "#FFFFFF96",
+   "alpha": 0.588,
+   "sprite": "item-slot",
+   "raycast": true,
+   "selectable": true,
+   "maskOnly": false,
+   "canvasOrder": -10,
+   "depth": 366,
+   "spriteSize": [
+    256.0,
+    256.0
+   ],
+   "spriteBorder": [
+    60.0,
+    60.0,
+    60.0,
+    60.0
+   ],
+   "imageType": "Sliced",
+   "preserveAspect": true
+  },
+  {
+   "path": "InGameScene/UI Canvas/GamePanels/FilterEntityPanel/MainPanel/Content/CircuitView/ListPage/AlertSection",
+   "kind": "Image",
+   "rect": [
+    228.1,
+    303.8,
+    665.0,
+    339.4
+   ],
+   "visible": [
+    228.1,
+    303.8,
+    665.0,
+    339.4
+   ],
+   "color": "#081C2CC7",
+   "alpha": 0.78,
+   "sprite": "white-backdrop",
+   "raycast": true,
+   "selectable": false,
+   "maskOnly": false,
+   "canvasOrder": -10,
+   "depth": 399,
+   "spriteSize": [
+    512.0,
+    512.0
+   ],
+   "spriteBorder": [
+    20.0,
+    20.0,
+    20.0,
+    20.0
+   ],
+   "imageType": "Sliced",
+   "preserveAspect": false
+  },
+  {
+   "path": "InGameScene/UI Canvas/GamePanels/FilterEntityPanel/MainPanel/HeaderContent/Header/TitleAndIcon/Title",
+   "kind": "TextMeshProUGUI",
+   "rect": [
+    221.3,
+    13.9,
+    488.3,
+    41.1
+   ],
+   "visible": [
+    221.3,
+    13.9,
+    488.3,
+    41.1
+   ],
+   "color": "#FFFFFFFF",
+   "alpha": 1.0,
+   "sprite": "",
+   "raycast": true,
+   "selectable": false,
+   "maskOnly": false,
+   "canvasOrder": -10,
+   "depth": 302,
+   "text": "Connector",
+   "textRect": [
+    221.3,
+    18.8,
+    312.4,
+    38.3
+   ],
+   "lines": 1,
+   "fontSize": 18.0
+  },
+  {
+   "path": "InGameScene/UI Canvas/GamePanels/FilterEntityPanel/MainPanel/Content/CircuitView/ListPage/FilterRow/Pill/Text (TMP)",
+   "kind": "TextMeshProUGUI",
+   "rect": [
+    294.2,
+    159.3,
+    477.0,
+    173.7
+   ],
+   "visible": [
+    294.2,
+    159.3,
+    477.0,
+    173.7
+   ],
+   "color": "#FFFFFFFF",
+   "alpha": 1.0,
+   "sprite": "",
+   "raycast": true,
+   "selectable": false,
+   "maskOnly": false,
+   "canvasOrder": -10,
+   "depth": 371,
+   "text": "Whitelist",
+   "textRect": [
+    355.3,
+    158.3,
+    416.0,
+    175.7
+   ],
+   "lines": 1,
+   "fontSize": 16.0
+  },
+  {
+   "path": "InGameScene/UI Canvas/GamePanels/FilterEntityPanel/MainPanel/Content/CircuitView/ListPage/Conditions/Viewport/Content/Condition0/RemoveButton(Clone)",
+   "kind": "Image",
+   "rect": [
+    634.5,
+    227.5,
+    658.2,
+    251.2
+   ],
+   "visible": [
+    634.5,
+    227.5,
+    658.2,
+    251.2
+   ],
+   "color": "#FFFFFFFF",
+   "alpha": 1.0,
+   "sprite": "borderless-secondary",
+   "raycast": true,
+   "selectable": true,
+   "maskOnly": false,
+   "canvasOrder": -10,
+   "depth": 393,
+   "spriteSize": [
+    512.0,
+    512.0
+   ],
+   "spriteBorder": [
+    20.0,
+    20.0,
+    20.0,
+    20.0
+   ],
+   "imageType": "Sliced",
+   "preserveAspect": true
+  },
+  {
+   "path": "InGameScene/UI Canvas/GamePanels/FilterEntityPanel/MainPanel/HeaderContent/Header/CircuitButtonIcon",
+   "kind": "Image",
+   "rect": [
+    606.5,
+    15.6,
+    630.2,
+    39.4
+   ],
+   "visible": [
+    606.5,
+    15.6,
+    630.2,
+    39.4
+   ],
+   "color": "#FFFFFFFF",
+   "alpha": 1.0,
+   "sprite": "borderless-primary",
+   "raycast": true,
+   "selectable": true,
+   "maskOnly": false,
+   "canvasOrder": -10,
+   "depth": 304,
+   "spriteSize": [
+    512.0,
+    512.0
+   ],
+   "spriteBorder": [
+    20.0,
+    20.0,
+    20.0,
+    20.0
+   ],
+   "imageType": "Sliced",
+   "preserveAspect": true
+  },
+  {
+   "path": "InGameScene/UI Canvas/GamePanels/FilterEntityPanel/MainPanel/Content/CircuitView/ListPage/Conditions/Viewport/Content/Condition0/Pill/Text (TMP)",
+   "kind": "TextMeshProUGUI",
+   "rect": [
+    234.9,
+    232.2,
+    278.1,
+    246.6
+   ],
+   "visible": [
+    234.9,
+    232.2,
+    278.1,
+    246.6
+   ],
+   "color": "#DCE6EEFF",
+   "alpha": 1.0,
+   "sprite": "",
+   "raycast": true,
+   "selectable": false,
+   "maskOnly": false,
+   "canvasOrder": -10,
+   "depth": 385,
+   "text": "NOT",
+   "textRect": [
+    242.0,
+    231.8,
+    271.0,
+    248.0
+   ],
+   "lines": 1,
+   "fontSize": 15.0
+  },
+  {
+   "path": "InGameScene/UI Canvas/GamePanels/FilterEntityPanel/MainPanel/Content/CircuitView/ListPage/Conditions/Viewport/Content/Condition0/SelectStopButton(Clone)",
+   "kind": "Image",
+   "rect": [
+    604.0,
+    227.5,
+    627.7,
+    251.2
+   ],
+   "visible": [
+    604.0,
+    227.5,
+    627.7,
+    251.2
+   ],
+   "color": "#FFFFFFFF",
+   "alpha": 1.0,
+   "sprite": "borderless-primary",
+   "raycast": true,
+   "selectable": true,
+   "maskOnly": false,
+   "canvasOrder": -10,
+   "depth": 391,
+   "spriteSize": [
+    512.0,
+    512.0
+   ],
+   "spriteBorder": [
+    20.0,
+    20.0,
+    20.0,
+    20.0
+   ],
+   "imageType": "Sliced",
+   "preserveAspect": true
+  },
+  {
+   "path": "InGameScene/UI Canvas/GamePanels/FilterEntityPanel/MainPanel/Content/CircuitView/ListPage/AddRow/ActionButton/Text (TMP)",
+   "kind": "TextMeshProUGUI",
+   "rect": [
+    284.4,
+    278.4,
+    375.2,
+    291.9
+   ],
+   "visible": [
+    284.4,
+    278.4,
+    375.2,
+    291.9
+   ],
+   "color": "#FFFFFFFF",
+   "alpha": 1.0,
+   "sprite": "",
+   "raycast": true,
+   "selectable": false,
+   "maskOnly": false,
+   "canvasOrder": -10,
+   "depth": 398,
+   "text": "Add condition",
+   "textRect": [
+    284.4,
+    277.0,
+    375.2,
+    293.3
+   ],
+   "lines": 1,
+   "fontSize": 15.0
+  },
+  {
+   "path": "InGameScene/UI Canvas/GamePanels/FilterEntityPanel/MainPanel/Content/CircuitView/ListPage/AddRow/ActionButton",
+   "kind": "Image",
+   "rect": [
+    228.1,
+    271.6,
+    414.5,
+    298.7
+   ],
+   "visible": [
+    228.1,
+    271.6,
+    414.5,
+    298.7
+   ],
+   "color": "#FFFFFFFF",
+   "alpha": 1.0,
+   "sprite": "white-backdrop",
+   "raycast": true,
+   "selectable": true,
+   "maskOnly": false,
+   "canvasOrder": -10,
+   "depth": 396,
+   "spriteSize": [
+    512.0,
+    512.0
+   ],
+   "spriteBorder": [
+    20.0,
+    20.0,
+    20.0,
+    20.0
+   ],
+   "imageType": "Sliced",
+   "preserveAspect": true
+  },
+  {
+   "path": "InGameScene/UI Canvas/GamePanels/FilterEntityPanel/MainPanel/Content/CircuitView/ListPage/Conditions/Viewport",
+   "kind": "Image",
+   "rect": [
+    228.1,
+    212.3,
+    665.0,
+    266.5
+   ],
+   "visible": [
+    228.1,
+    212.3,
+    665.0,
+    266.5
+   ],
+   "color": "#FFFFFFFF",
+   "alpha": 1.0,
+   "sprite": "UIMask",
+   "raycast": true,
+   "selectable": false,
+   "maskOnly": true,
+   "canvasOrder": -10,
+   "depth": 381,
+   "spriteSize": [
+    32.0,
+    32.0
+   ],
+   "spriteBorder": [
+    10.0,
+    10.0,
+    10.0,
+    10.0
+   ],
+   "imageType": "Sliced",
+   "preserveAspect": false
+  },
+  {
+   "path": "InGameScene/UI Canvas/GamePanels/FilterEntityPanel/MainPanel/Content/CircuitView/ListPage/Conditions/Viewport/Content/Condition0/Texts/NameLine/Name",
+   "kind": "TextMeshProUGUI",
+   "rect": [
+    325.6,
+    219.9,
+    556.5,
+    240.2
+   ],
+   "visible": [
+    325.6,
+    219.9,
+    556.5,
+    240.2
+   ],
+   "color": "#FFFFFFFF",
+   "alpha": 1.0,
+   "sprite": "",
+   "raycast": false,
+   "selectable": false,
+   "maskOnly": false,
+   "canvasOrder": -10,
+   "depth": 388,
+   "text": "Circuit Module",
+   "textRect": [
+    325.6,
+    220.8,
+    446.5,
+    239.3
+   ],
+   "lines": 1,
+   "fontSize": 17.0
+  },
+  {
+   "path": "InGameScene/UI Canvas/GamePanels/FilterEntityPanel/MainPanel/Content/CircuitView/ListPage/TopBar/Switch/Switch",
+   "kind": "Image",
+   "rect": [
+    231.5,
+    62.6,
+    265.4,
+    85.6
+   ],
+   "visible": [
+    231.5,
+    62.6,
+    265.4,
+    85.6
+   ],
+   "color": "#FFFFFFFF",
+   "alpha": 1.0,
+   "sprite": "SwitchOn",
+   "raycast": true,
+   "selectable": true,
+   "maskOnly": false,
+   "canvasOrder": -10,
+   "depth": 354,
+   "spriteSize": [
+    225.0,
+    150.0
+   ],
+   "spriteBorder": [
+    0.0,
+    0.0,
+    0.0,
+    0.0
+   ],
+   "imageType": "Simple",
+   "preserveAspect": false
+  },
+  {
+   "path": "InGameScene/UI Canvas/GamePanels/FilterEntityPanel/MainPanel/Content/CircuitView/ListPage/AlertSection/AlertHeader/Switch/Text (TMP)",
+   "kind": "TextMeshProUGUI",
+   "rect": [
+    275.6,
+    312.3,
+    479.0,
+    330.9
+   ],
+   "visible": [
+    275.6,
+    312.3,
+    479.0,
+    330.9
+   ],
+   "color": "#FFFFFFFF",
+   "alpha": 1.0,
+   "sprite": "",
+   "raycast": true,
+   "selectable": true,
+   "maskOnly": false,
+   "canvasOrder": -10,
+   "depth": 401,
+   "text": "Raise an alert when true",
+   "textRect": [
+    275.6,
+    312.9,
+    440.2,
+    330.3
+   ],
+   "lines": 1,
+   "fontSize": 16.0
+  },
+  {
+   "path": "InGameScene/UI Canvas/GamePanels/FilterEntityPanel/MainPanel/Content/CircuitView/ListPage/ActionPills2/Pill/Text (TMP)",
+   "kind": "TextMeshProUGUI",
+   "rect": [
+    449.1,
+    127.1,
+    665.0,
+    141.5
+   ],
+   "visible": [
+    449.1,
+    127.1,
+    665.0,
+    141.5
+   ],
+   "color": "#FFFFFFFF",
+   "alpha": 1.0,
+   "sprite": "",
+   "raycast": true,
+   "selectable": false,
+   "maskOnly": false,
+   "canvasOrder": -10,
+   "depth": 364,
+   "text": "Filter from set",
+   "textRect": [
+    517.3,
+    127.1,
+    596.8,
+    141.5
+   ],
+   "lines": 1,
+   "fontSize": 13.2
+  },
+  {
+   "path": "InGameScene/UI Canvas/GamePanels/FilterEntityPanel/MainPanel/Content/CircuitView/ListPage/Status/StatusText",
+   "kind": "TextMeshProUGUI",
+   "rect": [
+    243.3,
+    186.8,
+    425.9,
+    207.2
+   ],
+   "visible": [
+    243.3,
+    186.8,
+    425.9,
+    207.2
+   ],
+   "color": "#FFFFFFFF",
+   "alpha": 1.0,
+   "sprite": "",
+   "raycast": false,
+   "selectable": false,
+   "maskOnly": false,
+   "canvasOrder": -10,
+   "depth": 378,
+   "text": "Filtering by the circuit's list",
+   "textRect": [
+    243.3,
+    188.3,
+    425.9,
+    205.7
+   ],
+   "lines": 1,
+   "fontSize": 16.0
+  },
+  {
+   "path": "InGameScene/UI Canvas/GamePanels/FilterEntityPanel/MainPanel/Skin",
+   "kind": "Image",
+   "rect": [
+    207.7,
+    5.5,
+    678.5,
+    369.9
+   ],
+   "visible": [
+    207.7,
+    5.5,
+    678.5,
+    369.9
+   ],
+   "color": "#FFFFFFBF",
+   "alpha": 0.75,
+   "sprite": "background-main",
+   "raycast": false,
+   "selectable": false,
+   "maskOnly": false,
+   "canvasOrder": -10,
+   "depth": 299,
+   "spriteSize": [
+    512.0,
+    512.0
+   ],
+   "spriteBorder": [
+    10.0,
+    10.0,
+    10.0,
+    10.0
+   ],
+   "imageType": "Sliced",
+   "preserveAspect": false
+  },
+  {
+   "path": "InGameScene/UI Canvas/GamePanels/FilterEntityPanel/MainPanel/Content/CircuitView/ListPage/AddRow/ActionButton/IconParent/Icon",
+   "kind": "Image",
+   "rect": [
+    267.4,
+    280.1,
+    277.6,
+    290.2
+   ],
+   "visible": [
+    267.4,
+    280.1,
+    277.6,
+    290.2
+   ],
+   "color": "#FFFFFFFF",
+   "alpha": 1.0,
+   "sprite": "connection",
+   "raycast": true,
+   "selectable": false,
+   "maskOnly": false,
+   "canvasOrder": -10,
+   "depth": 397,
+   "spriteSize": [
+    48.0,
+    48.0
+   ],
+   "spriteBorder": [
+    0.0,
+    0.0,
+    0.0,
+    0.0
+   ],
+   "imageType": "Simple",
+   "preserveAspect": false
+  },
+  {
+   "path": "InGameScene/UI Canvas/GamePanels/FilterEntityPanel/MainPanel/Content/CircuitView/ListPage/FilterRow/Pill/Panel",
+   "kind": "Image",
+   "rect": [
+    482.1,
+    154.6,
+    665.0,
+    178.4
+   ],
+   "visible": [
+    482.1,
+    154.6,
+    665.0,
+    178.4
+   ],
+   "color": "#FFFFFFFF",
+   "alpha": 1.0,
+   "sprite": "white-backdrop",
+   "raycast": true,
+   "selectable": false,
+   "maskOnly": false,
+   "canvasOrder": -10,
+   "depth": 374,
+   "spriteSize": [
+    512.0,
+    512.0
+   ],
+   "spriteBorder": [
+    20.0,
+    20.0,
+    20.0,
+    20.0
+   ],
+   "imageType": "Sliced",
+   "preserveAspect": true
+  },
+  {
+   "path": "InGameScene/UI Canvas/GamePanels/FilterEntityPanel/MainPanel/Content/CircuitView/ListPage/Conditions/Viewport/Content/Condition0/Texts/NameLine/Tile",
+   "kind": "TextMeshProUGUI",
+   "rect": [
+    561.6,
+    219.9,
+    597.2,
+    240.2
+   ],
+   "visible": [
+    561.6,
+    219.9,
+    597.2,
+    240.2
+   ],
+   "color": "#9FB6C8FF",
+   "alpha": 1.0,
+   "sprite": "",
+   "raycast": false,
+   "selectable": false,
+   "maskOnly": false,
+   "canvasOrder": -10,
+   "depth": 389,
+   "text": "(13,\u00a010)",
+   "textRect": [
+    561.7,
+    222.4,
+    597.2,
+    236.5
+   ],
+   "lines": 1,
+   "fontSize": 13.0
+  },
+  {
+   "path": "InGameScene/UI Canvas/GamePanels/FilterEntityPanel/MainPanel/Content/CircuitView/ListPage/TopBar/Switch/Text (TMP)",
+   "kind": "TextMeshProUGUI",
+   "rect": [
+    268.8,
+    64.8,
+    362.0,
+    83.4
+   ],
+   "visible": [
+    268.8,
+    64.8,
+    362.0,
+    83.4
+   ],
+   "color": "#FFFFFFFF",
+   "alpha": 1.0,
+   "sprite": "",
+   "raycast": true,
+   "selectable": true,
+   "maskOnly": false,
+   "canvasOrder": -10,
+   "depth": 355,
+   "text": "Circuit on",
+   "textRect": [
+    268.8,
+    65.4,
+    334.8,
+    82.8
+   ],
+   "lines": 1,
+   "fontSize": 16.0
+  },
+  {
+   "path": "InGameScene/UI Canvas/GamePanels/FilterEntityPanel/MainPanel/Content/CircuitView/ListPage/FilterRow/FilterSlot0/IconParent/Icon",
+   "kind": "Image",
+   "rect": [
+    228.9,
+    155.5,
+    251.0,
+    177.5
+   ],
+   "visible": [
+    228.9,
+    155.5,
+    251.0,
+    177.5
+   ],
+   "color": "#FFFFFFFF",
+   "alpha": 1.0,
+   "sprite": "Ice",
+   "raycast": true,
+   "selectable": false,
+   "maskOnly": false,
+   "canvasOrder": -10,
+   "depth": 367,
+   "spriteSize": [
+    512.0,
+    512.0
+   ],
+   "spriteBorder": [
+    0.0,
+    0.0,
+    0.0,
+    0.0
+   ],
+   "imageType": "Simple",
+   "preserveAspect": true
+  },
+  {
+   "path": "InGameScene/UI Canvas/GamePanels/FilterEntityPanel/MainPanel/Content/CircuitView/ListPage/ActionPills/Switch/Text (TMP)",
+   "kind": "TextMeshProUGUI",
+   "rect": [
+    268.8,
+    95.3,
+    472.2,
+    113.9
+   ],
+   "visible": [
+    268.8,
+    95.3,
+    472.2,
+    113.9
+   ],
+   "color": "#FFFFFFFF",
+   "alpha": 1.0,
+   "sprite": "",
+   "raycast": true,
+   "selectable": true,
+   "maskOnly": false,
+   "canvasOrder": -10,
+   "depth": 357,
+   "text": "Turn on when true",
+   "textRect": [
+    268.8,
+    95.9,
+    394.1,
+    113.3
+   ],
+   "lines": 1,
+   "fontSize": 16.0
+  },
+  {
+   "path": "InGameScene/UI Canvas/GamePanels/FilterEntityPanel/MainPanel/HeaderContent/Header/exitbutton/ExitButton",
+   "kind": "Image",
+   "rect": [
+    642.9,
+    16.5,
+    665.0,
+    38.5
+   ],
+   "visible": [
+    642.9,
+    16.5,
+    665.0,
+    38.5
+   ],
+   "color": "#FFFFFFFF",
+   "alpha": 1.0,
+   "sprite": "x-button",
+   "raycast": true,
+   "selectable": true,
+   "maskOnly": false,
+   "canvasOrder": -10,
+   "depth": 303,
+   "spriteSize": [
+    512.0,
+    512.0
+   ],
+   "spriteBorder": [
+    0.0,
+    0.0,
+    0.0,
+    0.0
+   ],
+   "imageType": "Simple",
+   "preserveAspect": false
+  },
+  {
+   "path": "InGameScene/UI Canvas/GamePanels/FilterEntityPanel/MainPanel/Content/CircuitView/ListPage/AlertSection/AlertHeader/Switch/Switch",
+   "kind": "Image",
+   "rect": [
+    238.3,
+    310.1,
+    272.2,
+    333.1
+   ],
+   "visible": [
+    238.3,
+    310.1,
+    272.2,
+    333.1
+   ],
+   "color": "#FFFFFFFF",
+   "alpha": 1.0,
+   "sprite": "SwitchOff",
+   "raycast": true,
+   "selectable": true,
+   "maskOnly": false,
+   "canvasOrder": -10,
+   "depth": 400,
+   "spriteSize": [
+    225.0,
+    150.0
+   ],
+   "spriteBorder": [
+    0.0,
+    0.0,
+    0.0,
+    0.0
+   ],
+   "imageType": "Simple",
+   "preserveAspect": false
+  },
+  {
+   "path": "InGameScene/UI Canvas/GamePanels/FilterEntityPanel/MainPanel/Content/CircuitView/ListPage/ActionPills2/Pill/Panel",
+   "kind": "Image",
+   "rect": [
+    228.1,
+    122.4,
+    444.0,
+    146.2
+   ],
+   "visible": [
+    228.1,
+    122.4,
+    444.0,
+    146.2
+   ],
+   "color": "#FFFFFFFF",
+   "alpha": 1.0,
+   "sprite": "white-backdrop",
+   "raycast": true,
+   "selectable": false,
+   "maskOnly": false,
+   "canvasOrder": -10,
+   "depth": 359,
+   "spriteSize": [
+    512.0,
+    512.0
+   ],
+   "spriteBorder": [
+    20.0,
+    20.0,
+    20.0,
+    20.0
+   ],
+   "imageType": "Sliced",
+   "preserveAspect": true
+  },
+  {
+   "path": "InGameScene/UI Canvas/GamePanels/FilterEntityPanel/MainPanel/Content/CircuitView/ListPage/FilterRow/Pill/Text (TMP)",
+   "kind": "TextMeshProUGUI",
+   "rect": [
+    482.1,
+    159.3,
+    665.0,
+    173.7
+   ],
+   "visible": [
+    482.1,
+    159.3,
+    665.0,
+    173.7
+   ],
+   "color": "#FFFFFFFF",
+   "alpha": 1.0,
+   "sprite": "",
+   "raycast": true,
+   "selectable": false,
+   "maskOnly": false,
+   "canvasOrder": -10,
+   "depth": 375,
+   "text": "Blacklist",
+   "textRect": [
+    545.1,
+    158.3,
+    602.0,
+    175.7
+   ],
+   "lines": 1,
+   "fontSize": 16.0
+  },
+  {
+   "path": "InGameScene/UI Canvas/GamePanels/FilterEntityPanel/MainPanel/Content/CircuitView/ListPage/Conditions/Viewport/Content/Condition0/Pill/Panel",
+   "kind": "Image",
+   "rect": [
+    234.9,
+    227.5,
+    278.1,
+    251.2
+   ],
+   "visible": [
+    234.9,
+    227.5,
+    278.1,
+    251.2
+   ],
+   "color": "#FFFFFFFF",
+   "alpha": 1.0,
+   "sprite": "white-backdrop",
+   "raycast": true,
+   "selectable": false,
+   "maskOnly": false,
+   "canvasOrder": -10,
+   "depth": 384,
+   "spriteSize": [
+    512.0,
+    512.0
+   ],
+   "spriteBorder": [
+    20.0,
+    20.0,
+    20.0,
+    20.0
+   ],
+   "imageType": "Sliced",
+   "preserveAspect": true
+  },
+  {
+   "path": "InGameScene/UI Canvas/GamePanels/FilterEntityPanel/MainPanel/Content/CircuitView/ListPage/Conditions/Viewport/Content/Condition0/SelectStopButton(Clone)/IconParent/Icon",
+   "kind": "Image",
+   "rect": [
+    608.6,
+    231.8,
+    623.9,
+    247.0
+   ],
+   "visible": [
+    608.6,
+    231.8,
+    623.9,
+    247.0
+   ],
+   "color": "#FFFFFFFF",
+   "alpha": 1.0,
+   "sprite": "Tex_skill_13",
+   "raycast": true,
+   "selectable": false,
+   "maskOnly": false,
+   "canvasOrder": -10,
+   "depth": 392,
+   "spriteSize": [
+    256.0,
+    256.0
+   ],
+   "spriteBorder": [
+    0.0,
+    0.0,
+    0.0,
+    0.0
+   ],
+   "imageType": "Simple",
+   "preserveAspect": false
+  },
+  {
+   "path": "InGameScene/UI Canvas/GamePanels/FilterEntityPanel/MainPanel/Content/CircuitView/ListPage/ActionPills/Switch/Switch",
+   "kind": "Image",
+   "rect": [
+    231.5,
+    93.1,
+    265.4,
+    116.1
+   ],
+   "visible": [
+    231.5,
+    93.1,
+    265.4,
+    116.1
+   ],
+   "color": "#FFFFFFFF",
+   "alpha": 1.0,
+   "sprite": "SwitchOff",
+   "raycast": true,
+   "selectable": true,
+   "maskOnly": false,
+   "canvasOrder": -10,
+   "depth": 356,
+   "spriteSize": [
+    225.0,
+    150.0
+   ],
+   "spriteBorder": [
+    0.0,
+    0.0,
+    0.0,
+    0.0
+   ],
+   "imageType": "Simple",
+   "preserveAspect": false
+  },
+  {
+   "path": "InGameScene/UI Canvas/GamePanels/FilterEntityPanel/MainPanel/HeaderContent/Header/CircuitButtonIcon/IconParent/Icon",
+   "kind": "Image",
+   "rect": [
+    611.2,
+    19.9,
+    626.4,
+    35.1
+   ],
+   "visible": [
+    611.2,
+    19.9,
+    626.4,
+    35.1
+   ],
+   "color": "#FFFFFFFF",
+   "alpha": 1.0,
+   "sprite": "arrow",
+   "raycast": true,
+   "selectable": false,
+   "maskOnly": false,
+   "canvasOrder": -10,
+   "depth": 305,
+   "spriteSize": [
+    512.0,
+    512.0
+   ],
+   "spriteBorder": [
+    0.0,
+    0.0,
+    0.0,
+    0.0
+   ],
+   "imageType": "Simple",
+   "preserveAspect": true
+  },
+  {
+   "path": "InGameScene/UI Canvas/GamePanels/FilterEntityPanel/MainPanel/Content/CircuitView/ListPage/FilterRow/FilterSlot1",
+   "kind": "Image",
+   "rect": [
+    256.9,
+    154.6,
+    280.6,
+    178.4
+   ],
+   "visible": [
+    256.9,
+    154.6,
+    280.6,
+    178.4
+   ],
+   "color": "#FFFFFF96",
+   "alpha": 0.588,
+   "sprite": "item-slot",
+   "raycast": true,
+   "selectable": true,
+   "maskOnly": false,
+   "canvasOrder": -10,
+   "depth": 368,
+   "spriteSize": [
+    256.0,
+    256.0
+   ],
+   "spriteBorder": [
+    60.0,
+    60.0,
+    60.0,
+    60.0
+   ],
+   "imageType": "Sliced",
+   "preserveAspect": true
+  },
+  {
+   "path": "InGameScene/UI Canvas/GamePanels/FilterEntityPanel/MainPanel/Content/CircuitView/ListPage/ActionPills2/Pill/ChosenMark",
+   "kind": "Image",
+   "rect": [
+    233.2,
+    141.9,
+    438.9,
+    144.5
+   ],
+   "visible": [
+    233.2,
+    141.9,
+    438.9,
+    144.5
+   ],
+   "color": "#E8F4FAFF",
+   "alpha": 1.0,
+   "sprite": "",
+   "raycast": false,
+   "selectable": false,
+   "maskOnly": false,
+   "canvasOrder": -10,
+   "depth": 361
+  },
+  {
+   "path": "InGameScene/UI Canvas/GamePanels/FilterEntityPanel/MainPanel/Content/CircuitView/ListPage/Conditions/Viewport/Content/Condition0/Icon",
+   "kind": "Image",
+   "rect": [
+    284.9,
+    222.4,
+    318.8,
+    256.3
+   ],
+   "visible": [
+    284.9,
+    222.4,
+    318.8,
+    256.3
+   ],
+   "color": "#FFFFFFFF",
+   "alpha": 1.0,
+   "sprite": "CircuitModule",
+   "raycast": false,
+   "selectable": false,
+   "maskOnly": false,
+   "canvasOrder": -10,
+   "depth": 387,
+   "spriteSize": [
+    512.0,
+    512.0
+   ],
+   "spriteBorder": [
+    0.0,
+    0.0,
+    0.0,
+    0.0
+   ],
+   "imageType": "Simple",
+   "preserveAspect": true
+  },
+  {
+   "path": "InGameScene/UI Canvas/GamePanels/FilterEntityPanel/MainPanel/HeaderContent",
+   "kind": "HeaderHitArea",
+   "rect": [
+    214.5,
+    5.5,
+    671.8,
+    49.5
+   ],
+   "visible": [
+    214.5,
+    5.5,
+    671.8,
+    49.5
+   ],
+   "color": "#FFFFFFFF",
+   "alpha": 1.0,
+   "sprite": "",
+   "raycast": true,
+   "selectable": false,
+   "maskOnly": false,
+   "canvasOrder": -10,
+   "depth": 300
+  },
+  {
+   "path": "InGameScene/UI Canvas/GamePanels/FilterEntityPanel/MainPanel/Content/CircuitView/ListPage/FilterRow/Pill/ChosenMark",
+   "kind": "Image",
+   "rect": [
+    299.3,
+    174.1,
+    472.0,
+    176.7
+   ],
+   "visible": [
+    299.3,
+    174.1,
+    472.0,
+    176.7
+   ],
+   "color": "#E8F4FAFF",
+   "alpha": 1.0,
+   "sprite": "",
+   "raycast": false,
+   "selectable": false,
+   "maskOnly": false,
+   "canvasOrder": -10,
+   "depth": 372
+  },
+  {
+   "path": "InGameScene/UI Canvas/GamePanels/FilterEntityPanel/MainPanel",
+   "kind": "Image",
+   "rect": [
+    207.7,
+    5.5,
+    678.5,
+    369.9
+   ],
+   "visible": [
+    207.7,
+    5.5,
+    678.5,
+    369.9
+   ],
+   "color": "#FFFFFFFF",
+   "alpha": 1.0,
+   "sprite": "background-main",
+   "raycast": true,
+   "selectable": false,
+   "maskOnly": false,
+   "canvasOrder": -10,
+   "depth": 298,
+   "spriteSize": [
+    512.0,
+    512.0
+   ],
+   "spriteBorder": [
+    10.0,
+    10.0,
+    10.0,
+    10.0
+   ],
+   "imageType": "Sliced",
+   "preserveAspect": false
+  },
+  {
+   "path": "InGameScene/UI Canvas/GamePanels/FilterEntityPanel/MainPanel/HeaderContent/Header/StationGridButton/IconParent/Icon",
+   "kind": "Image",
+   "rect": [
+    575.6,
+    19.9,
+    590.8,
+    35.1
+   ],
+   "visible": [
+    575.6,
+    19.9,
+    590.8,
+    35.1
+   ],
+   "color": "#FFFFFFFF",
+   "alpha": 1.0,
+   "sprite": "Icon_Stations",
+   "raycast": true,
+   "selectable": false,
+   "maskOnly": false,
+   "canvasOrder": -10,
+   "depth": 307,
+   "spriteSize": [
+    512.0,
+    512.0
+   ],
+   "spriteBorder": [
+    0.0,
+    0.0,
+    0.0,
+    0.0
+   ],
+   "imageType": "Simple",
+   "preserveAspect": true
+  },
+  {
+   "path": "InGameScene/UI Canvas/GamePanels/FilterEntityPanel/MainPanel/Content/CircuitView/ListPage/Conditions/Viewport/Content/Condition0/RemoveButton(Clone)/IconParent/Icon",
+   "kind": "Image",
+   "rect": [
+    639.6,
+    232.6,
+    653.1,
+    246.2
+   ],
+   "visible": [
+    639.6,
+    232.6,
+    653.1,
+    246.2
+   ],
+   "color": "#FFFFFFFF",
+   "alpha": 1.0,
+   "sprite": "Exit",
+   "raycast": true,
+   "selectable": false,
+   "maskOnly": false,
+   "canvasOrder": -10,
+   "depth": 394,
+   "spriteSize": [
+    128.0,
+    128.0
+   ],
+   "spriteBorder": [
+    0.0,
+    0.0,
+    0.0,
+    0.0
+   ],
+   "imageType": "Simple",
+   "preserveAspect": false
+  },
+  {
+   "path": "InGameScene/UI Canvas/GamePanels/FilterEntityPanel/MainPanel/Content/CircuitView/ListPage/Status/Dot",
+   "kind": "Image",
+   "rect": [
+    228.1,
+    191.9,
+    238.3,
+    202.1
+   ],
+   "visible": [
+    228.1,
+    191.9,
+    238.3,
+    202.1
+   ],
+   "color": "#2C839CFF",
+   "alpha": 1.0,
+   "sprite": "white-backdrop",
+   "raycast": true,
+   "selectable": false,
+   "maskOnly": false,
+   "canvasOrder": -10,
+   "depth": 377,
+   "spriteSize": [
+    512.0,
+    512.0
+   ],
+   "spriteBorder": [
+    20.0,
+    20.0,
+    20.0,
+    20.0
+   ],
+   "imageType": "Sliced",
+   "preserveAspect": false
+  },
+  {
+   "path": "InGameScene/UI Canvas/GamePanels/FilterEntityPanel/MainPanel/Content/CircuitView/ListPage/ActionPills2/Pill/Text (TMP)",
+   "kind": "TextMeshProUGUI",
+   "rect": [
+    228.1,
+    127.1,
+    444.0,
+    141.5
+   ],
+   "visible": [
+    228.1,
+    127.1,
+    444.0,
+    141.5
+   ],
+   "color": "#FFFFFFFF",
+   "alpha": 1.0,
+   "sprite": "",
+   "raycast": true,
+   "selectable": false,
+   "maskOnly": false,
+   "canvasOrder": -10,
+   "depth": 360,
+   "text": "Filter when true",
+   "textRect": [
+    291.2,
+    127.1,
+    380.9,
+    141.5
+   ],
+   "lines": 1,
+   "fontSize": 13.2
+  },
+  {
+   "path": "InGameScene/UI Canvas/GamePanels/FilterEntityPanel/MainPanel/Content/CircuitView/ListPage/FilterRow/Pill/Panel",
+   "kind": "Image",
+   "rect": [
+    294.2,
+    154.6,
+    477.0,
+    178.4
+   ],
+   "visible": [
+    294.2,
+    154.6,
+    477.0,
+    178.4
+   ],
+   "color": "#FFFFFFFF",
+   "alpha": 1.0,
+   "sprite": "white-backdrop",
+   "raycast": true,
+   "selectable": false,
+   "maskOnly": false,
+   "canvasOrder": -10,
+   "depth": 370,
+   "spriteSize": [
+    512.0,
+    512.0
+   ],
+   "spriteBorder": [
+    20.0,
+    20.0,
+    20.0,
+    20.0
+   ],
+   "imageType": "Sliced",
+   "preserveAspect": true
+  },
+  {
+   "path": "InGameScene/UI Canvas/GamePanels/FilterEntityPanel/MainPanel/Content/CircuitView/ListPage/Conditions/Viewport/Content/Condition0/Texts/Condition",
+   "kind": "TextMeshProUGUI",
+   "rect": [
+    325.6,
+    240.2,
+    597.2,
+    258.9
+   ],
+   "visible": [
+    325.6,
+    240.2,
+    597.2,
+    258.9
+   ],
+   "color": "#FFFFFFFF",
+   "alpha": 1.0,
+   "sprite": "",
+   "raycast": false,
+   "selectable": false,
+   "maskOnly": false,
+   "canvasOrder": -10,
+   "depth": 390,
+   "text": "<noparse>calculation B < 20</noparse>  <",
+   "textRect": [
+    325.6,
+    241.4,
+    508.9,
+    257.7
+   ],
+   "lines": 1,
+   "fontSize": 15.0
+  },
+  {
+   "path": "InGameScene/UI Canvas/GamePanels/FilterEntityPanel/MainPanel/HeaderContent/Header/StationGridButton",
+   "kind": "Image",
+   "rect": [
+    570.9,
+    15.6,
+    594.6,
+    39.4
+   ],
+   "visible": [
+    570.9,
+    15.6,
+    594.6,
+    39.4
+   ],
+   "color": "#FFFFFFFF",
+   "alpha": 1.0,
+   "sprite": "borderless-primary",
+   "raycast": true,
+   "selectable": true,
+   "maskOnly": false,
+   "canvasOrder": -10,
+   "depth": 306,
+   "spriteSize": [
+    512.0,
+    512.0
+   ],
+   "spriteBorder": [
+    20.0,
+    20.0,
+    20.0,
+    20.0
+   ],
+   "imageType": "Sliced",
+   "preserveAspect": true
+  },
+  {
+   "path": "InGameScene/UI Canvas/GamePanels/FilterEntityPanel/MainPanel/Content/CircuitView/ListPage/Conditions/Viewport/Content/Condition0",
+   "kind": "Image",
+   "rect": [
+    228.1,
+    212.3,
+    665.0,
+    266.5
+   ],
+   "visible": [
+    228.1,
+    212.3,
+    665.0,
+    266.5
+   ],
+   "color": "#081C2CC7",
+   "alpha": 0.78,
+   "sprite": "white-backdrop",
+   "raycast": true,
+   "selectable": true,
+   "maskOnly": false,
+   "canvasOrder": -10,
+   "depth": 382,
+   "spriteSize": [
+    512.0,
+    512.0
+   ],
+   "spriteBorder": [
+    20.0,
+    20.0,
+    20.0,
+    20.0
+   ],
+   "imageType": "Sliced",
+   "preserveAspect": false
+  }
+ ]
+}

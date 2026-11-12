@@ -554,6 +554,82 @@ class StyleTest(unittest.TestCase):
             self.assertTrue(mine and all("delta E 0.0 (on screen)" in s for s in mine), summaries)
         self.assertEqual(failures, [])
 
+    W3919 = Path(__file__).resolve().parent / "fixtures" / "w3919-connector-pills-1280-classic-{}.json"
+
+    def connector(self, side, tint_chosen=False):
+        """w3919's Connector window at 1280x800 classic, the Circuit tab on Filter when true with Ice (after: e-list on
+        1b028de6e1; before: b-circuit on master 453f047d85), cut to the window and cropped to (0,150)-(680,610) of the
+        screen. The window moved from 208,156 to 3,208 between them, and each census lists its pills in another order.
+        With tint_chosen, a pill with its ChosenMark inside reads #2E8FA6 and the others #1A3A5C, as on screen."""
+        census = json.loads(Path(str(self.W3919).format(side)).read_text(encoding="utf-8"))
+        if tint_chosen:
+            marks = [e["rect"] for e in census["elements"] if e["path"].endswith("Pill/ChosenMark")]
+            for e in census["elements"]:
+                if e["path"].endswith("Pill/Panel"):
+                    chosen = any(ul.area(ul.inter(e["rect"], m)) > 0 for m in marks)
+                    e["color"] = "#2E8FA6FF" if chosen else "#1A3A5CFF"
+        return census
+
+    def test_clones_in_a_moved_window_pair_by_their_place_in_it(self):
+        # w3919: the window moved 204 px left and 52 px down, and pairing by screen overlap met each chosen pill of
+        # FilterRow and ActionPills2 with the unchosen one before (delta E 27.8 on screen for the same tint and art).
+        summaries, failures = ul.style(self.connector("before", True), self.connector("after", True),
+                                       "FilterEntityPanel/MainPanel", touched_fragments=["FilterEntityPanel"])
+        pills = [s for s in summaries if s.startswith(("FilterRow/Pill/Panel", "ActionPills2/Pill/Panel"))]
+        self.assertEqual(len(pills), 4, summaries)
+        self.assertTrue(all("delta E 0.0 (tint)" in s for s in pills), pills)
+        self.assertEqual(failures, [])
+
+    @unittest.skipUnless(importlib.util.find_spec("PIL"), "needs Pillow (the CI runner has none)")
+    def test_the_connector_pills_read_the_same_on_screen_after_the_window_moved(self):
+        # w3919's own run: PR #3555's Style line read delta E 27.8 at 1280x800 classic; the same art and tint read 0.0.
+        shots = str(self.W3919).replace(".json", ".png")
+        summaries, failures = ul.style(self.connector("before"), self.connector("after"), "FilterEntityPanel/MainPanel",
+                                       shot=shots.format("after"), ref_shot=shots.format("before"),
+                                       touched_fragments=["FilterEntityPanel"])
+        pills = [s for s in summaries if s.startswith(("FilterRow/Pill/Panel", "ActionPills2/Pill/Panel"))]
+        self.assertEqual(len(pills), 4, summaries)
+        self.assertTrue(all("delta E 0.0 (on screen)" in s for s in pills), pills)
+        self.assertEqual(failures, [])
+
+    @staticmethod
+    def moved_pills(x0, y0, chosen_first, pills=2, sibling=False):
+        """A window at x0,y0 with a row of `pills` clones at one path, the first chosen (teal), listed chosen first or
+        last."""
+        row = []
+        for i in range(pills):
+            extra = {"sibling": f"0/{i}"} if sibling else {}
+            row.append(el("Window/Row/Pill/Panel", [x0 + 10 + 90 * i, y0 + 40, x0 + 90 + 90 * i, y0 + 64],
+                          color="#2E8FA6FF" if i == 0 else "#1A3A5CFF", sprite="pill", **extra))
+        row = row if chosen_first else row[::-1]
+        return {"screen": [1280, 800], "elements": [el("Window", [x0, y0, x0 + 400, y0 + 300], color="#0D1724FF")] + row}
+
+    def test_two_same_path_clones_pair_by_rank_when_the_window_moves(self):
+        # The after window sits 200 px left and 60 px down, so neither pill overlaps a pill before and both are
+        # nearest the before's chosen one; the lists are in opposite orders too.
+        summaries, failures = ul.style(self.moved_pills(300, 100, True), self.moved_pills(100, 160, False), "Window",
+                                       touched_fragments=["Window/Row"])
+        pills = [s for s in summaries if s.startswith("Row/Pill/Panel")]
+        self.assertEqual(len(pills), 2, summaries)
+        self.assertTrue(all("delta E 0.0 (tint)" in s for s in pills), pills)
+        self.assertEqual(failures, [])
+
+    def test_a_clone_count_change_pairs_by_place_in_the_window(self):
+        # Three pills before and two after: no rank pairing, so each pairs with the pill at its place in the window.
+        summaries, failures = ul.style(self.moved_pills(300, 100, True, pills=3), self.moved_pills(100, 160, False),
+                                       "Window", touched_fragments=["Window/Row"])
+        pills = [s for s in summaries if s.startswith("Row/Pill/Panel")]
+        self.assertEqual(len(pills), 2, summaries)
+        self.assertTrue(all("delta E 0.0 (tint)" in s for s in pills), pills)
+        self.assertEqual(failures, [])
+
+    def test_a_sibling_index_pairs_clones_first(self):
+        before, after = self.moved_pills(300, 100, True, sibling=True), self.moved_pills(100, 160, False, sibling=True)
+        teal = next(e for e in after["elements"] if e.get("sibling") == "0/0")
+        mine = [e for e in after["elements"] if e["path"].endswith("Row/Pill/Panel")]
+        cands = [e for e in before["elements"] if e["path"].endswith("Row/Pill/Panel")]
+        self.assertEqual(ul.twin(teal, cands, mine, after, before)["sibling"], "0/0")
+
     def test_tint_colour_and_alpha_on_the_same_art(self):
         after = hud()
         after["elements"].append(el("BlueprintPanelChild", [392, 68, 850, 444], color="#0D1724FF", alpha=0.98))
