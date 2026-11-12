@@ -594,6 +594,14 @@ never rewritten (`tools/check_snapshot_compat.sh BASE_REF` holds it in CI). No t
     so CI's Linux `lint` and `check` went red at 7bef972.
   - Declare the module at the file's top level under `#[cfg(test)]`, where the path is relative to the file's own
     folder, and reach it from the tests through `use super::*`.
+- **A player-facing row (an FP row, or any row whose output a player sees: a panel, the HUD, the world's look, the
+  camera) starts with its design, not its code** (Ben, 2026-11-12, w2895 and w4008: "this is supposed to be a 3d game
+  engine"; on FP.21's 32-page picker: "this is supposed to be a professional level game, surpassing ff1"). Its first
+  PR is the design: a short `docs/rows/<Id>.md` design, mocks beside FF1's equivalent screen (2 or 3 options where
+  the look is a choice), a fresh `ui-critic` report; then `waiting_on_person` for the pick. Code starts after the pick
+  and names it (`Picked:`). A fan-out runs only that design step in parallel. Never build or polish on a stand-in look
+  (flat tiles, a default button grid) as the product; green CI and two clients that agree are not the bar, FF1 or better
+  is (evidence-gate `lessons/design-and-mock-player-facing-work-before-code.md`, UI checklist item 0).
 - **A row writes only files of its own, never a `docs/PLAN.md` table line or `docs/ff1-oracle.md`** (w3844, ffu #574).
   Take a row by merging `docs/rows/<Id>.md` holding `in progress: <session> (wNNN)` in a docs-only PR before you start
   (a row PLAN.md does not list: its table line `| <Id> | Task | Passes when | Runs | Stream |` first); finish it by

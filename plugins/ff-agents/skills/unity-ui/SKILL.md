@@ -533,6 +533,10 @@ still or a mock goes to anyone:
 The evidence-gate's design gate (checklist `ui.md`, at its top, items 27, 28, 30, 31, 33) is the rule; `pr_evidence.py` checks
 the four lines.
 
+A new panel, popup or screen meets that gate first as mocks, before any code: a short design, mocks beside the game's
+best existing screen of that kind (2 or 3 options where the look is a choice), a fresh critic, and the person's pick
+(checklist `ui.md` item 0, evidence-gate `lessons/design-and-mock-player-facing-work-before-code.md`, w2895, w4008).
+
 ## 5b. Check the rest of the screen, before and after
 
 A change to one panel can move or cover another: the minimap's side buttons drifted off it and a

@@ -14,6 +14,15 @@ Plan the run from the start: build the base commit and yours, run the same Deck 
 run Style as `ui_layout.py check --touched <panel> --ref <panel>`: it compares the panel against its own before. w2999 added
 these lines one checker round at a time and needed four rounds.
 
+0. **Design and mocks before code, reviewed by the person (w2895, w4008, 2026-11-12).** New player-facing work (a new
+   panel, picker, HUD element, screen, world look or camera) gets no code until: a short design (what the player sees at
+   full content, which reference screen it answers to); mocks beside that reference (FF1's equivalent screen for FFU,
+   the game's best existing screen of that kind for FF1), 2 or 3 options where the look is a choice; a fresh critic on
+   them (the gate below); and the person's pick, quoted as `Picked:` in the PR. A stand-in look (flat tiles, a default
+   button grid) is never shipped or polished as the product, and "it works and two clients agree" is not the bar: FF1's
+   own screen or better is. Ben, 2026-11-12, on FP.21's picker: "this is supposed to be a professional level game,
+   surpassing ff1" ([lesson](../lessons/design-and-mock-player-facing-work-before-code.md)).
+
 **The design gate: no UI still or mock reaches a person until it has passed** (w1399; Ben, 2026-10-16: "you make bad UI
 mistakes constantly", after three screens their workers and their orchestrator had passed). In order:
 1. Build from the game's own components and colours (the game repo's `docs/UI-Style.md`). A see-through colour draws much

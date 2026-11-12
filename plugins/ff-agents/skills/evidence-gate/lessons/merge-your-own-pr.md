@@ -1,6 +1,6 @@
 ---
 name: merge-your-own-pr
-description: "Once its verification is done and CI is green, the agent that opened a pull request merges it. A PR is held only for exceptional risk or a concrete timing reason, and the report says which and when it will merge."
+description: "Once its verification is done and CI is green, the agent that opened a pull request merges it. A PR is held only for exceptional risk or a concrete timing reason, and the report says which and when it will merge. Never before the review: a PR whose review, clip or audit is pending is not ready."
 date: 2026-10-02
 ---
 
@@ -25,7 +25,7 @@ or forgotten, so the person has to ask.
 **How to apply.**
 
 - Verification first, unchanged: the evidence gate, the visual checklist, the tests, the audit.
-  [No merge before the review](no-merge-before-the-review.md) still holds. This rule starts where
+  [No merge before the review](#no-merge-before-the-review-913-2026-10-02), below, still holds. This rule starts where
   that one ends.
 - Then merge. In the game repo that means into `master`, the one trunk (w1137, 2026-10-12: develop is
   retired; master takes only a pull request with green CI, no direct push, no force-push; `gh pr merge
@@ -93,6 +93,39 @@ or forgotten, so the person has to ask.
   post when its own copy is older than the released one (that FAIL is about the copy; it was posted on
   a PR twice and deleted by hand); update the plugin first.
 
+
+## No merge before the review (#913, 2026-10-02)
+
+The first half of this rule: "pending" is not done (merged here from its own lesson file by w4011).
+
+**Rule.** If the pull request says a review, a clip, an audit or a test run is pending, it is not
+ready to merge. Finish it, or take the claim it would support out of the title and list it under
+"Not verified".
+
+**Why.** On 2026-10-02 the quick-craft fix (#913) merged 37 minutes after it opened. Its own
+description said "The `watch_video` review is pending on BEAST". The day before, the miner
+explosion fix (#886) merged 39 minutes after it opened on editor-rig evidence, with the built
+game never looked at; it shipped in 0.50.0.64, where Ben found the explosion still huge. Workers
+are trusted to integrate verified work on their own, and that trust is the reason "verified" has
+to mean finished.
+
+**How to apply.**
+
+- Before merging, run `pr_evidence.py` on the pull request ([the merge checklist](../checklists/merge.md)).
+  It fails on anything pending in the `## Evidence` section, and `--comment` leaves the verdict
+  on the pull request before the merge.
+- Let the verdict gate the merge mechanically: `pr_evidence.py ... --comment && gh pr merge ...`.
+  On 2026-10-09 (w793, #1329) the check and the merge ran as two lines of one command; the check
+  said FAIL (its copy was one ff-agents release old) and the merge went through anyway. The newer
+  copy then said PASS, but the record before the merge was a FAIL.
+  On 2026-10-10 (w888, #1393) the same FAIL (a release-old copy) merged through `pr_evidence.py ... --comment 2>&1 |
+  head -2 && gh pr merge`: the pipe's exit status is `head`'s, always 0. Nothing may stand between the check and the
+  `&&`; redirect to a file to keep the output short.
+- If the review cannot run where you are (no key on this machine, no built player), move the work
+  to where it can, or hold the pull request and say what is missing and when it will merge. Don't
+  merge and promise the review afterwards.
+- Speed is not a reason. A merged change that is wrong costs a release and a report from a
+  player.
 
 ## Before the push: the repo's own pre-push check (ff-factory, w924, 2026-10-10)
 
