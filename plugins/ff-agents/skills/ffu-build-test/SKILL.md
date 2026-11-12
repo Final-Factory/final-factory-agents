@@ -58,6 +58,17 @@ whole verification. The repo's own `CLAUDE.md` is binding and longer; this skill
   The report then showed spreads up to 128 points and a half-finished variant set, so the whole leg was rerun. After
   any stop, run `ff-leftovers list` and `ff-leftovers end` until it prints nothing. Give each leg a fresh output
   folder, since `p4.sh time` appends to `runs.jsonl`.
+  "None is left" does not prove it on Windows (w3980): `ff-leftovers end` printed it twice while a background
+  `leg.sh` loop's two bash processes went on starting the next `ffu-headless` run. Count by command line instead:
+  `Get-CimInstance Win32_Process | ? { $_.CommandLine -match '<script>|<binary>' }`, `Stop-Process -Id` each one, the
+  loop's bash first, and count again until it is 0.
+- **Fit each lock's legs into its 30-minute turn, CI wait included** (w3980, ffu #668). Once a worker waits behind you,
+  the wait for CI jobs (up to 20 min) counts in your turn, and the queue then lets timing start beside the CI jobs.
+  w3980 planned 6 trailer runs (about 4.5 min each) and 6 FF1 tiled 5x8 runs (2 ticks, about 150 s each) for one lock.
+  The trailer runs used it all up. A second lock lost 15 min to CI and timed 4 tiled runs beside it, and T=16 needed a
+  third. Time one run of each leg first, put in each lock what fits with a margin, the legs you need most first, and
+  stop the rest before the warning's end time. Record which ticket timed beside CI, and do not claim its whole-tick
+  difference.
 - **Judge a cost cut by the whole tick, not only the stub share** (w3963). M1.6c kept each building's hash and copied
   and compared every whole building each tick to find what changed. The hash share fell from 25.8 % to 5.4 %, but the
   tick only went from 2670 to 2634 us (MEASURED, 250k, 1 thread): the compare cost what the hashes saved. With
