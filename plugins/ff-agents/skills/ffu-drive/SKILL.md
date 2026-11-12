@@ -20,6 +20,10 @@ A sector starts from `--start factory:N[:seed]` (a generated factory of about N 
 (Stingers flying at Gatling Turrets) or a `file.snap` a run saved. Every `ffu-headless` command ends with one JSON line
 on stdout: read that line, not stderr, unless it fails.
 
+`combat:N`'s Stingers stay round their camps (spawners 4 tiles in from each edge and corner); they do not fly to the
+centre, whatever `scenario.rs`'s doc says. A turret at the centre never fires; one 8 tiles from a spawner fights
+(measured, w2895 FP.22: combat:8 seed 3, a turret at (64,12) from tick 136 had 51 kills by tick 2403).
+
 ## Headless: run, inspect, measure
 
 ```sh
