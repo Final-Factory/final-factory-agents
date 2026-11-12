@@ -177,6 +177,10 @@ whole verification. The repo's own `CLAUDE.md` is binding and longer; this skill
     harness refuses `gh run rerun` of it, and a `workflow_dispatch` run on the same commit is not the PR's run.
 - **The Write tool cannot make a new file in an ffu slot** (w3831): a worker's Write may create files only in its game sandbox and its `$TMPDIR`, so a new `src/sector/comets.rs` in `$FFU_DIR` was refused. Write the new file in `$TMPDIR` and `cp` it into `$FFU_DIR`; edit existing files with Edit or a script file in `$TMPDIR`.
 - Put those exports in `$TMPDIR/rust.sh` and source it in every shell call: shell state does not persist.
+- **Never pipe an ffu command's stdout into `head`** (w2895). `ffu-headless ff1 import ... | head -c 400` panicked
+  when `head` closed the pipe: Rust's `println!` panics on a broken pipe. The panic wrote a crash report under the
+  user's AppData `FinalFactoryUniverse\crashes` folder, which a worker may not delete. The snapshot was still
+  written. Redirect the output to a file in `$TMPDIR` and read that file.
 - **Keep one target per worker; never share a `CARGO_TARGET_DIR` across parallel workers** (w3396). Two builds on one
   target wait on cargo's build-directory lock ("Blocking waiting for file lock"): one rebuild alone took 44 s, two at
   once 48 s and 71 s (measured, BEAST). A shared target is also never idle, so FF Factory's clean-up can never prune it.

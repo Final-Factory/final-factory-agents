@@ -97,6 +97,9 @@ zoom 24 at a station's centre shows empty floor (w3754: three blank stills). `--
 world:16's 534-tile tour in about 53 s.
 `ffu --headless <cmd>` is `ffu-headless <cmd>`. Judge motion from a clip, not a still (`/ff-agents:watch-video`'s
 viewing rules hold; its recorder is for Unity players).
+A connected clip (`--connect ... --clip`) draws the builder's notice, as the window does: a refusal, or FP.20's
+"2 tiles taken" (ffu #654, w2895). Before that PR a clip drew panels but no notice, so no still could show one.
+`--autodrag N` drags an N-tile belt line east from the free tile nearest the view's centre, then releases it.
 
 ## Art previews
 
