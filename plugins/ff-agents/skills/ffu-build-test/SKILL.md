@@ -59,6 +59,11 @@ whole verification. The repo's own `CLAUDE.md` is binding and longer; this skill
   any stop, run `ff-leftovers list` and `ff-leftovers end` until it prints nothing. Give each leg a fresh output
   folder, since `p4.sh time` appends to `runs.jsonl`. On Windows `ff-leftovers` finds such a loop by the temp folder
   its command line names and by its Git Bash parents since ff-factory #942 (w4000; w3980 had to count by command line).
+- **A bare `wait` in a timed script also waits on the ticket holder** (w4015). The script started `bench_queue.py
+  timed ... &` itself, so its `wait` after an affinity check waited for the holder to exit. The script hung after its
+  first leg for about 10 min of ticket t00006942. Stopping the task then released the ticket while its next legs ran
+  unticketed. Wait on named pids (`aff & P=$!; leg ...; wait $P`), and before each leg check the holder still runs
+  (`ps -p $TPID > /dev/null || exit 4`). The rerun under t00006945 did 12 runs in 80 s.
 - **Fit each lock's legs into its 30-minute turn, CI wait included** (w3980, ffu #668). Once a worker waits behind you,
   the wait for CI jobs (up to 20 min) counts in your turn, and the queue then lets timing start beside the CI jobs.
   w3980 planned 6 trailer runs (about 4.5 min each) and 6 FF1 tiled 5x8 runs (2 ticks, about 150 s each) for one lock.
