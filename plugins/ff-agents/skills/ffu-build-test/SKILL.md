@@ -100,6 +100,9 @@ whole verification. The repo's own `CLAUDE.md` is binding and longer; this skill
 - **Find a tick's slow part with `ffu-headless parts --start <snap> --ticks N`** (w4001): it prints each tick's time
   per step (step_sites, step_power, ...) and the slowest ticks' top three. A tiled or scaled start (5x8) shows the
   per-change full rebuilds the plain start hides: there each finished site's full power regrid cost ~390 ms.
+  Report a part's median tick beside its slow-tick value (w4023): w4002 wrote step_comets "62-66 ms on every slow
+  tick", and the next request was briefed as "62-66 ms every tick". Its median was 2.3 ms; the 62-69 ms came only on
+  the ticks a cached list was made again (after a load or a placement). Say which ticks pay a cost and why.
 - **A wait loop on "no `cargo.exe` left" (`tasklist`) on a shared Windows machine never ends either** (w3687): other
   workers' cargo and clippy runs match it. Wait on your own job's output (a marker line your script prints last, or
   the background task's notice), never on a process name.
