@@ -87,6 +87,14 @@ whole verification. The repo's own `CLAUDE.md` is binding and longer; this skill
   name with "build" in it, and a loop `until grep -q granted` on its log then waits forever (w3764 lost 10 min). Stop a
   wait loop on `refused` too. Git Bash on Windows has no `bc`: subtract times with `awk "BEGIN{print $t1 - $t0}"`
   (w3764's first run printed 0.0 for every leg).
+  `timed` refuses "test" in the name too (exit 78, w4001): call a leg "<what> timing leg" or "A/B timing".
+- **Time a RED test before you write that it "would time out"** (w4001, ffu #693). The many-open-sites `step_sites`
+  test was meant to hang on the quadratic path; at 20k sites the old code passed it in 1.8 s (release). Size it until
+  the old path is plainly slow in a debug build, as CI runs it: 60k sites took 82.1 s on main against 0.31 s fixed
+  (ticket t00006933), and the test comment says exactly that.
+- **Find a tick's slow part with `ffu-headless parts --start <snap> --ticks N`** (w4001): it prints each tick's time
+  per step (step_sites, step_power, ...) and the slowest ticks' top three. A tiled or scaled start (5x8) shows the
+  per-change full rebuilds the plain start hides: there each finished site's full power regrid cost ~390 ms.
 - **A wait loop on "no `cargo.exe` left" (`tasklist`) on a shared Windows machine never ends either** (w3687): other
   workers' cargo and clippy runs match it. Wait on your own job's output (a marker line your script prints last, or
   the background task's notice), never on a process name.
