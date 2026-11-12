@@ -124,7 +124,13 @@ census (`<shot>.json`: small, clipped, off-screen and overlapping text, covered 
   `ffa-<session>-*` save copy, so prevent them instead: give every leg `-ffAutomationRole solo` (with `-ffAutomationSave
   <your copy>` or `-ffAutomationSeed <seed>` for a new game; `specs/w2486-map-filter/tour/run_filter_tour.sh:6`). w2486's
   four such legs wrote no quit save; its three `-ffSoloNewGame` station legs wrote `_autosave_sp_before_quit_1..3` (their
-  Player.log: `[QuitSave] ApplicationQuit: saving the game as ...`). Grep each leg's Player.log for `[QuitSave]`.
+  Player.log: `[QuitSave] ApplicationQuit: saving the game as ...`). Check each leg with the game repo's
+  `python scripts/deck_audit/quit_save_check.py <leg>/Player.log` (exit 1 on a quit save; w4021, FinalFactory #3556), and
+  give every leg `-logFile`. `player_slots.py launch` prints the same FAIL line after a foreground player with `-logFile`.
+  A bare `[QuitSave]` grep is wrong: a right leg logs `[QuitSave] ApplicationQuit: not saving (AutomationProcess)`.
+  w3919's `run_tour.sh` (`-ffSoloNewGame`, no role) wrote `_autosave_sp_before_quit_1` on every leg until #3556 moved it
+  to `-ffAutomationRole solo -ffAutomationSeed w3919 -ffAutomationFlatMap true`. That solo path ignores
+  `-ffAutomationFreeBuild` (host new games only), and `ffauto:blueprint.place` constructs a blueprint without it.
 - **Development overlays are not the game.** The Debug Info counters, "Agent control ON" and Graphy
   draw in a development player and show up as overlaps and flicker; `ui_layout.py` ignores them,
   `ui_check.py` does not. Hold keys by `seconds`, not frames: a frame count is gone in a blink at
