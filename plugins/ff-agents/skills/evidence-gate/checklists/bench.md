@@ -92,6 +92,14 @@ Mechanics: the game repo's `Documentation/Bench-Lock.md`.
       (a counter the change already keeps, read in play), and bound the share as the added % of the system times the
       system's share of the heartbeat frame (the game repo's `Documentation/Performance-JustPlay-Transform-Chain-Waits-2026-10-27.md`
       has job lengths, e.g. `IncomingHealthChangeJob` 0.42 of 39.3 ms on JustPlay1003).
+- [ ] **A cost timing runs on a world that holds what the change's cost grows with** (w4012, 2026-11-12; the
+      orchestrator for ben: "its JustPlay save has 0 TeslaArcItem, 0 RemotePowerProducer and 0 StationGrid entities, so
+      it never timed the part of your change that grows with Tesla grids"). w4016 timed w4012's fingerprint change on
+      JustPlay (1,477,843 entities) and measured only the fixed part (+2.3 ms). Before a timed leg, count in the chosen
+      world the entities the change's new work iterates. Where no save has them, build an `EcsTestBase` world scaled in
+      N (100, 1,000, 4,000) in a `[Category("Performance")] [Explicit]` test that times with the data, stripped, and
+      with it again (the game repo's `PowerTeslaFingerprintCostPerformanceTest`; w4024 on the m3 measured +0.145,
+      +0.477 and +1.762 ms median), and report the per-entity cost with an estimate of the count a large base reaches.
 - [ ] **A "battle save" is checked for its battle in player.log** (w3955, 2026-11-12). The LifeAsTwoMegaWave fixture
       loses its wave on 1.0 builds: `Step0_50_0_55ClearAttackWaves` removes its 1,433 attack-wave ships on load, leaving
       52 enemies. Grep the leg's player.log for `Removed .* attack-wave ship` (and count enemy hits) before calling a
