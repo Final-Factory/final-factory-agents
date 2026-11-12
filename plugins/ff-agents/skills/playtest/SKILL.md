@@ -225,6 +225,23 @@ Measured on lothdesktop, 2026-10-28, a built player of FinalFactory f7901a742d:
 - **`pointer.wheel` over the Technology window pans the tech tree, not the list's ScrollRect.** A check that the list's
   scroll is kept needs another route: the code, or a list a wheel reaches.
 
+### Input timing bugs: sweep the click length at a pinned frame rate (w3988)
+
+On beast, 2026-11-12, w3988 (the nightly review of FinalFactory #3543, panning the open map with a right drag) checked
+built players of master f234b31697, of a first half-fix and of the full fix.
+- **A unit test of an input latch can share the bug's model.** The controller runs every action's `PerformActionUpdate`
+  before `CheckStateChange` (`PlayerController.cs`). So a hold decided on frame F changes the state at the end of F, and
+  its action first runs with the button down on frame F+1. On master, a still right click on the open map whose last held
+  frame came just before or on that decision acted neither as a hold nor as a quick click: the ghost under it stayed. The
+  half-fix passed its own test because the test assumed the hold acted on F. A built player still kept 2 of 3 ghosts
+  under 5-frame clicks. Model the frame on which the state change takes effect, and check the fix in a built player.
+- **Reproduce frame-boundary bugs this way.** Launch the player with `-ffFeelFps 20 -ffFeelVsync 0` to pin it to 20 fps.
+  Then sweep `pointer.click|1|N` (N held frames) over N around the threshold, one target per N, and read each target back
+  (`snap structure?x=&z=`). At 20 fps master kept 8 of 8 ghosts at N=4 and N=5, and removed every ghost at the other
+  lengths. The fix removed 36 of 36.
+- **`ui.mapfocus` takes world units (tile × 10).** On a flat map, waiting ghosts beyond the arena (rows from about z 60)
+  cannot be clicked from the open map, at any click length: keep the swept targets near the origin.
+
 ### Testing the DEMO build (w1012)
 
 The release lane's demo edition is the main build with one flag flipped: `Editor.ReleaseBuild.Build -ffEdition demo` ->
