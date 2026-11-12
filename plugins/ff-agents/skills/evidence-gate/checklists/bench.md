@@ -15,6 +15,12 @@ Mechanics: the game repo's `Documentation/Bench-Lock.md`.
       iterations of `DeterminismStateFingerprint.Compute`, 0.3-0.45 s each, is minutes in one call; a call past about
       10 s times out at the bridge, keeps running, and can run twice). Samples accumulate across calls in
       `AppDomain.CurrentDomain.SetData` under a round label with a done-counter; editor-ops, "Timeout receiving Unity response".
+- [ ] **A time in a before/after table is the median and spread of several runs per side, on an exact clock** (w4017,
+      2026-11-12: a one-run table read a quiet AutoQuit at 0.47 s before and 1.09 s after, and Ben asked whether the fix
+      slowed the quit; 8 interleaved runs each, timed from the log line to the process's own ExitTime, read medians
+      0.58 s with the fix and 0.56 s without it, host, spreads 0.03 to 0.09 s). Interleave the builds (ABBA), hold the ticket above, and time with the process's ExitTime
+      (`GetProcessTimes`) or an in-game stamp, never a `tasklist` or log poll loop (about 0.5 s of slop). A number from
+      one run per side is labelled "one run, not comparable" or left out of the table.
 - [ ] **A ticket is held only by a turn or a background task you watch** (w3715, lothsahn: "make sure stuff holding
       locks can continue doing stuff"; "it shouldn't be idle and hold the lock"; ff-factory PR #913). Run
       `bench_queue.py timed` and the legs under it in this turn or in a Bash `run_in_background` task, never behind
