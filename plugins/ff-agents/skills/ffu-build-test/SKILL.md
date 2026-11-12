@@ -74,7 +74,15 @@ whole verification. The repo's own `CLAUDE.md` is binding and longer; this skill
 - **Pin a run on Windows through a one-line `.cmd` file** (w3962, ffu `tools/bench/p4.sh`). With `MSYS_NO_PATHCONV=1`,
   `cmd //c "start "" /wait /b /affinity 4 ..."` keeps `//c`. cmd then opens an interactive shell, runs nothing and
   exits 0, so the log holds only cmd's banner. Instead, `printf 'start "" /wait /b /affinity %s "%s" %s\r\n' ... >
-  run.cmd`, then `cmd //c "$(cygpath -w run.cmd)"`; the child's stdout comes through.
+  run.cmd`, then `cmd //c "$(cygpath -w run.cmd)"`; the child's stdout comes through. **Give that path absolute**
+  (`cygpath -w "$PWD/run.cmd"`, w4003): on BEAST cmd does not look in the current folder, so a relative `run.cmd`
+  ran another `run.cmd` found on PATH (a PowerShell `Start-Process` under `C:\Users\corey\...`) and none of the legs.
+  Smoke one short leg and check its output files exist before taking a bench ticket.
+- **Time the binary you just built, from `target/release/deps/`** (w4003): after an ffu-sim edit, `cargo build --release
+  -p ffu-headless` rebuilt `deps/ffu_headless.exe` (09:12), while `target/release/ffu-headless.exe` stayed the
+  17:47 build of the day before (a different size). A hashcheck and crosscheck run on it passed against the old code.
+  Run or copy `$CARGO_TARGET_DIR/release/deps/ffu_headless.exe`, and check that the binary knows your change (a new JSON
+  field such as `hash_every`, or a changed hash) before you count a check.
 - **Timing builds** (w3764): a build time is shared work, `bench_queue.py run --what "<what>" -- <cmd>`; `timed` refuses a
   name with "build" in it, and a loop `until grep -q granted` on its log then waits forever (w3764 lost 10 min). Stop a
   wait loop on `refused` too. Git Bash on Windows has no `bc`: subtract times with `awk "BEGIN{print $t1 - $t0}"`
