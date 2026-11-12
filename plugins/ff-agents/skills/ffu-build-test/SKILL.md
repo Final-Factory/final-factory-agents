@@ -57,11 +57,8 @@ whole verification. The repo's own `CLAUDE.md` is binding and longer; this skill
   next ticketed leg and appended to the same `runs.jsonl` and log. It was still running after that ticket was released.
   The report then showed spreads up to 128 points and a half-finished variant set, so the whole leg was rerun. After
   any stop, run `ff-leftovers list` and `ff-leftovers end` until it prints nothing. Give each leg a fresh output
-  folder, since `p4.sh time` appends to `runs.jsonl`.
-  "None is left" does not prove it on Windows (w3980): `ff-leftovers end` printed it twice while a background
-  `leg.sh` loop's two bash processes went on starting the next `ffu-headless` run. Count by command line instead:
-  `Get-CimInstance Win32_Process | ? { $_.CommandLine -match '<script>|<binary>' }`, `Stop-Process -Id` each one, the
-  loop's bash first, and count again until it is 0.
+  folder, since `p4.sh time` appends to `runs.jsonl`. On Windows `ff-leftovers` finds such a loop by the temp folder
+  its command line names and by its Git Bash parents since ff-factory #942 (w4000; w3980 had to count by command line).
 - **Fit each lock's legs into its 30-minute turn, CI wait included** (w3980, ffu #668). Once a worker waits behind you,
   the wait for CI jobs (up to 20 min) counts in your turn, and the queue then lets timing start beside the CI jobs.
   w3980 planned 6 trailer runs (about 4.5 min each) and 6 FF1 tiled 5x8 runs (2 ticks, about 150 s each) for one lock.
