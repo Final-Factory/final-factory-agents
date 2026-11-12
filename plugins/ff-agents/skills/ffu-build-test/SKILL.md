@@ -283,6 +283,8 @@ cargo run --release -p ffu-headless -- crosscheck --threads 1,4,16 --golden gold
   `--manifest-path fuzz/Cargo.toml --bins`, on stable 1.94 with lint's `target/`. Only running them needs nightly
   (libfuzzer-sys builds on stable). A struct change that leaves `fuzz/` unbuildable goes red there, not in the nightly
   fuzz job (P0.12c's `slots` did, ffu #434). After changing a struct `fuzz/` sets, run both locally (ffu #441).
+- `ffu-client` has no library target: `cargo test -p ffu-client --lib` fails with "no library targets found", and a
+  `grep "test result"` of it prints nothing, which reads as a pass (w2895 FP.22). Its unit tests run with `--bins`.
 - Fuzzing needs nightly and cargo-fuzz (`tools/fuzz.sh [seconds] [target ...]`); BEAST has neither. Run new targets on
   biscuit by dispatching the nightly job on your branch: `gh workflow run fuzz.yml -R Final-Factory/ffu --ref <branch>
   -f seconds=600 -f targets="a b"`. Each target's result is its `stat::number_of_executed_units` line in
@@ -551,6 +553,12 @@ never rewritten (`tools/check_snapshot_compat.sh BASE_REF` holds it in CI). No t
 - Merge on green: `gh pr merge <n> -R Final-Factory/ffu --merge --match-head-commit <sha>`. "Not mergeable" means
   another PR touched the same lines (now mostly code lists: `Kind` arms, op encode/decode, `SECTIONS`): `git merge origin/main`, keep both sides, push, wait for CI
   again. Never force-push or rebase a pushed branch.
+  - **Several rows landing at once outrun a green PR** (w2895 FP.22, ffu #659): it went "not mergeable" after each of two
+    green runs (about 40 min each) and took three main merges. Merge the moment you are resumed on green; if refused,
+    merge main in and push at once, then read the jobs while the new run goes.
+  - **Check a "keep both" resolution compiles before you commit it** (w2895, #659): two tests appended at one file's end
+    shared their closing braces, git kept them once, and the committed merge did not parse. Run `cargo fmt --all
+    --check` before `git commit` on a merge.
   - **A PR whose CI queues for an hour behind busy runners goes stale while it waits** (w3487, ffu #428). #428 turned
     CONFLICTING twice after its legs went green: main took snapshot version 13 (#425), then the agent API's new `set`
     ops (#434). Each conflict cost a whole new CI run. Check `gh pr view <n> --json mergeable` (retry while `UNKNOWN`)
