@@ -346,5 +346,5 @@ merge went; while one is left, say which instead. The ledger closes the request 
 
 Lessons behind this list:
 [merge your own pull request](../lessons/merge-your-own-pr.md),
-[no merge before the review](../lessons/no-merge-before-the-review.md),
+[no merge before the review](../lessons/merge-your-own-pr.md#no-merge-before-the-review-913-2026-10-02),
 [a visual fix is verified by looking](../lessons/visual-fixes-are-verified-by-looking.md).

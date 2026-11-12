@@ -92,6 +92,15 @@ offer only options that keep every unnamed element in place, or ask; never offer
 options` against master's census puts each option IN or OUT before the round goes out, and the critic fails an option
 with an unnamed move (item 32).
 
+## Player-facing work: design and mocks first, code after the person's review
+
+Ben, 2026-11-12, on FFU's FP.21 picker: "it looks like you're just throwing together a prototype, instead of carefully
+designing, mocking, iterating, and reviewing things". Before code for anything a player sees (a panel, the HUD, the
+world's look, the camera), write a short design, mock it beside the reference (FF1's equivalent screen), 2 or 3 options
+where the look is a choice, run the critic, and get the person's pick. A stand-in look never ships as the product;
+"functional" is not the bar, FF1 or better is. A plan or fan-out row that is player-facing starts with that design step
+([lesson](lessons/design-and-mock-player-facing-work-before-code.md); [UI checklist](checklists/ui.md), item 0).
+
 ## No UI still reaches a person before the design gate
 
 Ben, 2026-10-16: "you make bad UI mistakes constantly". The gate, at the top of the [UI checklist](checklists/ui.md):
@@ -381,7 +390,7 @@ One file each under `lessons/`: the rule, why (the incident, dated), how to appl
   large. make sure you test these visually when you add new models to the game in the future"). `pr_evidence.py` fails
   a PR that adds or changes a model without a filled `Scale:` line (checklist 5k), and the critic asks "is it in scale
   with its neighbours?".
-- [No merge before the review](lessons/no-merge-before-the-review.md): "pending" is not done.
+- [No merge before the review](lessons/merge-your-own-pr.md#no-merge-before-the-review-913-2026-10-02): "pending" is not done.
 - [Merge your own pull request](lessons/merge-your-own-pr.md): verified and green means merge;
   hold only for exceptional risk or a timing reason, and say which and when. A save version bump with its old-save load test green is not a risk (Ben, 2026-10-23, w1826: backwards compatibility is the gate). mechanics: check `git branch --show-current` after a wait, gate `gh pr merge` on a passing check: in an FF Factory worker `ff-pr merge`, one call (w1478; its vault token cannot read checks and the guard refuses `gh pr checks`, w2015); elsewhere `gh pr checks N && gh pr merge N --match-head-commit <sha>` (exit 8 is pending; w864), post the verdict only from the newest ff-agents (w807); a red check that is not your change, and `not our ref` at checkout ([section](lessons/merge-your-own-pr.md#a-red-check-that-is-not-your-change-read-the-failing-test-then-the-cause-w1337-2026-10-15), w1337).
 - [What is in a player's build is checked by running it](lessons/whats-in-a-players-build-is-checked-by-running-it.md):
@@ -479,6 +488,10 @@ One file each under `lessons/`: the rule, why (the incident, dated), how to appl
   and proves it with a built-game census of what is still drawn inside its bounds, expect 0, on a `Hidden census:` line
   (Ben, w2209, after F7 left belt items, the hover field, then shields and engines: "and anything else, you keep missing
   stuff").
+- [Design and mock player-facing work before code](lessons/design-and-mock-player-facing-work-before-code.md): a
+  short design, mocks beside FF1's equivalent screen (2 or 3 options where the look is a choice), a fresh critic and the
+  person's pick come before any code, and a stand-in look never ships (Ben, 2026-11-12, w2895 and w4008: "this is
+  supposed to be a professional level game, surpassing ff1"). Plan and fan-out rows that are player-facing start there.
 - [Judge every UI still by eye](lessons/verify-ui-with-full-content-like-a-player.md#judge-every-still-by-eye-before-the-person-sees-it-w1386-w1296-2026-10-16): before a still goes to a person, one line
   per still on whether anything looks broken or poor (stretched controls, mostly empty windows, overlapping labels, text
   dumps), apart from every before/after comparison; `ui_layout.py shape` measures the first two and walls of text; a

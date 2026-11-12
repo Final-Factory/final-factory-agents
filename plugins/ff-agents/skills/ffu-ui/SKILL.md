@@ -38,7 +38,9 @@ It lays out the first crafter's inspector of `factory:2000:1` after 480 ticks an
 `.png` per size, one JSON line each. Measured on lothdesktop (w2895, ffu main 821bcea, Arc B580 on Vulkan): 29 nodes
 at 1280x800. `capture` (the agent API) draws the sector, not the UI. Show a person a still only after the tree's
 checks pass, and judge it by the evidence-gate's UI checklist (`/ff-agents:evidence-gate`, `checklists/ui.md`): the
-design gate, a fresh `ui-critic` agent on the stills, and **move only what the person asked to move**.
+design gate, a fresh `ui-critic` agent on the stills, and **move only what the person asked to move**. A new panel or
+screen starts before all this, with a design and mocks beside FF1's equivalent window for the person's pick, and no
+code until they pick (UI checklist item 0, w2895 and w4008; FP.21's 32 pages of identical buttons were the miss).
 
 - **A still of an opened panel from the built client** (w2895, ffu #652): `ffu --start world.snap --still out.png
   --inspect X,Y --press A,B` opens the inspector of the building at X,Y and presses the named nodes in order before

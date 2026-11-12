@@ -176,6 +176,13 @@ Every task MUST strictly follow this format:
 
 ### Task Organization
 
+0. **Player-facing stories: design and mocks first** (Final Factory, Ben, 2026-11-12, w2895 and w4008: "this is
+   supposed to be a professional level game, surpassing ff1"). In a story whose output a player sees (a panel, the HUD,
+   the world's look, the camera), the first task is the design: a short design, mocks beside the reference screen (FF1's
+   equivalent), 2 or 3 options where the look is a choice, a fresh `ff-agents:ui-critic`, then the person's pick. Every
+   implementation task of that story depends on it and is never marked [P] with it. Rule: `ff-agents:evidence-gate`,
+   `lessons/design-and-mock-player-facing-work-before-code.md`.
+
 1. **From User Stories (spec.md)** - PRIMARY ORGANIZATION:
    - Each user story (P1, P2, P3...) gets its own phase
    - Map all related components to their story:
