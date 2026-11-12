@@ -81,6 +81,17 @@ Mechanics: the game repo's `Documentation/Bench-Lock.md`.
       (`-ffHangWatchdogSelfTime`, the game repo's `WatchdogCost`) read under 0.01% of frame time in two runs, even on a
       busy BEAST. Load only inflates such a self-timing, so a busy run is an upper bound. For "does X cost under N%?",
       add the flag (off by default, zero cost without it) before planning A/B rounds.
+- [ ] **A per-event cost is weighed at the real event rate, not the synthetic one** (w3955, 2026-11-12, BEAST and
+      lothdesktop). A log written per enemy hit cost +26% of `IncomingHealthChangeSystem` at a synthetic 8,000 hits a
+      heartbeat (about 110 ns a hit), but real saves counted 0 to 0.03 enemy hits a heartbeat, and the whole-frame player
+      A/B (timed run tr_89ab62e413) showed no difference. Before timing, count the event rate on two or three real saves
+      (a counter the change already keeps, read in play), and bound the share as the added % of the system times the
+      system's share of the heartbeat frame (the game repo's `Documentation/Performance-JustPlay-Transform-Chain-Waits-2026-10-27.md`
+      has job lengths, e.g. `IncomingHealthChangeJob` 0.42 of 39.3 ms on JustPlay1003).
+- [ ] **A "battle save" is checked for its battle in player.log** (w3955, 2026-11-12). The LifeAsTwoMegaWave fixture
+      loses its wave on 1.0 builds: `Step0_50_0_55ClearAttackWaves` removes its 1,433 attack-wave ships on load, leaving
+      52 enemies. Grep the leg's player.log for `Removed .* attack-wave ship` (and count enemy hits) before calling a
+      save a battle save in a PR or report.
 - [ ] **A short plan.** The fewest rounds that can answer the question (lothsahn: "Get them all to shorten their plans a
       lot"); the round count is a cap, never the plan.
 - [ ] **Size the biggest leg with a short probe before the series** (w3094, 2026-11-04, m3). A briefed plan of 12
