@@ -1311,16 +1311,65 @@ def by_path(found: list[dict]) -> dict:
     return out
 
 
-def twin(e: dict, cands: list[dict] | None):
-    """The element of `cands` (the same path in the other census) that stands where `e` stands: the largest rect
-    overlap, else the nearest centre. None when the other census has nothing at that path (a new element)."""
+def window_origin(census: dict | None, path: str, cache: dict | None = None) -> tuple[float, float]:
+    """The top-left of the window an element sits in: the largest element of its block (block depth 2, GamePanels/X) in
+    that census. Clones are placed from it, so a window that moved moves this point with them (w3919)."""
+    if census is None:
+        return 0.0, 0.0
+    block = block_of(path, 2)
+    key = (id(census), block)
+    if cache is not None and key in cache:
+        return cache[key]
+    inside = [x for x in census.get("elements", []) if x["path"] == block or x["path"].startswith(block + "/")]
+    found = (0.0, 0.0)
+    if inside:
+        r = max(inside, key=lambda x: area(x.get("visible") or x["rect"]))["rect"]
+        found = (r[0], r[1])
+    if cache is not None:
+        cache[key] = found
+    return found
+
+
+def twin(e: dict, cands: list[dict] | None, mine: list[dict] | None = None, here: dict | None = None,
+         there: dict | None = None, cache: dict | None = None):
+    """The element of `cands` (the same path in the other census) that is `e`. A unique path pairs by path. Clones that
+    share a path (a row of `Pill/Panel`s) pair by their `sibling` index when both censuses carry one, else by their
+    rank in reading order inside the window (`mine`: e's own clones in `here`; `cands`' window in `there`), else, when
+    the two censuses hold a different number of them, by the largest overlap, then the nearest centre, measured from
+    each window's top-left. None when the other census has nothing at that path (a new element).
+
+    w3919: the Connector window moved 204 px left and 52 px down at 1280x800 classic (a row it gained no longer fit its
+    column), and pairing by screen overlap met the chosen (teal) pill with an unchosen one: delta E 27.8 for pills
+    whose tint was delta E 0.0 on the same art. The census lists clones in no set order (DeckTour.cs collects them with
+    FindObjectsSortMode.None, w3585), so the order has to come from where they stand in their window."""
     if not cands:
         return None
-    rect = e.get("visible") or e["rect"]
+    if e.get("sibling") is not None:
+        same = [c for c in cands if c.get("sibling") == e["sibling"]]
+        if same:
+            return same[0]
+    if len(cands) == 1 and (mine is None or len(mine) <= 1):
+        return cands[0]
+    ox, oy = window_origin(here, e["path"], cache)
+    tx, ty = window_origin(there, e["path"], cache)
+
+    def rel(x, dx, dy):
+        r = x.get("visible") or x["rect"]
+        return [r[0] - dx, r[1] - dy, r[2] - dx, r[3] - dy]
+
+    def reading(xs, dx, dy):
+        # rows 4 px apart or more are rows; within a row, left to right
+        return sorted(xs, key=lambda x: (round(rel(x, dx, dy)[1] / 4), rel(x, dx, dy)[0]))
+    if mine and len(mine) == len(cands):
+        ours = reading(mine, ox, oy)
+        at = [i for i, x in enumerate(ours) if x["rect"] == e["rect"]]
+        if at:
+            return reading(cands, tx, ty)[at[0]]
+    rect = rel(e, ox, oy)
     centre = ((rect[0] + rect[2]) / 2, (rect[1] + rect[3]) / 2)
 
     def score(c):
-        r = c.get("visible") or c["rect"]
+        r = rel(c, tx, ty)
         return (-area(inter(rect, r)), math.dist(centre, ((r[0] + r[2]) / 2, (r[1] + r[3]) / 2)))
     return min(cands, key=score)
 
@@ -1335,10 +1384,10 @@ def changed_panels(before: dict | None, after: dict, touched: list[str] | None =
               if any(t.lower() in e["path"].lower() for t in touched or [])]
     if before is None:
         return forced
-    pb = by_path(panels(before))
+    pb, mine, cache = by_path(panels(before)), by_path(pa), {}
     result = []
     for e in pa:
-        old = twin(e, pb.get(e["path"]))
+        old = twin(e, pb.get(e["path"]), mine.get(e["path"]), after, before, cache)
         if old is None:
             result.append(dict(e, why="new"))
             continue
@@ -1413,6 +1462,7 @@ def style(before: dict | None, after: dict, ref_fragment: str, shot=None, ref_sh
     # `--ref CraftQueuePanels` every slot image was compared with the queue's largest image, its progress fill,
     # delta E 52.6 for the same art as master).
     own = by_path(panels(ref_from, min_share=0)) if ref_from is not after else {}
+    clones, cache = by_path(panels(after, min_share=0)), {}
     # Clones share a path, so a list's item icons differ path for path: art the reference census already draws at that
     # path is content, not a new look.
     drawn = {(x["path"], x.get("sprite") or "") for x in ref_from.get("elements", [])} if own else set()
@@ -1425,7 +1475,7 @@ def style(before: dict | None, after: dict, ref_fragment: str, shot=None, ref_sh
         name = short(e["path"])
         ref = base
         if e["why"] == "touched" and own:
-            ref = twin(e, own.get(e["path"]))
+            ref = twin(e, own.get(e["path"]), clones.get(e["path"]), after, ref_from, cache)
             if ref is None:
                 # w3585: the planner's new Table/Graph switch (`View/Pill/Panel`) has no twin on master, and the window's
                 # fill is no measure of a pill (delta E 36.7, its chosen mark 79.1): say so rather than fail on it.
