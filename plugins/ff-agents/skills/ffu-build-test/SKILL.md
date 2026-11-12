@@ -359,6 +359,12 @@ never rewritten (`tools/check_snapshot_compat.sh BASE_REF` holds it in CI). No t
   - per-structure satisfaction between a rejoin and phase 5.
 
   `assert_heavy_matches_over` in `ff1_belts_live.rs` reloads over a window of ticks.
+- **A derived index's equivalence test must fail with each invalidation path planted out** (w3979, ffu #669). The
+  barge dock index (`Lanes`, rebuilt when `lanes_dirty`) had a random test comparing it with the old scan through
+  random places and removes. With the remove path's dirty flag planted out, it still passed: random removes mostly hit
+  empty tiles, so the index was never stale where the test looked. Remove-only rounds that pick standing buildings
+  (every third round) made it fail at round 2 planted and pass with the flag in. Plant out each path that marks the
+  index dirty (place, remove, load, restore) one at a time and see the test go red before you trust it.
 - **A new `Kind` or `Op` is matched outside `ffu-sim` too.** `cargo check --workspace --all-features --all-targets`
   finds the non-exhaustive matches:
   - `ffu-agent`'s `building_json`;
