@@ -158,6 +158,9 @@ on a mismatch, a ledger error, an unbalanced window or a short fleet). Measured 
     is refused.
   - **A world run on a push to main that is red on the ff1 step still deployed the first world.** Read its
     `deploy: before ... after` line before calling the first world broken.
+  - **A loot test runs on a local `ffu-server` holding a fresh FF1 import, not on :7778** (w3968, FP.17). No op lets
+    a client plant a wreck (wrecks are world-only), and the import's wrecks expire, so the shared world may have none
+    left. Two clients with `--autoloot` on 127.0.0.1 looted two wrecks, and the other client agreed (ffu #656).
   - **The release client's `--connect --clip` end line carries `"buildings"` and `"buildings_joined"`** (since ffu
     e521738). Check a clip's count against the import's `placedCount` from that line. Measured at main 99427e7: both
     read 3776, with 0 resyncs.
