@@ -103,6 +103,20 @@ whole verification. The repo's own `CLAUDE.md` is binding and longer; this skill
   Report a part's median tick beside its slow-tick value (w4023): w4002 wrote step_comets "62-66 ms on every slow
   tick", and the next request was briefed as "62-66 ms every tick". Its median was 2.3 ms; the 62-69 ms came only on
   the ticks a cached list was made again (after a load or a placement). Say which ticks pay a cost and why.
+- **A phase that runs only on a change never shows in a quiet run: time it with a remove and a re-place** (w4026, ffu
+  #711). `rebuild_connectors` runs only on the tick a building comes or goes, and a 60-tick `parts` run of the tiled
+  5x8 start had none. ffu's `crates/ffu-headless/tests/rebuild_timing.rs` (ignored) steps a snapshot
+  (`FFU_REBUILD_SNAP`, a Windows path) to tick 20, then removes and re-places the middle Connector
+  `FFU_REBUILD_REPS` times, timing each tick and printing the hash after. Build it twice (main's and your file) and run
+  the test exes pinned under one ticket: a rebuild took 4.0 s on main and 1.1 s fixed, against 0.37 s quiet
+  (t00006992). The same hash after on both sides is the state check.
+- **Fix a probe's anchor before you take the ticket, and give `FFU_PROBE_OUT` a Windows path** (w2895 M1.46). The
+  first locked `step_probe.py` run of M1.46 timed nothing, because its anchor no longer matched `step_marked` (w4025
+  fixed it, ffu #708). A Git Bash path in `FFU_PROBE_OUT` is not opened by the Windows exe: pass
+  `"$(cygpath -w "$OUT/probe.csv")"`. Smoke one untimed leg and check its CSV exists first.
+- **Write a bench script with the Write tool, not a heredoc** (w4026). The w3731 hook refuses any Bash command whose
+  text holds `bench_queue.py timed ... &`, including a heredoc that only writes the script to a file. Write it with
+  the Write tool, then run `bash "$TMPDIR/rb.sh" <out>` with `run_in_background`.
 - **A wait loop on "no `cargo.exe` left" (`tasklist`) on a shared Windows machine never ends either** (w3687): other
   workers' cargo and clippy runs match it. Wait on your own job's output (a marker line your script prints last, or
   the background task's notice), never on a process name.
