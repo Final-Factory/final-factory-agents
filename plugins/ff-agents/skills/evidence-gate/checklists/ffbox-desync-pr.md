@@ -79,8 +79,7 @@ changed code runs) in your first report and in the PR description.
 - A new `*Detail` dump in `DesyncReportCollector` is named in each `## \`<surface>\`` section of the game repo's
   `Documentation/Determinism-Surfaces.md` it is dumped for, in the same PR: `DeterminismSurfacesDocTest.EachSection_NamesItsReportDumps`
   checks `DesyncReportCollector.DumpLabelsFor` against the doc and fails CI otherwise (w3955, PR #3536, run 43173422502:
-  `EnemyDamageDetail` added to loot, census, containers and movers, the doc unchanged). The test selector picked it, but
-  a local run of only the new test classes does not.
+  `EnemyDamageDetail` added to loot, census, containers and movers, the doc unchanged). Run that test locally too.
 - A class 2 fix that also adds capture is class 3 for the capture part.
 - Mods loaded on a peer: read each mod's source through app-gherik before any Workshop or steamcmd download
   (`GH_REPO=Gherik1/TowBot gh api installation/repositories`, then `git clone`; never print the token)
