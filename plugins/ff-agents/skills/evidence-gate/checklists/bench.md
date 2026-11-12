@@ -11,6 +11,10 @@ Mechanics: the game repo's `Documentation/Bench-Lock.md`.
       `bench_queue.py timed --what "<what>"` in the background across calls (`timed --release` after), `--bench
       exclusive` for a batch run. The report names the ticket beside its numbers; a number taken without one is a guess
       about a busy machine (w1892: an hour of editor micro-benchmarks on a LothDesktop at 100% CPU, none held).
+- [ ] **An editor timing loop goes in chunks of a few seconds per `execute_code` call** (w4016, 2026-11-12: 220
+      iterations of `DeterminismStateFingerprint.Compute`, 0.3-0.45 s each, is minutes in one call; a call past about
+      10 s times out at the bridge, keeps running, and can run twice). Samples accumulate across calls in
+      `AppDomain.CurrentDomain.SetData` under a round label with a done-counter; editor-ops, "Timeout receiving Unity response".
 - [ ] **A ticket is held only by a turn or a background task you watch** (w3715, lothsahn: "make sure stuff holding
       locks can continue doing stuff"; "it shouldn't be idle and hold the lock"; ff-factory PR #913). Run
       `bench_queue.py timed` and the legs under it in this turn or in a Bash `run_in_background` task, never behind

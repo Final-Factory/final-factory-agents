@@ -138,6 +138,11 @@ Two things that look like this bug and are not:
   starvation. Real commands queue and drain only in `ProcessCommands` on
   `EditorApplication.update` (`StdioBridgeHost.cs:357`), so a busy editor stops servicing them
   while still answering pings. Wait for idle; re-pinning changes nothing.
+- A long `execute_code` call itself answers `Timeout receiving Unity response` (seen past about 10 s) but **keeps
+  running** in the editor, and the bridge's resend may run it **again** (w4016, 2026-11-12: a timed-out 15-iteration
+  chunk advanced its counter by 30). For a loop (a timing run, a sweep), send chunks of a few seconds each, keep the
+  state across calls in `AppDomain.CurrentDomain.SetData/GetData` with a done-counter (a doubled chunk then only adds
+  iterations), repeat with `execute_code` `replay <index>`, and after a timeout read the counter before the next chunk.
 - `editor/state` reporting `blocking_reasons: ["stale_status"]` under load is NORMAL. The
   heartbeat writer sits on that same update tick and went **56.5 s** stale during one EditMode
   suite. Harmless while the port answers — but that is only 3.5 s from the 60 s cliff above, so
