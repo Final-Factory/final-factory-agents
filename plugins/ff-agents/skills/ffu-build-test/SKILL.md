@@ -278,14 +278,20 @@ cargo run --release -p ffu-headless -- crosscheck --threads 1,4,16 --golden gold
   `packs::tests::gpu` / `one_gpu_at_a_time`; a new crate with GPU tests adds one). Several devices made at once crash
   Mesa's Vulkan loader: a SIGSEGV with no Rust panic, in 25 of 200 parallel runs of `ffu-client`'s tests on biscuit
   without the lock and 0 of 200 with it (measured, w2895 M2.17b, probe ffu #226).
+  The lock goes in each test binary that renders, not each crate: `ffu-ui`'s `tests/bounds.rs` had none and died with
+  signal 11 on biscuit once FP.19 lengthened one of its three rendered tests (CI job 130956215311). Its `gpu()` now
+  returns the guard with the device; a new rendered test binds both, `let Some((_one, g)) = gpu()` (w2895, ffu #653).
 - **The fuzz seeds and fuzz targets are compile-checked on every PR** in `ci.yml`'s Linux `lint` job, step "the fuzz
   seeds and the fuzz targets compile (w3552)": `cargo check --manifest-path fuzz/seeds/Cargo.toml` and
   `--manifest-path fuzz/Cargo.toml --bins`, on stable 1.94 with lint's `target/`. Only running them needs nightly
   (libfuzzer-sys builds on stable). A struct change that leaves `fuzz/` unbuildable goes red there, not in the nightly
   fuzz job (P0.12c's `slots` did, ffu #434). After changing a struct `fuzz/` sets, run both locally (ffu #441).
+  The same step runs `--locked`: a new dependency of a crate `fuzz/` builds (FP.19 gave `ffu-agent` `ffu-ui`) must
+  land in `fuzz/Cargo.lock` too, or lint goes red. `cargo metadata --manifest-path fuzz/Cargo.toml` updates it;
+  never revert the lock change `tools/fuzz.sh` makes (w2895, ffu #653).
 - `ffu-client` has no library target: `cargo test -p ffu-client --lib` fails with "no library targets found", and a
   `grep "test result"` of it prints nothing, which reads as a pass (w2895 FP.22). Its unit tests run with `--bins`.
-- Fuzzing needs nightly and cargo-fuzz (`tools/fuzz.sh [seconds] [target ...]`); BEAST has neither. Run new targets on
+- Fuzzing needs nightly and cargo-fuzz (`tools/fuzz.sh [seconds] [target ...]`); BEAST and lothdesktop have neither, and there the script stops before fuzzing yet reports "crashes" with no artifacts: check `cargo fuzz --version` first and write "not run" in the PR (w2895). Run new targets on
   biscuit by dispatching the nightly job on your branch: `gh workflow run fuzz.yml -R Final-Factory/ffu --ref <branch>
   -f seconds=600 -f targets="a b"`. Each target's result is its `stat::number_of_executed_units` line in
   `gh run view <id> --log` (w2895 P0.14c, run 42208794602: four targets in about 45 minutes with the build). A new
