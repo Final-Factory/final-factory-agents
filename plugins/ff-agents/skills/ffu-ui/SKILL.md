@@ -40,6 +40,12 @@ at 1280x800. `capture` (the agent API) draws the sector, not the UI. Show a pers
 checks pass, and judge it by the evidence-gate's UI checklist (`/ff-agents:evidence-gate`, `checklists/ui.md`): the
 design gate, a fresh `ui-critic` agent on the stills, and **move only what the person asked to move**.
 
+- **A still of an opened panel from the built client** (w2895, ffu #652): `ffu --start world.snap --still out.png
+  --inspect X,Y --press A,B` opens the inspector of the building at X,Y and presses the named nodes in order before
+  the still. The FF1 world: `ffu-headless ff1 import tools/world/ff1-trailer-staging-0.50.0.54.zip`.
+- **Before each critic round, check every tile in a row has one width in every still**: ui-critic round 4 of FP.21
+  graded the hold grid BROKEN for closed slots narrower than open ones.
+
 ## The tests a UI change keeps green
 
 ```sh
@@ -72,3 +78,11 @@ A button never writes the sector. `UiTree::hit(x, y)` finds the focusable node u
 ops and `submit` queues them through `Sector::submit` for the next tick, the same path as every other mutation
 (`/ff-agents:ffu-add-op`). Rotate is a remove and a place in one tick. Prove a button by its press test: press, one
 step, then the sector shows the change.
+
+## Focus is a fill: frame a button whose fill means something
+
+ffu-ui has no outline primitive: `inspector::highlight` paints a focused button's fill `BUTTON_FOCUS`, which hides a
+CURRENT green or a closed slot's dark look (FP.21, w2895: the critic read a focused closed slot as an open one). Make
+such a button a 3 px padded frame round an inner `Role::Panel` of its own fill (`filters.rs` slot tiles): focus then
+paints only the frame, a teal ring. Give **every** tile in the row the same frame, not only the special ones:
+padding on some tiles breaks `flex_basis 0` equal widths.
