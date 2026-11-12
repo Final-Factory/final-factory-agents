@@ -150,6 +150,28 @@ whole verification. The repo's own `CLAUDE.md` is binding and longer; this skill
     starved Windows runner (119 of 120 frames late) the last click's answer came after the last frame: "2 shown, 0
     refused, 3 clicked". Draw on while answers are pending, capped by a limit the run already has. Plant RED by
     holding the other thread's output past the end.
+  - **The test ends a served run, never a clock: hold the test thread at each step to find the races** (w3975, ffu
+    #660; w3976, ffu #662, #664, #667). Processes that end on a clock fail when a loaded runner holds the test thread
+    before its next step. The clock can be `--until-tick`, a client's `--seconds`, or an in-process server's
+    `ticks: Some(n)`. That step then meets one of three things:
+    - an exited process (os error 10061, 10054 or 10053; station_move, CI run 43132881003);
+    - a shard already past the asked tick ("switch-at: the shard is at tick 996, past 600");
+    - a standby that took over at its owner's end.
+
+    Find the sites with `tests/support/plant.rs`: `FFU_PLANT_HOLD=<site>:<ms>` holds the test thread at a named step.
+    w3976 proved 16 sites this way on main and dropped two with minutes of slack. Fix them by letting the test end the
+    run, never by a longer clock:
+    - `--until-tick 1_000_000` plus `--exit-on-stdin-close`, with the test closing stdin;
+    - followers that read until a shared `AtomicU64` end that the test sets;
+    - `ticks: None` for in-process servers;
+    - a gate that holds the peers while the test is not attending (owner_term's `Run::reach` used to open it for good);
+    - a `Valve` (`tests/support/valve.rs`) that holds the replica link at the kill tick;
+    - `ffu --world --end-on-stdin` (fly until `end T` on stdin and every station is followed to T).
+
+    Ask a `switch-at` before peered shards are linked: they cannot tick until then. Never `stop-at` a shard whose log
+    the test's hash check reads, because stop-at prunes the log through its snapshot. A test that skips on any child
+    failure hides the race: connect.rs's still test "passed" as "skipped, no renderer here: ffu: connect: connection
+    timed out". Skip only on the specific message ("no GPU"), and count a silent skip under a plant as a failure.
   - **Random process suspends find failover flakes that a CPU hog or one planted pause miss** (w3872, ffu #601).
     failover.rs's loose mid-tick test read "kill 1: the run ended before tick 870" on ffu-beast-3 (w3774). A loaded
     repeat (`load=4`) passed 50 of 50, and 12 owner-pause plants all passed. A PowerShell loop failed it 5 of 18 on
