@@ -118,6 +118,15 @@ Recording notes:
   (`ES_DISPLAY_REQUIRED` alone does not switch a sleeping display back on). The game repo's
   `scripts/narration/record_story_cinematic.py` and `specs/w884-one-tutorial/oswin.wake_display()` do both. Stop a
   window capture before its window closes: one closed under it never wrote the mp4 index.
+- **`fired_at` is not when the event happened; anchor the clip to heartbeats** (w3993, lothdesktop, 2026-11-12): on a
+  slot-pool player the command landed about 2 s after `<clip>.json`'s `fired_at` (measured), since `record_clip.py`
+  stamps it before `ch.cmd` sends the command and the agent channel looks the player up first. To time an edge to the
+  heartbeat (a beam that must appear "within one heartbeat"), fire it yourself and nudge the camera one unit
+  (`ffauto:camera.focus|x+1|..`, then back) just before the command and again the moment a polled flag flips (e.g.
+  `station.state`'s `coreFlying`): each nudge is a one-frame jump in the clip (mean grey-frame diff of consecutive
+  frames), and its reply carries the `heartbeat` it ran on. At 16 UPS a heartbeat is 3.75 frames of a 60 fps clip; two
+  nudges 310 heartbeats apart predicted f1352.5 and showed at f1351. Polling ~220 times a second shows as `STUTTER`;
+  take an unpolled clip beside it.
 - **The build audit's players have no window** (w2790, lothdesktop, 2026-11-01): the game repo's
   `scripts/audit/run_build_multiplayer_audit.sh` starts its host and client with `-batchmode`, `--graphics` too, so
   `record_clip --pid` stops with "no visible window for pid". To film a scene in a built player, launch a windowed solo
