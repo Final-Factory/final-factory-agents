@@ -223,3 +223,13 @@ Mechanics: the game repo's `Documentation/Bench-Lock.md`.
       foreground until-loop: a blocking call hid the next GO for 6 min. `ff-leftovers end` ends every background job of
       your session, your own `bench_queue.py timed` holder included, so ending a finished player between joins dropped
       the ticket twice; re-take it at once, or let the player end by its own timeout.
+- [ ] **A network latency leg from a Linux host on Wi-Fi checks the radio before blaming the network** (w3925,
+      2026-11-11, biscuit: ping p99 to the router 409 ms, then 12-17 ms after the fixes). Read
+      `iw dev <if> get power_save` (on is the NetworkManager default), `iw dev <if> link` (which mesh node and its
+      signal: biscuit roamed to a 6 GHz node at -72..-80 dBm with a 5 GHz node at -62 beside it), and
+      `timeout 120 stdbuf -oL iw event -t > file` for periodic `scan started` lines: each full-band scan stalls traffic
+      for 6-8 s. GNOME Settings left open on its Wi-Fi page scanned every 15.0 s (measured); below about -70 dBm the
+      background scan ran about every 30-37 s. Fixes for the session only, after the person's go:
+      `nmcli con modify --temporary "<ssid>" 802-11-wireless.powersave 2` or `802-11-wireless.bssid <node>`, then
+      `nmcli con up "<ssid>"` (a few seconds' blip; wait for CI jobs to end). Split the path first: ping the router from
+      the host itself, so the far machine's own Wi-Fi (m3 lost one ping every ~9.4 s on 6 GHz) is not counted twice.
