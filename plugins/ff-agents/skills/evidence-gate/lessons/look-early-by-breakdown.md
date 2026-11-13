@@ -86,6 +86,12 @@ safe:
    go red. A test that stays green with the code it guards removed proves nothing.
 5. **Turn on the feature toggle the path reads.** With the toggle off, the code under test returns
    early. Both A/B arms then agree, and the agreement shows nothing.
+6. **Make a mutant arm's input reach the changed branch.** An arm that sets an option, a group or a
+   mode must pick one the fixture's items actually fall in or out of. A category option the test
+   items do not belong to filters the same as no option at all, so the arm hashes like the baseline
+   and "the option moves the digest" goes unproven (w4062, 2026-11-13: the first option arm used a
+   group none of the transferred items were in; with the items' own category it moved the hash at
+   HEAD and fell back to the no-option hash under the revert patch).
 
 **Why.** w2124 (2026-10-25), the nightly regression check of blueprint and circuit copy. Three PRs
 had re-pinned `BlueprintPasteBefore2334DigestTest`: #2461 (connector circuit filters), #2369
