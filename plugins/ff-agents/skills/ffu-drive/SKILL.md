@@ -116,6 +116,25 @@ file or the source pack. A flaw that comes back round after round goes to Ben as
 near-match. The PR's `## Evidence` carries `Reference capture:` and `Art language:`, and
 `python3 <evidence-gate>/pr_evidence.py --repo Final-Factory/ffu --pr <n>` passes before you ask Ben or merge.
 
+## Tuning a look file (`--look`)
+
+`ffu --look looks/X.look` reads light, material, fog, sky, post-grade, camera and `ui.*` keys and reloads them live;
+`looks/ff1.look` is FF1's own values, the reference to measure against. Learned in w4040 (ffu #729, 7 critic rounds):
+
+- **Measure colour against FF1's stills, not by eye.** Render both looks at the same `--view x,y,zoom` (24, 48, 96)
+  and compare the same pixels, classified on FF1's still: the grey tops' mean Lab a*/b* (pink = a* up, warm = b* up),
+  the share of lit pixels with hue 290-355° (pink), the blue paint's Lab chroma and hue angle, and the orange strip
+  against the top under it (WCAG ratio). Each round's critic named a fault the eye had passed (pink tops, teal paint).
+- **Split toning moves more than it looks.** It is URP's soft light toward each tint, weighted by luma plus balance.
+  A highlight tint with green at blue's level turned the grey tops pink (round 5); a cream one at balance 0.35 turned
+  the blue paint teal (round 4). An amber sun alone washed the blue paint 20-40 % toward teal and grey (round 6); a
+  bluer shadow tint (the paint is a mid-tone) and saturation 1.3 to 1.4 brought back FF1's chroma within its hue
+  (measured). Warmer tops and cobalt paint trade against each other: find the balance point by a sweep (w4040 tried 46
+  variants), and name it in the file's comment.
+- **Glow over about 3 blooms the trim strips into red halos** on a dark frame (round 5): count red pixels where FF1's
+  still is black.
+- **Colours are numbers, not hex**: `#` starts a comment in a look file.
+
 ## The edit-to-running loop (hot reload)
 
 ```sh

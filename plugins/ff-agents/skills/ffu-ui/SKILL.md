@@ -81,6 +81,15 @@ ops and `submit` queues them through `Sector::submit` for the next tick, the sam
 (`/ff-agents:ffu-add-op`). Rotate is a remove and a place in one tick. Prove a button by its press test: press, one
 step, then the sector shows the change.
 
+## A theme's alpha blends in linear light
+
+The `ui.*` keys of a look file (w4040, ffu #729) restyle every panel through `Theme` without moving it. ffu-ui blends
+in linear light on an sRGB target, so a theme alpha a shows about as much of what is under it as a CSS alpha of
+a^(1/2.2) would in a browser mock: a panel at 235 of 255 still showed the world at about 28 % of its brightness, and at
+B's 189 the models crossed the inspector's text (measured). Convert a mock's CSS alphas (an edge line 0.55 is about
+0.55^2.2 = 69 of 255), measure the show-through on a still over the world, and keep a button opaque: a focus fill of
+accent-over-alpha came out darker than an unfocused button (UI critic round 2).
+
 ## Focus is a fill: frame a button whose fill means something
 
 ffu-ui has no outline primitive: `inspector::highlight` paints a focused button's fill `BUTTON_FOCUS`, which hides a
