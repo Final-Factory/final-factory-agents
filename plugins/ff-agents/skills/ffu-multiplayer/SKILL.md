@@ -142,6 +142,14 @@ on a mismatch, a ledger error, an unbalanced window or a short fleet). Measured 
   (1,762 and 1,776 at the end): the fleet's joins were still running at 300 s (`joined_by_ms` 302441 and 303981,
   Welcome max 61 s), and the server closed 391 and 267 with write timeouts. No tick went over 100 ms at any N, so
   the limit there was the join path over the link, not the server's tick.
+- **Measure the link and the fleet machine before you blame either.** beast <-> lothdesktop is Tailscale direct over
+  the internet, not a LAN (idle RTT 25-30 ms, 140-490 ms under a run). w4087 (2026-11-13, ffu b06aaf06, PR #763):
+  with plain frames (`-- --plain`) at 2400 and 4000 bots lothdesktop's Tailscale adapter received a flat 340-354
+  Mbit/s, so that route tops out near 350 Mbit/s and plain frames fill it; with squeezed frames the same runs moved
+  only ~80-100 Mbit/s yet still dropped bots, while the fleet burned 8-9 cores (`cpu_s` 2472 and 2661 over 300 s) on
+  a machine other sandboxes share. Sample the fleet machine through the run, 10 s apart: PowerShell
+  `Get-NetAdapterStatistics -Name Tailscale` (bytes received) and `Get-Counter '\Processor(_Total)\% Processor Time'`.
+  The fleet's `cpu_s` read exactly 195.62 in two different `--plain` runs: don't trust it there.
 - **Size a ping loop alongside the run by time, not count.** On Windows `ping -n 1 -w 2000` plus `sleep 1` gives one
   sample per ~1.7 s (70 samples spanned 117 s, measured in w3444).
 - `publish_review` accepts only images, video, `.md`/`.txt`/`.json` and `.zip`: copy a `.jsonl` log or a script to
