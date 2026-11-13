@@ -94,6 +94,16 @@ whole verification. The repo's own `CLAUDE.md` is binding and longer; this skill
   full sim fell 26 %, so the share doubled with no regression on main. Before you bisect a share, read both
   bench scripts' legs (from the workers' transcripts), rerun each side's setup on each endpoint, and give the rate
   and full us beside the share.
+- **Subtract the marks probe's own cost before you call a rest "unsplit"** (w4073, ffu #754). An in-loop marks build
+  pays about 0.021 µs a mark on BEAST (MEASURED: doubling every mark added 0.014-0.028 µs a mark). M1.54e's rest of
+  2.48 µs, with 0.67 µs "unsplit", came from its marks build's 6.46 µs tick against 5.23 µs plain; 25 small segments
+  held only about 0.07 µs of real work, and the real rest was about 1.75 µs at 20k (derived two ways). Time the marks
+  build and the plain build in one ticket, and quote a part's share of the plain tick, never of the marks tick.
+- **A rate-mode cut can slow the full sim: time the full tick in every rate-mode A/B** (w4073, ffu #754). An
+  awake-buildings list for phase_merge and phase_local cut the 20k rate tick 5.28 -> 5.00 µs, but the full tick rose
+  168.38 -> 183.78 µs at 20k and 2,722 -> 2,889 µs at 250k (MEASURED, median of 3, BEAST /affinity 14), in scan code
+  the change did not touch, and moving its code into `#[inline(never)]` functions did not help. The share fell only
+  through the bigger denominator, so quote a share against main's full tick, and keep such a change a probe.
 - **Pin a run on Windows through a one-line `.cmd` file** (w3962, ffu `tools/bench/p4.sh`). With `MSYS_NO_PATHCONV=1`,
   `cmd //c "start "" /wait /b /affinity 4 ..."` keeps `//c`. cmd then opens an interactive shell, runs nothing and
   exits 0, so the log holds only cmd's banner. Instead, `printf 'start "" /wait /b /affinity %s "%s" %s\r\n' ... >
@@ -528,6 +538,8 @@ never rewritten (`tools/check_snapshot_compat.sh BASE_REF` holds it in CI). No t
 - **A PR that changes only `docs/` runs no CI**: `ci.yml` has `pull_request: paths-ignore: ['docs/**']` (ffu #297).
   A `ci:` wait on it ends after 10 min with "no CI run exists". Merge it straight away with `gh pr merge <n> --merge
   --match-head-commit <head>` (w3382: ffu #395, a PLAN row, sat 10 min in such a wait).
+  `ff-pr status` and `ff-pr merge` answer "no workflow run on this head yet" and say to wait with `blocked_on`: they
+  do not know the filter, so check `mergeStateStatus` is `CLEAN` and merge with gh (w4073, ffu #754).
 - **A Windows test job red with every test passed and `temp leak check: ... MSBuildTemp`** was the build, not a test:
   SDL3's `-sys` crates build through cmake and MSBuild when a runner rebuilds its target. The test jobs build with
   `cargo test ... --no-run` before `check_temp_leaks.sh` since ffu #249 (w2895); keep any new checked step that way.
