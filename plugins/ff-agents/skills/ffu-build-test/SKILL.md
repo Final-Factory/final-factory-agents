@@ -1,6 +1,6 @@
 ---
 name: ffu-build-test
-description: Build, test and land a change in Final Factory Universe (FFU), the Rust engine in the private Final-Factory/ffu repo - the toolchain on FF Factory machines, the six checks CI runs (fmt, sim rules, clippy, tests, hashcheck, crosscheck), the snapshot and hash rules a sim change must keep, reading CI on ffu's own runners with gh, and merging your own PR. Use before any work in an ffu checkout; it replaces editor-ops there, since FFU has no Unity editor.
+description: Build, test and land a change in Final Factory Universe (FFU), the Rust engine in the private Final-Factory/ffu repo - the toolchain on FF Factory machines, the checks CI runs (fmt, keep-sorted lint, sim rules, clippy, tests, hashcheck, crosscheck), the snapshot and hash rules a sim change must keep, reading CI on ffu's own runners with gh, and merging your own PR. Use before any work in an ffu checkout; it replaces editor-ops there, since FFU has no Unity editor.
 ---
 
 # Building and testing FFU
@@ -291,6 +291,7 @@ whole verification. The repo's own `CLAUDE.md` is binding and longer; this skill
 
 ```sh
 cargo fmt --all --check
+python3 tools/test_keep_sorted.py && python3 tools/keep_sorted.py   # CI's lint job
 ./tools/check_sim_rules.sh
 cargo clippy --workspace --all-targets --all-features -- -D warnings
 cargo test --workspace --all-features
@@ -300,6 +301,10 @@ cargo run --release -p ffu-headless -- crosscheck --threads 1,4,16 --golden gold
 
 - Run what your change touches locally (`cargo test -p <crate>`); CI runs all of them on Linux and clippy, tests and
   hashcheck on Windows and ARM macOS.
+- **Run the lint job's `keep_sorted.py` too; it is a separate CI job** (w4039, ffu #724). Kind, op and section lists sit
+  between `// keep-sorted start` and `// keep-sorted end` (w3864). A match arm with an `if` guard inside such a block
+  fails it ("a guarded arm goes outside the sorted list", run 43371893957): put the guarded arm above the
+  `keep-sorted start` line, where it still matches first. The other five checks passed locally and missed it.
 - `hashcheck` ends with `"golden_match":true`. A change that moves the hash on purpose updates
   `golden/hashcheck.txt` in the same PR and says why; re-pin a crosscheck trace with
   `ffu-headless crosscheck --golden golden/crosscheck --write-golden` only for a change meant to move it.
