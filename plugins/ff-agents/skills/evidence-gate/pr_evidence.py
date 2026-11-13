@@ -1594,7 +1594,10 @@ def check(body: str, files: list[str] | None = None, brief: str | None = None,
     problems, notes = used_by, []
     kinds = kinds_of(section)
     if not kinds:
-        problems.append("no 'Kind:' line (visual, simulation, both, or other)")
+        # w4079: this message offered "both", which was never a kind, so "Kind: both" read as no Kind line
+        declared = field(section, "Kind")
+        problems.append("no 'Kind:' line" + (" naming a kind ('Kind: " + declared[1].strip() + "' names none)" if declared else "")
+                        + " (" + ", ".join(KINDS) + "; list each that applies, e.g. 'Kind: visual, simulation')")
 
     rows = claims(section)
     if not rows:

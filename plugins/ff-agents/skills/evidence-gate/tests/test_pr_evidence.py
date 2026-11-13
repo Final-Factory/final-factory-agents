@@ -271,6 +271,15 @@ Eye: 12 stills looked at full size, 0 look broken or poor (proofs/shots.md)
         self.assertEqual(pe.kinds_of(edit(GOOD, "Kind: visual, simulation", "Kind: visual and simulation (riders)")),
                          ["visual", "simulation"])
 
+    def test_the_kind_message_offers_only_real_kinds(self):
+        # w4079: the message offered "both", but "Kind: both" is not a kind and then read as a missing Kind line
+        problems, _ = pe.check(edit(GOOD, "Kind: visual, simulation", "Kind: both"))
+        kind = [p for p in problems if "names none" in p]
+        self.assertEqual(len(kind), 1, problems)
+        self.assertNotIn("both,", kind[0].split("names none")[1])
+        for k in pe.KINDS:
+            self.assertIn(k, kind[0])
+
     def test_kind_ui_alone_brings_the_visual_rules(self):
         body = edit(GOOD, "Kind: visual, simulation", "Kind: ui, simulation")
         body = edit(body, "Built player: yes\n", "")
