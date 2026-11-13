@@ -52,6 +52,11 @@ whole verification. The repo's own `CLAUDE.md` is binding and longer; this skill
   (exclusive)`. It may then wait up to 20 min for CI jobs on the machine ("granted, but 2 CI job(s) run here"), and only
   `granted <ticket>: time now` starts your turn. A loop on `grep granted` began timing beside two CI jobs. Wait with
   `until grep -qiE "time now|refused" "$log"`.
+  The 30-minute turn counts from `granted (exclusive)`, not from `time now`: the CI wait is inside it, and the
+  "held until" time printed with `time now` is too late (w4061, t00007073 on beast: granted about 11:32Z, 606 s of CI
+  drain, `time now` said "held until 12:12Z", revoked at 12:02:14Z with a worker waiting, so the third of three
+  back-to-back runs, planned to end at 12:07Z, lost its timing after 12:02). Plan every leg to end 30 min after the
+  `granted (exclusive)` line (CI wait included).
 - **Stopping a background task leaves its children running: `ff-leftovers list` before the next bench ticket** (w3963,
   ffu #655). A bench wrapper stopped with TaskStop left its `tools/bench/p4.sh` loop going. That loop timed beside the
   next ticketed leg and appended to the same `runs.jsonl` and log. It was still running after that ticket was released.

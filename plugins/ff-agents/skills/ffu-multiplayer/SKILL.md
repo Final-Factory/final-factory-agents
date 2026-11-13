@@ -137,6 +137,11 @@ on a mismatch, a ledger error, an unbalanced window or a short fleet). Measured 
   2.8 GB of Welcomes), and the steady windows held 70, 44 and 37 clients. The fleet still said 0 mismatches, with its
   errors as `os error 10060` read timeouts. Before you report numbers at N bots, check `stats.json`'s
   `clients_whole_window` and `grep -c "write timed out" server.log`, and say what load the windows actually carried.
+  After the fleet fix (ffu #741, `--joins 32`, w4061 at ab047204) the same pair held 1434 of 1500 in every steady
+  window (42 write timeouts), but at 2400 and 4000 the windows topped out at 1,725 and 1,713 whole-window clients
+  (1,762 and 1,776 at the end): the fleet's joins were still running at 300 s (`joined_by_ms` 302441 and 303981,
+  Welcome max 61 s), and the server closed 391 and 267 with write timeouts. No tick went over 100 ms at any N, so
+  the limit there was the join path over the link, not the server's tick.
 - **Size a ping loop alongside the run by time, not count.** On Windows `ping -n 1 -w 2000` plus `sleep 1` gives one
   sample per ~1.7 s (70 samples spanned 117 s, measured in w3444).
 - `publish_review` accepts only images, video, `.md`/`.txt`/`.json` and `.zip`: copy a `.jsonl` log or a script to
