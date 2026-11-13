@@ -150,6 +150,13 @@ on a mismatch, a ledger error, an unbalanced window or a short fleet). Measured 
   a machine other sandboxes share. Sample the fleet machine through the run, 10 s apart: PowerShell
   `Get-NetAdapterStatistics -Name Tailscale` (bytes received) and `Get-Counter '\Processor(_Total)\% Processor Time'`.
   The fleet's `cpu_s` read exactly 195.62 in two different `--plain` runs: don't trust it there.
+  "No other live agent" on lothdesktop does not mean idle: it also hosts ffu's own CI runners
+  (`V:/ffw/ffu-runners/ffu-lothdesktop-N`). In w4090 (2026-11-13, ffu 406e5c53, 4000 squeezed bots, fleet pinned to
+  0xFF00) a runner job started mid-run: rustc at 2-4 cores from 22:13Z, then its `ff1_import` test at 14 cores and the
+  machine at 100% for the fleet's last seconds. Check `Get-Process | ? Path -like '*ffu-runners*'` before you arm, and
+  log every other process over one core in the samples. That run also showed where 4000 bots break: the fleet used a
+  median 1.5 cores, yet Tailscale rx sat at 350-377 Mbit/s with squeezed frames, 940 bots dropped and the server
+  closed 1922 on write timeouts. On this route the link, not the fleet CPU, is the limit at 4000.
 - **Size a ping loop alongside the run by time, not count.** On Windows `ping -n 1 -w 2000` plus `sleep 1` gives one
   sample per ~1.7 s (70 samples spanned 117 s, measured in w3444).
 - `publish_review` accepts only images, video, `.md`/`.txt`/`.json` and `.zip`: copy a `.jsonl` log or a script to
