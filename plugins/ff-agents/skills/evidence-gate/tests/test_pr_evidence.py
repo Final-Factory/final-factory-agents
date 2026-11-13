@@ -260,6 +260,17 @@ Eye: 12 stills looked at full size, 0 look broken or poor (proofs/shots.md)
         self.assertEqual(self.problems(body), [])
         self.assertEqual(self.problems(body, ["Assets/Scripts/UI/Structured/StructuredHub.cs"]), [])
 
+    def test_an_explanation_after_the_kind_names_no_kind(self):
+        # w4065: "Kind: other (tests only; no simulation, save or network change)" was read as Kind: simulation
+        for line in ("Kind: other (tests only; no simulation, save or network change)",
+                     "Kind: other; no simulation change", "Kind: other - no visual or simulation change",
+                     "Kind: other <!-- visual | simulation | other -->"):
+            self.assertEqual(pe.kinds_of(edit(GOOD, "Kind: visual, simulation   <!-- visual | simulation | other -->", line)),
+                             ["other"], line)
+        self.assertEqual(pe.kinds_of(GOOD), ["visual", "simulation"])
+        self.assertEqual(pe.kinds_of(edit(GOOD, "Kind: visual, simulation", "Kind: visual and simulation (riders)")),
+                         ["visual", "simulation"])
+
     def test_kind_ui_alone_brings_the_visual_rules(self):
         body = edit(GOOD, "Kind: visual, simulation", "Kind: ui, simulation")
         body = edit(body, "Built player: yes\n", "")
