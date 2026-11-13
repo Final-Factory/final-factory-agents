@@ -259,6 +259,11 @@ Not verified: the Bats' slot lag (simulation, follow-up PR)
   `W2129UiFixGuardTests.DockedTabPillsAreInset16SideAnd10Top` pinned `StructuredDock.TabInsetTop` at 10 while
   w2095 moved it to 18 at Ben's pick, and `Test in editmode` went red only after `ff-pr push` merged master in. Update
   the guard in your PR, quoting the words that asked for the new value.
+- **Run `scripts/test_select.py` again after every commit, not once per branch** (w4079, 2026-11-13): a later commit
+  can widen the selection. A new `ValidationScenarios/*.ffbp.txt` fixture selects `BlueprintPasteBefore2334DigestTest`,
+  which hashes every blueprint not in its `FilesAddedAfter2334` list; w4079 added `w4079-calc-two-modules.ffbp.txt`
+  after its last local selection and `Test in editmode` went red twice (expected 8589d77dba8f2338, was
+  06cb0acd245fd591). A new fixture goes into that list in the same commit.
 - **A changed shader, shader graph, subgraph, include or material** needs a `## Used by` section
   beside `## Evidence`: the output of the game repo's `python3 scripts/asset_usage.py --changed
   origin/master --markdown`, with the tool's table whole and a basis on every row (`TARGET:`,
