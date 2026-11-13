@@ -186,6 +186,7 @@ carried over ([lesson](lessons/research-the-decision-not-the-topic.md#name-the-p
   system's. Only a concrete blocker reaches the person, with its evidence and the smallest step only they can take
   (their own login, password or 2FA code, an approval). Ben corrected this twice: w935 (Unity on his m5: "You can close
   Unity") and w1287 (the Factions design doc in Claude Design: "I already asked for this").
+- **Check the web before you say it doesn't exist** ([lesson](lessons/research-the-route-before-you-say-cant.md#check-the-web-before-you-say-it-doesnt-exist-w4-2026-11-13)). Before you write or relay that a model, software version, product, release, API or feature a person named does not exist or is not out yet, look it up (official docs, release notes, model lists, the tool's own `--help` or API) and use it: what you do not recognise is newer than your training. Call it missing only with the URLs you checked or the exact error text; without web access, brief a worker to look it up, with the person's name for it unchanged.
 - **Drive only the windows you opened** ([lesson](lessons/research-the-route-before-you-say-cant.md#drive-only-the-windows-you-opened-w1287-2026-10-14)). Before any
   computer-use click or key on a person's computer, name the app and the window id you opened in this request and pass
   that window to every call; never click, type or scroll in a window they had open (their Claude desktop app, chat,
@@ -638,6 +639,10 @@ One file each under `lessons/`: the rule, why (the incident, dated), how to appl
   it; only a concrete blocker with evidence and the smallest step only the person can take reach them (w935; w1287:
   the orchestrator told Ben twice it could not make a Claude Design project while his m5 was signed in; Ben: "I
   already asked for this").
+- [Check the web before you say it doesn't exist](lessons/research-the-route-before-you-say-cant.md#check-the-web-before-you-say-it-doesnt-exist-w4-2026-11-13): a model, version, product or
+  feature a person names that you do not recognise is newer than your training: look it up and use it; call it missing
+  only with the URLs checked or the error text (Lens Scout w2/w4, 2026-11-13: "Fable 5.2 isn't a model I know of"; Ben:
+  "check the internet update the god damn harness so you dont make these mistakes").
 - [A worker hands up the requests it cannot file](lessons/research-the-route-before-you-say-cant.md#a-worker-hands-up-the-requests-it-cannot-file-w2969-2026-11-03):
   a worker's follow-up requests go through `hand_up_requests` to the requester's orchestrator, never only a "couldn't
   file" line in its report (w2969: w2194's five approved dragon stages closed unfiled).

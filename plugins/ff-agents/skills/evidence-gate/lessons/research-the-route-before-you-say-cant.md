@@ -1,6 +1,6 @@
 ---
 name: research-the-route-before-you-say-cant
-description: "Before an agent (an orchestrator included) tells a person something can't be done, or asks them to do a step themselves, it researches the route (the tool's own docs, the harness's skills and briefs, the machines and the sessions already signed in on them, the tools it and the workers have) and then tries the work or files it for an agent that can. Only a concrete blocker reaches the person, with its evidence, together with the smallest step only they can take (a login, a password or 2FA code typed by them, an approval, a design decision). An orchestrator's own limits (no shell, no browser) are not the system's: it files the work instead of saying can't. Ben corrected this twice: w934/w935 (close Unity on his m5) and w1268/w1287 (the Factions design doc in Claude Design). A route on a person's computer drives only the windows the agent opened, never their Claude desktop app or other open apps (w1287: \"WHY IS IT POKING AROUND IN MY CLAUDE DESKTOP APP\")."
+description: "Before an agent (an orchestrator included) tells a person something can't be done, or asks them to do a step themselves, it researches the route (the tool's own docs, the harness's skills and briefs, the machines and the sessions already signed in on them, the tools it and the workers have) and then tries the work or files it for an agent that can. Only a concrete blocker reaches the person, with its evidence, together with the smallest step only they can take (a login, a password or 2FA code typed by them, an approval, a design decision). An orchestrator's own limits (no shell, no browser) are not the system's: it files the work instead of saying can't. Ben corrected this twice: w934/w935 (close Unity on his m5) and w1268/w1287 (the Factions design doc in Claude Design). A route on a person's computer drives only the windows the agent opened, never their Claude desktop app or other open apps (w1287: \"WHY IS IT POKING AROUND IN MY CLAUDE DESKTOP APP\"). The same goes for \"it doesn't exist\": a model, version or product a person names that the agent does not recognise is newer than its training; it checks the web and uses it, and calls it missing only with the URLs checked or the error text (Lens Scout w4, 2026-11-13: Fable 5.2)."
 date: 2026-10-14
 ---
 
@@ -151,3 +151,27 @@ too, but the tool carries the briefs and the count.
 **How to apply.** Before your DONE, list the requests your work leaves for later; hand them up in one
 `hand_up_requests` call; name them in the report ("handed up 5 build requests: stage 1 ..."). An orchestrator that
 gets `[follow-ups to file]` files each with `related_ids`, or closes the request saying why they are not wanted.
+
+## Check the web before you say it doesn't exist (w4, 2026-11-13)
+
+**Rule.** When a person names a model, software version, product, release, API or feature you do not recognise,
+assume it came out after your training cutoff. Look it up (official docs, release notes, model lists, the tool's own
+`--help` or API) and use it. Say it does not exist or is not out yet only with evidence: the URLs you checked, or the
+exact error text. An orchestrator or dispatcher that cannot check the web does not relay its doubt as fact: it briefs
+the worker to look the thing up and use it, and passes the person's name for it on unchanged.
+
+**Why.** In Lens Scout's ledger (Ben's deployment), Ben asked on w2 (the Unreal-versus-own-engine analysis) for "a fable
+5.2 deep think". His orchestrator told him "Fable 5.2 isn't a model I know of" and briefed "use 5.2 if it exists, else
+5.1". The dispatcher and the worker took that as fact: the worker wrote "Fable 5.2 doesn't exist" and ran Fable 5.1. No
+one checked the web. Claude Fable 5.2 had been out since 2026-11-09
+(https://www.anthropic.com/news/claude-fable-and-mythos-5-2). Ben: "fable 5.2 does exist god damnit check the fucking
+internet", and then: "why the hell do you not check that kind of thing ? you know your training data is limited. check
+the internet update the god damn harness so you dont make these mistakes". Each agent's training ended before the
+release. An agent's own prompt can lag too: a "the most recent models are ..." line is a snapshot, not a list of
+everything that exists.
+
+**How to apply.** Before you write "isn't a model I know of", "doesn't exist", "not released yet" or "if it exists",
+search for it (`WebSearch`, the vendor's docs, `<tool> --help`, the API's model list). Found: use it, with the
+person's name for it. Not found: say what you checked (the URLs, the exact error), and still try it once where trying
+is cheap (an API call with that model id). A brief carries the person's words unchanged ("Fable 5.2"), not "X if it
+exists, else Y".
