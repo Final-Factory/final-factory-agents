@@ -506,6 +506,17 @@ control, and a redesign goes out as 2 or 3 clearly different options built from 
     - **`pr_evidence.py` reads a bulleted `Moved:` line.** It read `Moved:` only as a bare line, unlike every other field
       (`field()`, w3050), so `- Moved: 0 element move(s) ...` read as no Moved line at all; it accepts `- ` and `* ` now.
 
+42. **Before calling an input lost, check what the tour's own setup left in hand (w4075).** w4063 reported "the first
+    still right click on the open map is lost" (3 of 3 runs). Its setup ended with `ffauto:blueprint.placewaiting`, and
+    `blueprint.place` and `blueprint.placewaiting` both leave the placed blueprint held (`HoldsActiveBlueprint`; the
+    census of a still after each had the held-blueprint hint "Hold L3 to hide ranges", 2 matches, and 0 after
+    `ffauto:blueprint.drop`; measured on 9763bc2e26). A right press with a blueprint in hand only clears the hand, by
+    design (`AltActionPressLatch`), so that first click did what it should; with a `blueprint.drop` before
+    `ui.map|open`, the first click removed its ghost like the other 17. Drop the hand after the last place, and before a
+    claim that an input was dropped, compare the still before it with the still after for state the input changed
+    (the hint, the hand, a selection), not only the target. The same tour's Assembler legs ran behind the pause menu
+    (an Escape with nothing to cancel, unity-ui's w3041 note): look at every still a verdict rests on.
+
 19. **The Deck tour is a stand-in (w770).** It forces its own window size and a scripted Deck, so it cannot show Steam's
     layout choice, the Proton first-frame resolution, the Steam client version or touch. A Deck UI change says "verified on
     a real Deck" or "not verified on a real Deck" ([deck.md](deck.md)). For a stored bad size use `-ffDeckTourSize none
