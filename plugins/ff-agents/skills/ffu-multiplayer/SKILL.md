@@ -130,6 +130,13 @@ on a mismatch, a ledger error, an unbalanced window or a short fleet). Measured 
   `--seconds 1500`, not 150), and the first leg starts its ~100 s timed part the moment its own drain ends (the log line
   `granted <ticket>: time now; it is held until ...`). The second ticket (granted 21:22Z, drained 21:30Z) ran the
   measurement in that window.
+- **A run "at N bots" is only at N bots if the server kept them: read `clients_whole_window` and count the drops.** A
+  remote fleet (`bots_ff1.sh` with `FFU_CONNECT`, M2.14e) over Tailscale loses most bots in the join burst. w4054
+  (2026-11-13, server on beast, fleet on lothdesktop, ffu 2eb76789): at N = 1500, 2400 and 4000 the server closed
+  1431, 2362 and 3999 clients with `a write timed out` within ~10 s of the joins (the 4000 run's join window sent
+  2.8 GB of Welcomes), and the steady windows held 70, 44 and 37 clients. The fleet still said 0 mismatches, with its
+  errors as `os error 10060` read timeouts. Before you report numbers at N bots, check `stats.json`'s
+  `clients_whole_window` and `grep -c "write timed out" server.log`, and say what load the windows actually carried.
 - **Size a ping loop alongside the run by time, not count.** On Windows `ping -n 1 -w 2000` plus `sleep 1` gives one
   sample per ~1.7 s (70 samples spanned 117 s, measured in w3444).
 - `publish_review` accepts only images, video, `.md`/`.txt`/`.json` and `.zip`: copy a `.jsonl` log or a script to
