@@ -282,6 +282,10 @@ to its pull request. For #1137's change the selection ran in 75 s against 376 s 
   w1499, BEAST slot4): `test_names ["CombatMoverFingerprintTest"]` ran `total 0` and answered `resultState Passed`;
   `Tests.Multiplayer.CombatMoverFingerprintTest` ran 22. Copy the names `test_select.py` prints, and read `summary.total`:
   0, or fewer than the class holds, means the filter matched nothing.
+- **An `[Explicit]` test named by its class is skipped** (measured 2026-11-13, w4081, m3 slot1): `test_names
+  ["TestsSlow.Circuits.CircuitCalculationBenchmark"]` answered `resultState Passed` with `skipped 1, passed 0` and logged
+  nothing; the method's full name (`...CircuitCalculationBenchmark.AThousandLines_CostPerHeartbeat`) ran it. Name the
+  method of an `[Explicit]` test, and read `summary.passed`.
 - Pass `test_names`, never regex `group_names`. One class through a regex took the job 16.6 s
   against 4.0 s by exact name, and regex runs held the main thread for minutes (measured).
 - Give `run_tests` an `init_timeout` of 120000. A call that answers "Timeout receiving Unity
