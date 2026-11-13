@@ -76,6 +76,13 @@ whole verification. The repo's own `CLAUDE.md` is binding and longer; this skill
   tick only went from 2670 to 2634 us (MEASURED, 250k, 1 thread): the compare cost what the hashes saved. With
   `update_local` returning whether it changed anything, the tick fell 16 % (2594 to 2168 us) at 1 thread and 21 %
   (2517 to 1987 us) at 2 (ticket t00006861). Report the main-variant tick before and after beside every share.
+- **Quote a rate-mode share only with its start seed, redoze and affinity, and compare shares only like for like**
+  (w4037, report r200). M1.7c's 3.2 % used `factory:N:7`, the default redoze 256 and `/affinity 4`; M1.54's 6.8 % used
+  `factory:N:1`, `--redoze 1024` and `/affinity 14`. On one binary (561e0f3e, 20k churn 42) that setup alone moved
+  the share from 5.3 % to 6.8 % (MEASURED, ticket t00007015). The rest was M1.6c: the rate tick rose 34 % while the
+  full sim fell 26 %, so the share doubled with no regression on main. Before you bisect a share, read both
+  bench scripts' legs (from the workers' transcripts), rerun each side's setup on each endpoint, and give the rate
+  and full us beside the share.
 - **Pin a run on Windows through a one-line `.cmd` file** (w3962, ffu `tools/bench/p4.sh`). With `MSYS_NO_PATHCONV=1`,
   `cmd //c "start "" /wait /b /affinity 4 ..."` keeps `//c`. cmd then opens an interactive shell, runs nothing and
   exits 0, so the log holds only cmd's banner. Instead, `printf 'start "" /wait /b /affinity %s "%s" %s\r\n' ... >
