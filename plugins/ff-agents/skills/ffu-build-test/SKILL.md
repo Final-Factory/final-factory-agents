@@ -76,6 +76,12 @@ whole verification. The repo's own `CLAUDE.md` is binding and longer; this skill
   tick only went from 2670 to 2634 us (MEASURED, 250k, 1 thread): the compare cost what the hashes saved. With
   `update_local` returning whether it changed anything, the tick fell 16 % (2594 to 2168 us) at 1 thread and 21 %
   (2517 to 1987 us) at 2 (ticket t00006861). Report the main-variant tick before and after beside every share.
+- **Split a sub-100 µs step into parts by doing each part twice, not with in-loop timers** (w4036, ffu #727). In
+  rate mode's 250k step, `Instant` and rdtsc probes around each phase raised `step_held` from about 61 to 84+ µs, so
+  their split was the probes' cost. Build one variant per suspect that runs that part a second time under
+  `core::hint::black_box`, and A/B each variant against the plain build, untimed, over 3 rounds. The added time is
+  that part's price: the held map lookup was 6.4 µs, `transfer_from` 4.5 µs and the anchor compare 4.7 µs. Those
+  prices picked the cuts. Then confirm the whole-tick change under a ticket.
 - **Quote a rate-mode share only with its start seed, redoze and affinity, and compare shares only like for like**
   (w4037, report r200). M1.7c's 3.2 % used `factory:N:7`, the default redoze 256 and `/affinity 4`; M1.54's 6.8 % used
   `factory:N:1`, `--redoze 1024` and `/affinity 14`. On one binary (561e0f3e, 20k churn 42) that setup alone moved
