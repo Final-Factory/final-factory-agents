@@ -536,6 +536,10 @@ still or a mock goes to anyone:
    words, and w3099's quoted window names and a rule, so a critic graded the asked-for move of the alert row BROKEN as
    unnamed (4 BROKEN; 0 with `--words`). Without `--words`, pack warns and carries the brief's ask and Done-when lines into
    `b/words.md` under their own heading, labelled as the brief's (w3111). Read `b/words.md` before you start the critic.
+   After a person picks among options, the next round's brief quotes their picks and the findings they accepted by
+   picking, and carries every earlier brief's list of what the request adds (new panels, cards, a hotbar). A fresh critic
+   knows none of it: w4014's first round on Ben's picked combination gave 3 BROKEN, each a decided item or a new element
+   the brief no longer named.
    Then run `Agent` with `subagent_type: "ff-agents:ui-critic"` and the line the pack prints. Fix or answer every broken or
    ugly finding, then run a new critic on a new pack. Publish its `critic.md` with the stills and paste its `Critic:` line.
 
