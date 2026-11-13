@@ -296,6 +296,16 @@ cargo run --release -p ffu-headless -- crosscheck --threads 1,4,16 --golden gold
 - `hashcheck` ends with `"golden_match":true`. A change that moves the hash on purpose updates
   `golden/hashcheck.txt` in the same PR and says why; re-pin a crosscheck trace with
   `ffu-headless crosscheck --golden golden/crosscheck --write-golden` only for a change meant to move it.
+- **Count crosscheck's rows that are not a match; never trust `| tail` or `$?`** (w2895 M1.54, ffu #716). A run piped
+  into `| tail -5` showed only the last scenarios' matches, and `echo $?` printed tail's 0. The `factory-rate` drift
+  at tick 64 went unseen until a later run. `crosscheck ... | grep -vc '"golden":"match"'` must print 0; if not, read
+  those rows (`::error title=crosscheck drift::` names the tick and the parts).
+  - A rate-mode policy change (when a held island dozes, anchors or releases) moves `golden/crosscheck/factory-rate.csv`
+    (meta and the held parts) while `tests/rate_mode.rs` stays green. Re-pin it with `--write-golden`, then `git
+    checkout --` the other scenarios' files it rewrote (line endings only), and say why in the PR.
+  - A new state the rate step can reach must also pass `install_held`'s load checks. M1.54's re-anchor saved
+    `since == tick`, which the loader refused with `BadParam`. The reload-every-tick tests (`kept_hashes_equal_a_rebuild_and_a_reload_every_tick...`,
+    `tests/heavy.rs`) caught it; `tests/rate_mode.rs` did not. Run the whole workspace with `--no-fail-fast` before you time anything.
 - **Before a push, run `cargo test --workspace --all-features --no-fail-fast`.** A plain workspace `cargo test` stops at
   the first crate that fails and never runs the rest. In w3459 (ffu #427), fixing the failures in `ffu-agent` revealed
   another in `ffu-ui`'s `names.rs`, which the first run had not reached.
