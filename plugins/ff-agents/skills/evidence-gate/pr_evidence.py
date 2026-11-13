@@ -224,7 +224,9 @@ def claims(section: str) -> list[tuple[str, str]]:
 
 def kinds_of(section: str) -> list[str]:
     declared = field(section, "Kind")
-    words = re.split(r"[,\s]+|\band\b", declared[1].lower()) if declared else []
+    # w4065: only the kinds before an explanation count; "Kind: other (no simulation change)" is other, not simulation
+    value = re.split(r"[(;:]|<!--|\s[-–—]\s", declared[1])[0] if declared else ""
+    words = re.split(r"[,\s]+|\band\b", value.lower())
     return [w for w in words if w in KINDS]
 
 
