@@ -102,6 +102,19 @@ keep their own fill under focus (a closed slot stays dark, FP.21, w2895).
 ## Matching a mock, measured (w4105, three ui-critic rounds)
 
 Measure each of these on the still beside the mock before a critic round; each one was a critic's UGLY:
+- **Get the mock pictures attached before you start**: r197's and r215's stills live behind the portal's login
+  (`/srv/fff/review/w4014-ffu-art-direction/picked-panels-full-{1080,deck}.png`, `.../w4105-ffu-style-b-panels-v6/`),
+  and `docs/ui-style/ref/*.png` in a checkout can be 26-byte login errors. w4105 and w4201 both stalled on it, and
+  w4201 shipped its glass item as a follow-up: ask your orchestrator in your first report to attach them.
+- **Corners are per part** (`Corners` on `Spec`, w4201, ffu #792): `Theme` follows the theme's family, `Square` for
+  buttons, close and pager, `CutBottomRight` for every tile. Give every tile in a panel the same one: critic round 1
+  graded the Assembler's recipe tile, still cut at both corners beside bottom-right-only input tiles, UGLY.
+- **Focus distance, two sources**: r197's spec puts the brackets 7 px out and a 1 px ring 3 px out; w4201's brief asked
+  for brackets about 3 px out, joined by the ring. `BRACKET_OUT` 2 (3 device px at 1080) follows the brief. Quote
+  both when they disagree, and build what the person's latest words say.
+- **A still of the ship's Hold**: serve the snap (`ffu-server --start world.snap --listen 127.0.0.1:P`), then
+  `ffu --connect 127.0.0.1:P --name pilot --autoloot --clip hold.mp4 --seconds 25 --size WxH --look looks/ffu.look`,
+  last frame with `ffmpeg -sseof -0.1 -i hold.mp4 -frames:v 1 -update 1 hold.png`.
 - **Tile icon size**: the art inside an icon cell has a transparent margin, so the box must be bigger than the art you
   want. FF1's sprites fill about 74 % of their cell; at 0.8 of a 5 px-inset square the art filled 47 % of a 60 px tile
   against the mock's 63-65 %. Now 0.95 of a 3 px inset (`render.rs` `TILE_ICON`, `frame.rs` `TILE_INSET`), top left,
