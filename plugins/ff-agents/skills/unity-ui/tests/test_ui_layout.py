@@ -487,6 +487,26 @@ class StyleTest(unittest.TestCase):
         summaries, _ = ul.style(None, hud(), "InventoryPanel", touched_fragments=["InventoryPanel"])
         self.assertEqual(summaries, [])
 
+    def test_a_touched_switch_pairs_with_its_own_window_not_a_same_named_one(self):
+        # w4223: the Cargo Hold window and the Player Inventory each hold SortButton/AutoSortCheckbox/Switch, one on
+        # (green) and one off (grey); `short()` prints both as the same three names, which read like a suffix pairing.
+        # The pairing is by full path, with --ref naming the reference only for a panel that is not touched.
+        def two(cargo="#3DB54AFF", mini="#7F7F7FFF"):
+            c = hud(inventory=False)
+            c["elements"] += [
+                el("MiniInventory/InventoryPanel/SortButton/AutoSortCheckbox/Switch", [700, 300, 725, 317], color=mini),
+                el("CargoEntityPanel/MainPanel/Content/CargoHoldPanel/SortButton/AutoSortCheckbox/Switch",
+                   [17, 351, 42, 368], color=cargo)]
+            return c
+        for ref in ("MiniInventory", "CargoEntityPanel"):
+            summaries, failures = ul.style(two(), two(), ref, touched_fragments=["CargoEntityPanel"])
+            line = next(s for s in summaries if s.startswith("SortButton/AutoSortCheckbox/Switch (touched)"))
+            self.assertIn("delta E 0.0 (tint)", line, (ref, summaries))
+            self.assertEqual(failures, [], ref)
+            # the Cargo Hold's own switch turned off does fail
+            _, failures = ul.style(two(), two(cargo="#7F7F7FFF"), ref, touched_fragments=["CargoEntityPanel"])
+            self.assertTrue(any("delta E" in f for f in failures), (ref, failures))
+
     def test_a_touched_small_panel_is_measured_against_its_own_look(self):
         # w3050: the craft queue's slots are each under 2 % of the screen, so `--touched CraftQueuePanels` said "no
         # --touched panel is open", and `--ref CraftQueuePanels` found no reference.
@@ -1849,6 +1869,38 @@ class SamplePanelFillTest(unittest.TestCase):
             code, out = Cmd.run(hud(), hud(blueprint_backdrop=True), closed=hud(),
                                 extra=["--touched", "BlueprintPanelChild", "--shot", str(after), "--ref-shot", str(before)])
         self.assertRegex(the_line(out, "Style"), r"delta E 0\.\d \(on screen\)")
+
+    # w4223: the Cargo Hold's Auto-Sort switch (on: green track, white knob) cut from a 1280x800 classic still; the
+    # switch's census rect inside this 60x40 crop. Its rect is 25x17 px, so the old 4x downscale left 24 pixels.
+    SWITCH, SWITCH_RECT = "w4223-cargo-hold-autosort-switch-on.png", [17.6, 13.9, 43.0, 30.8]
+
+    def shifted(self, d, name, levels, grey=False):
+        from PIL import Image  # noqa: PLC0415
+        with Image.open(self.FIXTURES / self.SWITCH) as image:
+            rgb = image.convert("RGB")
+        if grey:   # the switch off: its green track drawn grey
+            rgb = Image.eval(rgb.convert("L"), lambda v: v).convert("RGB")
+        rgb = Image.eval(rgb, lambda v: max(0, min(255, v + levels)))
+        path = Path(d) / name
+        rgb.save(path)
+        return path
+
+    def test_a_small_unchanged_switch_does_not_flip_its_colour_on_a_slight_brightness_change(self):
+        # w4223: `check --touched CargoEntityPanel` read the Cargo Hold's switch at delta E 62.2 (on screen) at 1280x800
+        # classic while its rect, colour and mean pixel (97,163,138 against 99,166,139) were unchanged: 24 downscaled
+        # pixels in 8-level buckets, so a 2- or 3-level shift moved the largest bucket (delta E 45.7 at +3, 47.9 at -2
+        # on this crop before the fix). Pairing was not the cause: style() pairs by the full path.
+        base = ul.fills(self.FIXTURES / self.SWITCH, self.SWITCH_RECT)
+        with tempfile.TemporaryDirectory() as d:
+            for levels in (-6, -3, -2, 2, 3, 6):
+                moved = ul.fills(self.shifted(d, f"s{levels}.png", levels), self.SWITCH_RECT)
+                self.assertLess(ul.fill_distance(moved, base), 3, f"{levels:+d} levels: {base} against {moved}")
+
+    def test_a_switch_turned_off_still_reads_far_off(self):
+        base = ul.fills(self.FIXTURES / self.SWITCH, self.SWITCH_RECT)
+        with tempfile.TemporaryDirectory() as d:
+            off = ul.fills(self.shifted(d, "off.png", 0, grey=True), self.SWITCH_RECT)
+        self.assertGreater(ul.fill_distance(off, base), 10, f"{base} against {off}")
 
     def test_a_recoloured_two_fill_window_still_reads_far_off(self):
         with tempfile.TemporaryDirectory() as d:

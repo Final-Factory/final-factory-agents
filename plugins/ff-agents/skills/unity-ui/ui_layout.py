@@ -1415,7 +1415,7 @@ def sample(shot, rect):
     return found[0] if found else None
 
 
-def fills(shot, rect, share: float = 0.6):
+def fills(shot, rect, share: float = 0.6, near: int = 8, seeds: int = 8):
     """The panel's own colours in a screenshot inside a rect (image pixels, top-left origin): the most common colour (the
     mean of the largest bucket of pixels that agree within 8 levels a channel), which is the window's fill wherever its
     rows and text sit, then every other bucket at least `share` of its size, largest first. w1475: the median pixel moved
@@ -1423,7 +1423,14 @@ def fills(shot, rect, share: float = 0.6):
     its fill was #133754 against #123654 (delta E 0.8). w3237: the Information window has two fills of nearly equal
     area, its panel (44,82,108) and its row cards (18,52,76); one crop had more card pixels and the other more panel
     pixels, so the largest bucket flipped and a window that only moved read delta E 12.6 against its before at 1280x800
-    (0.4 and 0.5 fill for fill). style() compares every near-tie fill with the reference's and keeps the closest pair."""
+    (0.4 and 0.5 fill for fill). style() compares every near-tie fill with the reference's and keeps the closest pair.
+
+    w4223: the Cargo Hold's Auto-Sort switch (25x17 px at 1280x800 classic) read delta E 62.2 against its unchanged self
+    (same rect, colour and mean pixel within 3 levels). A 4x downscale left 24 blended pixels, and an 8-level grid
+    bucket splits a colour that sits on its edge, so a 2-level shift moved the largest bucket. So a crop is downscaled
+    only down to about 4096 pixels, and each of the largest buckets is a seed: its colour is re-centred on every pixel
+    within `near` levels a channel of it (wherever the grid edges fall), seeds that land on one colour merge, and the
+    colours are ranked by those counts."""
     try:
         from PIL import Image  # noqa: PLC0415
     except ImportError:
@@ -1436,13 +1443,39 @@ def fills(shot, rect, share: float = 0.6):
         x1, y1 = min(image.width, x1), min(image.height, y1)
         if x1 - x0 < 2 or y1 - y0 < 2:
             return []
-        crop = image.convert("RGB").crop((x0, y0, x1, y1)).resize((max(1, (x1 - x0) // 4), max(1, (y1 - y0) // 4)))
-        buckets: dict[tuple, list] = {}
-        for p in crop.getdata():
-            buckets.setdefault((p[0] >> 3, p[1] >> 3, p[2] >> 3), []).append(p)
-        ranked = sorted(buckets.values(), key=len, reverse=True)
-        return [tuple(round(sum(c[i] for c in fill) / len(fill)) for i in range(3))
-                for fill in ranked if len(fill) >= share * len(ranked[0])]
+        crop = image.convert("RGB").crop((x0, y0, x1, y1))
+        step = max(1, int(((x1 - x0) * (y1 - y0) / 4096) ** 0.5))
+        if step > 1:
+            crop = crop.resize((max(1, (x1 - x0) // step), max(1, (y1 - y0) // step)))
+        pixels = list(crop.getdata())
+    buckets: dict[tuple, list] = {}
+    for p in pixels:
+        buckets.setdefault((p[0] >> 3, p[1] >> 3, p[2] >> 3), []).append(p)
+
+    def mean(xs):
+        return tuple(sum(c[i] for c in xs) / len(xs) for i in range(3))
+    found: list[tuple[tuple, int]] = []
+    for seed in sorted(buckets.values(), key=len, reverse=True)[:seeds]:
+        colour, members = mean(seed), seed
+        for _ in range(3):
+            close = [p for p in pixels if max(abs(p[i] - colour[i]) for i in range(3)) <= near]
+            if not close:
+                break
+            colour, members = mean(close), close
+        if not any(max(abs(c[i] - colour[i]) for i in range(3)) <= near for c, _ in found):
+            found.append((colour, len(members)))
+    found.sort(key=lambda f: -f[1])
+    return [tuple(round(v) for v in c) for c, n in found if n >= share * found[0][1]]
+
+
+def fill_distance(mine: list, theirs: list) -> float:
+    """How far two panels' fills (fills(), largest first) are apart: each side's largest fill against its nearest fill
+    on the other side, the larger of the two. A near-tie that swapped places still reads 0 (w3237), and a second colour
+    both share cannot hide a changed main one (w4223: an on switch, green track and white knob, against an off one, grey
+    track and the same knob, read 0 when every pair counted)."""
+    if not mine or not theirs:
+        return float("nan")
+    return max(min(delta_e(mine[0], b) for b in theirs), min(delta_e(a, theirs[0]) for a in mine))
 
 
 def style(before: dict | None, after: dict, ref_fragment: str, shot=None, ref_shot=None, ref_census: dict | None = None,
@@ -1488,7 +1521,7 @@ def style(before: dict | None, after: dict, ref_fragment: str, shot=None, ref_sh
         da = e.get("alpha", 1) - ref.get("alpha", 1)
         if shot and ref_shot:
             mine, theirs = fills(shot, e.get("visible") or e["rect"]), fills(ref_shot, ref.get("visible") or ref["rect"])
-            de = min((delta_e(a, b) for a in mine for b in theirs), default=float("nan"))
+            de = fill_distance(mine, theirs)
             how = "on screen"
         else:
             de = delta_e(rgba(e["color"]), rgba(ref["color"]))

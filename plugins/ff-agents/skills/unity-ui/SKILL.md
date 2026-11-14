@@ -614,6 +614,12 @@ moved after it; opening the Blueprint slide-out puts it over the hotbar (a new o
 closed HUD); #1272's backdrop is delta E 23.8 from the classic Inventory on screen, where the window
 was 2.1 before it.
 
+**A Style line pairs by full path (w4223).** `short()` prints only a path's last three names, so the Cargo Hold's
+`SortButton/AutoSortCheckbox/Switch` and the Player Inventory's read alike; the touched element is still compared with the
+element at its own full path. Before you blame the pairing for a high on-screen delta E, compare the two elements' full
+paths, rects and colours in the censuses and their pixels in the stills. In w4195 the cause was the sampling: a 25x17 px switch
+whose stills differed by 2 to 3 levels read delta E 62.2, which `fills()` now reads at under 3.
+
 **Windows count too (w981).** `Overlaps:` is the always-on HUD blocks. Every open window (the Player Inventory, a Cargo Hold,
 Station Core or Grid panel, the Station strip, a slide-out) against the other windows and the HUD is the `Window overlaps:`
 line, and `ui_layout.py overlaps <census.json>` lists them for one census, each pair named with both elements and the overlap
