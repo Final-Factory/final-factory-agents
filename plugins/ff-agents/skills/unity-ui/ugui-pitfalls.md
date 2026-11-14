@@ -172,6 +172,15 @@ manual pages for these components are the source for the rules: "Auto Layout", "
 
 ## TextMeshPro
 
+- **Measure a text the way it draws (w4154, w4155).** `GetPreferredValues` on an auto-sizing text measures at
+  `fontSizeMax` (72), not the drawn size: turn auto-size off, measure at the drawn size, put it back. TMP lays out only
+  an active object, and edit mode runs no `OnEnable`, so a test activates the row first. One line of Cyrillic with a
+  period ("Выкл.") measures 22.49 high in a 22-unit row: a row that grows for a wrapped value compares the wrapped
+  height with that text's own one-line height, never with the authored row height (it grew to 23 with nothing
+  wrapped). A value column that widens to its text widens only when the text overflows it: adding the label gap to a
+  value that fits ("Apagado", 73 in 80, to 82) pushes its label out of line with the other rows' labels, which a
+  fresh ui-critic called UGLY at 17 px for Russian "Выключено" (`HoverValueRowFit.Fit`, FinalFactory w4155). A
+  shorter translation is often the better fix than a wider column: check who else shares the key first.
 - **Overflow modes hide loss.** `Ellipsis` and `Truncate` cut text without an error; auto-size
   shrinks it below the 9 px rule. The census reports clipped text and capital height; a long
   localized string (German, Russian) is the usual trigger, so check one long-text locale.
