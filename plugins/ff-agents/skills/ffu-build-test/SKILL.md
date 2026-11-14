@@ -358,6 +358,8 @@ cargo run --release -p ffu-headless -- crosscheck --threads 1,4,16 --golden gold
 - **Before a push, run `cargo test --workspace --all-features --no-fail-fast`.** A plain workspace `cargo test` stops at
   the first crate that fails and never runs the rest. In w3459 (ffu #427), fixing the failures in `ffu-agent` revealed
   another in `ffu-ui`'s `names.rs`, which the first run had not reached.
+  Run it in debug, as CI does: under `--release` three ffu-sim tests named `..._is_caught_in_a_debug_build` fail by
+  design, since they assert a `debug_assert!` fires (w4105, measured on the m5).
 - **`python3` on lothdesktop is the WindowsApps Store stub**, so `./tools/check_sim_rules.sh` stops with "Python was not
   found". Putting `/c/Python313` on PATH does not help, because that folder has no `python3.exe`. The fix is a folder
   (`$TMPDIR/pybin`) whose `python3` is a two-line script, `#!/bin/sh` then `exec /c/Python313/python "$@"`, put first

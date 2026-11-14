@@ -90,10 +90,34 @@ B's 189 the models crossed the inspector's text (measured). Convert a mock's CSS
 0.55^2.2 = 69 of 255), measure the show-through on a still over the world, and keep a button opaque: a focus fill of
 accent-over-alpha came out darker than an unfocused button (UI critic round 2).
 
-## Focus is a fill: frame a button whose fill means something
+## Focus: an accent outline and corner brackets, in a gap the row leaves
 
-ffu-ui has no outline primitive: `inspector::highlight` paints a focused button's fill `BUTTON_FOCUS`, which hides a
-CURRENT green or a closed slot's dark look (FP.21, w2895: the critic read a focused closed slot as an open one). Make
-such a button a 3 px padded frame round an inner `Role::Panel` of its own fill (`filters.rs` slot tiles): focus then
-paints only the frame, a teal ring. Give **every** tile in the row the same frame, not only the special ones:
-padding on some tiles breaks `flex_basis 0` equal widths.
+Since w4105 (ffu #776, r197's style B) a shaped control has an outline primitive: the focused button's outline is
+`ui.accent` (`Theme::outline`, `Shape::Focus`) and `render.rs`'s `focus_marks` draws four corner brackets
+`BRACKET_OUT` (5 px) outside it. Never grow the control or add a second ring on focus: critic round 1 read a 116 px
+button that became 126 px with a ring as "grown into its neighbour". Leave the brackets room: the button row has a
+10 px gap and 6 px left and right padding, so a bracket stands in the gap and inside the panel's content edge. Tiles
+keep their own fill under focus (a closed slot stays dark, FP.21, w2895).
+
+## Matching a mock, measured (w4105, three ui-critic rounds)
+
+Measure each of these on the still beside the mock before a critic round; each one was a critic's UGLY:
+- **Tile icon size**: the art inside an icon cell has a transparent margin, so the box must be bigger than the art you
+  want. FF1's sprites fill about 74 % of their cell; at 0.8 of a 5 px-inset square the art filled 47 % of a 60 px tile
+  against the mock's 63-65 %. Now 0.95 of a 3 px inset (`render.rs` `TILE_ICON`, `frame.rs` `TILE_INSET`), top left,
+  about 62 %, the count on the icon's corner with a halo on all eight sides.
+- **Title on one line**: a heading shrinks to one line while that keeps three quarters of its size, and wraps only
+  past that (`lib.rs` `fit_px`): "SHIP ASSEMBLER #1984" wrapped at tracking 0.14 em; r197's tracking is about 0.1.
+- **Title weight**: Khyay's own stroke is about half the mock's; its glyphs are drawn twice, `round(px*0.75)` apart
+  (`render.rs` `HEADING_FONT`), as FF1's TMP widens bold titles.
+- **Quiet lines**: outlines are `px.floor()` wide (one device pixel at 1080p and under); `ui.slot_edge` alpha 36 gives
+  r197's 27, 80, 110 over the glass. Rounded widths drew 2 px lines at 1.4x the mock's brightness.
+- **Text sizes relative to each other**: info rows (Status, Power, Facing) are 12 px under the buttons' 13 px, in a
+  2 px-gap column (`inspector::INFO_PX`); at 14 px and the panel's gap they stood 37 px apart against the mock's 20.
+- **A fitted text keeps its box height**: taffy's measured width can differ from the rounded box, so a fitted text
+  wrapped one line more and spilled 1 px (`tests/bounds.rs`). The shape pass lowers px until the height fits.
+- **Layout per mock, not per building class**: a store (Cargo Hold) shows grid, rule and detail row and no Rotate,
+  Copy, Remove, because its mock shows none; the critic graded the added row BROKEN under "add no layouts they don't
+  show". An empty store still needs a non-empty sub line ("0 in hold"): `tests/gate.rs` fails a label with no text.
+- **Bottom room**: 6 px margin under the last button row, so the brackets do not crowd the panel's edge.
+- Give the critic the round before as the "before" so it can check that nothing moved.
