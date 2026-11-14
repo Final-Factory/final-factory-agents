@@ -113,6 +113,13 @@ whole verification. The repo's own `CLAUDE.md` is binding and longer; this skill
   168.38 -> 183.78 µs at 20k and 2,722 -> 2,889 µs at 250k (MEASURED, median of 3, BEAST /affinity 14), in scan code
   the change did not touch, and moving its code into `#[inline(never)]` functions did not help. The share fell only
   through the bigger denominator, so quote a share against main's full tick, and keep such a change a probe.
+  **The cause was lost inlining, not layout** (w4094, ffu #774). The new paths gave `update_local` and
+  `transfer_from` a second caller, so LLVM stopped inlining them into the full scans. `#[inline(always)]` on both put
+  the full tick back in main's spread (167.73 against 166.77 µs at 20k, t00007150) and kept the rate cut (5.00 -> 4.67
+  µs). None of `codegen-units=1`, boxing the fields, `-align-loops=64` or const-generic copies of the phases helped
+  (each 182-187 µs against main's 166-174). The probe that found it kept the field and removed only the new calls:
+  the loss went with the calls. Then force-inline the helpers that both paths now call, and time main with the same
+  attributes too (166.31 µs: no change).
 - **Pin a run on Windows through a one-line `.cmd` file** (w3962, ffu `tools/bench/p4.sh`). With `MSYS_NO_PATHCONV=1`,
   `cmd //c "start "" /wait /b /affinity 4 ..."` keeps `//c`. cmd then opens an interactive shell, runs nothing and
   exits 0, so the log holds only cmd's banner. Instead, `printf 'start "" /wait /b /affinity %s "%s" %s\r\n' ... >
