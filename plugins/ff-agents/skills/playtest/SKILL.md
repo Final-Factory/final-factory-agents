@@ -132,6 +132,7 @@ w1222 fix: on Windows it ended the worker's own Claude; evidence-gate `lessons/c
 `checklists/done.md` item 4, w1196: two leftover players ran 27 h and 34 h on biscuit). Mark it by its `-ffAutomationLabel`
 or `-logFile`, not its build path (the command line names the slot). Bash scripts: source
 `scripts/nightly/player_launch.sh` and start `"${FF_LAUNCH[@]}" "$PLAYER" -- <args> &`.
+Enforced since w4167 (lothsahn, 2026-11-14: "They should only be using sandboxes and player slots. They're triggering firewall warnings"): FF Factory's shell guard refuses a player started outside a slot, and a bash/python/PowerShell script handed one (a `$TMPDIR/builds/<sha>-win` path) unless that script starts its players through `player_slots.py launch` or `FF_LAUNCH`; `launch` refuses (exit 3) a slot whose exe has no firewall allow rule instead of starting it. Hand a tour script the build folder and let it launch through the slot.
 
 ⚠️ `-ffAutomationDeterminismAudit false` REQUIRES `-ffAutomationWriteReport false`, or the session
 dies on "Determinism report publication failed". ⚠️ Windowed, never `-batchmode`: a headless player
