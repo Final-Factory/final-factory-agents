@@ -211,6 +211,25 @@ def field(section: str, name: str) -> tuple[str, str] | None:
     return ((found.group(1) or "").strip(), found.group(2).strip()) if found else None
 
 
+def field_wrapped(section: str, name: str) -> tuple[str, str] | None:
+    """`field`, with the value's hard-wrapped lines joined on: the lines after it up to a blank line, a heading, a list
+    item or the next `Name:` field. w4107 (ffu #784): a Reference capture whose .png came on its second line, and an Art
+    language whose "accent" did, were refused as naming none."""
+    found = field(section, name)
+    if not found:
+        return None
+    lines = section.replace("\r\n", "\n").split("\n")
+    head = re.compile(rf"^\s*(?:[-*]\s+)?{re.escape(name)}\s*(?:\([^)]*\))?\s*:", re.IGNORECASE)
+    start = next(i for i, line in enumerate(lines) if head.match(line))
+    value = [found[1]]
+    for later in lines[start + 1:]:
+        if not later.strip() or re.match(r"^\s*([-*]\s|#|\|)", later) \
+                or re.match(r"^\s*[A-Z][\w -]{1,30}\s*(\([^)]*\))?\s*:", later):
+            break
+        value.append(later.strip())
+    return found[0], " ".join(v for v in value if v)
+
+
 def claims(section: str) -> list[tuple[str, str]]:
     """Rows of the claims table as (claim, basis), without the header and the separator."""
     rows = []
@@ -897,7 +916,7 @@ def ffu_art_problems(body: str, art_files: list[str]) -> list[str]:
         return [f"art or the code that draws it changed ({where}) and no '## Evidence' section: it needs a 'Reference capture:' and an 'Art "
                 "language:' line (checklists/visual.md 5o, w2895)"]
     found = []
-    capture = field(section, "Reference capture")
+    capture = field_wrapped(section, "Reference capture")
     text = capture[1] if capture else ""
     if not text:
         found.append(f"art changed ({where}) and no 'Reference capture:' line: name the still or clip of the reference "
@@ -914,7 +933,7 @@ def ffu_art_problems(body: str, art_files: list[str]) -> list[str]:
             found.append("'Reference capture: n/a' has to say why (new art with no counterpart in the game)")
     elif not CAPTURE.search(text):
         found.append("'Reference capture' names no still or clip (a .png, .jpg or .mp4, a review folder or an att_ id)")
-    art = field(section, "Art language")
+    art = field_wrapped(section, "Art language")
     if not art or not art[1]:
         found.append("no 'Art language:' line: say the two solid main colours and the one bright, bloomy HDR accent, "
                      "and how they read on screen beside the game's own art (checklists/visual.md 5c; Ben, w2895: "

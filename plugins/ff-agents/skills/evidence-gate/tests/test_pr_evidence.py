@@ -963,6 +963,19 @@ class FfuArtTest(unittest.TestCase):
                                "Art language: navy and indigo as the two main colours, one salmon HDR accent that blooms")
         self.assertEqual(pe.check(good, files)[0], [])
 
+    def test_a_wrapped_capture_and_art_language_pass(self):
+        # w4107 (ffu #784): both fields hard-wrapped at 120 columns, the .png and the "accent" on their second lines.
+        body, files = self.case("ffu-177-portal-nebula")
+        wrapped = self.with_lines(body, "Reference capture: r197's pick board, column Ba, beside the real client's",
+                                  "stills in the report (`/srv/fff/review/w4107-ffu-pick-feedback/board.png`).", "",
+                                  "Art language: the two solid main colours are the card's navy and the slot's",
+                                  "teal-navy; the one bright accent is r197's cyan.", "")
+        self.assertEqual(pe.check(wrapped, files)[0], [])
+        # The next field or list item ends the value: a .png there is not the capture's.
+        split = self.with_lines(body, "Reference capture: r197's pick board", "- see shots/ours.png",
+                                "Art language: navy and teal colours, one cyan accent")
+        self.assertIn("names no still or clip", " ".join(pe.check(split, files)[0]))
+
     def test_no_capture_or_an_unused_reference_fails(self):
         body, files = self.case("ffu-141-mining-station")
         art = "Art language: slate-blue and gunmetal colours, one cyan HDR accent"
