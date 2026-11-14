@@ -483,11 +483,15 @@ def resized_in_place(line: str, pin: dict) -> bool:
     and every correction behind them was a panel taken somewhere else (w813, w894, w895). w1824: #2269's font fix made
     the hover card and Station Info 5 to 8 px shorter in ja/ko/zh/ru/uk, bottom edges and widths kept, which Ben had
     approved ("a few pixels shorter in those languages is fine"), and the gate asked him again because his words did not
-    name each panel. The quote must still be the requester's words in the brief; any other change needs the name."""
+    name each panel. A pinned element whose outer rect is unchanged, with only parts inside it moved (`moves`' "outer rect
+    unchanged" line), stayed where it is pinned too (w4118: the hover card's Stability row in German, card rect the same).
+    The quote must still be the requester's words in the brief; any other change needs the name."""
     found = OUTER.search(line)
     if not found or pin.get("rule") != "above":
         return False
     x0, y0, w0, h0, x1, y1, w1, h1 = (int(v) for v in found.groups())
+    if all(abs(a - b) <= 1 for a, b in ((x0, x1), (y0, y1), (w0, w1), (h0, h1))):
+        return True  # outer rect unchanged: only parts inside it moved (w4118: a hover card row's label widened)
     if abs(h1 - h0) <= 1:
         return False  # the same size: a shift, which is a move
     return abs(x1 - x0) <= 1 and abs((x1 + w1) - (x0 + w0)) <= 1 and abs((y1 + h1) - (y0 + h0)) <= HELD_PX
