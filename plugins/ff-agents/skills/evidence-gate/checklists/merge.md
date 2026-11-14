@@ -8,7 +8,10 @@ required `Test in editmode`, which on a PR runs only the touched tests; the whol
 waiting for the person. Hold one only for exceptional risk or a concrete timing reason, and say in
 your report which it is and when it will merge
 ([merge your own pull request](../lessons/merge-your-own-pr.md)). This list is what "verified"
-means, and `pr_evidence.py` checks the part a script can check.
+means, and `pr_evidence.py` checks the part a script can check. Run it alone and read its verdict before the merge:
+never `pr_evidence.py ... | tail && ff-pr merge`, whose exit is tail's (w4145: #3605 merged on a FAIL; its only
+failure was "a newer checker is released", so no harm). Take the newest installed checker
+(`ls -d <plugin cache>/ff-agents/* | sort -V | tail -1`) when `$FF_SKILLS` names an older one.
 
 **Read the PR's base and the trunk rule again just before you merge** (w1065, 2026-10-12): a base can change after
 you open the PR. When w1137 retired `develop`, GitHub moved every open PR based on it to `master`, and the branch's own

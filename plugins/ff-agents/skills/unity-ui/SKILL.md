@@ -149,6 +149,12 @@ census (`<shot>.json`: small, clipped, off-screen and overlapping text, covered 
   changes when it ends (w3827 lost a doc edit; the diff waits in `restored.patch` in the build's cache entry). For a fix
   pack, the critic's and `moves`' before is the commit before the regressing merge, not master (against master w3827's
   critic called the restored layout 6 "moves"). `pr_evidence.py` reads a bulleted `- Moved:` line since w3846.
+- **Re-run a leg before you call a far window's move real (w4154).** In the w4145 station tour the Player Inventory
+  (`MiniInventory`) sat 417 px left at 1280x800 classic in one run of the after build and back in place in the re-run,
+  with the same saved `PanelPosition.Inventory` (`1;1;1`) and a different battery charge: run-to-run placement, not
+  the change. A move `moves` lists far from what you changed gets one re-run of that leg before it goes in `Moved:`.
+  FF Factory's Bash guard also refuses any command whose text holds the player exe's file name, a grep of a build log
+  included: wait on a build by its background notice.
 - **Tour traps from w4120.** (1) A `record` clip's frames (`<clip>/NNNNN.jpg`) are stored upside down: `ui_check.py
   flicker` reads them as they are, but a reviewable mp4 needs `ffmpeg -framerate 60 -i <clip>/%05d.jpg -vf vflip ...`,
   and you look at one frame before you publish (w4120 published two flipped mp4s first). (2) The player's seeded world
