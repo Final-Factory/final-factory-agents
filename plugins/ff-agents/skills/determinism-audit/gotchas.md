@@ -982,6 +982,13 @@ w2797 (2026-11-01, an m5 Mac host of a BEAST Windows client, PR #2989) launched 
   every `audit.write` checkpoint ("the audit is disabled").
 - Post HOST WAITING only after the log shows `waiting-host-peers-connected: connectedClients=1,target=2` following the
   last `pre-connect-command-complete`. Run 3, with both flags fixed, compared 2000 shared heartbeats.
+- **A long hand-launched dwell passes `-ffAutomationOutlivePairBreak true` on the host** (w4192, 2026-11-14, a
+  LothDesktop host of a biscuit Linux client, 900 s dwell). At hb 10,923 the link went quiet both ways for ~5 s (client
+  `underrunMs=3054`, host `Client 1 is not responding (3.0 s without progress)`); neither peer stalled. The client's
+  watchdog shut its transport, the host's session watcher ended on the disconnect (`session-ended: client disconnected
+  from host`) and AutoQuit, so the client's rejoin, which had worked (`ReconnectRestored attempts=1`), was closed at
+  epoch 2 hb 73 and the run ended early. With the flag the host survives the break ([#outlive-pair-break](#outlive-pair-break))
+  and the reconnect carries on; a determinism compare still covers only the epoch before the break.
 - **A circuit with more than one condition cannot go in the pre-join file** (w2838, 2026-11-01, a LothDesktop host of
   a biscuit client, PR #3006). `-ffAutomationPreConnectCommandFile` holds one chain, and the chain splits on every `;`
   (`AutomationChainExecutor.Split`). `circuit.set` also joins its conditions with `;`, so in that file each condition
