@@ -419,6 +419,15 @@ control, and a redesign goes out as 2 or 3 clearly different options built from 
     - The fresh critic gets master's still as each option's `--before`; it fails every option with an unnamed move
       (`Unnamed moves:` in its report, item 30).
     - The report that offers the options pastes the `Options:` line. An orchestrator relaying the round checks it first.
+    - **A screen with no census (a web page: an FF Factory portal screen, or a mock drawn into one; w4153):** the pixels
+      are the census. Take the before and every option's still at the same size, from one run of the backend and with a
+      fixed clock, and run `still_moves.py before.png option.png --named x0,y0,x1,y1` (unity-ui) with the rectangle the
+      person's words name: it prints `Moves: none outside the named region`, or one `CHANGED` box per block that differs
+      elsewhere. Every box is answered before the critic sees the round: it is the page's own state (the current row's
+      mark on another route), or it is put back, or the move goes to the person as a question in words, with no still.
+      w4153 sent two rounds to the critic with the sidebar's block grown (the list under it 74 px lower) and an unnamed
+      panel cut from 787 to 590 px
+      ([lesson](../lessons/a-ui-change-leaves-the-rest-of-the-screen-as-it-was.md#a-screen-with-no-census-compare-the-stills-w4153-2026-11-14)).
 
 33. **The window matches the game's other windows: corners, header, padding (w1818). Measured, then looked at side by
     side.** A panel judged on its own passed twice with defects a player sees only beside another window. w1296's

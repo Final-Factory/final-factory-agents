@@ -1,6 +1,6 @@
 ---
 name: a-ui-change-leaves-the-rest-of-the-screen-as-it-was
-description: "A UI change proves it left the rest of the screen as it was: a whole-screen layout census before and after (whole HUD showing, every slide-out open) with no new overlap between always-on HUD blocks, no anchored cluster drifting more than 2 px, and every touched panel's measured colour and alpha within reach of a classic panel's. A panel the player opens on purpose and can close may cover the HUD, if it draws on top, is clickable, stays on screen and gives the HUD back (Ben, w732 and w742). Move only what the person asked to move: every moved element at 1920x1080, 1280x800 and 1280x800 docked is listed and asked for in the brief's own words, or put back, and the places Ben fixed himself (hud-pins.json) hold in every census (Ben, w826 and w894: \"stop moving panels around that I don't ask you to move around\"). The same holds for every option and mock offered before the PR: an option moves only what the person named, checked by ui_layout.py options against master and the ui-critic (Ben, w1429: "getting extremely worried you guys moved the fucking station controls panel when i told you not to twelve times"). Checked by the released pr_evidence.py, not an older copy. Open windows against each other and the HUD are measured by ui_layout.py (Window overlaps:), never by eye (w981)."
+description: "A UI change proves it left the rest of the screen as it was: a whole-screen layout census before and after (whole HUD showing, every slide-out open) with no new overlap between always-on HUD blocks, no anchored cluster drifting more than 2 px, and every touched panel's measured colour and alpha within reach of a classic panel's. A panel the player opens on purpose and can close may cover the HUD, if it draws on top, is clickable, stays on screen and gives the HUD back (Ben, w732 and w742). Move only what the person asked to move: every moved element at 1920x1080, 1280x800 and 1280x800 docked is listed and asked for in the brief's own words, or put back, and the places Ben fixed himself (hud-pins.json) hold in every census (Ben, w826 and w894: \"stop moving panels around that I don't ask you to move around\"). The same holds for every option and mock offered before the PR: an option moves only what the person named, checked by ui_layout.py options against master and the ui-critic (Ben, w1429: "getting extremely worried you guys moved the fucking station controls panel when i told you not to twelve times"). Checked by the released pr_evidence.py, not an older copy. Open windows against each other and the HUD are measured by ui_layout.py (Window overlaps:), never by eye (w981). A screen with no census (a web page, an FF Factory portal mock) is checked on its stills by still_moves.py (w4153)."
 date: 2026-10-09
 ---
 
@@ -285,6 +285,37 @@ offered as an option.
 4. Pack the remaining stills for a fresh `ff-agents:ui-critic` with master's still as each one's `--before`; its
    `Unnamed moves:` must read none.
 5. The report offering the round pastes the `Options:` line; an orchestrator relaying it checks that line first.
+
+### A screen with no census: compare the stills (w4153, 2026-11-14)
+
+A web page has no layout census, so `ui_layout.py options` has nothing to read, and the rule still holds. On w4153 (a
+design of the FF Factory portal's waiting list as the orchestrator page's right panel; Ben: "the list of things waiting
+on input should just always appear in the right panel of the orchestrator") the mocks went to the critic twice with
+moves he had not named. Round 1: the sidebar's "Needs you" block grew from 3 rows to 4 plus "N more" and pushed the
+Computers list 74 px lower, and a third column cut the chat from 853 to 605 px. Round 2: that column still cut the
+Dispatcher's panel from 787 to 590 px. The critic caught both (`Unnamed moves:`), so no such still reached Ben, at the
+cost of two rounds. Round 3 read `Unnamed moves: none`.
+
+**The check that would have caught it before the first critic:** `still_moves.py <before.png> <mock.png> --named <the
+right panel's rectangle>` (unity-ui; `tests/test_still_moves.py` is the grown block, drawn). MEASURED on w4153's stills
+at 1280 px, against the same page today: round 1 prints `CHANGED 8,445-271,568` (the grown block) and
+`CHANGED 14,578-263,751` (the list under it); the last round prints neither, only the current row's mark (the two stills
+are of two routes) and small texts that count time (the two stills came from two runs of the backend).
+
+**How to apply, for a portal screen.**
+1. The before and the mocks come from the repo's own mock backend, never a live portal: in a clone of ff-factory, after
+   `npm ci` and a web build, `MOCK_NOAUTH=1 MOCK_FROZEN=1 PORT=<port> node mock/server.ts` in `web/`, under `timeout` so
+   it ends by itself. Take the stills with the repo's own Playwright (`node_modules/@playwright/test`), with
+   `page.clock.setFixedTime`, and the before and the after from one run of the backend, so texts that count time match.
+2. A mock that must change no code is drawn into the rendered page at screenshot time (`page.addStyleTag`,
+   `page.evaluate`), with the page's own card markup and CSS. A state the mock data lacks is made by patching the state
+   message in the browser (`page.route('**/api/state')` and `page.routeWebSocket`), not by editing the mock data. A
+   person's wait has three signals there (the work item, the worker's `waitingOn`, the worker's last report line,
+   `shared/workState.ts`), so a "nothing waits" state clears all three.
+3. The before for a region is the same page today at the same width: for a chat beside a new right panel, today's page
+   with another panel open, not the bare home.
+4. Run `still_moves.py` on every pair and answer each `CHANGED` box, then pack for the fresh critic. A fork that needs a
+   move (a third column, a block that grows) goes to the person in words, with the measured widths and no still.
 
 ## Window overlaps are measured by the tool, not by eye (w981, 2026-10-11)
 

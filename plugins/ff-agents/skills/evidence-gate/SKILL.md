@@ -530,7 +530,9 @@ One file each under `lessons/`: the rule, why (the incident, dated), how to appl
 - [Options move only what the person named](lessons/a-ui-change-leaves-the-rest-of-the-screen-as-it-was.md#options-and-mocks-move-only-what-the-person-named-w1429-2026-10-17): the hard rule holds
   for every option and mock offered, not only the pull request (w1429: on w1386 the round-3 options A, B and C each moved
   the station controls panel after Ben said "keep the station controls where they were"); `ui_layout.py options` against
-  master's census drops every option with an unnamed move, and the ui-critic fails it (checklist item 32).
+  master's census drops every option with an unnamed move, and the ui-critic fails it (checklist item 32). A screen with
+  no census (a web page, an FF Factory portal mock) is checked on its stills: `still_moves.py before.png option.png
+  --named <the rectangle the person named>` (w4153: two critic rounds found a grown sidebar block and a shrunk panel by eye).
 - [Window overlaps are measured by the tool, not by eye](lessons/a-ui-change-leaves-the-rest-of-the-screen-as-it-was.md#window-overlaps-are-measured-by-the-tool-not-by-eye-w981-2026-10-11): `ui_layout.py
 - [A fix that clears one overlap must not land on a window that was clear](lessons/a-ui-change-leaves-the-rest-of-the-screen-as-it-was.md#a-fix-that-clears-one-overlap-must-not-land-on-a-window-that-was-clear-w1911-2026-10-24): `unity-ui/window_changes.py` lists NEW COVER, RESIZED and moved windows between two censuses; a gate FAIL on window overlaps is a regression, and a case with no free way is a fork with stills (w1911).
   overlaps` counted only always-on HUD blocks, so the Station strip standing 11 px over the Player Inventory (w961, #1444;
