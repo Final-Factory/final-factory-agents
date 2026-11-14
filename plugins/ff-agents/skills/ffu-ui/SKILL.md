@@ -145,3 +145,23 @@ Measure each of these on the still beside the mock before a critic round; each o
 - FF1's hotbar defaults are `GameInitializer.StartHotbarItems` in FF1's main scene.
 - The Write and Edit tools may refuse to create a file in an ffu slot (w4106, m5): write it in `$TMPDIR` and copy it
   in, and edit with a small Python script that checks each replacement's count.
+
+## A pick's answer and other HUD motion (w4107, ffu pick feedback a)
+
+- **A local `--pick X,Y` clip runs as a pilot only with `--name N`** (ffu `main.rs`): without it the ship holds
+  nothing and the "N in hold" note never shows. `ffu --start world.snap --name pilot --hud --pick X,Y --view X,Y,48
+  --clip out.mp4 --seconds 3 --size 1920x1080 --look looks/ffu.look` records 60 fps and picks at frame 60.
+- **A clip loop must age what the window ages**: the local clip never called `Builder::frame`, so the pulse ring sat
+  at its first frame for the whole clip while the stills looked right. Check motion on a frame strip, never on stills:
+  `ffmpeg -i clip.mp4 -vf "select='between(n,56,87)',crop=W:H:X:Y,scale=iw*2:-1,tile=8x4" -frames:v 1 strip.png`
+  (m5's ffmpeg has no `drawtext` and refuses `-vsync`; read frames left to right from the first). watch_video's vfx
+  detector anchored on the pointer's move, not on a 6 px ring.
+- **Turn a tile into screen pixels through the tilted look camera** (`Camera::to_screen`): a flat-camera `tile_pixel`
+  picked a Belt beside the Assembler it aimed at.
+- **Tell the critic what each part of a mock is**: the first critic round graded every still BROKEN for a "missing hand
+  chip" because it read r197's dashed ghost tile at the cursor as the chip, and for a note "beside the ghost". Quote
+  the design's own words in the brief and name the parts (ghost, chip, note, slot); the second round then judged the
+  real differences.
+- **A frame a shared token draws goes on its own node**: the hotbar's selected slot and w4105's focused hold tile share
+  `TILE_FOCUS` (`Shape::Pick`, 1 px outline). The mock's 2 px hotbar frame is a `hud.selected` ring, so the hold grid
+  keeps its edge. The gate's sibling-overlap check exempts `hud.pulse` and `hud.selected` by name.
