@@ -142,6 +142,6 @@ Measure each of these on the still beside the mock before a critic round; each o
 - **Real-client stills** for a HUD: serve a world with `ffu-server --listen`, then `ffu --connect <addr> --name pilot
   --hud --minimap --still out.png --seconds 4 --size 1280x800 --look looks/ffu.look` (without `--minimap` there is no
   map). An `--autobuild` of an item the ship holds 0 of gives the refusal notice for a still.
-- FF1's hotbar defaults are `GameInitializer.StartHotbarItems` in FF1's `main.unity`.
+- FF1's hotbar defaults are `GameInitializer.StartHotbarItems` in FF1's main scene.
 - The Write and Edit tools may refuse to create a file in an ffu slot (w4106, m5): write it in `$TMPDIR` and copy it
   in, and edit with a small Python script that checks each replacement's count.
