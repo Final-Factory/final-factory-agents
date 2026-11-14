@@ -224,6 +224,15 @@ $B/ffu-server replica --dir "$OUT/replica" --listen 127.0.0.1:0 --exit-on-stdin-
   though `Tailscale-In` allows Domain,Private and the Tailscale profile is Private; outbound to biscuit:47100 worked.
   So do the dry listen and the remote connect test before the pair is placed and the bench tickets are taken, and
   when writing a pair brief with a Windows leg, put the firewall check after a first listen, never before the build.
+- **A shard's snapshot is copied a share of stations a tick and encoded off the tick** (w4130, ffu #787, M2.16b).
+  Copying all 174 stations of the overload world (1,044,000 buildings) on one tick cost 22-32 ms and encoding them
+  72-89 ms (MEASURED, `crates/ffu-server/tests/snap_timing.rs`, ticket t00007163), so `shard.rs` `Capture` copies a
+  share in the 32 ticks before the due tick, keeps each copy's records, and the log thread replays, checks and encodes
+  them: the `snap` max fell from 507.6 to 2.343 ms (t00007166). Two traps: a record for tick t is built while
+  `world.tick()` is t-1, so a station copied at world tick c has `sector.tick() == c` and replays from record c+1 (an
+  off-by-one there fails as "a snapshot copy at tick 8 has a record for tick 9"). And `tools/overload.sh` snapshots
+  only every 4096 ticks, twice in a 720 s run: judge a snapshot change from `SOAK_TRACE=1`'s per-tick `trace-0.jsonl`
+  (fields `snapshot`, `snap_us`, `tick_us`, `send_us`) against each 60 s window's p99, not from the phase summary.
 
 ## When two peers disagree
 
