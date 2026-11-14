@@ -773,6 +773,10 @@ class MovedTest(unittest.TestCase):
         for why, rect in cases.items():
             line = f"- 1920x1080 undocked GamePanels/BuildInfoPanel (ja): {rect}: {quote}"
             self.assertIn("is pinned (Station Info", self.reasons("\n".join([head, line]), brief), why)
+        # w4118: the card stayed put and only its Stability row moved inside it (moves' "outer rect unchanged" line)
+        inside = (f"- 1920x1080 undocked GamePanels/BuildInfoPanel: outer rect unchanged (was 823,791 274x100, now 823,791 "
+                  f"274x100); 2 parts moved inside, largest Stability/Label x +3, y +0 px, size +6 x +0 px: {quote}")
+        self.assertNotIn("is pinned", self.reasons("\n".join([head, inside]), brief))
         kept = f"- 1920x1080 undocked GamePanels/BuildInfoPanel (ja): x +0, y +4 px, size +0 x -8 px (was 823,791 274x100, now 823,799 274x92): {quote}"
         self.assertNotIn("is pinned", self.reasons("\n".join([head, kept]), brief))
 
