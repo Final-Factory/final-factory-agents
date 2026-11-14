@@ -206,9 +206,15 @@ revealed the second):
    by symlink get it too). **Reload** is correct unless the editor holds deliberate unsaved
    scene work.
 
-Recovery recipe: DPI-aware screenshot FIRST (`SetProcessDPIAware` before `CopyFromScreen`,
-and capture+click in ONE process — the DPI trap is per-process and bidirectional), click the
-top modal, screenshot again — modals stack, so repeat until the desktop is clean. The editor
+Recovery recipe: list the editor's own top-level windows (`EnumWindows`, keeping those whose
+`GetWindowThreadProcessId` is the editor's pid; a visible one not titled as the main window is a
+modal) and capture each by its handle with `PrintWindow` (as `ffu-drive/window_shot.ps1` does),
+DPI-aware (`SetProcessDPIAware` first, and capture+click in ONE process — the DPI trap is
+per-process and bidirectional). Click the modal's button, list again — modals stack, so repeat
+until only the main window is left. A system modal (Windows Firewall, UAC) is no editor window:
+tell your orchestrator, for the machine's person. Not a whole-desktop `CopyFromScreen`: it shows
+the person's other windows, and the worker privacy guard refuses it ("captures the whole desktop"; ff-factory docs/privacy.md).
+Take one only when the machine's person asked for a look at their whole desktop. The editor
 loop resumes instantly; re-trigger whatever was queued. Both editors on a box can be stalled
 by ONE system modal at the same time.
 

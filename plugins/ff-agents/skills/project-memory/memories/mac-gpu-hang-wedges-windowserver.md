@@ -18,7 +18,13 @@ Seen on the m3 (M3 Pro) while bisecting the Just Play bench's Metal hang with `-
 ## Before every next GPU run on a Mac
 1. `pgrep -lx WindowServer`, and check with `ps -o time` that it has CPU time and was not started seconds ago.
 2. `ps -axo pid,stat,comm | grep -i finalfactory`: no player may be left, above all one in state E.
-3. Run `/usr/sbin/screencapture -x "$TMPDIR/check.png"` under a 10 s bound; it must write the file.
+3. Ask WindowServer for its window count, under a 10 s bound; it must answer a number:
+   `perl -e 'alarm 10; exec @ARGV' osascript -l JavaScript -e 'ObjC.import("CoreGraphics"); ObjC.castRefToObject($.CGWindowListCopyWindowInfo($.kCGWindowListOptionOnScreenOnly, 0)).count'`
+   (m3, 2026-11-14: 45, in 2 s; untried on a wedged WindowServer, which is expected to hang or fail it, as it did
+   `screencapture`). It reads no pixels and needs no screen-recording permission; a one-pixel
+   `screencapture -R` failed there without that permission ("could not create image from rect"). Not a whole-desktop
+   `screencapture -x`: it shows the person's other windows, and the worker privacy guard refuses it ("captures the
+   whole desktop"; ff-factory docs/privacy.md).
 
 If any check fails, run nothing. The Mac needs a restart by its owner, and a run in that state proves nothing.
 

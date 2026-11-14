@@ -76,8 +76,8 @@ in the built player (drive-game, "The mouse cursor in a built player"; w980).
    prompt, UAC, a crash or "not responding" box. One there voids the capture: re-take it after the dialog is gone, and
    **A clip's frames show only the player window** (w2408): a desktop grab (`ddagrab`, `gdigrab`: every Windows clip
    without `gfxcapture`) records any window drawn over the player, a browser or another sandbox's editor, exit 0
-   (w2380, BEAST); `record_clip` pins the player and refuses a covered take, so a hand-made `ffmpeg` grab needs the
-   same look.
+   (w2380, BEAST); `record_clip` pins the player and refuses a covered take. A hand-made whole-desktop grab shows the
+   person's other windows, and the worker privacy guard refuses it ("captures the whole desktop"; ff-factory docs/privacy.md): record with `record_clip`.
    For a firewall prompt over a slot player run `player_slots.py firewall` and report it
    ([lesson](../lessons/visual-fixes-are-verified-by-looking.md#a-clip-with-a-system-dialog-over-the-game-is-void-w1742); a slot2-0 prompt covered all 12 of w1722's clips).
 5c. **Art language: two solid main colours + one bright, bloomy HDR accent, and a highlight is the object's own
