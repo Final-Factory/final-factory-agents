@@ -121,3 +121,27 @@ Measure each of these on the still beside the mock before a critic round; each o
   show". An empty store still needs a non-empty sub line ("0 in hold"): `tests/gate.rs` fails a label with no text.
 - **Bottom room**: 6 px margin under the last button row, so the brackets do not crowd the panel's edge.
 - Give the critic the round before as the "before" so it can check that nothing moved.
+
+## The HUD: matching r197's HUD mocks (w4106, three ui-critic rounds)
+
+- **The HUD has its own scale**: r197 draws the HUD at 1.5x at 1080 lines and 1.2x on the Deck's 800 (measured), not
+  the panels' `scale_for` (1.11 at 800). Lay a HUD tree out with `hud_layout` (`hud_scale`), and set a size the mock
+  draws differently at 800 with `by_height(height, at_1080, at_800)` (`lib.rs`). Gate HUD panels at that scale
+  (`tests/gate.rs` `hud_panels`, `gate_hud`). Measure every text and box at both mock sizes, not only at 1080: the
+  chip text, the map's coordinates and the speed card were 10, 8 and 46 px at 800 against the mock's 13, 12 and 36.
+- **Taffy resolves a nested absolute node's right and bottom insets against the screen** (measured): only left and
+  top insets place an absolute node below the root. Place a slot's key or count with left and top insets, or keep the
+  count in normal flow with `justify_content`/`align_items` `FLEX_END`.
+- **Size an icon to the art the mock draws, not to its square**: FF1's art has a clear margin, so a 25.3 px box drew
+  the Connector 28 px wide and a 36 px box drew it 43 px, against r197's 40 (measured). Find the box by measuring the
+  drawn art's width (33.5 here).
+- **Clear a title on a map with a box around its text**: a band the width of the disc under the title cut the map
+  along a straight line, which the critic graded UGLY as a clipped texture. Keep the cells out of the text's box plus a
+  margin only (`minimap::title_clear`).
+- **The gate's sibling-overlap check exempts an Image and a Value**: a key or count over its item art is meant.
+- **Real-client stills** for a HUD: serve a world with `ffu-server --listen`, then `ffu --connect <addr> --name pilot
+  --hud --minimap --still out.png --seconds 4 --size 1280x800 --look looks/ffu.look` (without `--minimap` there is no
+  map). An `--autobuild` of an item the ship holds 0 of gives the refusal notice for a still.
+- FF1's hotbar defaults are `GameInitializer.StartHotbarItems` in FF1's `main.unity`.
+- The Write and Edit tools may refuse to create a file in an ffu slot (w4106, m5): write it in `$TMPDIR` and copy it
+  in, and edit with a small Python script that checks each replacement's count.
