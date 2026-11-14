@@ -165,3 +165,8 @@ Measure each of these on the still beside the mock before a critic round; each o
 - **A frame a shared token draws goes on its own node**: the hotbar's selected slot and w4105's focused hold tile share
   `TILE_FOCUS` (`Shape::Pick`, 1 px outline). The mock's 2 px hotbar frame is a `hud.selected` ring, so the hold grid
   keeps its edge. The gate's sibling-overlap check exempts `hud.pulse` and `hud.selected` by name.
+- **Measure a line's width; don't take a critic's word for it**: round 1 called the selected slot's 1 px edge too thin
+  against a 2 px mock, round 2 called the 3 px fix too thick against a "1 px" mock. One pixel row through both settled
+  it (mock 2 px at the still's scale, checked by the slot's width): `ffmpeg -i still.png -vf
+  "crop=20:1:X:Y,format=gray" -f rawvideo - | od -An -tu1 -v`. A width in logical pixels is times the HUD's scale (1.5
+  at 1080): `RING_WIDTH` 4/3 draws 2.
