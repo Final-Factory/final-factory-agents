@@ -332,8 +332,11 @@ export GIT_INDEX_FILE="$TMPDIR/idx-<v>"; git read-tree origin/release/<v>
 B=$(git hash-object -w Temp/release-notes-<v>.md)
 git update-index --cacheinfo 100644,$B,cicd/release-notes/<v>.md; T=$(git write-tree); unset GIT_INDEX_FILE
 C=$(git commit-tree $T -p origin/release/<v> -m "<v> notes: <what was added>")
-git push origin $C:refs/heads/release/<v>    # then check the PR's headRefOid is $C and wait for its CI again
+git push origin "${C}:refs/heads/release/<v>"    # then check the PR's headRefOid is $C and wait for its CI again
 ```
+
+Keep the braces and quotes: in zsh (the macOS workers' shell) `$C:r` is a history modifier, so an unbraced
+`$C:refs/...` became `<sha>efs/heads/...` and the push was refused (w4165, 1.0.0.46).
 
 **After that push, merge only on the run at `$C`** (w1416, Build 108): the `ci:` wait resumed the worker
 with "all workflow runs passed" on the first run's green at the old head `bd83effba2`, while the run for
