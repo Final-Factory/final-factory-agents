@@ -804,6 +804,9 @@ def reparent_target(block: str, old: dict, now: dict, same) -> str | None:
 
 
 TITLE_MENU = "PersistentObjects/Canvas/MainMenuPanel(Clone)/"
+# w4159: the title screen's own overlays over its menu: the progress bar (the load bar, and the Mods window's Steam
+# Workshop upload bar) and the confirmation dialogs. A census of the Mods window with either open is still the title.
+TITLE_OVERLAYS = ("PersistentObjects/Canvas/LoadingBars/", "PersistentObjects/Canvas/ConfirmationModalParent(Clone)/")
 
 
 def title_screen(census: dict) -> bool:
@@ -812,7 +815,8 @@ def title_screen(census: dict) -> bool:
     HUD's elements beside it, so it is not taken for the title screen. A development player's overlays (IGNORE: the
     Graphy fps counter) are not the game and do not count (w3768: they made a dev player's title census "3 not shown")."""
     elements = [e for e in census["elements"] if not any(i in e["path"] for i in IGNORE)]
-    return bool(elements) and all(e["path"].startswith(TITLE_MENU) for e in elements)
+    return (any(e["path"].startswith(TITLE_MENU) for e in elements)
+            and all(e["path"].startswith((TITLE_MENU,) + TITLE_OVERLAYS) for e in elements))
 
 
 def layout_of(census: dict) -> str:

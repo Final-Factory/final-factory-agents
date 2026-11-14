@@ -915,6 +915,14 @@ class PinTest(unittest.TestCase):
         loaded["elements"].append(el("PersistentObjects/[Graphy]/FPS/Text", [10, 10, 80, 30]))
         loaded["layout"] = "docked"
         self.assertEqual(ul.layout_of(loaded), "title")
+        # w4159: the Workshop upload bar and a confirmation dialog over the Mods window are the title screen's own.
+        def at(path, rect):
+            return dict(el("x", rect), path=path)
+        loaded["elements"].append(at("PersistentObjects/Canvas/LoadingBars/LoadBar/Header", [400, 300, 700, 330]))
+        loaded["elements"].append(at("PersistentObjects/Canvas/ConfirmationModalParent(Clone)/Panel", [400, 300, 800, 500]))
+        self.assertEqual(ul.layout_of(loaded), "title")
+        alone = {"screen": [1280, 800], "elements": [at("PersistentObjects/Canvas/LoadingBars/LoadBar", [400, 300, 700, 360])]}
+        self.assertNotEqual(ul.layout_of(alone), "title", "a load bar alone (loading a game) is no title menu")
         loaded["elements"].append(el("PersistentObjects/Canvas/GamePanels/TopInfoPanel", [0, 0, 1280, 40]))
         del loaded["layout"]
         self.assertEqual(ul.layout_of(loaded), "undocked", "a menu over a game lists the HUD too")
