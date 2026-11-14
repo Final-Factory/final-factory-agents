@@ -388,11 +388,13 @@ cargo run --release -p ffu-headless -- crosscheck --threads 1,4,16 --golden gold
 - `ffu-client` has no library target: `cargo test -p ffu-client --lib` fails with "no library targets found", and a
   `grep "test result"` of it prints nothing, which reads as a pass (w2895 FP.22). Its unit tests run with `--bins`.
 - Fuzzing needs nightly and cargo-fuzz (`tools/fuzz.sh [seconds] [target ...]`); BEAST and lothdesktop have neither, and there the script stops before fuzzing yet reports "crashes" with no artifacts: check `cargo fuzz --version` first and write "not run" in the PR (w2895). Run new targets on
-  biscuit by dispatching the nightly job on your branch: `gh workflow run fuzz.yml -R Final-Factory/ffu --ref <branch>
+  FFBox (fuzz.yml runs only there since w4076, `ffu-ffbox`) by dispatching the nightly job on your branch: `gh workflow run fuzz.yml -R Final-Factory/ffu --ref <branch>
   -f seconds=600 -f targets="a b"`. Each target's result is its `stat::number_of_executed_units` line in
   `gh run view <id> --log` (w2895 P0.14c, run 42208794602: four targets in about 45 minutes with the build). A new
-  target adds a `[[bin]]` in `fuzz/Cargo.toml`, a name in each of `tools/fuzz.sh`'s target lists, and minutes to
-  `fuzz.yml`'s `timeout-minutes` (10 per target plus the build).
+  target adds a `[[bin]]` in `fuzz/Cargo.toml`, a name in each of `tools/fuzz.sh`'s target lists, and a check that each of
+  fuzz.yml's halves (`FUZZ_SHARD` 1/2 and 2/2, every other target of the list) still ends well inside FFBox's 240-minute
+  job watchdog: about 10 min per target there, 13 to 30 for a few (agent_line, replica_file, world), plus a 16 to 21
+  min cold build (w4076, run 43584973167). Past it, add a third half rather than raise `timeout-minutes`.
 
 ## 3. The rules a sim change keeps
 
@@ -497,8 +499,19 @@ never rewritten (`tools/check_snapshot_compat.sh BASE_REF` holds it in CI). No t
 
 - Push your branch, `gh pr create -R Final-Factory/ffu --base main --title ... --body-file ...`, with
   `Request: wNNN` (or `Part of: wNNN`) in the body.
-- CI runs on ffu's own runners, one job at a time each: `ffu-linux` (biscuit), `ffu-windows` (BEAST), `ffu-macos`
-  (the M3). A job waits while its machine is off; a queue of several minutes is normal.
+- CI runs on ffu's own runners, one job at a time each: `ffu-linux` (biscuit's four and FFBox's ffu containers),
+  `ffu-linux-biscuit` (biscuit alone: check, lint), `ffu-ffbox` (FFBox alone: the fuzz nightly), `ffu-windows` (BEAST,
+  LothDesktop), `ffu-macos` (the M3). A job waits while its machine is off; a queue of several minutes is normal.
+- **Before moving an ffu job onto FFBox, set its length against FFBox's own job watchdog** (w4076): the host ends any
+  job 240 minutes after it starts (ffbox `config.md` `watchdog_minutes`, `runners/lib/config.sh`), whatever the job's
+  `timeout-minutes` says, and the log shows only "The runner has received a shutdown signal" and a cancelled step. The
+  fuzz nightly (23 targets at 600 s, about 5 h there) was cut 18 targets in (run 43584973167) and now runs as two
+  matrix halves (ffu #790). Also on FFBox: a change to its ffu image or labels reaches only containers minted after it,
+  so the idle one runs the old image until it takes a job or retires (w4076: a dispatch landed on a pre-clang
+  container); and when one job is red on FFBox and green on biscuit, print the toolchain, CPU and C compiler first
+  (fuzz.yml's step does): FFBox's Ubuntu 22.04 gcc 11.4 ASan reported a false stack-use-after-scope in zstd's
+  zstd_opt.c:899 that biscuit's gcc 15.2 and clang 14 do not (runs 43456030183, 43456036792; tools/fuzz.sh builds C
+  with clang there).
 - **A run whose only jobs left are `ffu-macos` ones, queued for over half an hour, means the M3 is off**: check
   `gh api repos/Final-Factory/ffu/actions/runners` (ffu-m3, ffu-m3-2 `offline`) and the portal journal (grep `m3`)
   before you wait on it. ffu's main has no branch protection. A PR that touches no `crates/ffu-sim` and no platform
