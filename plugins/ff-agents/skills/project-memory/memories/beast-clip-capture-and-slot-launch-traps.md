@@ -29,9 +29,10 @@
 8. **A Windows Firewall prompt dims every desktop recording** (w157, 2026-10-01). "Do you want to allow public
    and private networks to access this app?" for some `finalfactory.exe` sat on the desktop for over an hour.
    Windows dims everything behind it, so every `record_clip` (ddagrab) clip came out dark, and the prompt itself
-   covered part of a window placed mid-screen. It does not show in a window enumeration. Grab the desktop once
-   (`ffmpeg -init_hw_device d3d11va -filter_complex "ddagrab=output_idx=0,hwdownload,format=bgra" -frames:v 1`)
-   when a clip looks dark. Do not click it: tell Ben. `/v1/screenshot` is the game's own frame and is not dimmed;
+   covered part of a window placed mid-screen. It does not show in a window enumeration. When a clip looks dark,
+   compare it with the game's own `/v1/screenshot`: a dark clip beside a bright screenshot means a system prompt is
+   up (`player_slots.py firewall` names a slot player's). Do not grab the desktop to look: it shows the person's
+   other windows, and the worker privacy guard refuses it ("captures the whole desktop"; ff-factory docs/privacy.md). Do not click it: tell Ben. `/v1/screenshot` is the game's own frame and is not dimmed;
    move player windows clear of the screen centre with `SetWindowPos`.
 9. **Gemini cannot read a HUD panel or see a few-pixel ship on the full 1280x720 frame.** Blind, it reported the
    count unchanged on a clip where it dropped, and quoted error texts the game does not contain. Review crops

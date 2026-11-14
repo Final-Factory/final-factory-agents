@@ -13,8 +13,10 @@ Found while playing the whole Normal tutorial twice in a development player and 
   in the log): mining and placing stop, and no ffauto verb or key closes it. Skip a step with `ffauto:ui.click|objectives|SkipButton`
   (the card must be showing: retry every 3 s), not `console.run|completeXObjectives`.
 - **The window.** The game re-applies its saved window size while loading: size it (`SetWindowPos`) after the first command
-  works, and again if `GetClientRect` changes. Record with `ffmpeg -f gdigrab -framerate 15 -i desktop -vf crop=W:H:X:Y` (X, Y from
-  the DPI-aware client rect); `-offset_x/-video_size` in a DPI-unaware ffmpeg on a scaled desktop records a magnified corner. A
+  works, and again if `GetClientRect` changes. Record with `record_clip` (watch-video), which records the player's own window
+  by its handle (`gfxcapture`, ffmpeg 8+); by hand, `ffmpeg -f gdigrab -framerate 15 -i title="<player window title>"`. Not
+  `-i desktop -vf crop=...`: it grabs the whole desktop, the person's other windows, before the crop, and the worker privacy guard refuses it ("captures the whole desktop"; ff-factory docs/privacy.md).
+  `-offset_x/-video_size` in a DPI-unaware ffmpeg on a scaled desktop records a magnified corner. A
   killed ffmpeg only leaves a playable file with `-movflags +frag_keyframe+empty_moov`.
 - **Windows reuses process ids.** A `session-<pid>.json` left by an earlier player with the same pid names a dead port: the client
   waited forever twice. Take the file only when it is newer than the launch.

@@ -19,7 +19,8 @@ and every centred panel cut on both sides. That is exactly what a resolution bug
   `root/`. `root/usr/bin/Xvfb :77 -screen 0 1280x800x24 -nolisten tcp &`; openbox needs its own libraries and
   theme: `DISPLAY=:77 LD_LIBRARY_PATH=$PWD/root/usr/lib/x86_64-linux-gnu XDG_DATA_DIRS=$PWD/root/usr/share
   XDG_CONFIG_DIRS=$PWD/root/etc/xdg root/usr/bin/openbox &` (without them it exits on "Unable to load a theme").
-- Whole-screen stills: Pillow `ImageGrab.grab(xdisplay=':77')`. Clips: ffmpeg `-f x11grab -framerate 60 -video_size
+- Whole-screen stills of the tour's own Xvfb, which holds only the player (never a person's display `:0`, where
+  ffmpeg takes `-window_id` and the worker privacy guard refuses the rest ("captures the whole desktop"; ff-factory docs/privacy.md)): Pillow `ImageGrab.grab(xdisplay=':77')`. Clips: ffmpeg `-f x11grab -framerate 60 -video_size
   1280x800 -i :77`; on biscuit, `apt-get download ffmpeg libavdevice62 libplacebo360 libjack-jackd2-0 libopenal1
   libdc1394-25` and `dpkg -x` them, run with `LD_LIBRARY_PATH=<root>/usr/lib/x86_64-linux-gnu` (the other libav
   libraries are installed; w773), or a static build. Clicks: XTest through
