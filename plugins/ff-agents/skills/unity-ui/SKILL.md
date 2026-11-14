@@ -157,6 +157,17 @@ census (`<shot>.json`: small, clipped, off-screen and overlapping text, covered 
   built). Read each leg's `tour.log` for a failed setup before you read its stills. (3) A list fit that counts each row
   as one line overshoots its room when names wrap (`StationGridTable.FitHeight`): measure the gap from the last row (Net)
   to the window frame in the census, before and after, and compare it with the reference panel's.
+- **Title-screen tour traps (w4162).** (1) A tour of a title-screen dialog passes no `-ffAutomationRole solo`: that
+  role starts a new game, so the title menu is gone ("ui.modmismatch: no title menu"); with no game ticked,
+  `quit_save_check.py` still found no quit save on w4162's legs. (2) `hide:` takes a kind selector,
+  `hide:name:<GameObject>`; a bare `hide:<name>` matches nothing. (3) A new `ffauto:` harness command goes at the END of
+  `NightlyHarnessCommands.Catalog`, with its own `NightlyHarnessCommands.Catalog[N]` line in
+  `LocalMultiplayerAutomationCommandRunner.CommandCatalog` and a `CommandTiers` row; then fold `CommandTiersTest`'s golden
+  with the game repo's `scripts/ffauto_catalog_hash.py` over the merge tree (w4162 inserted one mid-catalog: the index
+  list shifted and dropped `ui.selectstation`). (4) On biscuit (Linux) numpy, Pillow and ffmpeg are not installed: run
+  the scripts as `uv run -q --no-project --with numpy --with pillow python3 ...`, ffmpeg from `imageio-ffmpeg`
+  (`imageio_ffmpeg.get_ffmpeg_exe()`). (5) A new button beside Back takes Back's skin: `FFButton Variant Action`'s
+  red-orange read as destructive or disabled to the critic (run 1).
 - **Debug Info in a tour (w3309).** `{"setup": "debuginfo:on"}` keeps the development read-out up in `shot` stills and
   logs `rect debug info` in `tour.log`. Its drawn lines are wider than its own RectTransform (284 against 243 px at
   1280x720): measure the union of its TMP lines' rects, not the panel's. A `record` clip does not show it (absent from all
