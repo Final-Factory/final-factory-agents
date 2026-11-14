@@ -149,6 +149,14 @@ census (`<shot>.json`: small, clipped, off-screen and overlapping text, covered 
   changes when it ends (w3827 lost a doc edit; the diff waits in `restored.patch` in the build's cache entry). For a fix
   pack, the critic's and `moves`' before is the commit before the regressing merge, not master (against master w3827's
   critic called the restored layout 6 "moves"). `pr_evidence.py` reads a bulleted `- Moved:` line since w3846.
+- **Tour traps from w4120.** (1) A `record` clip's frames (`<clip>/NNNNN.jpg`) are stored upside down: `ui_check.py
+  flicker` reads them as they are, but a reviewable mp4 needs `ffmpeg -framerate 60 -i <clip>/%05d.jpg -vf vflip ...`,
+  and you look at one frame before you publish (w4120 published two flipped mp4s first). (2) The player's seeded world
+  (`-ffAutomationSeed`) is not an editor New Game: a placement that builds in the editor can sit on an asteroid in the
+  player (seed w881: a station 12 tiles east never built its Spawner Chest, so `spawnerpower` failed; 14 tiles west
+  built). Read each leg's `tour.log` for a failed setup before you read its stills. (3) A list fit that counts each row
+  as one line overshoots its room when names wrap (`StationGridTable.FitHeight`): measure the gap from the last row (Net)
+  to the window frame in the census, before and after, and compare it with the reference panel's.
 - **Debug Info in a tour (w3309).** `{"setup": "debuginfo:on"}` keeps the development read-out up in `shot` stills and
   logs `rect debug info` in `tour.log`. Its drawn lines are wider than its own RectTransform (284 against 243 px at
   1280x720): measure the union of its TMP lines' rects, not the panel's. A `record` clip does not show it (absent from all
