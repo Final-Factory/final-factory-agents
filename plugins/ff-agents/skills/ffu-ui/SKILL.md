@@ -134,6 +134,13 @@ Measure each of these on the still beside the mock before a critic round; each o
   show". An empty store still needs a non-empty sub line ("0 in hold"): `tests/gate.rs` fails a label with no text.
 - **Bottom room**: 6 px margin under the last button row, so the brackets do not crowd the panel's edge.
 - Give the critic the round before as the "before" so it can check that nothing moved.
+- **Match a glass colour on the glass alone, never on a whole panel's median** (w4215, three ui-critic rounds): r197's
+  panel medians (9,27,43 and 15,31,46) count the slot cells and the lit world showing through, and two tokens aimed at
+  them were graded UGLY (slate, then a flat navy). Sample thin strips between slots: the mock's glass is 4,10,18 to
+  4,11,22, and its empty slots are 6,17,27. Then FFU's old token was already within about 1 dE00. Over FFU's warm
+  belts, a higher alpha (215) keeps the glass from going grey. Measure candidates on the glass between slots, on an
+  empty slot and over lit belts, beside the mock, before the critic sees them. pr_evidence's `Pinned:` and
+  `Covered text:` need a Unity census that FFU does not make: say "not measured" and why.
 
 ## The HUD: matching r197's HUD mocks (w4106, three ui-critic rounds)
 
