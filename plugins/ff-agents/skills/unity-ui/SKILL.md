@@ -221,6 +221,9 @@ census (`<shot>.json`: small, clipped, off-screen and overlapping text, covered 
   steps that follow it"), so follow it with `{"wait": <seconds + 1>}`, or the next step lands in the clip (w2505: a
   `ui.close|inventory` right after a 4 s `record` made all six clips show the bare world, and every clip leg ran again).
   Look at one frame of each clip before you encode the set.
+  **Encode with the game repo's `scripts/deck_audit/clip_video.py <clip dir> <out.mp4> "<label>" --flip`**: it turns
+  the frames upright and keeps each frame's real duration from `frames.txt`. A hand `ffmpeg -framerate <average>` call
+  skips both (w4116: six mp4s came out upside down, the w819 trap again, found only on looking at a frame of the video).
   The frames come out **upside down** (w819: every `clip-*/NNNNN.jpg` is flipped vertically; the
   `shot` PNGs are not), so crop and `ui_check.py flicker --rect` in flipped coordinates, and make
   the video with `cd clip-<name> && ffmpeg -f concat -safe 0 -i frames.txt -vf vflip -c:v libx264
@@ -302,6 +305,10 @@ census (`<shot>.json`: small, clipped, off-screen and overlapping text, covered 
   --ref-census <the before census>` compared it with its own before (0.0). (6) `ui_layout.py check` reported 3
   covered texts "before" even for HEAD against itself: compare the covered-text counts of both censuses, not its
   "before" number. And never run `ff-leftovers end` while a queued leg script runs: it ends the script.
+  (7) Darkening a gradient sprite tile until its label passes 4.5:1 needs more than the factor a flat fill needs:
+  `ui_look.py` measures the text against the tile's brightest part under it (w4116: the selected-tab sprites at 0.975x,
+  the factor that took the flat pill to 4.52:1, measured 4.47:1 under "Production"; 0.955x measured 4.77:1). Measure the
+  label in a built player before you call a factor enough.
 - **Three evidence traps of a window that got shorter (w3802, FinalFactory #3478, Windows development player, BEAST).**
   (1) `ui_layout.py check --touched <window> --ref <window>` samples a translucent window's pixels, world included: after
   the Station Grid sat 16 px lower, its title icon read delta E 14.3 with the same icon pixels, and at 1280x800 the list
