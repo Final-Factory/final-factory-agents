@@ -684,7 +684,15 @@ for the `Shape:` line: STRETCHED (a sprite drawn 2x or more off its own aspect),
 screen wide). `--repo` reads sprite sizes from the game's PNGs for a census without `spriteSize`. Then look at every
 still at full size and write the `Eye:` line (evidence-gate `checklists/ui.md` items 27-29). A redesign goes out as 2-3
 options built from the game's best dialogs, not nudged spacing, and every option moves only what the person named
-(`ui_layout.py options`, item 32).
+(`ui_layout.py options`, item 32). A screen with no census (a web page: an FF Factory portal screen, or a mock drawn into
+one) is checked on its stills instead (w4153):
+
+```sh
+python "$FF_SKILLS/unity-ui/still_moves.py" before.png option.png --named x0,y0,x1,y1
+```
+
+It lists every block of pixels that differs outside the rectangle the person named (`Moves: none outside the named
+region`, or a `CHANGED` box per block); take both stills at one size, from one run of the backend, with a fixed clock.
 
 ## 5c. A font-size change, and the desktop under a Deck change
 
