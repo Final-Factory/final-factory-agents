@@ -1588,7 +1588,10 @@ w3371 (2026-11-07, the LothDesktop client of a BEAST-host pair for PR #3344) hit
   same label overwrites it.
 - **`timeout` stops only the launcher.** `timeout -s TERM <n> python scripts/nightly/player_slots.py launch ...` (without
   `--detach`) ended the python launcher and left `finalfactory.exe` running, and `ff-leftovers list` did not list it.
-  Launch with `--detach`, read `pid` from its JSON, and stop that pid yourself.
+  Launch with `--detach`, read `pid` from its JSON, and stop that pid yourself. `--detach` prints a `player slot K-1:
+  ... (mirrored ...)` line before the JSON, so parse only the last line (`tail -1`), never the whole output (w4123,
+  2026-11-14: `json.load` of the whole output failed, so the wrapper treated the player as exited. That ended its shared
+  bench ticket and its quit timer while the player kept running, and `ff-leftovers list` found it still up 20 minutes later).
 - **On a lived-in save the audit gets the client dropped in under a minute** (w3612, 2026-11-08, a LothDesktop client of a
   BEAST host, PR #3389, save w3408-LifeAsTwoMegaWave). With `-ffAutomationDeterminismAudit true` the client joined 9.8 s
   behind (`[MP pacing] ... delayMs=10161 depthAvg=155.6`) and never caught up: it applied 155 heartbeats per 10 s at
