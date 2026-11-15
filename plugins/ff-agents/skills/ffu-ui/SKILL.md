@@ -159,6 +159,12 @@ Measure each of these on the still beside the mock before a critic round; each o
   along a straight line, which the critic graded UGLY as a clipped texture. Keep the cells out of the text's box plus a
   margin only (`minimap::title_clear`).
 - **The gate's sibling-overlap check exempts an Image and a Value**: a key or count over its item art is meant.
+- **Test a HUD card with the longest real figures, not the mock's** (w4196, ffu #802): the Station card's figure
+  cells grew from `flex_basis: 0`, so "0 Wh / 1.40 kWh" ran 4 px past the card's edge on a real-client still while
+  every test with the mock's figures passed. Lay figures out in columns of cells with `flex_shrink: 0` and width auto
+  (`hud.station.left`/`right`), and test long values in every locale at the three sizes
+  (`long_station_figures_stay_inside_the_card`). Run clippy as CI does, debug, never `--release`: code under
+  `debug_assertions` holds uses, and a release clippy fails on unused items CI never sees.
 - **Real-client stills** for a HUD: serve a world with `ffu-server --listen`, then `ffu --connect <addr> --name pilot
   --hud --minimap --still out.png --seconds 4 --size 1280x800 --look looks/ffu.look` (without `--minimap` there is no
   map). An `--autobuild` of an item the ship holds 0 of gives the refusal notice for a still.
