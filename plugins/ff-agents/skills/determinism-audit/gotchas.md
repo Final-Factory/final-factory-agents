@@ -60,6 +60,7 @@ load-bearing for future runs even where the original defect is fixed.
 - [A host script run right after launch: the agent channel answers before the world exists](#agent-channel-before-world) (w3853)
 - [A beam that links or unlinks on a station move: read the heartbeat from the power fingerprint](#beam-link-heartbeat) (w3972)
 - [A portal hop in a scenario: the 100 u range is to the portal's centre, and a refusal is silent](#portal-hop-range) (w3994)
+- [A pair run of a pull request: its own scenarios, a headless Linux relay client, a continued `--player` line](#pr-pair-run-traps) (w4286)
 
 ## Full-window rule: never diagnose from a partial window {#full-window-rule}
 
@@ -1823,3 +1824,24 @@ a portal.) The first pair run failed at its hop step: the station had not moved.
 - **The life save `w1440-lifesave-0.50.0.105` hangs a host with the audit on** (HangWatchdog: 10.1 s with no main loop
   near heartbeat 4, m5, commit e251cd57), so dry-run the audit legs on a flat map and the life-save legs with the audit
   off, as in the join-pair rule in SKILL.md (w3635).
+
+## A pair run of a pull request: its own scenarios, a headless Linux relay client, a continued `--player` line {#pr-pair-run-traps}
+
+w4214 (2026-11-15: the research-swaps rejoin pair on PR #3624 at 230ede4a, m5 host and a biscuit Linux client through
+the relay) passed only after three workarounds. Each one is now in code (w4286):
+
+- **Play the PR's own scenarios: `ffnightly.py run --scenarios-from <the PR's commit>`.** The runner reads
+  `scripts/nightly/scenarios/` from its own worktree, usually master. PR #3624 renamed Gatling Turrets to Defense,
+  Capacitors to Power Storage and Lighting to Lasers, so master's MP-W2125 researched techs the PR's player no longer
+  had. The option writes that commit's scenario files to `<out>/scenarios-<sha>/` and plays those; fetch the commit
+  first. Without it, a run whose `--sha` is not the worktree's HEAD logs a note. Before the option (game repo
+  #3657) the workaround was `git checkout <sha> -- scripts/nightly/scenarios/<id>.json`.
+- **A Linux relay client is headless.** A windowed Linux player crashed at start in `SetVSyncCount` on biscuit. An m5
+  host with a Linux client uses `scripts/nightly/lab.pair-m5-relay-linux.json`, and a BEAST host uses
+  `lab.pair-beast-relay-linux.json`. Both set `"headless": true` on peer a. `lab.pair-m5-relay.json` is for a Windows
+  client only. `scripts/tests/test_pair_relay.py` fails a Linux relay lab without headless.
+- **The player-slot guard read a continued `--player` line as a launch.** A `run.sh` written with `ffnightly.py run ... \`
+  and `--player "$TMPDIR/.../finalfactory.app" \` on the next line was refused as "a built player outside a player
+  slot". FF Factory's `checkPlayerLaunch` split on newlines and took the path as that line's program; ff-factory #975
+  joins backslash continuations first. ffnightly copies the build into a leased slot itself (lab.py `PlayerSlots`).
+  Until #975 is deployed on a machine, put the whole `ffnightly.py run ...` on one line.
