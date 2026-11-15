@@ -228,6 +228,18 @@ Measure each of these on the still beside the mock before a critic round; each o
 - **Crop the quadrant of the style you build from a multi-style sheet** (w4197): r197's `hud-deck.png` holds styles A
   to D. Style B is the bottom-left quadrant (x 0-964, y 604-1208, scaled 1.328 to 1280x800). A critic round graded the
   pack BROKEN because the 800 comparison used style C.
+- **A HUD card's cut corner needs `ui.card_cut`** (w4243, ffu #800): `Corners::CutBottomRight` on a `Shape::Card` drew
+  square, since the Card shape's cut was 0. `Theme::card_cut` (`looks/ffu.look` `ui.card_cut = 4.67`, 7 device px at
+  1080, measured on r197's mock) cuts it; tiles keep their own cut.
+- **An arrow node's text is still laid out** (w4243): a footer or toggle button drawn as a triangle (`Spec.arrow`)
+  keeps its text as the layout and accessible name, and a word there failed the gate's "leaves its parent" check. Give
+  it one glyph (`‹`, `›`, `v`); a separate accessible name is a follow-up.
+- **A stills script builds nothing: build first** (w4243): a script that runs `ffu-server` and `ffu` from
+  `$CARGO_TARGET_DIR/release` drew the last build's client, and a critic round graded an old card. Run `cargo build
+  --release -p ffu-server -p ffu-client` before every stills leg.
+- **`pr_evidence.py` reads `Reference capture:` and `Art language:` only as plain labels** (w4243): bolded
+  (`**Reference capture:**`) it still failed. A `ui.wgsl` change in an ffu PR asks for both: name the mock still as the
+  reference and the HUD's two colours and its one accent.
 - FF1's hotbar defaults are `GameInitializer.StartHotbarItems` in FF1's main scene.
 - The Write and Edit tools may refuse to create a file in an ffu slot (w4106, m5): write it in `$TMPDIR` and copy it
   in, and edit with a small Python script that checks each replacement's count.
