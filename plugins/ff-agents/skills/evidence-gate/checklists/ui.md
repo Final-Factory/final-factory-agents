@@ -552,6 +552,18 @@ control, and a redesign goes out as 2 or 3 clearly different options built from 
       the same `record` step came out at 8 fps on two legs and 65 fps on another. `tour.log` prints `recorded <name>: N
       frames in S s (F fps)`. Record again any leg under 30 fps, at a quieter time if you can; `pr_evidence.py` refuses
       1 to 9 fps.
+45. **A card that only loses rows still needs a measured Style line, and a tour still needs a held icon (w4268).**
+    - `ui_layout.py check` with the default `--ref InventoryPanel` prints `no panel changed colour, alpha or art` for a
+      hover card whose rows were removed (only its size changed, no Inventory open), and `pr_evidence.py` refuses that
+      line: it has no delta E and alpha. Compare the card with its own before: `--before <before census> --after <after
+      census> --touched HoverDescription --ref HoverDescription --shot <after png> --ref-shot <before png>`. The card is
+      see-through, so take delta E from the stills (`--shot/--ref-shot`), not the census colours; w4268 measured 5.6.
+      Any panel nobody recoloured works the same way: `--touched <it> --ref <it>`.
+    - Structures placed for a tour form one station only when every gap between them holds a Connector facing Right
+      (rotation 1, which links the tiles left and right). Before you read a power or warning still, check in the census
+      or the still that they share one station. The station's warning icons blink (every 0.75 s), so take each still
+      twice about 0.8 s apart and keep the one that shows the icon ([unity-ui](../../unity-ui/SKILL.md), "Tour worlds
+      on one station").
 
 19. **The Deck tour is a stand-in (w770).** It forces its own window size and a scripted Deck, so it cannot show Steam's
     layout choice, the Proton first-frame resolution, the Steam client version or touch. A Deck UI change says "verified on
