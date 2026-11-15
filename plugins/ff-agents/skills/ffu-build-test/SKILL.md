@@ -311,13 +311,25 @@ whole verification. The repo's own `CLAUDE.md` is binding and longer; this skill
 - **Use the one target (your slot's, else `CARGO_TARGET_DIR="$TMPDIR/ffu-target"`) for every leg; never a new target per leg** (w3617). One
   worker on biscuit made a target per leg (`ffu-target`, `ffu-target-m13`, `ffu-target-g10`, ...): 12 of them held 22 GB
   together (measured, 2026-11-08), each a cold build's worth of deps. A leg on the same checkout reuses the target and
-  builds in seconds; a new target rebuilds everything. The only second target is a second checkout's (next bullet,
+  builds in seconds; a new target rebuilds everything. The only second target is a slotless worker's second checkout's (below,
   `ffu-target-main`). FF Factory's clean-up caps the sum of one worker's targets (8 GB): the oldest idle ones lose their
   `debug/incremental` first, then whole idle targets go, oldest first.
-- **Give a second checkout its own target too** (w3480): a `main` worktree for the RED run and your branch must not
-  share one `CARGO_TARGET_DIR`. After building main's tests there, `cargo test` on the branch ran main's stale test
-  binaries and reported main's failures: the new `ship_flies_over_buildings` failed until its sources were touched and
-  rebuilt, then passed 3/3 (measured, BEAST). Use `CARGO_TARGET_DIR="$TMPDIR/ffu-target-main"` for the RED checkout.
+- **Holding a slot, build only in the slot's target, the RED baseline too** (w4258, lothsahn: "A worker that holds an
+  ffu slot builds in that slot's target and never in a private $TMPDIR/ffu-target"). LothDesktop's clean-up log of
+  2026-11-15 showed a worker's own 4.9 GB `ffu-target` beside its warm slot. For a RED run, commit or stash your work in
+  the slot, `git checkout <main sha>` there, build and run, then check your branch out again: one checkout, one target,
+  both builds stay warm, and the slot's stale-unit sweep keeps both while either is recent. Since ff-factory #973 the
+  guard refuses `CARGO_TARGET_DIR`/`--target-dir` into your temp folder while you hold a slot, and the clean-up takes
+  such a target (cap 0). `$TMPDIR/ffu-target` is only for a worker with no slot (`ffu-slot take` exit 3).
+- **Without a slot, give a second checkout its own target** (w3480): a `main` worktree for the RED run and your branch
+  must not share one `CARGO_TARGET_DIR`. After building main's tests there, `cargo test` on the branch ran main's stale
+  test binaries and reported main's failures: the new `ship_flies_over_buildings` failed until its sources were touched
+  and rebuilt, then passed 3/3 (measured, BEAST). Use `CARGO_TARGET_DIR="$TMPDIR/ffu-target-main"` for that checkout.
+- **Reading cargo's fingerprints yourself: the u64s are bare JSON numbers past 2^53** (w4258). Each
+  `.fingerprint/<pkg>-<hash>/<kind>.json` lists `deps: [[id, name, public, fingerprint]]`, and `JSON.parse` (or any
+  double-based parser) rounds the fingerprint, so no link matches: a first dry run of ff-factory's sweep marked 98 live
+  paths stale on m5. Quote runs of 16+ digits before parsing (ff-factory `server/cargoGraphSweep.ts`, its test uses
+  fingerprints above 2^53); the unit's own `<kind>` file holds the u64's little-endian bytes in hex.
 - **A big target is usually stale artifacts, not debug info** (w3396). Since ffu #381 (`[profile.dev] debug =
   "line-tables-only"`, dependencies `debug = 0`) a clean `cargo test --workspace --all-features --no-run` target is
   5.5 GB, down from 14.1 GB (measured, BEAST). Cargo never deletes what an older build left: a worker that rebuilt all
