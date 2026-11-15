@@ -68,6 +68,12 @@ whole verification. The repo's own `CLAUDE.md` is binding and longer; this skill
   `cargo test -p ffu-sim --test golden_snapshot` against the old pins, and look for a pass. Then re-pin with a "wNNN
   moved it from ..." comment. ffu-sim's clippy denies `indexing_slicing`: a `windows(2).all(|w| w[0] <= w[1])` fails
   it, so use `is_sorted_by_key`.
+- **A storm of 0xc0000142 or missing test exes on Windows is load, not your change: rerun narrower before you count
+  it** (w4284, ffu #817). On lothdesktop a full `cargo test --workspace --all-features --no-fail-fast` at default
+  parallelism failed 98 test targets with STATUS_DLL_INIT_FAILED (0xc0000142), none of them real. `-j 4 --
+  --test-threads 6` cleared it, but six targets of untouched crates (ffu-crash, ffu-platform, ffu-render, ffu-testdir)
+  were then "never executed" (os error 2, the exe missing); `cargo test -p <those packages>` passed. Run the workspace
+  at `-j 4 -- --test-threads 6` there, rerun any missing or DLL-init target per package, and say so in the PR evidence.
 - **Check an incremental sync against the whole one across the whole workspace suite** (w4051, ffu #756). A partial
   sync of the crafters' power needs passed every ffu-sim test, then failed 21 bot and oracle tests (`mix_ff1`,
   `ff1_import`) on its debug assert against the whole sync. `Op::CrafterProgress` raised an Assembler's need without
