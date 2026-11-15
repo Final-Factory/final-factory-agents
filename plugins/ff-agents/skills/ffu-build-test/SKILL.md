@@ -558,6 +558,15 @@ never rewritten (`tools/check_snapshot_compat.sh BASE_REF` holds it in CI). No t
     "no CI run exists". `gh run cancel` leaves the earlier run queued.
     `gh api -X POST repos/Final-Factory/ffu/actions/runs/<old id>/force-cancel` ends it, and the new run is queued
     within a minute (w3168, ffu #302, measured).
+- **Two PRs that each add a row to a fixed-size table merge clean and break main together; the fix PR is red on
+  snapshot compat by construction** (w4271). #798 (w4241, `Hull`) and #808 (w4247, `Enemy`) each added a `Word` and a
+  row to ffu-ui's `WORDS: [[&str; 11]; 115]`. Git merged both, and main stopped compiling at 41a68c5b (E0308, "expected
+  an array with a size of 115, found one with a size of 116"). If a build fails on main right after a fresh checkout,
+  look at main's own run first (`gh run list -R Final-Factory/ffu --branch main --limit 3`). Send the fix as its own
+  small PR so every branch can merge it. That PR's `check-release` step "the previous build's snapshots load (M1.12)"
+  fails whatever it holds, because `tools/check_snapshot_compat.sh` builds ffu-headless at the base, which is the
+  broken main. Merge it when every other job is green, and say in its description why that step is red (ffu #811,
+  run 43684186320). The next PR's compat step passed.
   - **Never rerun a job of an older run once a newer one exists on the PR** (`gh run rerun <old> --failed` or
     `--job`). The rerun re-enters the `ci-<ref>` group with `cancel-in-progress` and cancels the newer run's queued
     and running jobs. In w3543 (ffu #442), a rerun of old run 42442283959's Windows hashcheck at 05:51:08Z cancelled
