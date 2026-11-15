@@ -208,6 +208,16 @@ Measure each of these on the still beside the mock before a critic round; each o
   colours and the HDR accent, or "none") lines: run it on the PR before `blocked_on` (w4264 lost a merge to it).
 - **A merge where git interleaves two appended functions**: run `git merge-file --diff-algorithm=patience` on the
   `:1:`/`:2:`/`:3:` stages (`git show :2:<file>`); the conflicts come out as whole blocks to keep both of (w4246).
+- **A still of an animated HUD part catches one phase: judge the frame you pick from the clip** (w4275, ffu #832).
+  The ability tray's hint frame (FF1's `RedAlertFrame` compact look, `ui.wgsl` kind 8) flashes its ring between 1 and
+  0.3 twice a sweep. The lossless `--still` caught the 0.3 phase: 67 orange pixels against FF1's 123, which read as a
+  frame too thin. Pick the frame from the clip by counting alert-orange pixels in each frame (`ffmpeg -f rawvideo -pix_fmt
+  rgb24 -` into a counter). Also show a strip of phases (`-vf "fps=10,crop=...,tile=4x4"`).
+- **A connected client's player id comes from its `--name`, not 1** (w4275): `pilot` is 268856033, printed in the
+  client's line `ffu: flying pilot (player N)`. No public op gives fleet ships outside a yard, and `restore_fleets` is
+  `pub(crate)`. To build a snap that gives that pilot ships, make it `pub` for the snapgen build only, then revert it.
+  The ui-critic graded a hint frame on a tile with no ships (a greyed 0/4) UGLY, so give the world the ships the step
+  uses.
 - **Real-client stills** for a HUD: serve a world with `ffu-server --dir <dir> --start <world.snap> --listen
   127.0.0.1:P` (it needs both `--dir` and a snap: no `combat:` start; save one with `ffu-headless run --start ... --ticks
   1 --save`), then `ffu --connect <addr> --name pilot --hud --minimap --clip out.mp4 --still out.png --seconds 4 --size
