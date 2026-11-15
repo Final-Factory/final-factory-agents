@@ -197,6 +197,12 @@ Measure each of these on the still beside the mock before a critic round; each o
   inset span: left 0, right 50% overlapped w4196's station card in the gate's sibling check though no tile did; use
   left auto with a right margin. A heat test world: an Assembler joins an Antimatter Station's grid only when placed
   after it (40 steps) facing its slot, and the station passes 100 near tick 19,782 (ffu-client `alerts.rs` world test).
+- **The alert row wraps at 4 a line; lift grey art on its fill, never dim it** (w4264, ffu #810, three ui-critic
+  rounds). Five tiles in one line overlapped `hud.station` at 1280x800 in `tests/gate.rs`. `hud.rs` `ALERT_COLUMNS` is
+  4 (FF1's AttackWarnings grid), and the extra tiles go on lines above, right-aligned, so the bottom line never moves
+  (`hud.alerts.line{n}`). The hotbar's dimmed `GREY_ICON` on the alert tile's maroon fill measured 1.6:1, which the
+  critic graded UGLY. Alert tiles draw grey as luminance lifted 0.2 in linear light (`ui.wgsl` kind 6, `extra.x` 2),
+  which measured 5.0:1. Measure grey art's contrast on the fill it sits on before the critic round.
 - **A merge where git interleaves two appended functions**: run `git merge-file --diff-algorithm=patience` on the
   `:1:`/`:2:`/`:3:` stages (`git show :2:<file>`); the conflicts come out as whole blocks to keep both of (w4246).
 - **Real-client stills** for a HUD: serve a world with `ffu-server --dir <dir> --start <world.snap> --listen
