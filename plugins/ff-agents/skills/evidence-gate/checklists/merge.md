@@ -225,6 +225,12 @@ Not verified: the Bats' slot lag (simulation, follow-up PR)
   the leg at once with the addresses tried. A host address is a machine name (`@m3`, `lab_hosts.json`), never a copied
   LAN IP: w2252's LothDesktop client lost every ping to the m3's 10.0.0.110 and waited out a 150 s join timeout
   ([lesson](../lessons/verify-simulation-at-a-slow-hosts-frame-rate.md#a-client-leg-reaches-the-host-from-its-own-machine-first-w2259-2026-10-26)).
+- **A pair run of a pull request plays that PR's scenarios** (w4286): the host runs `ffnightly.py run --sha <sha>
+  --scenarios-from <sha>`, the commit the player was built from, since the runner otherwise reads master's
+  `scripts/nightly/scenarios/`. A PR that renames content failed master's research steps for reasons not its own
+  (w4214, PR #3624). A Linux relay client takes a headless lab (`lab.pair-m5-relay-linux.json`,
+  `lab.pair-beast-relay-linux.json`), because a windowed Linux player crashed at start on biscuit
+  ([gotcha](../../determinism-audit/gotchas.md#pr-pair-run-traps)).
 - **A pair leg's scenario survives the bench turn** (w2407): each player launches with `player_slots.py launch
   --bench-wait`; a player log with `[QuitSave] ApplicationQuit: not saving (AutomationProcess)` and no quit of its own
   makes that scenario void (say so to the partner and in the report), and each client is ended once its scenario's
