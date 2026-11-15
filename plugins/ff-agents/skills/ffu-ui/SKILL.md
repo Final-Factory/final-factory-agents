@@ -179,9 +179,22 @@ Measure each of these on the still beside the mock before a critic round; each o
   (`hud.station.left`/`right`), and test long values in every locale at the three sizes
   (`long_station_figures_stay_inside_the_card`). Run clippy as CI does, debug, never `--release`: code under
   `debug_assertions` holds uses, and a release clippy fails on unused items CI never sees.
-- **Real-client stills** for a HUD: serve a world with `ffu-server --listen`, then `ffu --connect <addr> --name pilot
-  --hud --minimap --still out.png --seconds 4 --size 1280x800 --look looks/ffu.look` (without `--minimap` there is no
-  map). An `--autobuild` of an item the ship holds 0 of gives the refusal notice for a still.
+- **Real-client stills** for a HUD: serve a world with `ffu-server --dir <dir> --start <world.snap> --listen
+  127.0.0.1:P` (it needs both `--dir` and a snap: no `combat:` start; save one with `ffu-headless run --start ... --ticks
+  1 --save`), then `ffu --connect <addr> --name pilot --hud --minimap --clip out.mp4 --still out.png --seconds 4 --size
+  1280x800 --look looks/ffu.look` (without `--minimap` there is no map). Pass `--clip` with `--still`: a connected
+  `--still` alone draws as a viewer with no pilot, so the ship's readouts are missing (w4241, ffu `main.rs` connected
+  still path). `--clip` needs `ffmpeg` on PATH; biscuit has none, and a static build in `$TMPDIR` works. A world in a
+  set state (a damaged ship) comes from a small crate in `$TMPDIR` with a path dependency on `ffu-sim` that submits ops,
+  steps a `Sector` to the state and writes `snapshot::encode`. An `--autobuild` of an item the ship holds 0 of gives
+  the refusal notice for a still.
+- **Trace every card in a mock to its FF1 object before you build it** (w4241, ffu #798): r197's top-left "Hull
+  612/700" card is FF1's `TechProgressBar`, research progress (main.unity line 243408, `TechProgressPanel.cs:147`), and
+  FF1's health is a segment of the readouts card (`PersonalInfoDisplay.cs:91-106`), which r197 called "construction
+  bots". Find the object by its place in main.unity (anchors and position) and the code that sets its text.
+- **A card that grows beside a centred fixed-width segment pads unevenly** (w4241, critic UGLY: 10 px left against
+  18 px right): beside another segment, give the fixed one its text's width and anchor that text where the lone card
+  centred it (`hud.rs` `speed_at`).
 - FF1's hotbar defaults are `GameInitializer.StartHotbarItems` in FF1's main scene.
 - The Write and Edit tools may refuse to create a file in an ffu slot (w4106, m5): write it in `$TMPDIR` and copy it
   in, and edit with a small Python script that checks each replacement's count.
