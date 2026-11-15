@@ -61,6 +61,7 @@ load-bearing for future runs even where the original defect is fixed.
 - [A beam that links or unlinks on a station move: read the heartbeat from the power fingerprint](#beam-link-heartbeat) (w3972)
 - [A portal hop in a scenario: the 100 u range is to the portal's centre, and a refusal is silent](#portal-hop-range) (w3994)
 - [A pair run of a pull request: its own scenarios, a headless Linux relay client, a continued `--player` line](#pr-pair-run-traps) (w4286)
+- [A hand-driven Windows host with a Linux client: mods, a headless click, the join retry, typed reports](#hand-pair-win-host) (w4263)
 
 ## Full-window rule: never diagnose from a partial window {#full-window-rule}
 
@@ -1845,3 +1846,25 @@ the relay) passed only after three workarounds. Each one is now in code (w4286):
   slot". FF Factory's `checkPlayerLaunch` split on newlines and took the path as that line's program; ff-factory #975
   joins backslash continuations first. ffnightly copies the build into a leased slot itself (lab.py `PlayerSlots`).
   Until #975 is deployed on a machine, put the whole `ffnightly.py run ...` on one line.
+
+## A hand-driven Windows host with a Linux client: mods, a headless click, the join retry, typed reports {#hand-pair-win-host}
+
+w4263 (2026-11-15: the w4205 waypoint and landing-zone menu pair at 96d6364c0a, a LothDesktop Windows host driven
+through `peer.py` and a headless biscuit Linux client over Tailscale) passed after five traps:
+
+- **LothDesktop's own mods folder loads towbot on the host.** The client's join failed with
+  `DisconnectClassified ... category=Mods`. Launch the host with `-ffModsPath <an empty folder>`; its log then says
+  `Mod set: 0 mod(s)`. Check that line on both peers before the client joins.
+- **A headless (`-batchmode -nographics`) client cannot click-select a tile.** Its `pointer.moveto`/`pointer.click`
+  projection misses: aimed at (-3,1), it placed a waypoint at (-25,15). A step that selects a landing zone or a
+  building by click needs a windowed peer; give it to the Windows peer and name the gap (here the client-to-host
+  zone-delete request was not exercised). Copy-place by click still worked, only at the wrong tile.
+- **Put the host's world setup in `-ffAutomationPreConnectCommandFile`.** The client never received a HOST WAITING
+  message sent by hand; with the setup in the pre-connect file the host is ready at boot and the client retries its
+  join by itself.
+- **The temp folder can be swept during a long wait.** The built player was gone after a stop; the player slot still
+  held a copy (`/v/ffw/players/<slot>/player`), but `player_slots.py launch` refuses a slot's own path, so copy it
+  into `$TMPDIR` and launch that.
+- **On the typed `# audit-record-v1` reports, `compare_determinism_reports.sh` compares 0 heartbeats (`count=0`).**
+  That is unsupported input, not a pass. Use `compare_audit_records.py` (it stops at the 16384-sample cap: 14790 of
+  18773 here), and run the .sh script on the two players' `[DeterminismAudit]` log lines for the full window.
