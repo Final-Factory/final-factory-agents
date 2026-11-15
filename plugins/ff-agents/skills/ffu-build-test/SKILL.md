@@ -61,6 +61,13 @@ whole verification. The repo's own `CLAUDE.md` is binding and longer; this skill
   BEAST the queue turned the ticket away with a note to call `mcp__machine__timed_place` first (w1969), a note without
   the word "refused", and the loop waited 14 min on an exited holder. Use `until grep -qiE "time now|refused" "$log" ||
   ! ps -p $TPID > /dev/null`, and on a big computer call `timed_place` before the script takes its ticket.
+- **A new hash part kept out of the hash while empty still moves the combat fixtures' pins** (w4264, ffu #810). A part
+  is added only when it has content, but the `golden_snapshot.rs` v3, v5 and v8 fixtures fight for 64 ticks and fill
+  it, so their pinned hashes failed, while the crate's own tests and hashcheck stayed green. Run the whole workspace
+  suite before you push. Then prove the part is the only cause: switch it off (`if false && ...`), run
+  `cargo test -p ffu-sim --test golden_snapshot` against the old pins, and look for a pass. Then re-pin with a "wNNN
+  moved it from ..." comment. ffu-sim's clippy denies `indexing_slicing`: a `windows(2).all(|w| w[0] <= w[1])` fails
+  it, so use `is_sorted_by_key`.
 - **Check an incremental sync against the whole one across the whole workspace suite** (w4051, ffu #756). A partial
   sync of the crafters' power needs passed every ffu-sim test, then failed 21 bot and oracle tests (`mix_ff1`,
   `ff1_import`) on its debug assert against the whole sync. `Op::CrafterProgress` raised an Assembler's need without
