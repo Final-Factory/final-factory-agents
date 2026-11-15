@@ -869,10 +869,60 @@ def layout_problems(section: str) -> list[str]:
             problems.append("'Style:' has no measured delta E and alpha: compare every touched panel with a classic "
                             "reference panel (ui_layout.py check --touched <window> --shot/--ref-shot) and paste its line. "
                             "A sentence like 'keeps its translucent look' is not a measurement (w733: #1272)")
-        elif max(deltas) > 10 and not INTENDED.search(style[1]):
-            problems.append(f"'Style:' has a panel at delta E {max(deltas):.1f} from the classic panel (more than 10): "
-                            f"restore the game's panel look, or quote the requester as intended (who): \"...\"")
+        else:
+            # w4288: an element registered in hud-clusters.json `animated` (a glow that pulses on the clock) differs
+            # only by the phase each still caught; its clause does not count (#3665: the storage gauge's CellGlow1 at
+            # delta E 44.8, alpha 0.55 vs 0.32, in a change that never touched it).
+            kept = [float(d) for clause in style[1].split(";")
+                    if not any(path_has(clause, pat) for pat in ANIMATED)
+                    for pair in re.findall(r"delta E\s+(\d+(?:\.\d+)?)(?:\s+to\s+(\d+(?:\.\d+)?))?", clause,
+                                           re.IGNORECASE)
+                    for d in pair if d]  # "delta E 0.0 to 4.8": the range's top counts too
+            if kept and max(kept) > 10 and not INTENDED.search(style[1]):
+                problems.append(f"'Style:' has a panel at delta E {max(kept):.1f} from the classic panel (more than 10): "
+                                f"restore the game's panel look, or quote the requester as intended (who): \"...\"")
     return problems
+
+
+# hud-clusters.json `animated` (w4288): element paths (fnmatch path components) that pulse or fade on the clock. main()
+# fills it from the game repo: the PR head's copy with --repo/--pr, else the nearest scripts/nightly/ui_layout/ above.
+ANIMATED: list[str] = []
+HUD_CLUSTERS = "scripts/nightly/ui_layout/hud-clusters.json"
+
+
+def path_has(text: str, pattern: str) -> bool:
+    """Whether a run of `pattern`'s path components (fnmatch globs) appears among the '/'-separated words of `text`."""
+    import fnmatch
+    want = [w for w in pattern.split("/") if w]
+    for token in re.findall(r"[^\s,;()]+", text):
+        parts = [x.replace("(Clone)", "") for x in token.split("/") if x]
+        for i in range(len(parts) - len(want) + 1):
+            if all(fnmatch.fnmatchcase(parts[i + j], want[j]) for j in range(len(want))):
+                return True
+    return False
+
+
+def load_animated(repo: str | None, pr: int | None) -> list[str]:
+    text = None
+    if repo and pr:
+        try:
+            head = json.loads(gh("pr", "view", str(pr), "--repo", repo, "--json", "headRefOid"))["headRefOid"]
+            done = subprocess.run(["gh", "api", f"repos/{repo}/contents/{HUD_CLUSTERS}?ref={head}",
+                                   "-H", "Accept: application/vnd.github.raw"], capture_output=True, text=True,
+                                  encoding="utf-8")
+            text = done.stdout if done.returncode == 0 else None
+        except (SystemExit, KeyError, ValueError):
+            text = None
+    if text is None:
+        cwd = Path.cwd().resolve()
+        for d in (cwd, *cwd.parents):
+            if (d / HUD_CLUSTERS).is_file():
+                text = (d / HUD_CLUSTERS).read_text(encoding="utf-8")
+                break
+    try:
+        return list(((json.loads(text) if text else {}).get("animated") or {}).get("paths", []))
+    except ValueError:
+        return []
 
 
 def art_language_problems(section: str, art_files: list[str]) -> list[str]:
@@ -1975,6 +2025,7 @@ def main(argv=None) -> int:
         ap.error("give --repo and --pr, or --body-file, or --audit")
 
     brief = Path(args.brief).read_text(encoding="utf-8") if args.brief else None
+    ANIMATED[:] = load_animated(args.repo, args.pr)
     problems, notes = check(body, files, brief, changes)
     if not args.offline:
         released = released_version()

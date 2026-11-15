@@ -269,6 +269,13 @@ def world_marker_patterns(spec: dict | None) -> list[str]:
     return list(((spec or {}).get("worldMarkers") or {}).get("paths", []))
 
 
+def animated_patterns(spec: dict | None) -> list[str]:
+    """hud-clusters.json `animated`: elements that pulse or fade on the clock (a gauge's glow), so their colour and alpha
+    depend on the moment a still was taken, not on the change. `style` lists them as not measured, and pr_evidence.py's
+    Style rule does not count a clause naming one (w4288, PR #3665)."""
+    return list(((spec or {}).get("animated") or {}).get("paths", []))
+
+
 def transient_patterns(spec: dict | None) -> list[str]:
     """hud-clusters.json `transient`: hover cards and tooltips, shown only while the pointer is on something. One may cover
     a panel the same hover does not show (lothsahn, 2026-11-02, w2885: "The user can stop hovering to see the card"); two
@@ -1480,7 +1487,7 @@ def fill_distance(mine: list, theirs: list) -> float:
 
 def style(before: dict | None, after: dict, ref_fragment: str, shot=None, ref_shot=None, ref_census: dict | None = None,
           touched_fragments: list[str] | None = None, max_delta: float = 10.0,
-          max_alpha: float = 0.2) -> tuple[list[str], list[str]]:
+          max_alpha: float = 0.2, animated: list[str] | None = None) -> tuple[list[str], list[str]]:
     """(one summary per checked panel, failures). The reference panel comes from ref_census (a census with the
     classic panel open), else before, else after."""
     ref = ref_from = None
@@ -1504,6 +1511,12 @@ def style(before: dict | None, after: dict, ref_fragment: str, shot=None, ref_sh
     # path is content, not a new look.
     drawn = {(x["path"], x.get("sprite") or "") for x in ref_from.get("elements", [])} if own else set()
     for e in touched:
+        # w4288: an element in hud-clusters.json `animated` pulses on the clock (the storage gauge's CellGlow1, alpha 0.04
+        # to 0.55): two stills catch it at two phases, so its look is not measured (PR #3665: delta E 44.8 for a glow the
+        # change never touched).
+        if any(path_has(e["path"], pat) for pat in animated or []):
+            summaries.append(f"{short(e['path'])}: animated (hud-clusters.json `animated`), not measured")
+            continue
         # The reference itself, in the same census: nothing to compare. The same panel taken from the before (or
         # --ref-census) census is its own look on master, which is the reference a spacing or layout change wants
         # (w1418: `--touched Tooltip(Clone) --ref Tooltip(Clone)` printed "Style: nothing checked").
@@ -1941,7 +1954,8 @@ def run_check(args) -> int:
     failed |= bool(lines)
 
     ref_census = load(args.ref_census) if args.ref_census else None
-    summaries, failures = style(before, after, args.ref, args.shot, args.ref_shot, ref_census, args.touched)
+    summaries, failures = style(before, after, args.ref, args.shot, args.ref_shot, ref_census, args.touched,
+                                animated=animated_patterns(spec))
     print("Style: " + ("; ".join(summaries) if summaries else "nothing checked"))
     for f in failures:
         print(f"  STYLE: {f}")

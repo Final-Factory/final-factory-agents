@@ -487,6 +487,17 @@ class StyleTest(unittest.TestCase):
         summaries, _ = ul.style(None, hud(), "InventoryPanel", touched_fragments=["InventoryPanel"])
         self.assertEqual(summaries, [])
 
+    def test_an_animated_element_is_listed_not_measured(self):
+        # w4288: a glow that pulses on the clock is caught at another phase in each still (PR #3665, delta E 44.8).
+        after = hud()
+        after["elements"] = [dict(e, color="#0D1724FF") if e["path"].endswith("InventoryPanel") else e for e in after["elements"]]
+        _, failures = ul.style(hud(), after, "InventoryPanel", touched_fragments=["InventoryPanel"])
+        self.assertTrue(failures)
+        summaries, failures = ul.style(hud(), after, "InventoryPanel", touched_fragments=["InventoryPanel"],
+                                       animated=["InvAndCraft/InventoryPanel"])
+        self.assertEqual(failures, [])
+        self.assertTrue(any("animated" in s and "not measured" in s for s in summaries), summaries)
+
     def test_a_touched_switch_pairs_with_its_own_window_not_a_same_named_one(self):
         # w4223: the Cargo Hold window and the Player Inventory each hold SortButton/AutoSortCheckbox/Switch, one on
         # (green) and one off (grey); `short()` prints both as the same three names, which read like a suffix pairing.

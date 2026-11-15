@@ -381,6 +381,22 @@ class LayoutTest(unittest.TestCase):
         asked = line + '; intended (Ben): "make the blueprint panel solid dark navy"'
         self.assertNotIn("delta E 21.6 from the classic panel", self.reasons(self.ui_body(Style=asked)))
 
+    def test_an_animated_element_registered_in_hud_clusters_does_not_count(self):
+        # w4288, PR #3665: the storage gauge's glow pulses on Time.unscaledTime; the after still caught it brighter.
+        line = ("StationGridEntityPanel (touched) vs StationGridEntityPanel before: delta E 0.0 to 4.8 (on screen), alpha "
+                "1.00 vs 1.00, same art; the one other is StorageCellGauge/Cell/CellGlow1, delta E 44.8, alpha 0.55 vs 0.32")
+        old = pe.ANIMATED[:]
+        try:
+            pe.ANIMATED[:] = []
+            self.assertIn("delta E 44.8 from the classic panel", self.reasons(self.ui_body(Style=line)))
+            pe.ANIMATED[:] = ["StorageCellGauge/Cell/CellGlow*"]
+            self.assertNotIn("from the classic panel", self.reasons(self.ui_body(Style=line)))
+            # Only the clause naming it is skipped: a real panel change beside it still fails.
+            worse = line.replace("delta E 0.0 to 4.8", "delta E 0.0 to 14.8")
+            self.assertIn("delta E 14.8 from the classic panel", self.reasons(self.ui_body(Style=worse)))
+        finally:
+            pe.ANIMATED[:] = old
+
     def test_a_new_overlap_or_a_drift_fails(self):
         overlap = "4 block pairs before, 5 after, 1 new, 0 kept between blocks the change moved (ui_layout.py)"
         self.assertIn("1 new overlap(s) between HUD blocks", self.reasons(self.ui_body(Overlaps=overlap)))
