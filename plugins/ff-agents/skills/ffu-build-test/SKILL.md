@@ -518,6 +518,11 @@ never rewritten (`tools/check_snapshot_compat.sh BASE_REF` holds it in CI). No t
   `cargo test --release -p <crate> --test <file> <name>`, then `git checkout <your branch>`), and look for a fix in flight
   (`gh pr list -R Final-Factory/ffu`) before editing the test yourself, which would conflict with it. Then wait on that
   PR with `blocked_on`, not on your own CI.
+- **A new saved field must not change the world fixtures' starts** (w4197, ffu #805). Naming stations in
+  `World::add_station` changed the world scenarios against their fixtures
+  (`crosscheck::tests::the_world_scenarios_end_on_their_fixtures_worlds`), and fixtures are never rewritten. Set
+  such a field only where no fixture is built (`scenario::factory`, `ff1import`), and run
+  `tools/check_snapshot_compat.sh origin/main` and that crosscheck test before pushing.
 
 ## 4. Land it: PR, CI with gh, merge your own
 
