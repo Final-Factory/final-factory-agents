@@ -193,6 +193,18 @@ whole verification. The repo's own `CLAUDE.md` is binding and longer; this skill
     had stopped held no world yet, and a standby with no world never takes over (`Standby::follow`), so it sat silent
     for 180 s ("standby 4 did not take over: \"\""). Wait for `holds_world` before the kill, bounded by the run's
     `Deadline`; plant `FFU_FAILOVER_CHAIN_PAUSE_WORLD_MS`: RED in 191 s on main, GREEN in 27 s.
+  - **A test that ends an unpaced shard and reads its files runs it `--paced`** (w4231, ffu #795). An unpaced shard
+    sends ticks its log has not written yet (up to `wal::MAX_LAG` = 160 behind). On a loaded Linux runner
+    `snapshot_mid_interval`'s log thread was about 60 ticks behind when the test ended it at tick 92, so the files
+    recovered to snapshot 32 with no tick to replay (run 43661543745). A paced shard sends a tick's frames only once
+    its records are on disk (`shard.rs`, `wait_durable`). See it RED with `FFU_WAL_PLANT_SYNC_MS=2000`: a 200-500 ms
+    plant is hidden by group commits, which sync every pending tick at once.
+  - **A gateway_standby gap whose re-subscribe "from tick" is far past the kill's tick means the owner outlived the
+    kill, not slow detection** (w4231, ffu #795, report r235). In run 43358632615 (ffu-windows) a kill at tick 508
+    "took" 20002 ms, but the gateway re-subscribed from tick 5352: the owner ran about 19.4 s past the test's kill
+    timestamp, then the clients stepped through 4844 queued ticks in the 0.6 s takeover, past the gateway's `MAX_HELD`
+    (4096), which dropped 749 ops. The gateway now waits instead of dropping, and the test prints "the kill took N ms":
+    read it before you blame detection.
   - **A test of a standby must expect one that lost its bid to be gone** (w3681, ffu #500). With no directory leader for
     its give-up time while the group elected, a new owner gives the shard up, its standbys bid at once, and the loser
     exits before the test tells it the restarted replica's port. A failed tell asserts the standby exited; the next
