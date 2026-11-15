@@ -184,10 +184,14 @@ Measure each of these on the still beside the mock before a critic round; each o
   1 --save`), then `ffu --connect <addr> --name pilot --hud --minimap --clip out.mp4 --still out.png --seconds 4 --size
   1280x800 --look looks/ffu.look` (without `--minimap` there is no map). Pass `--clip` with `--still`: a connected
   `--still` alone draws as a viewer with no pilot, so the ship's readouts are missing (w4241, ffu `main.rs` connected
-  still path). `--clip` needs `ffmpeg` on PATH; biscuit has none, and a static build in `$TMPDIR` works. A world in a
+  still path). `--clip` needs `ffmpeg` on PATH; biscuit has none, and a static build in `$TMPDIR` works: `UV_CACHE_DIR=$TMPDIR/uvcache ~/.local/bin/uvx --from imageio-ffmpeg python -c "import imageio_ffmpeg; print(imageio_ffmpeg.get_ffmpeg_exe())"` prints its path (w4242). A world in a
   set state (a damaged ship) comes from a small crate in `$TMPDIR` with a path dependency on `ffu-sim` that submits ops,
   steps a `Sector` to the state and writes `snapshot::encode`. An `--autobuild` of an item the ship holds 0 of gives
   the refusal notice for a still.
+- **r197's Deck mock (`hud-deck`, a 2x2 of quadrants) hides the top readout row under quadrant B's caption** (w4242,
+  ffu #801): a readout's place at 1280x800 cannot be measured there. Derive it (the 1080 offset to the speed text, scaled
+  to the Deck's speed text at x 459, w4106) and say "derived, not measured" in the PR and the report. FF1's fleet icon is
+  `Assets/Resources/Icons/Bat.png`, added to the PersonalDisplay in FF1's `main.unity`; in FFU it is `content::BAT`.
 - **Trace every card in a mock to its FF1 object before you build it** (w4241, ffu #798): r197's top-left "Hull
   612/700" card is FF1's `TechProgressBar`, research progress (main.unity line 243408, FF1 TechProgressPanel line 147), and
   FF1's health is a segment of the readouts card (FF1 PersonalInfoDisplay, lines 91-106), which r197 called "construction
