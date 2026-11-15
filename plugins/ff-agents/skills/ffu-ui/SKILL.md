@@ -203,6 +203,9 @@ Measure each of these on the still beside the mock before a critic round; each o
   (`hud.alerts.line{n}`). The hotbar's dimmed `GREY_ICON` on the alert tile's maroon fill measured 1.6:1, which the
   critic graded UGLY. Alert tiles draw grey as luminance lifted 0.2 in linear light (`ui.wgsl` kind 6, `extra.x` 2),
   which measured 5.0:1. Measure grey art's contrast on the fill it sits on before the critic round.
+  Merge-on-green's Evidence check (`pr_evidence.py`) counts any `ui.wgsl` edit as an art change. It refuses a PR
+  without `Reference capture:` (the real-client still of what the change replaces) and `Art language:` (the two solid
+  colours and the HDR accent, or "none") lines: run it on the PR before `blocked_on` (w4264 lost a merge to it).
 - **A merge where git interleaves two appended functions**: run `git merge-file --diff-algorithm=patience` on the
   `:1:`/`:2:`/`:3:` stages (`git show :2:<file>`); the conflicts come out as whole blocks to keep both of (w4246).
 - **Real-client stills** for a HUD: serve a world with `ffu-server --dir <dir> --start <world.snap> --listen
