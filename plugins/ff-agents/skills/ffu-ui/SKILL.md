@@ -81,6 +81,20 @@ ops and `submit` queues them through `Sector::submit` for the next tick, the sam
 (`/ff-agents:ffu-add-op`). Rotate is a remove and a place in one tick. Prove a button by its press test: press, one
 step, then the sector shows the change.
 
+- **A still of the HUD's pilot parts (the fleet card, speed) comes from a clip, losslessly** (w4260, ffu #806).
+  `ffu --connect ... --still` takes no pilot, so those parts never show; `--connect ... --name pilot --hud --clip
+  out.mp4 --seconds 5` flies one, and its last frame is the still. The clip is x264 4:2:0 at crf 18 (`ffmpeg()` in
+  `crates/ffu-client/src/main.rs`), which smears 1 px edge detail such as icon specks. For pixel evidence put an
+  `ffmpeg` shim first on PATH that swaps `libx264`/`yuv420p`/`-crf N` for `ffv1`/`rgba` and `.mp4` for `.mkv`, then
+  take the last frame with `ffmpeg -sseof -0.2 -i x.mkv -frames:v 1 -update 1 x.png`.
+- **A before/after pair joins both client binaries to one server at once** (w4260): sequential runs land on different
+  ticks (147 against 182), and a critic graded world objects that moved between them BROKEN. Each client's ship
+  colour is its player's (`ffu-client/src/ship.rs` `color`, by id), so give each its own `--name` and expect that.
+- **Item icons are a premultiplied, padded, mipped atlas** (w4260, `render.rs` `icon_levels`, `ui.wgsl` kind 6). FF1's
+  icons carry a pure-white fringe at low alpha (436 of the Bat's 460 edge pixels); filtered as straight alpha at one
+  mip level it showed as white specks at 25 px. Keep any new texture with soft edges premultiplied in linear light,
+  and judge an icon change at 8x against an area-filtered downscale of its source on the card colour.
+
 ## A theme's alpha blends in linear light
 
 The `ui.*` keys of a look file (w4040, ffu #729) restyle every panel through `Theme` without moving it. ffu-ui blends
