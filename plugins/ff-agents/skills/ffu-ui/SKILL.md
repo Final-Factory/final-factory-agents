@@ -179,6 +179,17 @@ Measure each of these on the still beside the mock before a critic round; each o
   (`hud.station.left`/`right`), and test long values in every locale at the three sizes
   (`long_station_figures_stay_inside_the_card`). Run clippy as CI does, debug, never `--release`: code under
   `debug_assertions` holds uses, and a release clippy fails on unused items CI never sees.
+- **Alert tiles and text over art** (w4246, ffu #807, three ui-critic rounds): text drawn over an item's art gets the
+  dark halo only as a child of that `Role::Image` (`render.rs`: a Value whose parent is an Image); `Spec::art` places
+  the art inside its box (left, top, side as parts of it). A bold sans is `Spec::bold` (the body face drawn twice, the
+  halo under both copies): `title_face` Khyay's footless "1" with a hard halo box was graded UGLY as a prototype font.
+  Sample a mock's colour by counting its pixels (`ffmpeg -f rawvideo -pix_fmt rgb24 -` into a Counter), never one
+  pixel: a first pick of #F76834 was the art's orange; r197's count is #FF8A7A. An absolute row's box is its whole
+  inset span: left 0, right 50% overlapped w4196's station card in the gate's sibling check though no tile did; use
+  left auto with a right margin. A heat test world: an Assembler joins an Antimatter Station's grid only when placed
+  after it (40 steps) facing its slot, and the station passes 100 near tick 19,782 (ffu-client `alerts.rs` world test).
+- **A merge where git interleaves two appended functions**: run `git merge-file --diff-algorithm=patience` on the
+  `:1:`/`:2:`/`:3:` stages (`git show :2:<file>`); the conflicts come out as whole blocks to keep both of (w4246).
 - **Real-client stills** for a HUD: serve a world with `ffu-server --dir <dir> --start <world.snap> --listen
   127.0.0.1:P` (it needs both `--dir` and a snap: no `combat:` start; save one with `ffu-headless run --start ... --ticks
   1 --save`), then `ffu --connect <addr> --name pilot --hud --minimap --clip out.mp4 --still out.png --seconds 4 --size
@@ -191,11 +202,11 @@ Measure each of these on the still beside the mock before a critic round; each o
 - **r197's Deck mock (`hud-deck`, a 2x2 of quadrants) hides the top readout row under quadrant B's caption** (w4242,
   ffu #801): a readout's place at 1280x800 cannot be measured there. Derive it (the 1080 offset to the speed text, scaled
   to the Deck's speed text at x 459, w4106) and say "derived, not measured" in the PR and the report. FF1's fleet icon is
-  `Assets/Resources/Icons/Bat.png`, added to the PersonalDisplay in FF1's `main.unity`; in FFU it is `content::BAT`.
+  FF1's `Resources/Icons/Bat` sprite, added to the PersonalDisplay in FF1's main scene; in FFU it is `content::BAT`.
 - **Trace every card in a mock to its FF1 object before you build it** (w4241, ffu #798): r197's top-left "Hull
-  612/700" card is FF1's `TechProgressBar`, research progress (main.unity line 243408, FF1 TechProgressPanel line 147), and
+  612/700" card is FF1's `TechProgressBar`, research progress (FF1's main scene, line 243408, FF1 TechProgressPanel line 147), and
   FF1's health is a segment of the readouts card (FF1 PersonalInfoDisplay, lines 91-106), which r197 called "construction
-  bots". Find the object by its place in main.unity (anchors and position) and the code that sets its text.
+  bots". Find the object by its place in FF1's main scene (anchors and position) and the code that sets its text.
 - **A card that grows beside a centred fixed-width segment pads unevenly** (w4241, critic UGLY: 10 px left against
   18 px right): beside another segment, give the fixed one its text's width and anchor that text where the lone card
   centred it (`hud.rs` `speed_at`).
