@@ -243,6 +243,10 @@ Measure each of these on the still beside the mock before a critic round; each o
 - **An arrow node's text is still laid out** (w4243): a footer or toggle button drawn as a triangle (`Spec.arrow`)
   keeps its text as the layout and accessible name, and a word there failed the gate's "leaves its parent" check. Give
   it one glyph (`‹`, `›`, `v`); a separate accessible name is a follow-up.
+- **Read the PR's state just before you push a fix onto another worker's branch** (w4317): a critic fix pushed as
+  cf0c384c landed on #828's branch about a minute after #828 merged. The push succeeded, but onto a dead branch, so
+  the fix had to move to follow-up #830. Run `gh pr view <n> --json state,mergedAt` right before the push. If the PR
+  merged, branch from `origin/main`, cherry-pick, and open a follow-up PR.
 - **A stills script builds nothing: build first** (w4243): a script that runs `ffu-server` and `ffu` from
   `$CARGO_TARGET_DIR/release` drew the last build's client, and a critic round graded an old card. Run `cargo build
   --release -p ffu-server -p ffu-client` before every stills leg.
