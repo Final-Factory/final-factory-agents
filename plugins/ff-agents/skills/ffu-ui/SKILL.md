@@ -281,3 +281,10 @@ Measure each of these on the still beside the mock before a critic round; each o
   it (mock 2 px at the still's scale, checked by the slot's width): `ffmpeg -i still.png -vf
   "crop=20:1:X:Y,format=gray" -f rawvideo - | od -An -tu1 -v`. A width in logical pixels is times the HUD's scale (1.5
   at 1080): `RING_WIDTH` 4/3 draws 2.
+- **Key prompts are tabs cut like their tiles, in a row clear above them** (w4280, ffu #829, three ui-critic rounds):
+  a round key chip (`Shape::Key`, round ends) on or beside the ability tray's cut-corner tiles was graded UGLY in
+  rounds 1 and 2 under Ben's w1761 words ("i dont like the differing border-radius values all smashed together"),
+  first overlapping the tile's corner, then 3 px above it. Draw a prompt as `Corners::Fine` on a `Shape::Key`
+  (`render.rs` `KEY_CUT`, cut at the tiles' two corners) in a row `PROMPT_GAP` (4 logical, 6 px at 1080) above the
+  tile (`hud.rs` `tray_tile`); round 3 found 0 BROKEN or UGLY. One corner family per row: check every small part
+  (key, count, badge) against the tile it sits on before the critic round.

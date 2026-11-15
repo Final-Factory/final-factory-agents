@@ -21,7 +21,7 @@ not deterministic or not fully encoded breaks recovery as well as peers.
 | 5 | `sector.rs`, `fn apply` | Apply it. Return a `SimError` to refuse (a missing building, a wrong kind, an out-of-range value): a refused op moves `ops_rejected`, not the state. Use `get`, `checked_*` or `saturating_*`; no `unwrap`, indexing or unchecked arithmetic in the tick. |
 | 6 | `sector/rate.rs` | If it can touch a building, add it to the ops that wake that building's island before it applies, or a dozing island misses it. |
 | 7 | `sector.rs`, `building_hash` | A new field it writes goes into the hash (`every_field_and_the_index_change_a_building_hash` lists them). |
-| 8 | `snapshot.rs` | A new saved field bumps `SNAPSHOT_VERSION`, keeps the old decoder as the upgrade path and adds a fixture in `crates/ffu-sim/tests/fixtures`; never rewrite an old fixture. |
+| 8 | `snapshot.rs` | A new saved field bumps `SNAPSHOT_VERSION`, keeps the old decoder as the upgrade path and adds a fixture in `crates/ffu-sim/tests/fixtures`; never rewrite an old fixture. `check_sim_rules` forbids `std::fs` and `std::env` in `ffu-sim/src`, so a fixture writer test there prints hex (`println!("FIXTURE {hex}")`) and the shell makes the file (`cargo test ... -- --ignored --nocapture <name> \| grep '^FIXTURE ' \| cut -c9- \| xxd -r -p > fixture.snap`); drop `--exact` with a short test name, which matches nothing (w4280). |
 
 If players may send it, give it to the agent API too: `crates/ffu-agent/src/lib.rs`, the `set` method's `op` names
 and its `discover` schema; run the fuzz target `agent_line` (`tools/fuzz.sh 60 agent_line`) on the new request shape. If the server sends it as world
