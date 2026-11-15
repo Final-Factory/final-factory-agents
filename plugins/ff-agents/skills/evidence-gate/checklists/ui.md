@@ -525,6 +525,21 @@ control, and a redesign goes out as 2 or 3 clearly different options built from 
     claim that an input was dropped, compare the still before it with the still after for state the input changed
     (the hint, the hand, a selection), not only the target. The same tour's Assembler legs ran behind the pause menu
     (an Escape with nothing to cancel, unity-ui's w3041 note): look at every still a verdict rests on.
+43. **Four traps of one hover-card column fit (w4126).**
+    - **A live value is not a move.** `ui_layout.py moves` counted the Battery card's charge row as moved 5 px. The
+      battery's live charge read "6 % (1.33kWh)" before and "3 % (725Wh)" after, and the row's word beside it follows the
+      value's width. Pair stills whose live text is as wide (measured: the after run's English still after the switch
+      back read 1186.7 against master's 1186.7, and showed no move), or hold the value. Say on `Moved:` which still was
+      paired and why.
+    - **Check the critic's "what changed" against the census.** A fresh ui-critic called the change a no-op. The census
+      had Russian "Вверх" at x 1182 before and 1201 after. A critic finding of no change or a move is a claim; measure
+      it before you act on it.
+    - **A fit that lines things up keeps what already lined up.** A column set at the longest label plus the gap pulled
+      English's values 19 px left. On master they had stood in line with the charge row's word above them, and nobody
+      asked to move them. Keep the scene's own column as the floor, and run `moves` on the language that already passed.
+    - **Merge `origin/master` before the evidence round, not at push time.** w4163 shortened the very Russian label the
+      fit was for ("Цена стабильности" for "Стоимость стабильности", 152 against 195 units). Two rounds of stills and a
+      critic run, of a card that grew for a label master no longer had, went stale.
 
 19. **The Deck tour is a stand-in (w770).** It forces its own window size and a scripted Deck, so it cannot show Steam's
     layout choice, the Proton first-frame resolution, the Steam client version or touch. A Deck UI change says "verified on
