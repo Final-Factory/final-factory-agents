@@ -131,6 +131,11 @@ census (`<shot>.json`: small, clipped, off-screen and overlapping text, covered 
   w3919's `run_tour.sh` (`-ffSoloNewGame`, no role) wrote `_autosave_sp_before_quit_1` on every leg until #3556 moved it
   to `-ffAutomationRole solo -ffAutomationSeed w3919 -ffAutomationFlatMap true`. That solo path ignores
   `-ffAutomationFreeBuild` (host new games only), and `ffauto:blueprint.place` constructs a blueprint without it.
+  **A loaded game does the same (w4311).** A DeckTour run with `-ffDeckTourQuit` on a loaded game wrote a quit autosave,
+  `_autosave_sp_before_quit_<N>_<first characters of the save name>.zip` and `.jpg`, into the shared saves folder
+  (`AppData/LocalLow/Never Games/finalfactory/UserData/saves`) that holds a person's own saves, and `game_data.py
+  snapshot/restore` does not remove it. List the saves folder before and after the run; the new `_autosave_sp_before_quit_*`
+  files are yours (delete only those, where the delete guard above allows it, else prevent them with `-ffAutomationRole`).
 - **Development overlays are not the game.** The Debug Info counters, "Agent control ON" and Graphy
   draw in a development player and show up as overlaps and flicker; `ui_layout.py` ignores them,
   `ui_check.py` does not. Hold keys by `seconds`, not frames: a frame count is gone in a blink at
@@ -228,6 +233,11 @@ census (`<shot>.json`: small, clipped, off-screen and overlapping text, covered 
 - **A tour that ran `ffauto:console.run` has the dev console open over the bottom-left HUD (w1064).** A `record` clip then shows the console, not the
   queue or panel. Take a `shot` first (it closes the console); the frames of a tour clip at 1920x1080 ran at about 75 fps, so check
   `frames.txt` before calling a clip real-rate. `make_tour.py --clip` in the same folder does it.
+- **Two `ffauto:console.run|debug.hang <s>` setup steps do not make two long frames in a row (w4311).** With a
+  `{"wait":0.01}` step between them, the Quantum console's own opening frames fall between the two hangs, so a frame-time
+  detector (the stalled-vSync switch) never sees a back-to-back pair: neither build 47 nor the fix tripped it (measured).
+  Feed measured frame times into an EditMode test instead, or use a real heavy action: a 10k-structure blueprint pickup made
+  two 3.1 s frames on a loaded machine, but only about 0.85 s on an idle one.
 - **A tutorial step is reached by a save, not by a count of skips (w883).** `ffauto:console.run|completeXObjectives 1` once
   per step advances at the heartbeat, not per call: 34 calls landed on the assembler step in one run and on "Open the map"
   in the next, and `completeXObjectives 33` in one call only completes the first. Skip once with a save after each call
