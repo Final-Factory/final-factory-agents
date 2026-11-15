@@ -163,6 +163,12 @@ census (`<shot>.json`: small, clipped, off-screen and overlapping text, covered 
   built). Read each leg's `tour.log` for a failed setup before you read its stills. (3) A list fit that counts each row
   as one line overshoots its room when names wrap (`StationGridTable.FitHeight`): measure the gap from the last row (Net)
   to the window frame in the census, before and after, and compare it with the reference panel's.
+- **Tour worlds on one station (w4268).** Structures you place with `ffauto:blueprint.place` join one station only
+  when every gap between them holds a Connector facing Right (rotation 1, `blueprint('Connector', 1)` from the game
+  repo's `scripts/deck_audit/build_audit_world.py`; it links the tiles left and right, `StationConnectionsSystem.cs`).
+  w4268's first two runs left gaps, or Connectors facing Up below the row, and got separate stations, so the power
+  stills showed the wrong station. The warning icons over a station (No Power and the rest) blink every 0.75 s: take
+  each still twice, `{"wait": 0.8}` apart, and keep the one that shows the icon.
 - **Title-screen tour traps (w4162).** (1) A tour of a title-screen dialog passes no `-ffAutomationRole solo`: that
   role starts a new game, so the title menu is gone ("ui.modmismatch: no title menu"); with no game ticked,
   `quit_save_check.py` still found no quit save on w4162's legs. (2) `hide:` takes a kind selector,
@@ -323,7 +329,10 @@ census (`<shot>.json`: small, clipped, off-screen and overlapping text, covered 
   for `Deck tour done` in `tour.log`, then `ff-leftovers end`: no `_autosave_sp_before_quit` file is written. (3) A
   title-menu panel has no pinned HUD, yet `pr_evidence.py` still wants `Pinned: ... 0 not shown`: run that station census
   at 1920x1080, 1280x800 undocked and docked. Every `Style:` line must be the measured one (`ui_layout.py check --touched
-  <panel> --ref <panel> --shot/--ref-shot`); a prose `Style:` line anywhere fails the checker.
+  <panel> --ref <panel> --shot/--ref-shot`); a prose `Style:` line anywhere fails the checker. A card that
+  only lost rows (w4268's hover card) is not counted as changed under the default `--ref InventoryPanel`; give it as
+  `--touched HoverDescription --ref HoverDescription` with `--before` and `--shot/--ref-shot` (evidence-gate
+  `checklists/ui.md` item 45).
   (4) A `ui_look.py colour` check of a panel that already had flaws fails on them: pass each still's before with
   `--before <png>::<census>` in the same order, and old flaws count as standing. (5) The `Style:` line of a check of
   one window took the Inventory as its reference (delta E 19.8) until `ui_layout.py check --touched X --ref X
