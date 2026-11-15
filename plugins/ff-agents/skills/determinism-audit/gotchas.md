@@ -92,6 +92,14 @@ test had applied between heartbeats 375 and 641. `python scripts/audit/compare_a
 3,489. For any session longer than about two and a half minutes, use the typed comparator, and
 check that the first shared heartbeat it prints is before your ops.
 
+**Never compare two peers' logs with a hand-written `join` on the heartbeat number** (w4236, biscuit, 2026-11-15).
+One heartbeat carries several `DeterminismFingerprintSystem -> Fingerprint` lines, so `join` writes every pairing of
+them. Two greps of about 1 MB each, over 4,810 heartbeats, grew a 32 GB `joined.txt` and a 10 GB `sort` temp in
+`$TMPDIR` within three minutes, and the machine's disk went critical (7 GB free) while other sandboxes worked. Compare
+with `scripts/audit/compare_determinism_reports.sh <host> <client>` (the per-heartbeat `[DeterminismAudit]` grep of
+both player logs works as input; the m5 host leg compared all 4,810 that way) and `compare_audit_records.py` on the
+`audit.write` checkpoints. Both pair the lines by heartbeat and stop at the first mismatch.
+
 ## Inventory hash roles: retain the raw field, gate the contracted surfaces {#inventory-hash-roles}
 
 `PlayerInventoryHash` folds the slot arrangement of every authoritative player inventory in one
