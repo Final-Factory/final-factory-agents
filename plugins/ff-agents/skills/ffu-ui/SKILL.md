@@ -219,6 +219,15 @@ Measure each of these on the still beside the mock before a critic round; each o
 - **A card that grows beside a centred fixed-width segment pads unevenly** (w4241, critic UGLY: 10 px left against
   18 px right): beside another segment, give the fixed one its text's width and anchor that text where the lone card
   centred it (`hud.rs` `speed_at`).
+- **Measure a title's letter spacing on the word it will show** (w4197, ffu #805): `text::LIGHT_TRACKING` 0.3 em was
+  tuned on "MAP". On "HAVEN" it drew 78 px with 6-8 px gaps, against the 1080 mock's 66 px and 3-4 px; 0.15 em gives
+  68 px with gaps 4/3/4/4 (a per-column ink scan of both stills).
+- **Cut the own ship's marker to the map's box, not the sector's rectangle** (w4197): clipped to `Fit::area`, a ship
+  near the sector's edge lost half its ring on the Deck still. `ships()` now clips it to `Fit::view`;
+  `the_own_marker_is_whole_at_the_sectors_edge` failed before and passes after.
+- **Crop the quadrant of the style you build from a multi-style sheet** (w4197): r197's `hud-deck.png` holds styles A
+  to D. Style B is the bottom-left quadrant (x 0-964, y 604-1208, scaled 1.328 to 1280x800). A critic round graded the
+  pack BROKEN because the 800 comparison used style C.
 - FF1's hotbar defaults are `GameInitializer.StartHotbarItems` in FF1's main scene.
 - The Write and Edit tools may refuse to create a file in an ffu slot (w4106, m5): write it in `$TMPDIR` and copy it
   in, and edit with a small Python script that checks each replacement's count.
