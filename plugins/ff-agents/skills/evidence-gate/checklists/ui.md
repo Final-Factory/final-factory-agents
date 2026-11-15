@@ -540,6 +540,18 @@ control, and a redesign goes out as 2 or 3 clearly different options built from 
     - **Merge `origin/master` before the evidence round, not at push time.** w4163 shortened the very Russian label the
       fit was for ("Цена стабильности" for "Стоимость стабильности", 152 against 195 units). Two rounds of stills and a
       critic run, of a card that grew for a label master no longer had, went stale.
+44. **Publish the evidence, censuses included, before a turn ends with the UI PR open (w4216).** w4216 moved to biscuit
+    for its merge after FF Factory's Evidence check refused PR #3637. The earlier workers' before and after
+    `*-layout.json` censuses stayed on their own machines, so none of the `ui_layout.py` and `ui_look.py` lines could be
+    run again. Answering the checker took two new Linux player builds and eight tour legs (about 2 hours, measured).
+    Before you end a turn with a UI PR still open (a wait on CI, a handover, a refused merge), use `publish_review` on
+    the stills and clips, plus one zip of the before and after censuses, the tour script, the tool output lines
+    (`check`, `moves`, `pins`, `shape`, `colour`) and critic.md. A worker on any machine can then run the checks again
+    without rebuilding.
+    - **Read a clip's frame rate before you use it.** On a loaded machine (biscuit, load average 30 to 48 on 16 cores)
+      the same `record` step came out at 8 fps on two legs and 65 fps on another. `tour.log` prints `recorded <name>: N
+      frames in S s (F fps)`. Record again any leg under 30 fps, at a quieter time if you can; `pr_evidence.py` refuses
+      1 to 9 fps.
 
 19. **The Deck tour is a stand-in (w770).** It forces its own window size and a scripted Deck, so it cannot show Steam's
     layout choice, the Proton first-frame resolution, the Steam client version or touch. A Deck UI change says "verified on
