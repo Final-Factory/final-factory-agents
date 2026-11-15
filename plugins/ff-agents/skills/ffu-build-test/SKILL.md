@@ -777,6 +777,12 @@ never rewritten (`tools/check_snapshot_compat.sh BASE_REF` holds it in CI). No t
   - **Open a draft PR the moment you take a kind, op tag or section number** (`tools/row_numbers.py next ... --prs`): a
     number held only in a branch is no claim. ffu #567 committed op tags at 06:40Z and opened at 09:47Z; ffu #566,
     opened at 09:14Z, kept them and #567 had to renumber (w3844).
+  - **Run `tools/row_numbers.py check --base origin/main --prs` again right before you merge, not only when you
+    claim** (w4272). ffu #810 (alarms, w4264) and #812 (ship hits, w4271) both took snapshot section 28 and merged two
+    minutes apart. Each section lives in its own `snapshot/<name>.rs` and `SECTIONS` is sorted at compile time, so git
+    merged both clean and main failed three tests (`sections_are_in_tag_order`, a Decode Truncated, a fixture
+    BadParam) until #821 moved alarms to 30. A message kind on a stale branch collides the same way: #801's `Fleet`
+    took kind 8 while w4272's `ShipHull` waited on a branch; that one showed as a git conflict, a section does not.
   - **A row adds a kind, an op or a snapshot section at its name, never at a list's end** (w3864, ffu #602, #607). The
     shared code lists sit between `// keep-sorted start` and `// keep-sorted end` markers in name order. One variant
     per arm, catch-alls after the end marker. `Kind::ALL` and `SECTIONS` are sorted by number at compile time, so
