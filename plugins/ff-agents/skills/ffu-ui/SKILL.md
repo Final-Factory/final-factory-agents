@@ -166,6 +166,15 @@ Measure each of these on the still beside the mock before a critic round; each o
 - **Taffy resolves a nested absolute node's right and bottom insets against the screen** (measured): only left and
   top insets place an absolute node below the root. Place a slot's key or count with left and top insets, or keep the
   count in normal flow with `justify_content`/`align_items` `FLEX_END`.
+  Percent sizes too: a nested absolute row at `percent(1.0)` width came out the screen's width (w4245, ffu #799).
+- **Size a bottom-edge HUD row to its card, never the screen's width** (w4245, ffu #799): an absolute row spanning the
+  screen is a sibling of every other bottom piece, and the gate failed "hud.station overlaps its sibling hud.abilities"
+  once w4196's station card landed. Centre it as left `percent(0.5)`, margin left minus half its width, width the card's.
+- **A centred row's fractional left edge rounds its children apart** (w4245): at 1280x800 a tile column rounded to 39
+  px while its absolute prompts child of the same logical width rounded to 40, and the gate failed "leaves its
+  parent". Make such a child half a logical pixel narrower than its parent.
+- **r197's 10 px key prompts cannot hold text at the gate's 9 px floor** (w4245): the ability tray's pills are 12 px
+  at 1080 (15 px at 800, as the brief says). Say so in the PR rather than shrinking the text under 9 px.
 - **Size an icon to the art the mock draws, not to its square**: FF1's art has a clear margin, so a 25.3 px box drew
   the Connector 28 px wide and a 36 px box drew it 43 px, against r197's 40 (measured). Find the box by measuring the
   drawn art's width (33.5 here).
