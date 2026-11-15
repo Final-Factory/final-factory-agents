@@ -202,11 +202,11 @@ Measure each of these on the still beside the mock before a critic round; each o
 - **r197's Deck mock (`hud-deck`, a 2x2 of quadrants) hides the top readout row under quadrant B's caption** (w4242,
   ffu #801): a readout's place at 1280x800 cannot be measured there. Derive it (the 1080 offset to the speed text, scaled
   to the Deck's speed text at x 459, w4106) and say "derived, not measured" in the PR and the report. FF1's fleet icon is
-  `Assets/Resources/Icons/Bat.png`, added to the PersonalDisplay in FF1's `main.unity`; in FFU it is `content::BAT`.
+  FF1's `Resources/Icons/Bat` sprite, added to the PersonalDisplay in FF1's main scene; in FFU it is `content::BAT`.
 - **Trace every card in a mock to its FF1 object before you build it** (w4241, ffu #798): r197's top-left "Hull
-  612/700" card is FF1's `TechProgressBar`, research progress (main.unity line 243408, FF1 TechProgressPanel line 147), and
+  612/700" card is FF1's `TechProgressBar`, research progress (FF1's main scene, line 243408, FF1 TechProgressPanel line 147), and
   FF1's health is a segment of the readouts card (FF1 PersonalInfoDisplay, lines 91-106), which r197 called "construction
-  bots". Find the object by its place in main.unity (anchors and position) and the code that sets its text.
+  bots". Find the object by its place in FF1's main scene (anchors and position) and the code that sets its text.
 - **A card that grows beside a centred fixed-width segment pads unevenly** (w4241, critic UGLY: 10 px left against
   18 px right): beside another segment, give the fixed one its text's width and anchor that text where the lone card
   centred it (`hud.rs` `speed_at`).
