@@ -231,6 +231,11 @@ Not verified: the Bats' slot lag (simulation, follow-up PR)
   (w4214, PR #3624). A Linux relay client takes a headless lab (`lab.pair-m5-relay-linux.json`,
   `lab.pair-beast-relay-linux.json`), because a windowed Linux player crashed at start on biscuit
   ([gotcha](../../determinism-audit/gotchas.md#pr-pair-run-traps)).
+- **A pair client leg checks its computer's load before the run** (w4428, 2026-11-16): `uptime` on the client;
+  a 1-minute load above its core count (FFU CI's rustc and test binaries) gets the client removed as
+  `FlowControl:TooSlow`. biscuit sat at 13-58 on 16 cores for 45+ minutes and all 4 client launches were dropped
+  before 10 game minutes, with 0 diverged. Report it at once so the requester re-files with `request_pair` `avoid`
+  that computer; do not wait it out.
 - **A pair leg's scenario survives the bench turn** (w2407): each player launches with `player_slots.py launch
   --bench-wait`; a player log with `[QuitSave] ApplicationQuit: not saving (AutomationProcess)` and no quit of its own
   makes that scenario void (say so to the partner and in the report), and each client is ended once its scenario's
