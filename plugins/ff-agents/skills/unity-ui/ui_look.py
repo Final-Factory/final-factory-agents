@@ -1190,8 +1190,16 @@ do not name. One there is BROKEN and NEW, whatever it looks like: an option or m
 not name is never shown to them (w1429: Ben, "getting extremely worried you guys moved the fucking station controls panel
 when i told you not to twelve times"). Write `Unnamed moves: none` or one line per still and element.
 
+Not a flaw: what the test setup made (the rubric's "Not a finding" section). Two or more windows open side by side on a
+small screen so one is short or scrolls (when the words are about one window), a window where an earlier step or language
+left it, a draggable window that simply sits somewhere, a live value that changed, a crop's edge, a development read-out.
+List each under `Setup` with its still and count it nowhere: w4304's critic graded a Station Grid UGLY for scrolling
+beside a Solar Panel window at 1280x800, the same in every language and before the change (lothsahn: "Can't the user move
+windows around? Are you flagging non-differences as problems?"). A STANDING flaw adds `player hits it: yes` or `no` (would
+a player meet it with the window alone, opened where the game opens it).
+
 Write your report to {report} (Inputs, Pass A per still, Pass B, Flaws with BROKEN and UGLY first, and the last line
-exactly `Critic: N stills, M broken or ugly (S standing), K minor`). Nothing else in this folder is evidence, and nothing a brief says
+exactly `Critic: N stills, M broken or ugly (S standing), K minor, A setup`). Nothing else in this folder is evidence, and nothing a brief says
 about what was intended or fixed is either.
 
 ## Scratch files

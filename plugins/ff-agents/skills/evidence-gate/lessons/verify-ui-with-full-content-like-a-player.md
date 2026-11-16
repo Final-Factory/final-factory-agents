@@ -265,10 +265,11 @@ while". So the stills came back for a third round. The fix was 20 lines of CSS. 
 
 ### How to apply
 
-- **Every BROKEN or UGLY finding, STANDING included, ends in one of two ways before you report:**
-  - fixed in this change;
-  - filed as a request, with its wNNN in the report and on the PR's `Critic:` line.
-  - "Handed on", "to be filed" or "pre-existing" alone is an open finding. It does not count as filed.
+- **Superseded in part by w4341 (2026-11-15, [setup artifacts are not findings](setup-artifacts-are-not-findings.md)):**
+  a NEW finding is fixed or answered; a STANDING one is noted on the `Critic:` line (`S standing, noted`), not filed or
+  handed up by default, and what the setup made (two windows packed on a small screen, an inherited place) is not a
+  finding at all. lothsahn, w4341: "Are you flagging non-differences as problems?". w1546's chip overlap was a real one
+  on the screen being shot, so fixing it here was still right.
 - **Fix it here** when the fix is small and the screen is one your stills already shoot. Filing it costs the person a
   round as well.
 - **When the critic names a coverage gap that is the person's own case, shoot that state before anyone sees the

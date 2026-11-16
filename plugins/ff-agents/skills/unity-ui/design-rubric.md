@@ -54,6 +54,24 @@ still. Look at the panel at its own pixels, not only the whole screen: `ui_look.
    feels crammed"). Name the reference window and the numbers you compared; `ui_look.py family` measures them
    (`Family:` line).
 
+**Not a finding: what the test setup made (w4341).** Grade what a player sees in normal play, not where a tour happened to
+leave a window. A player drags, closes and reopens windows, and the game remembers where they put them. So these are
+SETUP, listed in their own section and never graded BROKEN, UGLY or minor, unless the person's words are about exactly
+that state:
+- two or more windows open side by side on a small screen (1280x800, the Deck), so one is short, scrolls or is pushed
+  aside, when the brief is about one of them (w4304: the Station Grid scrolled "+3 de plus" beside a Solar Panel window at
+  1280x800, in every language and before the change; lothsahn: "Can't the user move windows around? Are you flagging
+  non-differences as problems?");
+- a window in another place than in the before still, or than in another language's still, when the tour ran several
+  languages or steps in one session (a window keeps the place it got earlier: PlayerPrefs `PanelPosition.<role>`), unless
+  the person's words or the census say this change moved it;
+- a draggable window simply sitting somewhere (over the HUD, at an edge, off-centre) that the player can move;
+- a live value that changed between stills (a charge, a count, a timer, a rate), a different selection or save;
+- a crop's edge, a development read-out ("Agent control ON", Debug Info) or a tour's own marker.
+Item 5's "while the screen has room" means room the window gets with only it open, where the game opens it: a window
+short beside another window has no room to grow into, and the player can scroll, drag or close the other. Grade item 5
+on the still with that window alone; if the pack has none, write SETUP and ask for one.
+
 **And the person's words, at the size they asked for.** Each quoted ask is visibly met, and a small ask stays small: Ben
 asked for the Add stop button to "stand out just a little more" (w1334) and got the brightest fill in the panel.
 

@@ -63,6 +63,15 @@ your report: you judge what is on screen. Never read the game's code, the pull r
    HUD piece over a window, text cut off. The
    Inventory/Crafting window and a structure's window never stand open together for a player (Ben, 2026-10-24): a
    still showing both is a forced-open state, not a layout; say so at the top of your report and do not grade it.
+6b. **Setup, not a flaw** (w4341; the rubric's "Not a finding" section). Before you call anything BROKEN, UGLY or minor,
+   ask: would a player in normal play see it, with the window opened fresh where the game opens it, alone unless the
+   person's words are about two? Two windows packed side by side on a small screen, a window placed where an earlier step
+   or language left it, a draggable window that simply sits somewhere, a live value that changed between stills, a crop's
+   edge and a development label are SETUP: list each under `Setup` with the still, and leave it out of Flaws and of every
+   count. w4304's critic graded a Station Grid UGLY for scrolling "+3 de plus" beside a Solar Panel window at 1280x800,
+   the same in every language and before the change, and it was handed up as a request; lothsahn: "Can't the user move
+   windows around? Are you flagging non-differences as problems?". If the pack lacks the still that would settle it (the
+   window alone), say so under Setup; do not grade it.
 7. Hunt for what should not be there: a fill brighter than everything else, a colour bleeding into the controls inside a
    selected row, a stretched or squashed control, an empty half of a window, a dense block of text, text you have to
    squint at, edges that do not line up, a control unlike its siblings.
@@ -102,8 +111,10 @@ Write `critic.md` where the brief says, in this order:
   why a player would mind, and a fix direction in a sentence (what to change, never code). NEW: this change made it, or
   the person's words ask for its kind of fix (w1386's words were "fix the ones that are clearly bugs", and its stills
   showed the panel it fixed with the On/Off switch stretched 14x, as on master). STANDING: the before still shows it too
-  and no words ask for it.
-- The last line exactly: `Critic: N stills, M broken or ugly (S standing), K minor`.
+  and no words ask for it. A STANDING flaw is noted, not a request: add `player hits it: yes` only when a player would
+  meet it in normal play (the window alone, where the game opens it, in their language), else `player hits it: no`.
+- **Setup**: one line per still and item from step 6b, or `Setup: none`. Not counted anywhere.
+- The last line exactly: `Critic: N stills, M broken or ugly (S standing), K minor, A setup`.
 
 BROKEN or UGLY means a player would call the screen broken, ugly or confusing at first sight; minor is polish. Do not
 soften one because the change improved on the before, and do not invent flaws to have some: zero is a valid count once

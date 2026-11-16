@@ -620,6 +620,24 @@ class ShapeAndEyeTest(unittest.TestCase):
         standing = "critic.md (pack 3f2a91ab, run 1): 3 stills, 4 broken or ugly found (2 standing), 2 fixed, 0 open, 3 minor"
         self.assertIn("2 standing finding(s)", self.reasons(Critic=standing))
         self.assertEqual(self.reasons(Critic=standing.replace("(2 standing)", "(2 standing, filed as w1405)")), "")
+        # w4341: a standing finding is noted, not handed up by default.
+        self.assertEqual(self.reasons(Critic=standing.replace("(2 standing)", "(2 standing, noted)")), "")
+
+    # MEASURED (w4304, PR #3676 in FinalFactory): the critic's one standing finding was the Station Grid scrolling beside a
+    # Solar Panel window at 1280x800, a setup artifact, and the check forced it into a follow-up request lothsahn dropped.
+    W4304_CRITIC = ("/srv/fff/review/w4304-station-grid-french-floating/critic.md (pack 74293796, run 1): 6 stills, 3 broken "
+                    "or ugly found, 0 fixed, 0 open, 1 standing, 2 answered below, 5 minor")
+
+    def test_a_standing_finding_is_noted_not_filed(self):
+        self.assertIn("1 standing finding(s)", self.reasons(Critic=self.W4304_CRITIC))
+        self.assertEqual(self.reasons(Critic=self.W4304_CRITIC.replace("1 standing", "1 standing, noted")), "")
+        self.assertEqual(self.reasons(Critic=self.W4304_CRITIC.replace("5 minor", "5 minor, 1 setup")
+                                      .replace("1 standing", "1 standing, noted")), "")
+        # "noted" settles only the standing count, never an open NEW finding.
+        open_one = self.W4304_CRITIC.replace("0 open", "1 open").replace("1 standing", "1 standing, noted")
+        self.assertIn("1 broken or ugly finding(s) open", self.reasons(Critic=open_one))
+        self.assertEqual(self.reasons(Eye="9 stills looked at full size, 1 look broken or poor (the grid scrolls beside "
+                                          "the solar window, standing on master, noted)"), "")
 
     def test_an_eye_line_needs_its_counts(self):
         self.assertIn("'Eye:' says how many stills", self.reasons(Eye="looked at them all, fine"))
