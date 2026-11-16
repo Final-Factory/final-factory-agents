@@ -44,6 +44,9 @@ For any `rm`, `Remove-Item`, `del`, `rd`, `git clean`, `shutil.rmtree` or clean-
    request w1332 was stalled, and the brief's list did not name it). The command says "no ledger facts" or is not found: delete no worker's folder.
    A KEEP folder held only by the 7-day reopen hold can carry DELETE rows inside it (a finished worker's clean clones, Library copies, test output,
    w2223): delete those rows, not the folder; short of the target, say what the holds protect.
+   Delete a DELETE row with `ff-leftovers remove <path>...` (w4394), never rm: it judges the path again just before it deletes, refuses KEEP,
+   links, the main clone and anything outside the install folder or on C:, and logs each removal with its size. The harness denies a raw
+   `rm -rf` of another worker's folder (w4391 on the m3 could not remove two DELETE folders of 18 GB before it existed).
 2b. **Does it hold a git clone with work?** (w1387) A DELETE row judges the ledger, not git. For every folder with a `.git` in it or a few
    levels below (a worker's clone, a `wt-*` worktree): `git -C <clone> status --porcelain`, `git -C <clone> log --oneline --branches --not --remotes`,
    `git -C <clone> stash list`, or the portal's clean-up log (`portal_logs` source `cleanup`, `machine`, `grep` the folder name: "kept for a
