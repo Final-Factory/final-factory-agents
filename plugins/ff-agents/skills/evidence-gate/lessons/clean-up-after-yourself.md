@@ -277,7 +277,7 @@ the daemon updated; the space you can still free is your own sandbox and what is
 
 **Never take a list of live or "will resume" workers from a brief and delete the rest.** A brief's list is a guess of the dispatcher at
 the minute it wrote it; the ledger moves (a request stalls on a usage limit, a person asks for a change, a hold ends). Brief writers (the
-dispatcher, the orchestrators): a clean-up brief says "run `ff-leftovers folders` and delete only its DELETE rows", never "these workers are live".
+dispatcher, the orchestrators): a clean-up brief says "run `ff-leftovers folders` and delete only its DELETE rows, each with `ff-leftovers remove <path>`" (w4394; a raw `rm -rf` of a worker's folder is denied), never "these workers are live".
 
 **Why.** 2026-10-15 (w1379): w1374, LothDesktop's low-disk clean-up (worker d314b54b, V:\ffw), deleted the temp folder of stopped worker
 a735f37c, which is on w1332 (the comet catch-tail VFX). The ledger had stalled w1332 at 13:15 on a usage limit (revived at 13:59) and it was then
