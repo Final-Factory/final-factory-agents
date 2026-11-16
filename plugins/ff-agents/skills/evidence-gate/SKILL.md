@@ -402,7 +402,9 @@ One file each under `lessons/`: the rule, why (the incident, dated), how to appl
   the same turn); a player-facing fix's DONE says `Ships in:` and `pre-1.0:` (`build_claim_check.py`; w1770, after
   #1760's tabs were called in Build 111 from git and players had none). Where a release lands: a master bump on
   `development`, nothing sets `pre-release` or the default; run `release-status.py`, never recall it
-  ([section](lessons/whats-in-a-players-build-is-checked-by-running-it.md#where-a-release-lands-is-read-not-recalled-2026-10-03)).
+  ([section](lessons/whats-in-a-players-build-is-checked-by-running-it.md#where-a-release-lands-is-read-not-recalled-2026-10-03)). A tech reward or tech-gated content reaches players only when its tech is in the shipped tree
+  (`TechTree.cs:19` drops `_disabled` and toggled-off techs); check it and see the path fire on a live load before you call
+  a bug player-facing ([section](lessons/whats-in-a-players-build-is-checked-by-running-it.md#a-tech-reward-reaches-players-only-if-its-tech-is-in-the-shipped-tree-w4435-2026-11-16), w4435).
 - [Ask before content goes live](lessons/ask-before-content-goes-live.md): a build that makes major new
   content live on any Steam branch (1.0, a toggle on by default, an open beta) waits for the person's go for
   that moment, even on an agreed plan; a brief or PR that changes what a branch serves by default names that
