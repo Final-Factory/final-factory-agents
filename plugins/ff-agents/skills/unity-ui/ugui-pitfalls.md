@@ -132,6 +132,12 @@ manual pages for these components are the source for the rules: "Auto Layout", "
 - **A `ScrollRect` needs a viewport with a mask (`RectMask2D`) and a content anchored to the top**
   (anchor y 1, pivot y 1) that is TALLER than the viewport, with `vertical` on. Content no taller
   than the viewport does not scroll; content taller with `vertical` off is cut, silently.
+- **A Graphic without a CanvasRenderer draws nothing, in the editor only.** uGUI 2.0's `Graphic` requires only a
+  RectTransform and adds its renderer lazily behind `ReferenceEquals(GetComponent<CanvasRenderer>(), null)`; the
+  editor's fake null for a missing component fails that check, so `new GameObject(n, typeof(RectTransform))` plus
+  `AddComponent<OurGraphic>()` draws nothing there, silently, while a player draws it (w4386: the tech tree's lines).
+  Make the object with `typeof(CanvasRenderer)` and give the class `[RequireComponent(typeof(CanvasRenderer))]`
+  (`GraphicCanvasRendererGuardTest`). `Image`, `RawImage` and `Text` carry it already.
 - **A mask hides; nothing reports it.** `RectMask2D` culls anything outside its rect
   (`CanvasRenderer.cull`). Icons, previews and buttons cut by a mask raise no text-census flag. The
   rect audit checks every graphic against its masks.

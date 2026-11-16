@@ -465,3 +465,37 @@ filed or handed up as if the change had made them (the report r<N> of w4341 has 
   `test_a_standing_finding_is_noted_not_filed`).
 - A small fix on a screen your stills already shoot is still worth making here (w1546); the rule above only stops the
   default of turning every standing finding into a request.
+
+## A UI element built in code has a test that it draws, and is looked at in the editor too (w4386, 2026-11-16)
+
+**Rule.** When you add or change a uGUI element that is built in code (a `new GameObject(...)` and an
+`AddComponent` of a `Graphic`: a line layer, a custom mesh, a frame, a marker):
+
+1. **Create the GameObject with its renderer**: `new GameObject(name, typeof(RectTransform), typeof(CanvasRenderer))`,
+   and give every `Graphic` subclass of ours `[RequireComponent(typeof(CanvasRenderer))]`. The game repo's
+   `GraphicCanvasRendererGuardTest` fails on a Graphic class without it.
+2. **A test asserts that it draws**: the element exists, has a live `CanvasRenderer` (`GetComponent<CanvasRenderer>()
+   != null`, Unity's `==`), and its mesh is not empty (call `OnPopulateMesh` into a `VertexHelper`, or read
+   `canvasRenderer.GetMesh()`/`absoluteDepth`). "No exception" and "the data is built" are not "it draws".
+3. **Look at it in the editor and in a built player.** A built player is the verdict for players
+   (the sections above), but the people who
+   develop the game look at it in the editor, and the two can differ (below).
+
+**Why (w4386, 2026-11-16, lothsahn: "There was a regression due to a recent change. Can you please figure out how this
+happened and ensure a test backfills this so it never happens again").** The Technology window's tree showed its tiles
+and none of its connector lines in the editor. `TechTreePanel.CreateConnectorGraphic` (w646, PR #1214, 2026-10-07) made
+"Connectors" with only a RectTransform and then added `TechTreeConnectorGraphic`, a `MaskableGraphic`. In uGUI 2.0
+(`com.unity.ugui` 2.0.0, Unity 6000.3), `Graphic` requires only a RectTransform; its `canvasRenderer` getter adds a
+renderer lazily, behind `ReferenceEquals(GetComponent<CanvasRenderer>(), null)` (`Graphic.cs` 459-475). In the editor,
+`GetComponent` of a missing component returns Unity's fake null, an object that `==` calls null but `ReferenceEquals`
+does not, so no renderer was ever added and the 235 lines were built and never drawn, with no error or warning. In a
+player `GetComponent` returns a true null and the lazy add works: a Development player built from master's tech tree code
+drew every line (measured, lothdesktop). w646 was verified in a built player only, so the editor-only miss was never
+seen, and no test asserted a renderer. The production planner's graph links (`PlannerGraphLinks`, built with
+`CircuitUiKit.NewRect`) were the same bug, still behind its feature toggle.
+
+**How to apply.**
+- A new Graphic class: add the attribute; the guard test tells you if you forget.
+- A runtime-built element in a PR: name the test that asserts it has a renderer and a non-empty mesh in `## Evidence`.
+- A "lines/icons/frame missing" report: check `GetComponent<CanvasRenderer>() != null` on the element first, in the
+  same place (editor or player) the person saw it, before you bisect.
