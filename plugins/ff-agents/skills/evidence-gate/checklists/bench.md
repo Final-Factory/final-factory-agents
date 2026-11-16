@@ -251,7 +251,7 @@ Mechanics: the game repo's `Documentation/Bench-Lock.md`.
       `nmcli con modify --temporary "<ssid>" 802-11-wireless.powersave 2` or `802-11-wireless.bssid <node>`, then
       `nmcli con up "<ssid>"` (a few seconds' blip; wait for CI jobs to end). Split the path first: ping the router from
       the host itself, so the far machine's own Wi-Fi (m3 lost one ping every ~9.4 s on 6 GHz) is not counted twice.
-- [ ] **An ad hoc PERF A/B or rerun batch** (w4444, 2026-11-16; [lesson](../lessons/ad-hoc-perf-legs-one-exclusive-ticket.md)):
+- [ ] **An ad hoc PERF A/B or rerun batch** (w4444, 2026-11-16; [lesson](../lessons/settle-your-own-guesses.md#ad-hoc-perf-and-rerun-legs-one-exclusive-ticket-adaptive-vsync-off-a-void-rerun-is-rerun-w4444-2026-11-16)):
       all legs in ONE `bench_queue.py run --mode exclusive` ticket (a ticket per leg re-queued for about 42 min each,
       measured); windowed legs pass `--peer-arg solo=-ffNoAdaptiveVSync` (`FramePacer.cs:474`) or cap at 60 fps; a rerun
       that ended `env` because a person played on that PC is void, run it again after the game closes.
