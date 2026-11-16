@@ -182,6 +182,16 @@ census (`<shot>.json`: small, clipped, off-screen and overlapping text, covered 
   w4268's first two runs left gaps, or Connectors facing Up below the row, and got separate stations, so the power
   stills showed the wrong station. The warning icons over a station (No Power and the rest) blink every 0.75 s: take
   each still twice, `{"wait": 0.8}` apart, and keep the one that shows the icon.
+- **Marker, load and profile traps (w4438).** (1) `ffauto:ping.at` is rate-limited: 3 at once, then one per 2 s, and a
+  ping lives about 6 s; a tour that drops more gets "You are pinging too fast" in chat and fewer pings, so drop 3, wait
+  6.5 s, repeat. (2) A `key`/`press` of escape after `ffauto:ui.loadgame` opens the pause menu over every later still;
+  close menus with `ffauto:ui.menu|close`. (3) A `profile:<name>` capture (`<out>/<name>.raw`, 20 s is about 600 MB) is
+  read in your sandbox editor with `execute_code`: `ProfilerDriver.LoadProfile`, then per frame
+  `GetHierarchyFrameDataView` (`frameTimeMs`, and the `<Class>.LateUpdate() [Invoke]` items summed by name). Four
+  captures outrun the MCP reply timeout, so write the digest to a file in `$TMPDIR` and wait for the file. A dev player
+  at 60 fps is vsync-bound: compare the markers' ms per frame, not the frame time. (4) On a big computer call
+  `timed_place` before `bench_queue.py timed`, and start the ticket as its own `run_in_background` task (a trailing `&`
+  is refused, hook w3731); a script that waits for `granted` in the ticket's log runs the legs.
 - **Title-screen tour traps (w4162).** (1) A tour of a title-screen dialog passes no `-ffAutomationRole solo`: that
   role starts a new game, so the title menu is gone ("ui.modmismatch: no title menu"); with no game ticked,
   `quit_save_check.py` still found no quit save on w4162's legs. (2) `hide:` takes a kind selector,
