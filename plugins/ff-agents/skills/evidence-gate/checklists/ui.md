@@ -579,6 +579,12 @@ control, and a redesign goes out as 2 or 3 clearly different options built from 
     non-empty mesh, and look at it in the editor as well as the player
     ([lesson](../lessons/verify-ui-with-full-content-like-a-player.md#a-ui-element-built-in-code-has-a-test-that-it-draws-and-is-looked-at-in-the-editor-too-w4386-2026-11-16)).
 
+47. **A change whose effect is in the world is shown in the world (w4383).** When the panel only words a change and its
+    effect is where a ship lands or which way something faces, shoot that effect in a setup where before and after differ
+    (a landing zone turned away from Up), in both builds; a save where both act the same earns the critic's "the ask is
+    not shown". Recipe: `rotate.at|x|z|cw|4`, `hauler.waittime`, a `landingzone.zonedump` poll for `inStation`
+    ([lesson](../lessons/verify-ui-with-full-content-like-a-player.md#a-change-whose-effect-is-in-the-world-is-shown-in-the-world-with-a-setup-where-before-and-after-differ-w4383-2026-11-15)).
+
 19. **The Deck tour is a stand-in (w770).** It forces its own window size and a scripted Deck, so it cannot show Steam's
     layout choice, the Proton first-frame resolution, the Steam client version or touch. A Deck UI change says "verified on
     a real Deck" or "not verified on a real Deck" ([deck.md](deck.md)). For a stored bad size use `-ffDeckTourSize none
