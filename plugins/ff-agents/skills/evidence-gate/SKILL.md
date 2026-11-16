@@ -717,3 +717,4 @@ repo](lessons/lessons-belong-in-the-harness-repo.md). The design and its sources
 
 The reasoning behind this skill, the incident it came from and the prior art: [design.md](design.md).
 The week's cases replayed against it: [replay-2026-10-02.md](replay-2026-10-02.md).
+- [Ad hoc PERF legs: one exclusive ticket, no adaptive vSync, void reruns, TMP tests need a Canvas](lessons/settle-your-own-guesses.md#ad-hoc-perf-and-rerun-legs-one-exclusive-ticket-adaptive-vsync-off-a-void-rerun-is-rerun-w4444-2026-11-16) (w4444, 2026-11-16): one `bench_queue.py run --mode exclusive` for all legs (a ticket per leg waited ~42 min each); `--peer-arg solo=-ffNoAdaptiveVSync`; a rerun voided by a person playing is run again; an EditMode TMP layout test needs a parent Canvas.
