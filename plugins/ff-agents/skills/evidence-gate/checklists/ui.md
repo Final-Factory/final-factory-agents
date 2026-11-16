@@ -570,6 +570,15 @@ control, and a redesign goes out as 2 or 3 clearly different options built from 
       twice about 0.8 s apart and keep the one that shows the icon ([unity-ui](../../unity-ui/SKILL.md), "Tour worlds
       on one station").
 
+46. **A UI element built in code has a test that it draws, and is looked at in the editor too (w4386).** The Technology
+    window's tree lost every connector line in the editor for 40 days: `TechTreePanel` made "Connectors" with only a
+    RectTransform, uGUI 2.0's `Graphic` adds its CanvasRenderer lazily behind a `ReferenceEquals` null check, and the
+    editor's fake-null `GetComponent` defeats it (a built player drew the lines). Create such a GameObject with
+    `typeof(CanvasRenderer)`, give a Graphic class of ours `[RequireComponent(typeof(CanvasRenderer))]` (the game repo's
+    `GraphicCanvasRendererGuardTest` fails without it), name the test that asserts the element has a live renderer and a
+    non-empty mesh, and look at it in the editor as well as the player
+    ([lesson](../lessons/verify-ui-with-full-content-like-a-player.md#a-ui-element-built-in-code-has-a-test-that-it-draws-and-is-looked-at-in-the-editor-too-w4386-2026-11-16)).
+
 19. **The Deck tour is a stand-in (w770).** It forces its own window size and a scripted Deck, so it cannot show Steam's
     layout choice, the Proton first-frame resolution, the Steam client version or touch. A Deck UI change says "verified on
     a real Deck" or "not verified on a real Deck" ([deck.md](deck.md)). For a stored bad size use `-ffDeckTourSize none

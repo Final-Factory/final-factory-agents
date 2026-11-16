@@ -682,6 +682,10 @@ One file each under `lessons/`: the rule, why (the incident, dated), how to appl
   re-pinned digest proves nothing about a field no fixture sets or the hash leaves out; assert each excluded field, write
   old-file fixtures with the old tree's own serializer and read them at HEAD with mutant arms, and turn the feature
   toggle on (w2124: no checked-in string carried a circuit, an Intermediates filter or a projector copy).
+- [A UI element built in code has a test that it draws](lessons/verify-ui-with-full-content-like-a-player.md#a-ui-element-built-in-code-has-a-test-that-it-draws-and-is-looked-at-in-the-editor-too-w4386-2026-11-16):
+  a runtime-made Graphic's GameObject gets `typeof(CanvasRenderer)` and its class the RequireComponent, a test asserts a
+  live renderer and a non-empty mesh, and it is looked at in the editor too (w4386: the tech tree drew no lines in the
+  editor for 40 days; the editor's fake null kept uGUI from adding the renderer, a player drew them).
 
 ## Adding a lesson: before every DONE
 
