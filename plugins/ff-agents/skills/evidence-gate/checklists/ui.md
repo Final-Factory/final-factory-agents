@@ -585,6 +585,15 @@ control, and a redesign goes out as 2 or 3 clearly different options built from 
     not shown". Recipe: `rotate.at|x|z|cw|4`, `hauler.waittime`, a `landingzone.zonedump` poll for `inStation`
     ([lesson](../lessons/verify-ui-with-full-content-like-a-player.md#a-change-whose-effect-is-in-the-world-is-shown-in-the-world-with-a-setup-where-before-and-after-differ-w4383-2026-11-15)).
 
+48. **Ask about a kept window overlap before you leave a PR to merge on green (w4222).** An overlap that was already on
+    master turns "kept" once the change moves either element: on PR #3644 a parent set 150 tiles away moved the Inserter
+    Bot's world marker (`IconImage(Clone)`), which drew over the bot's window before and after. `pr_evidence.py` then
+    passes the `Window overlaps:` line only with `intended (who): "words"` whose words are in a `Brief (who): "..."` line
+    of the PR, and a note about the feature itself does not cover it. The merge-on-green attempt failed on this check, and
+    the request stood a day. Ask the requester with `waiting_on_person` as soon as the census shows a KEPT pair (use
+    `decided_override` when their note settles only the feature), add their card answer as a
+    `Brief (who, date): "..."` line, and quote it on the `Window overlaps:` line.
+
 19. **The Deck tour is a stand-in (w770).** It forces its own window size and a scripted Deck, so it cannot show Steam's
     layout choice, the Proton first-frame resolution, the Steam client version or touch. A Deck UI change says "verified on
     a real Deck" or "not verified on a real Deck" ([deck.md](deck.md)). For a stored bad size use `-ffDeckTourSize none
