@@ -127,6 +127,10 @@ holds, or the report says what is left instead of DONE.
 10. **Cause named under the reporter's conditions.** A report that names a bug's cause lists the reported save, mods,
    settings, machine/GPU and exact symptom beside the repro's, says which were matched, and either removed each
    difference or showed the cause with and without it; otherwise it says "contributing factor", not "cause" ([lesson](../lessons/settle-your-own-guesses.md#name-a-cause-only-from-a-repro-under-the-reporters-conditions-w844-w2448-2026-10-28), w844, w2448).
+10a. **Reached by players.** A bug called player-facing in content behind a tech, an asset flag or a feature toggle
+   names the check that the content is on in the shipped tree, and a live load where its path ran; otherwise it says
+   "latent" ([w4435](../lessons/whats-in-a-players-build-is-checked-by-running-it.md#a-tech-reward-reaches-players-only-if-its-tech-is-in-the-shipped-tree-w4435-2026-11-16):
+   Probe Engine Speed's reload bug, measured in EditMode, sat in four `_disabled` techs).
 11. **Learned.** The report has `Learned: <file or PR>` or `Learned: nothing new`. A correction or a
    reopen gets the check that would have caught it ([lessons belong in the harness
    repo](../lessons/lessons-belong-in-the-harness-repo.md)).

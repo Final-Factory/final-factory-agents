@@ -87,3 +87,23 @@ been reported as stuck when it was slow: it landed 72 min after the bump, inside
   keep asking.
 - If ffbox's `SETLIVE` changes, the script follows it by itself; fix the prose here and in `ci-release` in the same
   change.
+
+## A tech reward reaches players only if its tech is in the shipped tree (w4435, 2026-11-16)
+
+**Rule.** Before you call a bug in a technology's reward, or in any tech-gated content, player-facing, check that the
+tech is in the shipped tree: `TechTree.cs:19` keeps only techs with `!t.Disabled && FeatureToggles.IsGateOpen(...)`, and
+`ResearchController.RecomputeAllTechnologyRewards` resets and rewards only those. A tech asset with `_disabled: 1`, or
+behind a closed toggle, never runs its `Reward` or `ResetToBaseline` in a game, whatever an EditMode test that builds
+it enabled shows.
+
+**Why.** The w4435 nightly regression check of #3702 (w4401, Probe Engine Speed applies once) built the Probe Engine
+Speed techs enabled in an EditMode probe. It measured a real mismatch: an Oracle speed purchase after research gave
+144.5, and a reload gave 148.5. All four `ProbeEngineSpeed*.asset` are `_disabled: 1` (FF-957, 2022), so no player
+can hit it. What showed it was a temporary log in `ResetToBaseline` that never fired while 42 real saves loaded. The
+fix still merged as latent (PR #3715, with tests), and the report says plainly that it is latent.
+
+**How to apply.** `grep -n '_disabled\|_featureToggle' Assets/Resources/Technologies/<Tech>.asset`, or in the editor
+check that the tech is in `ResearchController`'s `_allTechs`. Then confirm on a live save load that the code path runs
+(a log or a counter on it). An EditMode fixture that builds content itself proves the code, not that players reach
+it. Label the verdict "latent" when the content is off.
+
