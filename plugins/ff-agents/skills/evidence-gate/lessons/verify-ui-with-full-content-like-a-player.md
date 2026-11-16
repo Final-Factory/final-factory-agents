@@ -499,3 +499,25 @@ seen, and no test asserted a renderer. The production planner's graph links (`Pl
 - A runtime-built element in a PR: name the test that asserts it has a renderer and a non-empty mesh in `## Evidence`.
 - A "lines/icons/frame missing" report: check `GetComponent<CanvasRenderer>() != null` on the element first, in the
   same place (editor or player) the person saw it, before you bisect.
+
+
+## A change whose effect is in the world is shown in the world, with a setup where before and after differ (w4383, 2026-11-15)
+
+**Rule.** When a change's effect is in the world (where a ship lands, which way it faces, what a building does) and the
+panel only words it, the before and after stills show that effect, in a setup where the two builds differ. Stills of an
+unchanged panel, or a save where both builds act the same, do not show the ask.
+
+**Why (w4383, lothsahn: "up always makes the command core in the right direction (up->up relative to the world,
+etc)").** The Command Core stop's Orientation arrows became world facings. The first stills were of the stop panel on
+the `SameNameZones-0.50.0.75` fixture, whose zones all face Up, so before and after looked the same, and a fresh ui-critic
+graded it BROKEN: "the person's ask is not shown". Turning the zone the ship lands at, in both built players, showed it:
+the same ship landed facing Right before (turned with the zone) and Up after.
+
+**How to apply.**
+- Pick the setup where the old and new rules disagree (a zone turned away from Up), and shoot both builds the same way.
+- Built-player recipe (m5, measured): `ffauto:rotate.at|x|z|cw|4` turns a landing zone (y 4 is its layer);
+  `ffauto:hauler.waittime|<stop>|60|<core x>|<core z>` holds the ship at that stop, since a stop with no wait is left
+  between two polls; poll `ffauto:landingzone.zonedump` until the zone's entry says `inStation`; then
+  `ff-agent screenshot`. `ff-agent`'s `--pid` and `--wait` go after the subcommand (`ff-agent cmd "..." --wait --pid N`).
+- Outside the game repo, `ui_layout.py`, `ui_look.py pack` and `pr_evidence.py` need `FF_GAME_REPO=<the checkout>` to
+  find `hud-pins.json`.

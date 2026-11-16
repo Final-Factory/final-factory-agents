@@ -686,6 +686,9 @@ One file each under `lessons/`: the rule, why (the incident, dated), how to appl
   a runtime-made Graphic's GameObject gets `typeof(CanvasRenderer)` and its class the RequireComponent, a test asserts a
   live renderer and a non-empty mesh, and it is looked at in the editor too (w4386: the tech tree drew no lines in the
   editor for 40 days; the editor's fake null kept uGUI from adding the renderer, a player drew them).
+- [A change whose effect is in the world is shown in the world](lessons/verify-ui-with-full-content-like-a-player.md#a-change-whose-effect-is-in-the-world-is-shown-in-the-world-with-a-setup-where-before-and-after-differ-w4383-2026-11-15):
+  shoot the world effect in a setup where before and after differ, both builds (w4383: a panel on a save whose zones
+  all faced Up showed nothing; turning the zone showed the ship land Right before and Up after).
 
 ## Adding a lesson: before every DONE
 
