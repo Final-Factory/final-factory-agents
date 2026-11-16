@@ -459,6 +459,15 @@ alone. **Verify through the MCP bridge, not by watching files**:
    shipped "fixes" in it had never run — and a second bug, a never-assigned `ComponentLookup`
    that threw on first scheduling, only surfaced once the query was corrected.
 
+**Without MCP, never wait on a log line alone** (w4350, 2026-11-15): with UnityMCP down, a wait that grepped
+`Editor.log` for a reload marker matched an EARLIER reload, missed a `CS0246` in a new test file, and the next start
+stopped at "Enter Safe Mode?". Through `scripts/unity-bridge.py`, wait until `Library/ScriptAssemblies/<asm>.dll` is
+newer than the edited source, then grep `error CS` only in the log lines after the reload that produced it.
+
+**Restored assets need a forced refresh** (w4350): after a RED check (`git stash apply`, `git checkout -- <asset>`)
+puts `.asset` files back while the editor runs, `refresh_unity` with `mode: "force"` before the next test run. Without
+it, 4 of 8 tests failed in a merge-gate run against the pre-restore assets; all passed after the forced refresh.
+
 **New `.cs` files**: an unimported script is not compiled at all — 0 errors + fresh domain
 reload + green tests can all be true while your new file is absent from the build. Confirm the
 `.meta` appeared next to it after refresh.
