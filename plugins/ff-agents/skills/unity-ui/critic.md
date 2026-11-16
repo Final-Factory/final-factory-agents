@@ -72,13 +72,13 @@ brief's reasoning or the worker's notes, given only what a person would see.
    bugs", and its stills showed the panel it fixed with the On/Off switch stretched 14x, as on master: NEW. The report
    ends with one line:
    `Critic: N stills, M broken or ugly (S standing), K minor, A setup`.
-   What the test setup made (two windows packed on a small screen, a place left over from an earlier language or step, a
-   live value, a crop's edge) is listed under `Setup` and counted nowhere (design-rubric.md, "Not a finding"; w4341).
+   What the test setup made (a window the tour forced open or dragged, a place left over from an earlier language or
+   step, a live value, a crop's edge; not windows the game opens together by itself) is listed under `Setup` and counted nowhere (design-rubric.md, "Not a finding"; w4341).
 4. **Fix or answer every NEW broken or ugly finding**, or answer it with the person's words asking for exactly that.
    **Note the STANDING ones; do not file or hand them up by default** (w4341, lothsahn: "Are you flagging non-differences
    as problems?"). The change did not make them and must not be blocked on them. Put them in the report as one line,
-   "standing, noted". Only one marked `player hits it: yes` (a player meets it in normal play: the window alone, opened
-   where the game opens it, in their language) goes in your report to the person as "worth a fix?", for their
+   "standing, noted". Only one marked `player hits it: yes` (a player meets it in normal play: the same steps in a fresh
+   session, with the windows the game opens for them, in their language) goes in your report to the person as "worth a fix?", for their
    orchestrator to decide; you never hand_up_requests it yourself unless the person asked for follow-ups. Minor findings
    are never handed up. Then a new pack of the new stills, and
    a new critic. After three rounds with one still open, the person gets the options and the critic's report, not a

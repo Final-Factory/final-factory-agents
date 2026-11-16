@@ -109,8 +109,8 @@ Ben, 2026-10-16: "you make bad UI mistakes constantly". The gate, at the top of 
 3. Measure it against the before with `ui_look.py colour` and `ui_layout.py shape` (`Colour:`, `Shape:`), and against a
    reference window of the game's with `ui_look.py family` (`Family:`: corners, header, padding; item 33).
 4. Have a **fresh** `ff-agents:ui-critic` grade the pack `ui_look.py pack` builds (`Critic:`), and fix or answer each
-   broken or ugly finding. What the test setup made (two windows packed on a small screen, a place an earlier language
-   left, a live value) is SETUP, not a finding, and a STANDING one is noted (`S standing, noted`), not filed or handed
+   broken or ugly finding. What the test setup made (a window the tour forced open or dragged, a place an earlier
+   language left, a live value) is SETUP, not a finding, and a STANDING one is noted (`S standing, noted`), not filed or handed
    up by default ([lesson](lessons/verify-ui-with-full-content-like-a-player.md#what-the-test-setup-made-is-not-a-ui-finding-and-a-standing-one-is-noted-not-handed-up-w4341-2026-11-15), w4341); a coverage gap the critic names that is
    the person's own case gets its stills
    ([lesson](lessons/verify-ui-with-full-content-like-a-player.md#a-standing-finding-is-filed-with-its-wnnn-or-fixed-and-the-critics-coverage-gap-is-shot-w1546-2026-10-19)).
