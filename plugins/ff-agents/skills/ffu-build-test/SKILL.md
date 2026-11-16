@@ -74,6 +74,10 @@ whole verification. The repo's own `CLAUDE.md` is binding and longer; this skill
   --test-threads 6` cleared it, but six targets of untouched crates (ffu-crash, ffu-platform, ffu-render, ffu-testdir)
   were then "never executed" (os error 2, the exe missing); `cargo test -p <those packages>` passed. Run the workspace
   at `-j 4 -- --test-threads 6` there, rerun any missing or DLL-init target per package, and say so in the PR evidence.
+- **Run the whole workspace in debug, or with `--no-fail-fast`: a release run fails 3 tests on purpose** (w4418, ffu
+  #853). `cargo test --release --workspace` fails ffu-sim's `*_is_caught_in_a_debug_build` tests (they need
+  `debug_assertions`), and cargo then stops before the later crates, so most of the suite never runs (110 of 178
+  targets ran on biscuit). Add `--no-fail-fast` and count those 3 as expected, or run in debug as CI does.
 - **Check an incremental sync against the whole one across the whole workspace suite** (w4051, ffu #756). A partial
   sync of the crafters' power needs passed every ffu-sim test, then failed 21 bot and oracle tests (`mix_ff1`,
   `ff1_import`) on its debug assert against the whole sync. `Op::CrafterProgress` raised an Assembler's need without

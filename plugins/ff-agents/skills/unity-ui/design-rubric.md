@@ -34,7 +34,9 @@ still. Look at the panel at its own pixels, not only the whole screen: `ui_look.
    bullets where a list of rows belongs; ragged edges; siblings with different padding; labels jammed against values or
    the frame.
 7. **Readable.** PASS: every text and icon stands clear of what is behind it: body text 4.5:1 or more (WCAG 2), large text
-   and the parts of a control 3:1 or more, nothing under 9 px on the Deck screen. FAIL: grey on navy, or text on a tinted
+   and the parts of a control 3:1 or more, nothing under 9 px on the Deck screen. The 9 px is a font size (Valve's rule):
+   its capitals draw about 7 px of ink, so compare a measured letter height with 0.75 of the floor, or the font size the
+   census or UI tree reports (w4418: a critic graded 7 px letters of a 9 px font UGLY, then withdrew it). FAIL: grey on navy, or text on a tinted
    or bright fill, that fades (`Colour:` LOW CONTRAST); controls washed out by a fill behind them.
 8. **It belongs in Final Factory.** PASS: beside the reference panels it looks like the same game: the same frame art,
    navy, fonts, button styles and icon sizes, the game's components reused (Ben, w1296: "reuse components when you can
