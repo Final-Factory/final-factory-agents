@@ -130,6 +130,10 @@ Measure each of these on the still beside the mock before a critic round; each o
 - **Corners are per part** (`Corners` on `Spec`, w4201, ffu #792): `Theme` follows the theme's family, `Square` for
   buttons, close and pager, `CutBottomRight` for every tile. Give every tile in a panel the same one: critic round 1
   graded the Assembler's recipe tile, still cut at both corners beside bottom-right-only input tiles, UGLY.
+- **One corner shape across a window** (w4345, ffu #847): a fill in a colour of its own is `Shape::Plain`, which drew
+  `CutBottomRight` square beside cut token fills until #847 (render.rs). Small-shape token fills (BAR_BACK, BUTTON,
+  FIELD_FILL, CURRENT) carry `ui.slot_edge`'s 1 px outline; an unoutlined row takes a colour of its own. Match the mock's
+  corners on every control: mixed square and cut was UGLY (Ben, w1761: "differing border-radius values all smashed together").
 - **Focus distance, two sources**: r197's spec puts the brackets 7 px out and a 1 px ring 3 px out; w4201's brief asked
   for brackets about 3 px out, joined by the ring. `BRACKET_OUT` 2 (3 device px at 1080) follows the brief. Quote
   both when they disagree, and build what the person's latest words say.
@@ -234,6 +238,10 @@ Measure each of these on the still beside the mock before a critic round; each o
   set state (a damaged ship) comes from a small crate in `$TMPDIR` with a path dependency on `ffu-sim` that submits ops,
   steps a `Sector` to the state and writes `snapshot::encode`. An `--autobuild` of an item the ship holds 0 of gives
   the refusal notice for a still.
+- **A hauler panel over the FF1 world** (w4345, ffu #847): `ffu-headless ff1 import <zip> --out world.snap` (no
+  `--out` only prints JSON), serve it as above, then `ffu --connect ... --name pilot --hud --minimap --hauler h.snap
+  --route --clip x.mp4 --still x.png` (`--hauler` connected needs `--clip`; the camera follows the pilot). An offscreen
+  `--start` still over the big world was blank. macOS has no `timeout`: `perl -e 'alarm shift; exec @ARGV' N cmd`.
 - **r197's Deck mock (`hud-deck`, a 2x2 of quadrants) hides the top readout row under quadrant B's caption** (w4242,
   ffu #801): a readout's place at 1280x800 cannot be measured there. Derive it (the 1080 offset to the speed text, scaled
   to the Deck's speed text at x 459, w4106) and say "derived, not measured" in the PR and the report. FF1's fleet icon is
@@ -260,6 +268,9 @@ Measure each of these on the still beside the mock before a critic round; each o
 - **An arrow node's text is still laid out** (w4243): a footer or toggle button drawn as a triangle (`Spec.arrow`)
   keeps its text as the layout and accessible name, and a word there failed the gate's "leaves its parent" check. Give
   it one glyph (`‹`, `›`, `v`); a separate accessible name is a follow-up.
+- **A glyph the font lacks is a drawn `Symbol`** (w4345, ffu #847): Roboto has ↓ ↑ × › ‹ but no → ← or chevrons
+  (fontTools). Draw a bar grid, 1 device px per cell; a cell never shrinks under 1 px (`Symbol::place`), so size the
+  box `cols/1.5` at 1080 and `cols/1.2` at 800 (HUD scales) or the gate fails it, and keep grids 9+ columns for 9 px.
 - **Read the PR's state just before you push a fix onto another worker's branch** (w4317): a critic fix pushed as
   cf0c384c landed on #828's branch about a minute after #828 merged. The push succeeded, but onto a dead branch, so
   the fix had to move to follow-up #830. Run `gh pr view <n> --json state,mergedAt` right before the push. If the PR
@@ -270,6 +281,9 @@ Measure each of these on the still beside the mock before a critic round; each o
 - **`pr_evidence.py` reads `Reference capture:` and `Art language:` only as plain labels** (w4243): bolded
   (`**Reference capture:**`) it still failed. A `ui.wgsl` change in an ffu PR asks for both: name the mock still as the
   reference and the HUD's two colours and its one accent.
+- **pr_evidence's Unity-census lines** (Overlaps, Moved, Pinned, Style delta E, Critic pack id, Window overlaps) have no
+  ffu source (w4345): write each "not measured (no Unity census)" with the stand-in, `crates/ffu-ui/tests/gate.rs` and a
+  layout test that opening the panel moves no other HUD node.
 - FF1's hotbar defaults are `GameInitializer.StartHotbarItems` in FF1's main scene.
 - The Write and Edit tools may refuse to create a file in an ffu slot (w4106, m5): write it in `$TMPDIR` and copy it
   in, and edit with a small Python script that checks each replacement's count.
