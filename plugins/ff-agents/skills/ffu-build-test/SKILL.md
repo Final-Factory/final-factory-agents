@@ -68,6 +68,17 @@ whole verification. The repo's own `CLAUDE.md` is binding and longer; this skill
   `cargo test -p ffu-sim --test golden_snapshot` against the old pins, and look for a pass. Then re-pin with a "wNNN
   moved it from ..." comment. ffu-sim's clippy denies `indexing_slicing`: a `windows(2).all(|w| w[0] <= w[1])` fails
   it, so use `is_sorted_by_key`.
+- **A change to a sim rate or per-tick constant: check every main merge, saved per-tick fields and the planted-rule
+  scripts** (w4405, ffu #861, the sector moved from 16 to 20 UPS). Three things went wrong:
+  - While the PR was open, three of main's merges added new hard-coded 16s: w4400's bot step, w4302's landing linger,
+    and w4376's `GRACE_TICKS = 48` with repair tests that expected 0.3 a pass. Before each push, grep the diff of every
+    `origin/main` merge for `16`, `1<<28`, `/16` and per-tick constants.
+  - A per-tick value saved in a snapshot (a yard site's bot `step`) loads at the rate it was saved at. Re-sync it in
+    `decode_with` (`sync_bot_step`), and test that a 16-UPS step loads at the sector's rate.
+  - `tools/sim_switch.sh` (check-release, M2.9b) and `tools/measure_edit_loop.sh` find the rule they plant by the exact
+    line `pub const MINER_PERIOD: u16 = ...;`. Changing that line fails `check-release` with "no longer has ...; plant
+    another sim change here". That job runs only in CI, after the local checks are green. Move both scripts' anchors in
+    the same PR.
 - **A storm of 0xc0000142 or missing test exes on Windows is load, not your change: rerun narrower before you count
   it** (w4284, ffu #817). On lothdesktop a full `cargo test --workspace --all-features --no-fail-fast` at default
   parallelism failed 98 test targets with STATUS_DLL_INIT_FAILED (0xc0000142), none of them real. `-j 4 --
