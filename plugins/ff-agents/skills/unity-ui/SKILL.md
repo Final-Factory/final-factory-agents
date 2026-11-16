@@ -108,7 +108,7 @@ census (`<shot>.json`: small, clipped, off-screen and overlapping text, covered 
   each switch. Shoot the window the brief is about alone, opened fresh where the game opens it; open a second window
   only when the task is about two. A window short or scrolling beside another on a small screen is SETUP, not a finding
   (w4304's Station Grid beside a Solar Panel window at 1280x800; design-rubric.md "Not a finding";
-  evidence-gate `lessons/setup-artifacts-are-not-findings.md`).
+  evidence-gate `lessons/verify-ui-with-full-content-like-a-player.md#what-the-test-setup-made-is-not-a-ui-finding-and-a-standing-one-is-noted-not-handed-up-w4341-2026-11-15`).
 - **Judge a dropped window where it opens again, not where it was dropped (w1217).** While a window is dragged and
   after the drop it sits on the drag canvas (`PersistentObjects/Canvas/PanelShowcase`), above the whole HUD, until it
   is closed. Opened again (the next session, with its saved `PanelPosition`) it is back under `GamePanels`, where the
