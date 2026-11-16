@@ -267,8 +267,8 @@ while". So the stills came back for a third round. The fix was 20 lines of CSS. 
 
 - **Superseded in part by w4341 (2026-11-15, [setup artifacts are not findings](#what-the-test-setup-made-is-not-a-ui-finding-and-a-standing-one-is-noted-not-handed-up-w4341-2026-11-15)):**
   a NEW finding is fixed or answered; a STANDING one is noted on the `Critic:` line (`S standing, noted`), not filed or
-  handed up by default, and what the setup made (two windows packed on a small screen, an inherited place) is not a
-  finding at all. lothsahn, w4341: "Are you flagging non-differences as problems?". w1546's chip overlap was a real one
+  handed up by default, and what the setup made (a window the tour forced open or dragged, an inherited place) is
+  not a finding at all. lothsahn, w4341: "Are you flagging non-differences as problems?". w1546's chip overlap was a real one
   on the screen being shot, so fixing it here was still right.
 - **Fix it here** when the fix is small and the screen is one your stills already shoot. Filing it costs the person a
   round as well.
@@ -418,8 +418,8 @@ w3050 (the craft queue under the ability bar at 1280x720) took four detours befo
 ## What the test setup made is not a UI finding, and a standing one is noted, not handed up (w4341, 2026-11-15)
 
 **The rule.** Before a UI finding is graded, counted, fixed, filed or handed up, ask whether a player would see it in
-normal play: the window opened fresh where the game opens it, alone unless the person's words are about two, in their
-language. If not, it is SETUP (what the tour or the shot made) and is listed, never counted. A STANDING finding (the before
+normal play: the same steps in a fresh session, with the windows the game opens for them where it opens them, in
+their language. If not, it is SETUP (what the tour or the shot made) and is listed, never counted. A STANDING finding (the before
 still shows it too and no words ask for it) is noted in the PR's `Critic:` line and the report, not filed and not handed up
 by default; only one a player hits in normal play goes to the person's report as "worth a fix?", and their orchestrator
 decides. A minor finding is never handed up.
@@ -437,9 +437,14 @@ move windows around? Are you flagging non-differences as problems?"
 What the code says (sourced, the game repo at 424742b2fb): the column fits a window it placed to the place it gets
 (`SelectionColumn.cs`, `otherFit.Fit(placedOther.height)` for windows the player did not place), and never moves or
 shortens one the player placed (w725, `Header.PlacedByPlayer`). The game remembers where each window was put
-(`PanelLayout.cs`, PlayerPrefs `PanelPosition.<role>`). So a grid short beside a Solar Panel window is a player's own
-layout choice they can change with a drag or a close, and the tour that ran en, de, fr and ru in one session put each
-language's windows where the last one left them.
+(`PanelLayout.cs`, PlayerPrefs `PanelPosition.<role>`), and w4304's tour ran en, de, fr and ru in one session.
+
+So w4341 re-shot it (measured, a Mac player of master 424742b2fb, French alone, every `PanelPosition` key removed, the
+Capacitor then the Solar Panel selected as the tour does): the game itself opened the Station Grid beside the Solar Panel
+window, and the list still showed 5 rows and "+3 de plus" with about 115 px free above the hotbar; with the Capacitor
+selected it showed all 8. The finding was real and standing (a player hits it), not setup. What was wrong was its route:
+a standing finding the change did not make became a request by default. And the question "is it setup?" was answered by a
+fresh re-shoot, not by reasoning from the code.
 
 w4341's audit of 182 UI pull requests' `Critic:` lines found the same pattern again: standing and setup findings counted,
 filed or handed up as if the change had made them (the report r<N> of w4341 has the table).
@@ -448,10 +453,10 @@ filed or handed up as if the change had made them (the report r<N> of w4341 has 
 
 - The checklist line that would have caught w4304's case (`checklists/ui.md`, item 30): **"Before a finding is fixed,
   filed or handed up, name its still's setup: which windows were open, where each was opened (fresh, or where an earlier
-  language or step left it) and the screen size. A window short or scrolling beside another window on a small screen,
-  when the brief is about one window, is SETUP: shoot that window alone, opened fresh, before you call it a finding."**
+  language or step left it) and the screen size; re-shoot it in a fresh session with a player's steps before you call it
+  setup or a finding."** Then a standing one is noted, with `player hits it: yes` going to the report as "worth a fix?".
 - Tours: one language per fresh session (a fresh config folder or `game_data.py` snapshot and restore between legs), or
-  close and reopen the window after each language switch; one window per still unless the task is about two
+  close and reopen the window after each language switch; open a window by hand only when the task is about it
   (unity-ui SKILL.md, the tour notes).
 - The critic lists SETUP in its own section and its last line gains `, A setup`
   (`agents/ui-critic.md` step 6b, `design-rubric.md` "Not a finding").

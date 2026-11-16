@@ -380,8 +380,9 @@ control, and a redesign goes out as 2 or 3 clearly different options built from 
     that; note the STANDING ones (`S standing, noted`; not filed or handed up by default, w4341; a small fix on a screen
     you already shoot is made here, w1546); before a finding is fixed, filed or handed up, name its still's setup: which
     windows were open, where each was opened (fresh, or where an earlier language or step left it) and the screen size;
-    a window short or scrolling beside another window on a small screen, when the brief is about one window, is SETUP:
-    shoot that window alone, opened fresh, before you call it a finding (w4304's two-window "+3 de plus" at 1280x800,
+    re-shoot it in a fresh session with a player's steps before you call it setup or a finding: a window short beside
+    one the tour opened, dragged or left in an old place is SETUP; beside one the game opened itself it is a finding
+    (w4341's fresh re-shoot of w4304's two-window "+3 de plus" at 1280x800 showed the game opens both: real, standing,
     [lesson](../lessons/verify-ui-with-full-content-like-a-player.md#what-the-test-setup-made-is-not-a-ui-finding-and-a-standing-one-is-noted-not-handed-up-w4341-2026-11-15)); shoot any coverage gap the critic names that is the person's own case; then pack the new stills for a new critic. Before fixing or filing a finding, name the census its still came from (as the windows open, or after a leg dragged one) and check it there; the before and after stills come from the same steps on both builds (w1790, w1821). NEW: this change made it, or the
     person's words ask for its kind of fix (w1386: "fix the ones that are clearly bugs", and the panel it fixed showed its
     On/Off switch stretched 14x, as on master). STANDING: the before still shows it too and no words ask for it. After

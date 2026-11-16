@@ -64,14 +64,13 @@ your report: you judge what is on screen. Never read the game's code, the pull r
    Inventory/Crafting window and a structure's window never stand open together for a player (Ben, 2026-10-24): a
    still showing both is a forced-open state, not a layout; say so at the top of your report and do not grade it.
 6b. **Setup, not a flaw** (w4341; the rubric's "Not a finding" section). Before you call anything BROKEN, UGLY or minor,
-   ask: would a player in normal play see it, with the window opened fresh where the game opens it, alone unless the
-   person's words are about two? Two windows packed side by side on a small screen, a window placed where an earlier step
-   or language left it, a draggable window that simply sits somewhere, a live value that changed between stills, a crop's
-   edge and a development label are SETUP: list each under `Setup` with the still, and leave it out of Flaws and of every
-   count. w4304's critic graded a Station Grid UGLY for scrolling "+3 de plus" beside a Solar Panel window at 1280x800,
-   the same in every language and before the change, and it was handed up as a request; lothsahn: "Can't the user move
-   windows around? Are you flagging non-differences as problems?". If the pack lacks the still that would settle it (the
-   window alone), say so under Setup; do not grade it.
+   ask: would a player in normal play see it, taking the same steps in a fresh session, with the windows the game opens
+   for them where it opens them? A window the tour forced open, dragged or left open beside the one the brief is about, a
+   window placed where an earlier step or language left it, a draggable window that simply sits somewhere, a live value
+   that changed between stills, a crop's edge and a development label are SETUP: list each under `Setup` with the still,
+   and leave it out of Flaws and of every count. Windows the game opens together by itself are not setup: grade them.
+   lothsahn, w4341: "Can't the user move windows around? Are you flagging non-differences as problems?"; w4341 re-shot w4304's still in a fresh session (French alone, no remembered window places, the Capacitor then the Solar Panel selected): the game itself opened the Station Grid beside the Solar Panel window and the list still scrolled "+3 de plus" with room above the hotbar, so that one is a real STANDING flaw a player hits, not setup.
+   If the pack cannot tell which it is, write `SETUP?` with the still a fresh session would need; do not grade it.
 7. Hunt for what should not be there: a fill brighter than everything else, a colour bleeding into the controls inside a
    selected row, a stretched or squashed control, an empty half of a window, a dense block of text, text you have to
    squint at, edges that do not line up, a control unlike its siblings.
@@ -112,7 +111,7 @@ Write `critic.md` where the brief says, in this order:
   the person's words ask for its kind of fix (w1386's words were "fix the ones that are clearly bugs", and its stills
   showed the panel it fixed with the On/Off switch stretched 14x, as on master). STANDING: the before still shows it too
   and no words ask for it. A STANDING flaw is noted, not a request: add `player hits it: yes` only when a player would
-  meet it in normal play (the window alone, where the game opens it, in their language), else `player hits it: no`.
+  meet it in normal play (the same steps in a fresh session, with the windows the game opens for them, in their language), else `player hits it: no`.
 - **Setup**: one line per still and item from step 6b, or `Setup: none`. Not counted anywhere.
 - The last line exactly: `Critic: N stills, M broken or ugly (S standing), K minor, A setup`.
 
