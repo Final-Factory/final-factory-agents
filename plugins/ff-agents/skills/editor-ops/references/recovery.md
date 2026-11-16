@@ -321,6 +321,21 @@ run at the old root. CI's editor compile was green on pull requests containing t
 Recovery: delete that checkout's `Library/Bee` (the editor stopped, its slot free) and build
 again; nothing in the code changes.
 
+### A real `error CS0246` for a type that is in the tree: a stale `Library/Bee` rsp, not the code
+
+The editor's boot and a batch player build can both fail with a real `error CS` line naming a type whose file and
+`.meta` are in the checkout. The cause is an old compile response file under `Library/Bee` (one from before a branch
+switch or a pull) that lists only the files of its day. The build reuses it under `--defer-dag-verification`, so the
+files added since are never compiled. Measured 2026-11-16 (w4411, biscuit/slot2): after a branch switch,
+`error CS0246: The type or namespace name 'JoinerLiveness' could not be found`
+(`Assets/Scripts/FFCore/Network/PeerCatchUpTracker.cs:268,475`) stopped the editor at "Enter Safe Mode?" and failed
+the batch build, while `JoinerLiveness.cs` was on master and in the tree. `Library/Bee/artifacts/2400b0aE.dag/FFCore.rsp`
+predated the switch and left out 6 FFCore files. Deleting `Library/SourceAssetDB` did not help.
+Check: `grep -c JoinerLiveness.cs Library/Bee/artifacts/*E.dag/FFCore.rsp` printed 0 while `git ls-files` listed
+the file. Recovery: with the editor stopped and no batch run of yours in flight, `rm -rf Library/Bee` and build
+again (w4411: 0 errors on the next build). Before that, run `git status` and `git log -1` to rule out a checkout that
+really lacks the file.
+
 ### An ffsb sandbox shared by two sessions: `switch_branch` refuses, and a commit without switching
 
 `mcp__sandbox__switch_branch` refuses while another session is mid-turn in the same sandbox, even

@@ -247,6 +247,7 @@ Open it when the editor or bridge misbehaves:
 - A long-uptime Steam client can wedge play-mode entry (~26h uptime)
 - A fresh editor boot with no scene looks wedged, not hung
 - A failed batch build leaves `Temp/UnityLockfile`: the next build says the project is open
+- A real `error CS0246` for a type that is in the tree: a stale `Library/Bee` rsp, not the code
 - An ffsb sandbox shared by two sessions: `switch_branch` refuses, and a commit without switching
 - The branch-switch hook also refuses `git checkout <branch>` in a temp clone
 - A pull while the editor starts rewrites `.meta` files: the boot fails and a new game throws missing singletons
