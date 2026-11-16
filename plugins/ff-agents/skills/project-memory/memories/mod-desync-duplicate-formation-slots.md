@@ -38,3 +38,25 @@ same in any mod that creates `FleetShip` itself. A game-side guard against dupli
   plan probes before the join.
 - **One clean run proves little.** The fork needs duplicate fighters overlapping at a serve: it showed in 1 of 3
   unpatched runs. Read the cause from the report, and run the fixed build more than once.
+
+## A lone host with a client by address, no relay (w4462, 2026-11-16)
+
+Measured on PR #3741 (253c947): LothDesktop hosted with ffnightly, and a worker on biscuit joined a Linux client by
+Tailscale address.
+- **A squadron with no enemy camp.** `ffauto:spawn.ships|Cruiser|3`, then `ffauto:enemy.leechspawner|25` on a flat
+  map with `enemies: false`. The first Hornet launched 1.5 to 5 min later; wait with `logPresent` on
+  `[FleetFormationIndexHeal] Renumbered`. `enemy.leechraid` was refused there ("no enemy camp").
+- **The port is the lab's port + 1.** ffnightly bound 7965 for a lab port of 7964. Read `host-ready: port=` in host.log,
+  or run `netstat -ano -p udp`, before you send the client the address. Cycle 1's first join failed on this.
+- **Count by epoch, not heartbeats.** Each serve restarts the heartbeat count at 0 (`[SaveCapture] ... heartbeat=0
+  epoch=N`). A `heartbeats` step across a rejoin ended at once, and the next step met a paused host.
+  - Poll `ffauto:desync.stats` instead: `data.clients[0].compared` (one comparison per 8 heartbeats), then
+    `data.epoch` for the rejoin.
+  - A poll's `timeoutS` did not end the wait in this run (it was still waiting after 15 min with a 600 s timeout).
+    Stop the run yourself once the numbers are in.
+- **ffnightly hosts run `-batchmode -nographics`** unless the scenario sets `"windowed": true`.
+- **A windowed Linux client on a locked screen falls behind.** XWayland gives it one-second frames
+  (`HiddenWindowVSync.cs`), and the host drops it with `FlowControl:TooSlow` after about 5 to 7 min. Run that client
+  `-batchmode -nographics`.
+- **A client's default `PostConnectDelayMs` (1.5 s) ends its session** just after it joins. On a rejoin that shut the
+  transport down. Pass `-ffAutomationPostConnectDelayMs 900000` and close it on your own timer.
