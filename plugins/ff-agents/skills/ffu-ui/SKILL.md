@@ -42,6 +42,13 @@ design gate, a fresh `ui-critic` agent on the stills, and **move only what the p
 screen starts before all this, with a design and mocks beside FF1's equivalent window for the person's pick, and no
 code until they pick (UI checklist item 0, w2895 and w4008; FP.21's 32 pages of identical buttons were the miss).
 
+- **Draw a new panel's mocks over the person's picked HUD, and list what they drop from FF1, before the pick** (w4299,
+  the Hauler route panel). Round 1 sat on a plain background, and ben's orchestrator sent it back: "shoot each mock over
+  the real FFU HUD from r197's picked HUD mock", and list every FF1 control the panel drops "with why" and the row that
+  adds it. Over the real HUD, measure where the window sits against Objectives, the hotbar and its label, and the
+  Station card, at 1920x1080 and 1280x800. Give the fresh ui-critic that HUD still as its reference (`ui_look.py pack
+  --ref`). r197's stills are behind the portal's login: ask the orchestrator to attach them.
+
 - **A still of an opened panel from the built client** (w2895, ffu #652): `ffu --start world.snap --still out.png
   --inspect X,Y --press A,B` opens the inspector of the building at X,Y and presses the named nodes in order before
   the still. The FF1 world: `ffu-headless ff1 import tools/world/ff1-trailer-staging-0.50.0.54.zip`.
