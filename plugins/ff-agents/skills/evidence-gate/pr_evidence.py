@@ -734,6 +734,13 @@ def names_request(value: str) -> bool:
     return bool(re.search(r"\bw\d{3,}\b", re.sub(r"\S*/\S*", " ", value)))
 
 
+NOTED = re.compile(r"\bstanding\b[^;.]{0,40}?\bnoted\b", re.IGNORECASE)
+"""A standing finding is noted, not filed, by default (w4341, lothsahn: "Can't the user move windows around? Are you flagging
+non-differences as problems?"): w4304's critic flagged a Station Grid scrolling beside a Solar Panel window at 1280x800, the
+same in every language and before the change, and the line's standing count forced it into a follow-up request. 'standing,
+noted' (or a wNNN when a person asked for it filed) settles a standing count; it never settles an open NEW finding."""
+
+
 def eye_problems(section: str) -> list[str]:
     """The person's eye, before the person's (w1396). Every still is looked at full size and judged as a player would see it:
     anything stretched or squashed, a large empty area, overlapping labels, a dense text dump, anything obviously broken or
@@ -750,9 +757,10 @@ def eye_problems(section: str) -> list[str]:
     if not stills or not poor:
         return ["'Eye:' says how many stills were looked at and how many look broken or poor: 'Eye: 12 stills looked at "
                 "full size, 0 look broken or poor (proofs/shots.md)'"]
-    if int(poor.group(1)) and not names_request(value):
+    if int(poor.group(1)) and not (names_request(value) or NOTED.search(value)):
         return [f"'Eye:' has {poor.group(1)} still(s) that look broken or poor: fix them before anyone sees them, or, when "
-                f"it is not this change's (standing on master), name the request it was filed as (wNNN) on the line"]
+                f"it is not this change's (standing on master), say so on the line ('standing on master, noted'; a wNNN "
+                f"only when a person asked for it filed)"]
     return []
 
 
@@ -781,13 +789,15 @@ def critic_problems(section: str) -> list[str]:
                         "still open: 'Critic: proofs/critic.md (pack 3f2a91ab, run 2): 8 stills, 3 broken or ugly found, "
                         "3 fixed, 0 open, 2 minor'")
     elif int(still_open.group(1)) and not (names_request(value) or ANSWERED.search(value)):
-        problems.append(f"'Critic:' has {still_open.group(1)} broken or ugly finding(s) open: fix each, file a standing one "
-                        f"(wNNN on the line), or answer it with the person's words asking for exactly that "
+        problems.append(f"'Critic:' has {still_open.group(1)} broken or ugly finding(s) open: fix each, move a standing "
+                        f"one to the standing count, or answer it with the person's words asking for exactly that "
                         f"(answered (who): \"...\"); the answer goes to the person with the stills")
     standing = re.search(r"(\d+)\s+standing", value, re.IGNORECASE)
-    if standing and int(standing.group(1)) and not names_request(value):
-        problems.append(f"'Critic:' lists {standing.group(1)} standing finding(s) (the before still shows them too): file "
-                        f"them and name the request on the line (filed as wNNN); they are not this change's to fix")
+    if standing and int(standing.group(1)) and not (names_request(value) or NOTED.search(value)):
+        problems.append(f"'Critic:' lists {standing.group(1)} standing finding(s) (the before still shows them too): write "
+                        f"'{standing.group(1)} standing, noted' on the line (they are not this change's to fix, and are "
+                        f"not handed up by default: unity-ui critic.md step 4, w4341), or 'filed as wNNN' when a person "
+                        f"asked for them filed")
     return problems
 
 

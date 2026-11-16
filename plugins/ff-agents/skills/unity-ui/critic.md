@@ -71,15 +71,20 @@ brief's reasoning or the worker's notes, given only what a person would see.
    STANDING (the before still shows it too, and no words ask for it). w1386's words were "fix the ones that are clearly
    bugs", and its stills showed the panel it fixed with the On/Off switch stretched 14x, as on master: NEW. The report
    ends with one line:
-   `Critic: N stills, M broken or ugly (S standing), K minor`.
+   `Critic: N stills, M broken or ugly (S standing), K minor, A setup`.
+   What the test setup made (two windows packed on a small screen, a place left over from an earlier language or step, a
+   live value, a crop's edge) is listed under `Setup` and counted nowhere (design-rubric.md, "Not a finding"; w4341).
 4. **Fix or answer every NEW broken or ugly finding**, or answer it with the person's words asking for exactly that.
-   **File the STANDING ones** (wNNN, named in the report's first lines). The critic is strict: in w1399's trial it found
-   real standing defects in master panels nobody had complained about (a hover card's text colliding with a window, names
-   broken mid-word), which the change did not make and must not be blocked on. Then a new pack of the new stills, and
+   **Note the STANDING ones; do not file or hand them up by default** (w4341, lothsahn: "Are you flagging non-differences
+   as problems?"). The change did not make them and must not be blocked on them. Put them in the report as one line,
+   "standing, noted". Only one marked `player hits it: yes` (a player meets it in normal play: the window alone, opened
+   where the game opens it, in their language) goes in your report to the person as "worth a fix?", for their
+   orchestrator to decide; you never hand_up_requests it yourself unless the person asked for follow-ups. Minor findings
+   are never handed up. Then a new pack of the new stills, and
    a new critic. After three rounds with one still open, the person gets the options and the critic's report, not a
    fourth nudge.
 5. **The pull request** carries `Critic: <critic.md> (pack <id>, run R): N stills, M broken or ugly found (S standing,
-   filed as wNNN), F fixed, 0 open, K minor`. The report to the person gives the critic's verdict in a line, with its top finding and how it was answered.
+   noted), F fixed, 0 open, K minor, A setup` (or `S standing, filed as wNNN` when a person asked for it filed). The report to the person gives the critic's verdict in a line, with its top finding and how it was answered.
    `pr_evidence.py` fails a UI change without the line, or with a broken or ugly finding open and neither filed nor
    answered.
 

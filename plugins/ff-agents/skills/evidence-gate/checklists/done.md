@@ -100,6 +100,8 @@ holds, or the report says what is left instead of DONE.
    the try or the filed request (its wNNN), and, for what is left, the blocker's evidence (the error, a screenshot) and
    the one smallest step only the person can take (their own login, password or 2FA code, an approval)
    ([research the route before you say can't](../lessons/research-the-route-before-you-say-cant.md), w935, w1287).
+   A UI critic's STANDING or minor finding, or one the test setup made, is not a follow-up: it is noted in the report,
+   never handed up unless a person asked ([setup artifacts are not findings](../lessons/verify-ui-with-full-content-like-a-player.md#what-the-test-setup-made-is-not-a-ui-finding-and-a-standing-one-is-noted-not-handed-up-w4341-2026-11-15), w4341).
    Requests your work leaves to file (stages, follow-ups) are handed up with `hand_up_requests` before the DONE, never
    left as "I couldn't file them" in the report
    ([a worker hands up the requests it cannot file](../lessons/research-the-route-before-you-say-cant.md#a-worker-hands-up-the-requests-it-cannot-file-w2969-2026-11-03), w2969).

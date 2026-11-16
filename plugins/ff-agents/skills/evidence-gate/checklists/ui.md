@@ -257,11 +257,11 @@ screen; on desktop three labels stopped fitting, the two windows left their defa
       `--brief` alone is not the gate: the PR's `Brief (Ben): "..."` line must hold every quote its `Moved:` and
       `Window overlaps:` lines use, and the last check before you push runs without `--brief` (w3258: #3283 passed with
       `--brief` and the pilot refused it on green CI, its Brief line quoting half of Ben's sentence).
-    - A critic finding that stands on master too fails `'Critic:' ... N standing` until the line names its filed request
-      (wNNN). A handed-up follow-up has no number until its orchestrator files it, and it may go to the person first, so
-      ask that orchestrator before you push which line to write, rather than waiting for green CI and then for the filing
-      (w3280: #3293 sat green until Ben's orchestrator answered "Write the Critic line as \"docked bottom gap (8 px, a
-      standing issue on master too) handed up; Ben decides whether to file it\", and merge PR #3293 now").
+    - A critic finding that stands on master too is written `N standing, noted` on the `'Critic:'` line; it is not
+      filed or handed up by default (w4341, lothsahn: "Are you flagging non-differences as problems?"). Only one a
+      player hits in normal play goes in your report as "worth a fix?", and the person's orchestrator decides; a wNNN
+      goes on the line only when a person asked for it filed (w3280's orchestrator: "handed up; Ben decides whether to
+      file it").
     - A pinned element that only got taller or shorter is resized, not moved: its left and right edges within 1 px and
       its anchored edge (the bottom, over the abilities or the minimap) within 5 px (the census's 4 px plus the printed
       rounding). Its line still carries the requester's words from the brief that approved the change, but they need not
@@ -377,12 +377,16 @@ control, and a redesign goes out as 2 or 3 clearly different options built from 
     the brief's ask heading pack adds without `--words`. A list of window names and rules alone grades the asked-for move
     BROKEN (w3111: w3099's critic, 4 BROKEN, then 0 with the ask passed). A style the brief names counts as an ask too: quote its own tokens (title font and tracking, accent, corners) from its source report into `--words`, or the critic grades the style's own type UGLY on every still (w4147: style B, Ben's pick in r197, Khyay caps titles; 11 of 11 mock stills UGLY for the title alone, three passes). A mock's backdrop is a whole game frame with the new window where the game opens the one it replaces, never a cropped panel on black (w4147). Its `critic.md` goes in the review
     folder with the stills. Fix every NEW broken or ugly finding or answer it with the person's words asking for exactly
-    that; file the STANDING ones (wNNN in the report: "handed on to be filed" is still open; a small fix on a screen you
-    already shoot is made here, w1546); shoot any coverage gap the critic names that is the person's own case; then pack the new stills for a new critic. Before fixing or filing a finding, name the census its still came from (as the windows open, or after a leg dragged one) and check it there; the before and after stills come from the same steps on both builds (w1790, w1821). NEW: this change made it, or the
+    that; note the STANDING ones (`S standing, noted`; not filed or handed up by default, w4341; a small fix on a screen
+    you already shoot is made here, w1546); before a finding is fixed, filed or handed up, name its still's setup: which
+    windows were open, where each was opened (fresh, or where an earlier language or step left it) and the screen size;
+    a window short or scrolling beside another window on a small screen, when the brief is about one window, is SETUP:
+    shoot that window alone, opened fresh, before you call it a finding (w4304's two-window "+3 de plus" at 1280x800,
+    [lesson](../lessons/verify-ui-with-full-content-like-a-player.md#what-the-test-setup-made-is-not-a-ui-finding-and-a-standing-one-is-noted-not-handed-up-w4341-2026-11-15)); shoot any coverage gap the critic names that is the person's own case; then pack the new stills for a new critic. Before fixing or filing a finding, name the census its still came from (as the windows open, or after a leg dragged one) and check it there; the before and after stills come from the same steps on both builds (w1790, w1821). NEW: this change made it, or the
     person's words ask for its kind of fix (w1386: "fix the ones that are clearly bugs", and the panel it fixed showed its
     On/Off switch stretched 14x, as on master). STANDING: the before still shows it too and no words ask for it. After
     three rounds with one still open, the person gets the options and the critic's report. The PR carries `Critic: <critic.md> (pack <id>, run R): N stills, M
-    broken or ugly found (S standing, filed as wNNN), F fixed, 0 open, K minor`. The unity-ui skill's `critic.md` is the recipe.
+    broken or ugly found (S standing, noted), F fixed, 0 open, K minor, A setup`. The unity-ui skill's `critic.md` is the recipe.
 31. **Colour, measured against the before (w1399).** `ui_look.py colour <after.png>::<census.json> --before
     <before.png>::<census.json>` (unity-ui) prints the `Colour:` line, judging the pixels a player sees:
     - LOUD FILL: a flat fill over 0.1 % of the screen at CIELAB L* 60 or more and C* 25 or more. w1334's "+ Add stop" was
