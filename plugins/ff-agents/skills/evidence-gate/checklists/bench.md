@@ -233,6 +233,13 @@ Mechanics: the game repo's `Documentation/Bench-Lock.md`.
       started at load 69 beside 4 ffu CI jobs, and three later turns spent their whole 20 minutes in the CI wait. Wait for
       the `^granted .*time now` line, note when the first grant line came, and run a leg only with its length left in
       the turn (grant + 30 min), else give the turn back; record the ticket log in each leg's folder.
+- [ ] **The ticket holder writes to a file with no pipe, and a separate waiter that exits tells you of the grant**
+      (w4530, 2026-11-17, LothDesktop). A background `bench_queue.py timed ... | grep -v ExperimentalWarning` held its
+      lines in the pipe's buffer: the grant never reached the output file and 16 of the 30-minute turn went by unseen.
+      An earlier holder was granted, then killed at the 2 h background limit before a leg ran. Run the holder as
+      `bench_queue.py timed ... > "$TMPDIR/ticket.txt" 2>&1` (`run_in_background`, timeout 7200000), then a second
+      background `until grep -q '^granted' "$TMPDIR/ticket.txt"; do sleep 15; done`: it exits on the grant and its notice
+      wakes you. Put both arms in place and compile them before the grant, so the turn holds only the timed runs.
 - [ ] **A pair-run leg has its ticket before the GO, and `ff-leftovers end` only after its last timed leg** (w3414,
       2026-11-07, biscuit client of a LothDesktop host). On a big computer (biscuit, BEAST, LothDesktop) `bench_queue.py
       timed` first needs `timed_place` (with `same_machine` naming the pair run), then the grant can still wait up to
