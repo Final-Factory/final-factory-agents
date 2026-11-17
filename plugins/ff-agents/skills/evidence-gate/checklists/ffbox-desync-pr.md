@@ -121,6 +121,9 @@ changed code runs) in your first report and in the PR description.
       regression test on the branch reaches it", and the branch's test is red on master and green with the
       fix, run both ways by you. Then `## Evidence` says `Determinism audit: not needed, <why, quoting him>`
       (`pr_evidence.py` accepts a "not needed" line of 30 characters or more).
+- [ ] The fork does not reproduce on `origin/master`: A/B the fixes merged since the report's commit (cherry-pick the
+      likeliest onto it, rerun the same pair) before root-causing the old commit; a merged fix closes it by its PR
+      ([lesson](../lessons/settle-your-own-guesses.md#a-fork-that-shows-on-an-older-commit-and-not-on-master-ab-the-fixes-merged-since-first-w4505-2026-11-17), w4505).
 - [ ] Every `Report:` line is confirmed in that report's own dump, not only the one FFBox diagnosed: diff
       both peers' Detail lines of the forked surface per tile (w3222: the `ContainersDetail` entries
       grouped by tile; each of the five reports differed only at the stacked-box tile, with equal counts).
