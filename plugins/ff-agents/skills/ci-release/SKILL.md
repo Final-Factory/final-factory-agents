@@ -298,7 +298,8 @@ prints `Built from: <sha>` for it. The game repo's `Documentation/Release-Lanes.
 `ff-pr merge` runs `pr_evidence.py` on every FinalFactory PR since w3088 and refused the bump three times, first for no
 `## Evidence`, then for no `Kind:` and no `Not verified:` line, and because `FFVersion.cs` counts as simulation code.
 `trigger-ci-release.sh --request wNNN` did not write a `Request:` line into the body either. Append this to the body
-(`gh pr view <n> --json body -q .body > f`, add, `gh pr edit <n> --body-file f`), filled in:
+(`gh pr view <n> --json body -q .body > f`, add, `gh api -X PATCH repos/Final-Factory/FinalFactory/pulls/<n> -F body=@f`;
+`gh pr edit` exits 1 on the Projects (classic) deprecation, w4501), filled in:
 
 ```markdown
 Request: wNNN
