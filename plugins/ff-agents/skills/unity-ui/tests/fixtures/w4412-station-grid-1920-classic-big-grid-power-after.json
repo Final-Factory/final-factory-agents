@@ -1,0 +1,1399 @@
+{
+ "screen": [
+  1920,
+  1080
+ ],
+ "elements": [
+  {
+   "path": "InGameScene/UI Canvas/GamePanels/StationGridEntityPanel/MainPanel",
+   "kind": "Image",
+   "rect": [
+    700,
+    192,
+    1220,
+    768
+   ],
+   "visible": [
+    700,
+    192,
+    1220,
+    768
+   ],
+   "color": "#0D1B2AF2",
+   "alpha": 0.949,
+   "sprite": "PanelBack",
+   "raycast": false,
+   "selectable": false,
+   "maskOnly": false,
+   "canvasOrder": -10,
+   "depth": 101
+  },
+  {
+   "path": "InGameScene/UI Canvas/GamePanels/StationGridEntityPanel/MainPanel/HeaderContent/Header/TitleAndIcon/Title",
+   "kind": "TextMeshProUGUI",
+   "rect": [
+    716,
+    200,
+    960,
+    222
+   ],
+   "visible": [
+    716,
+    200,
+    960,
+    222
+   ],
+   "color": "#FFFFFFFF",
+   "alpha": 1.0,
+   "sprite": "",
+   "raycast": false,
+   "selectable": false,
+   "maskOnly": false,
+   "canvasOrder": -10,
+   "depth": 102,
+   "text": "Station Grid Information"
+  },
+  {
+   "path": "InGameScene/UI Canvas/GamePanels/StationGridEntityPanel/MainPanel/Content/PowerGridPanel/MainContent/tables/StationGridTable/Scroll/Viewport/Rows/Row",
+   "kind": "Image",
+   "rect": [
+    712,
+    312,
+    1208,
+    336
+   ],
+   "visible": [
+    712,
+    312,
+    1208,
+    336
+   ],
+   "color": "#1E2A38FF",
+   "alpha": 1.0,
+   "sprite": "RowBox",
+   "raycast": false,
+   "selectable": false,
+   "maskOnly": false,
+   "canvasOrder": -10,
+   "depth": 103
+  },
+  {
+   "path": "InGameScene/UI Canvas/GamePanels/StationGridEntityPanel/MainPanel/Content/PowerGridPanel/MainContent/tables/StationGridTable/Scroll/Viewport/Rows/Row/Group",
+   "kind": "Image",
+   "rect": [
+    712,
+    314,
+    715,
+    334
+   ],
+   "visible": [
+    712,
+    314,
+    715,
+    334
+   ],
+   "color": "#F2C14EFF",
+   "alpha": 1.0,
+   "sprite": "",
+   "raycast": false,
+   "selectable": false,
+   "maskOnly": false,
+   "canvasOrder": -10,
+   "depth": 104
+  },
+  {
+   "path": "InGameScene/UI Canvas/GamePanels/StationGridEntityPanel/MainPanel/Content/PowerGridPanel/MainContent/tables/StationGridTable/Scroll/Viewport/Rows/Row/NameArea/Icon",
+   "kind": "Image",
+   "rect": [
+    722,
+    314,
+    742,
+    334
+   ],
+   "visible": [
+    722,
+    314,
+    742,
+    334
+   ],
+   "color": "#FFFFFFFF",
+   "alpha": 1.0,
+   "sprite": "SolarPanel",
+   "raycast": false,
+   "selectable": false,
+   "maskOnly": false,
+   "canvasOrder": -10,
+   "depth": 105
+  },
+  {
+   "path": "InGameScene/UI Canvas/GamePanels/StationGridEntityPanel/MainPanel/Content/PowerGridPanel/MainContent/tables/StationGridTable/Scroll/Viewport/Rows/Row/NameArea/Name",
+   "kind": "TextMeshProUGUI",
+   "rect": [
+    748,
+    316,
+    900,
+    332
+   ],
+   "visible": [
+    748,
+    316,
+    900,
+    332
+   ],
+   "color": "#FFFFFFFF",
+   "alpha": 1.0,
+   "sprite": "",
+   "raycast": false,
+   "selectable": false,
+   "maskOnly": false,
+   "canvasOrder": -10,
+   "depth": 106,
+   "text": "Solar Panel"
+  },
+  {
+   "path": "InGameScene/UI Canvas/GamePanels/StationGridEntityPanel/MainPanel/Content/PowerGridPanel/MainContent/tables/StationGridTable/Scroll/Viewport/Rows/Row/Count",
+   "kind": "TextMeshProUGUI",
+   "rect": [
+    910,
+    316,
+    940,
+    332
+   ],
+   "visible": [
+    910,
+    316,
+    940,
+    332
+   ],
+   "color": "#FFFFFFFF",
+   "alpha": 1.0,
+   "sprite": "",
+   "raycast": false,
+   "selectable": false,
+   "maskOnly": false,
+   "canvasOrder": -10,
+   "depth": 107,
+   "text": "x1"
+  },
+  {
+   "path": "InGameScene/UI Canvas/GamePanels/StationGridEntityPanel/MainPanel/Content/PowerGridPanel/MainContent/tables/StationGridTable/Scroll/Viewport/Rows/Row",
+   "kind": "Image",
+   "rect": [
+    712,
+    338,
+    1208,
+    362
+   ],
+   "visible": [
+    712,
+    338,
+    1208,
+    362
+   ],
+   "color": "#1E2A38FF",
+   "alpha": 1.0,
+   "sprite": "RowBox",
+   "raycast": false,
+   "selectable": false,
+   "maskOnly": false,
+   "canvasOrder": -10,
+   "depth": 108
+  },
+  {
+   "path": "InGameScene/UI Canvas/GamePanels/StationGridEntityPanel/MainPanel/Content/PowerGridPanel/MainContent/tables/StationGridTable/Scroll/Viewport/Rows/Row/Group",
+   "kind": "Image",
+   "rect": [
+    712,
+    340,
+    715,
+    360
+   ],
+   "visible": [
+    712,
+    340,
+    715,
+    360
+   ],
+   "color": "#F2C14EFF",
+   "alpha": 1.0,
+   "sprite": "",
+   "raycast": false,
+   "selectable": false,
+   "maskOnly": false,
+   "canvasOrder": -10,
+   "depth": 109
+  },
+  {
+   "path": "InGameScene/UI Canvas/GamePanels/StationGridEntityPanel/MainPanel/Content/PowerGridPanel/MainContent/tables/StationGridTable/Scroll/Viewport/Rows/Row/NameArea/Icon",
+   "kind": "Image",
+   "rect": [
+    722,
+    340,
+    742,
+    360
+   ],
+   "visible": [
+    722,
+    340,
+    742,
+    360
+   ],
+   "color": "#FFFFFFFF",
+   "alpha": 1.0,
+   "sprite": "AdvancedSolarPanel",
+   "raycast": false,
+   "selectable": false,
+   "maskOnly": false,
+   "canvasOrder": -10,
+   "depth": 110
+  },
+  {
+   "path": "InGameScene/UI Canvas/GamePanels/StationGridEntityPanel/MainPanel/Content/PowerGridPanel/MainContent/tables/StationGridTable/Scroll/Viewport/Rows/Row/NameArea/Name",
+   "kind": "TextMeshProUGUI",
+   "rect": [
+    748,
+    342,
+    900,
+    358
+   ],
+   "visible": [
+    748,
+    342,
+    900,
+    358
+   ],
+   "color": "#FFFFFFFF",
+   "alpha": 1.0,
+   "sprite": "",
+   "raycast": false,
+   "selectable": false,
+   "maskOnly": false,
+   "canvasOrder": -10,
+   "depth": 111,
+   "text": "Advanced Solar Panel"
+  },
+  {
+   "path": "InGameScene/UI Canvas/GamePanels/StationGridEntityPanel/MainPanel/Content/PowerGridPanel/MainContent/tables/StationGridTable/Scroll/Viewport/Rows/Row/Count",
+   "kind": "TextMeshProUGUI",
+   "rect": [
+    910,
+    342,
+    940,
+    358
+   ],
+   "visible": [
+    910,
+    342,
+    940,
+    358
+   ],
+   "color": "#FFFFFFFF",
+   "alpha": 1.0,
+   "sprite": "",
+   "raycast": false,
+   "selectable": false,
+   "maskOnly": false,
+   "canvasOrder": -10,
+   "depth": 112,
+   "text": "x1"
+  },
+  {
+   "path": "InGameScene/UI Canvas/GamePanels/StationGridEntityPanel/MainPanel/Content/PowerGridPanel/MainContent/tables/StationGridTable/Scroll/Viewport/Rows/Row",
+   "kind": "Image",
+   "rect": [
+    712,
+    364,
+    1208,
+    388
+   ],
+   "visible": [
+    712,
+    364,
+    1208,
+    388
+   ],
+   "color": "#1E2A38FF",
+   "alpha": 1.0,
+   "sprite": "RowBox",
+   "raycast": false,
+   "selectable": false,
+   "maskOnly": false,
+   "canvasOrder": -10,
+   "depth": 113
+  },
+  {
+   "path": "InGameScene/UI Canvas/GamePanels/StationGridEntityPanel/MainPanel/Content/PowerGridPanel/MainContent/tables/StationGridTable/Scroll/Viewport/Rows/Row/Group",
+   "kind": "Image",
+   "rect": [
+    712,
+    366,
+    715,
+    386
+   ],
+   "visible": [
+    712,
+    366,
+    715,
+    386
+   ],
+   "color": "#F2C14EFF",
+   "alpha": 1.0,
+   "sprite": "",
+   "raycast": false,
+   "selectable": false,
+   "maskOnly": false,
+   "canvasOrder": -10,
+   "depth": 114
+  },
+  {
+   "path": "InGameScene/UI Canvas/GamePanels/StationGridEntityPanel/MainPanel/Content/PowerGridPanel/MainContent/tables/StationGridTable/Scroll/Viewport/Rows/Row/NameArea/Icon",
+   "kind": "Image",
+   "rect": [
+    722,
+    366,
+    742,
+    386
+   ],
+   "visible": [
+    722,
+    366,
+    742,
+    386
+   ],
+   "color": "#FFFFFFFF",
+   "alpha": 1.0,
+   "sprite": "Battery",
+   "raycast": false,
+   "selectable": false,
+   "maskOnly": false,
+   "canvasOrder": -10,
+   "depth": 115
+  },
+  {
+   "path": "InGameScene/UI Canvas/GamePanels/StationGridEntityPanel/MainPanel/Content/PowerGridPanel/MainContent/tables/StationGridTable/Scroll/Viewport/Rows/Row/NameArea/Name",
+   "kind": "TextMeshProUGUI",
+   "rect": [
+    748,
+    368,
+    900,
+    384
+   ],
+   "visible": [
+    748,
+    368,
+    900,
+    384
+   ],
+   "color": "#FFFFFFFF",
+   "alpha": 1.0,
+   "sprite": "",
+   "raycast": false,
+   "selectable": false,
+   "maskOnly": false,
+   "canvasOrder": -10,
+   "depth": 116,
+   "text": "Battery"
+  },
+  {
+   "path": "InGameScene/UI Canvas/GamePanels/StationGridEntityPanel/MainPanel/Content/PowerGridPanel/MainContent/tables/StationGridTable/Scroll/Viewport/Rows/Row/Count",
+   "kind": "TextMeshProUGUI",
+   "rect": [
+    910,
+    368,
+    940,
+    384
+   ],
+   "visible": [
+    910,
+    368,
+    940,
+    384
+   ],
+   "color": "#FFFFFFFF",
+   "alpha": 1.0,
+   "sprite": "",
+   "raycast": false,
+   "selectable": false,
+   "maskOnly": false,
+   "canvasOrder": -10,
+   "depth": 117,
+   "text": "x1"
+  },
+  {
+   "path": "InGameScene/UI Canvas/GamePanels/StationGridEntityPanel/MainPanel/Content/PowerGridPanel/MainContent/tables/StationGridTable/Scroll/Viewport/Rows/Row",
+   "kind": "Image",
+   "rect": [
+    712,
+    390,
+    1208,
+    414
+   ],
+   "visible": [
+    712,
+    390,
+    1208,
+    414
+   ],
+   "color": "#1E2A38FF",
+   "alpha": 1.0,
+   "sprite": "RowBox",
+   "raycast": false,
+   "selectable": false,
+   "maskOnly": false,
+   "canvasOrder": -10,
+   "depth": 118
+  },
+  {
+   "path": "InGameScene/UI Canvas/GamePanels/StationGridEntityPanel/MainPanel/Content/PowerGridPanel/MainContent/tables/StationGridTable/Scroll/Viewport/Rows/Row/Group",
+   "kind": "Image",
+   "rect": [
+    712,
+    392,
+    715,
+    412
+   ],
+   "visible": [
+    712,
+    392,
+    715,
+    412
+   ],
+   "color": "#00D8FFFF",
+   "alpha": 1.0,
+   "sprite": "",
+   "raycast": false,
+   "selectable": false,
+   "maskOnly": false,
+   "canvasOrder": -10,
+   "depth": 119
+  },
+  {
+   "path": "InGameScene/UI Canvas/GamePanels/StationGridEntityPanel/MainPanel/Content/PowerGridPanel/MainContent/tables/StationGridTable/Scroll/Viewport/Rows/Row/NameArea/Icon",
+   "kind": "Image",
+   "rect": [
+    722,
+    392,
+    742,
+    412
+   ],
+   "visible": [
+    722,
+    392,
+    742,
+    412
+   ],
+   "color": "#FFFFFFFF",
+   "alpha": 1.0,
+   "sprite": "Capacitor",
+   "raycast": false,
+   "selectable": false,
+   "maskOnly": false,
+   "canvasOrder": -10,
+   "depth": 120
+  },
+  {
+   "path": "InGameScene/UI Canvas/GamePanels/StationGridEntityPanel/MainPanel/Content/PowerGridPanel/MainContent/tables/StationGridTable/Scroll/Viewport/Rows/Row/NameArea/Name",
+   "kind": "TextMeshProUGUI",
+   "rect": [
+    748,
+    394,
+    900,
+    410
+   ],
+   "visible": [
+    748,
+    394,
+    900,
+    410
+   ],
+   "color": "#FFFFFFFF",
+   "alpha": 1.0,
+   "sprite": "",
+   "raycast": false,
+   "selectable": false,
+   "maskOnly": false,
+   "canvasOrder": -10,
+   "depth": 121,
+   "text": "Capacitor"
+  },
+  {
+   "path": "InGameScene/UI Canvas/GamePanels/StationGridEntityPanel/MainPanel/Content/PowerGridPanel/MainContent/tables/StationGridTable/Scroll/Viewport/Rows/Row/Count",
+   "kind": "TextMeshProUGUI",
+   "rect": [
+    910,
+    394,
+    940,
+    410
+   ],
+   "visible": [
+    910,
+    394,
+    940,
+    410
+   ],
+   "color": "#FFFFFFFF",
+   "alpha": 1.0,
+   "sprite": "",
+   "raycast": false,
+   "selectable": false,
+   "maskOnly": false,
+   "canvasOrder": -10,
+   "depth": 122,
+   "text": "x1"
+  },
+  {
+   "path": "InGameScene/UI Canvas/GamePanels/StationGridEntityPanel/MainPanel/Content/PowerGridPanel/MainContent/tables/StationGridTable/Scroll/Viewport/Rows/Row",
+   "kind": "Image",
+   "rect": [
+    712,
+    416,
+    1208,
+    440
+   ],
+   "visible": [
+    712,
+    416,
+    1208,
+    440
+   ],
+   "color": "#1E2A38FF",
+   "alpha": 1.0,
+   "sprite": "RowBox",
+   "raycast": false,
+   "selectable": false,
+   "maskOnly": false,
+   "canvasOrder": -10,
+   "depth": 123
+  },
+  {
+   "path": "InGameScene/UI Canvas/GamePanels/StationGridEntityPanel/MainPanel/Content/PowerGridPanel/MainContent/tables/StationGridTable/Scroll/Viewport/Rows/Row/Group",
+   "kind": "Image",
+   "rect": [
+    712,
+    418,
+    715,
+    438
+   ],
+   "visible": [
+    712,
+    418,
+    715,
+    438
+   ],
+   "color": "#00D8FFFF",
+   "alpha": 1.0,
+   "sprite": "",
+   "raycast": false,
+   "selectable": false,
+   "maskOnly": false,
+   "canvasOrder": -10,
+   "depth": 124
+  },
+  {
+   "path": "InGameScene/UI Canvas/GamePanels/StationGridEntityPanel/MainPanel/Content/PowerGridPanel/MainContent/tables/StationGridTable/Scroll/Viewport/Rows/Row/NameArea/Icon",
+   "kind": "Image",
+   "rect": [
+    722,
+    418,
+    742,
+    438
+   ],
+   "visible": [
+    722,
+    418,
+    742,
+    438
+   ],
+   "color": "#FFFFFFFF",
+   "alpha": 1.0,
+   "sprite": "HeatExchanger",
+   "raycast": false,
+   "selectable": false,
+   "maskOnly": false,
+   "canvasOrder": -10,
+   "depth": 125
+  },
+  {
+   "path": "InGameScene/UI Canvas/GamePanels/StationGridEntityPanel/MainPanel/Content/PowerGridPanel/MainContent/tables/StationGridTable/Scroll/Viewport/Rows/Row/NameArea/Name",
+   "kind": "TextMeshProUGUI",
+   "rect": [
+    748,
+    420,
+    900,
+    436
+   ],
+   "visible": [
+    748,
+    420,
+    900,
+    436
+   ],
+   "color": "#FFFFFFFF",
+   "alpha": 1.0,
+   "sprite": "",
+   "raycast": false,
+   "selectable": false,
+   "maskOnly": false,
+   "canvasOrder": -10,
+   "depth": 126,
+   "text": "Heat Exchanger"
+  },
+  {
+   "path": "InGameScene/UI Canvas/GamePanels/StationGridEntityPanel/MainPanel/Content/PowerGridPanel/MainContent/tables/StationGridTable/Scroll/Viewport/Rows/Row/Count",
+   "kind": "TextMeshProUGUI",
+   "rect": [
+    910,
+    420,
+    940,
+    436
+   ],
+   "visible": [
+    910,
+    420,
+    940,
+    436
+   ],
+   "color": "#FFFFFFFF",
+   "alpha": 1.0,
+   "sprite": "",
+   "raycast": false,
+   "selectable": false,
+   "maskOnly": false,
+   "canvasOrder": -10,
+   "depth": 127,
+   "text": "x1"
+  },
+  {
+   "path": "InGameScene/UI Canvas/GamePanels/StationGridEntityPanel/MainPanel/Content/PowerGridPanel/MainContent/tables/StationGridTable/Scroll/Viewport/Rows/Row",
+   "kind": "Image",
+   "rect": [
+    712,
+    442,
+    1208,
+    466
+   ],
+   "visible": [
+    712,
+    442,
+    1208,
+    466
+   ],
+   "color": "#1E2A38FF",
+   "alpha": 1.0,
+   "sprite": "RowBox",
+   "raycast": false,
+   "selectable": false,
+   "maskOnly": false,
+   "canvasOrder": -10,
+   "depth": 128
+  },
+  {
+   "path": "InGameScene/UI Canvas/GamePanels/StationGridEntityPanel/MainPanel/Content/PowerGridPanel/MainContent/tables/StationGridTable/Scroll/Viewport/Rows/Row/Group",
+   "kind": "Image",
+   "rect": [
+    712,
+    444,
+    715,
+    464
+   ],
+   "visible": [
+    712,
+    444,
+    715,
+    464
+   ],
+   "color": "#00D8FFFF",
+   "alpha": 1.0,
+   "sprite": "",
+   "raycast": false,
+   "selectable": false,
+   "maskOnly": false,
+   "canvasOrder": -10,
+   "depth": 129
+  },
+  {
+   "path": "InGameScene/UI Canvas/GamePanels/StationGridEntityPanel/MainPanel/Content/PowerGridPanel/MainContent/tables/StationGridTable/Scroll/Viewport/Rows/Row/NameArea/Icon",
+   "kind": "Image",
+   "rect": [
+    722,
+    444,
+    742,
+    464
+   ],
+   "visible": [
+    722,
+    444,
+    742,
+    464
+   ],
+   "color": "#FFFFFFFF",
+   "alpha": 1.0,
+   "sprite": "Radiator",
+   "raycast": false,
+   "selectable": false,
+   "maskOnly": false,
+   "canvasOrder": -10,
+   "depth": 130
+  },
+  {
+   "path": "InGameScene/UI Canvas/GamePanels/StationGridEntityPanel/MainPanel/Content/PowerGridPanel/MainContent/tables/StationGridTable/Scroll/Viewport/Rows/Row/NameArea/Name",
+   "kind": "TextMeshProUGUI",
+   "rect": [
+    748,
+    446,
+    900,
+    462
+   ],
+   "visible": [
+    748,
+    446,
+    900,
+    462
+   ],
+   "color": "#FFFFFFFF",
+   "alpha": 1.0,
+   "sprite": "",
+   "raycast": false,
+   "selectable": false,
+   "maskOnly": false,
+   "canvasOrder": -10,
+   "depth": 131,
+   "text": "Radiator"
+  },
+  {
+   "path": "InGameScene/UI Canvas/GamePanels/StationGridEntityPanel/MainPanel/Content/PowerGridPanel/MainContent/tables/StationGridTable/Scroll/Viewport/Rows/Row/Count",
+   "kind": "TextMeshProUGUI",
+   "rect": [
+    910,
+    446,
+    940,
+    462
+   ],
+   "visible": [
+    910,
+    446,
+    940,
+    462
+   ],
+   "color": "#FFFFFFFF",
+   "alpha": 1.0,
+   "sprite": "",
+   "raycast": false,
+   "selectable": false,
+   "maskOnly": false,
+   "canvasOrder": -10,
+   "depth": 132,
+   "text": "x1"
+  },
+  {
+   "path": "InGameScene/UI Canvas/GamePanels/StationGridEntityPanel/MainPanel/Content/PowerGridPanel/MainContent/tables/StationGridTable/Scroll/Viewport/Rows/Row",
+   "kind": "Image",
+   "rect": [
+    712,
+    468,
+    1208,
+    492
+   ],
+   "visible": [
+    712,
+    468,
+    1208,
+    492
+   ],
+   "color": "#1E2A38FF",
+   "alpha": 1.0,
+   "sprite": "RowBox",
+   "raycast": false,
+   "selectable": false,
+   "maskOnly": false,
+   "canvasOrder": -10,
+   "depth": 133
+  },
+  {
+   "path": "InGameScene/UI Canvas/GamePanels/StationGridEntityPanel/MainPanel/Content/PowerGridPanel/MainContent/tables/StationGridTable/Scroll/Viewport/Rows/Row/Group",
+   "kind": "Image",
+   "rect": [
+    712,
+    470,
+    715,
+    490
+   ],
+   "visible": [
+    712,
+    470,
+    715,
+    490
+   ],
+   "color": "#2178C6FF",
+   "alpha": 1.0,
+   "sprite": "",
+   "raycast": false,
+   "selectable": false,
+   "maskOnly": false,
+   "canvasOrder": -10,
+   "depth": 134
+  },
+  {
+   "path": "InGameScene/UI Canvas/GamePanels/StationGridEntityPanel/MainPanel/Content/PowerGridPanel/MainContent/tables/StationGridTable/Scroll/Viewport/Rows/Row/NameArea/Icon",
+   "kind": "Image",
+   "rect": [
+    722,
+    470,
+    742,
+    490
+   ],
+   "visible": [
+    722,
+    470,
+    742,
+    490
+   ],
+   "color": "#FFFFFFFF",
+   "alpha": 1.0,
+   "sprite": "CargoHold",
+   "raycast": false,
+   "selectable": false,
+   "maskOnly": false,
+   "canvasOrder": -10,
+   "depth": 135
+  },
+  {
+   "path": "InGameScene/UI Canvas/GamePanels/StationGridEntityPanel/MainPanel/Content/PowerGridPanel/MainContent/tables/StationGridTable/Scroll/Viewport/Rows/Row/NameArea/Name",
+   "kind": "TextMeshProUGUI",
+   "rect": [
+    748,
+    472,
+    900,
+    488
+   ],
+   "visible": [
+    748,
+    472,
+    900,
+    488
+   ],
+   "color": "#FFFFFFFF",
+   "alpha": 1.0,
+   "sprite": "",
+   "raycast": false,
+   "selectable": false,
+   "maskOnly": false,
+   "canvasOrder": -10,
+   "depth": 136,
+   "text": "Cargo Hold"
+  },
+  {
+   "path": "InGameScene/UI Canvas/GamePanels/StationGridEntityPanel/MainPanel/Content/PowerGridPanel/MainContent/tables/StationGridTable/Scroll/Viewport/Rows/Row/Count",
+   "kind": "TextMeshProUGUI",
+   "rect": [
+    910,
+    472,
+    940,
+    488
+   ],
+   "visible": [
+    910,
+    472,
+    940,
+    488
+   ],
+   "color": "#FFFFFFFF",
+   "alpha": 1.0,
+   "sprite": "",
+   "raycast": false,
+   "selectable": false,
+   "maskOnly": false,
+   "canvasOrder": -10,
+   "depth": 137,
+   "text": "x1"
+  },
+  {
+   "path": "InGameScene/UI Canvas/GamePanels/StationGridEntityPanel/MainPanel/Content/PowerGridPanel/MainContent/tables/StationGridTable/Scroll/Viewport/Rows/Row",
+   "kind": "Image",
+   "rect": [
+    712,
+    494,
+    1208,
+    518
+   ],
+   "visible": [
+    712,
+    494,
+    1208,
+    518
+   ],
+   "color": "#1E2A38FF",
+   "alpha": 1.0,
+   "sprite": "RowBox",
+   "raycast": false,
+   "selectable": false,
+   "maskOnly": false,
+   "canvasOrder": -10,
+   "depth": 138
+  },
+  {
+   "path": "InGameScene/UI Canvas/GamePanels/StationGridEntityPanel/MainPanel/Content/PowerGridPanel/MainContent/tables/StationGridTable/Scroll/Viewport/Rows/Row/Group",
+   "kind": "Image",
+   "rect": [
+    712,
+    496,
+    715,
+    516
+   ],
+   "visible": [
+    712,
+    496,
+    715,
+    516
+   ],
+   "color": "#2178C6FF",
+   "alpha": 1.0,
+   "sprite": "",
+   "raycast": false,
+   "selectable": false,
+   "maskOnly": false,
+   "canvasOrder": -10,
+   "depth": 139
+  },
+  {
+   "path": "InGameScene/UI Canvas/GamePanels/StationGridEntityPanel/MainPanel/Content/PowerGridPanel/MainContent/tables/StationGridTable/Scroll/Viewport/Rows/Row/NameArea/Icon",
+   "kind": "Image",
+   "rect": [
+    722,
+    496,
+    742,
+    516
+   ],
+   "visible": [
+    722,
+    496,
+    742,
+    516
+   ],
+   "color": "#FFFFFFFF",
+   "alpha": 1.0,
+   "sprite": "SpawnerChest",
+   "raycast": false,
+   "selectable": false,
+   "maskOnly": false,
+   "canvasOrder": -10,
+   "depth": 140
+  },
+  {
+   "path": "InGameScene/UI Canvas/GamePanels/StationGridEntityPanel/MainPanel/Content/PowerGridPanel/MainContent/tables/StationGridTable/Scroll/Viewport/Rows/Row/NameArea/Name",
+   "kind": "TextMeshProUGUI",
+   "rect": [
+    748,
+    498,
+    900,
+    514
+   ],
+   "visible": [
+    748,
+    498,
+    900,
+    514
+   ],
+   "color": "#FFFFFFFF",
+   "alpha": 1.0,
+   "sprite": "",
+   "raycast": false,
+   "selectable": false,
+   "maskOnly": false,
+   "canvasOrder": -10,
+   "depth": 141,
+   "text": "Spawner Chest"
+  },
+  {
+   "path": "InGameScene/UI Canvas/GamePanels/StationGridEntityPanel/MainPanel/Content/PowerGridPanel/MainContent/tables/StationGridTable/Scroll/Viewport/Rows/Row/Count",
+   "kind": "TextMeshProUGUI",
+   "rect": [
+    910,
+    498,
+    940,
+    514
+   ],
+   "visible": [
+    910,
+    498,
+    940,
+    514
+   ],
+   "color": "#FFFFFFFF",
+   "alpha": 1.0,
+   "sprite": "",
+   "raycast": false,
+   "selectable": false,
+   "maskOnly": false,
+   "canvasOrder": -10,
+   "depth": 142,
+   "text": "x1"
+  },
+  {
+   "path": "InGameScene/UI Canvas/GamePanels/StationGridEntityPanel/MainPanel/Content/PowerGridPanel/MainContent/tables/StationGridTable/Scroll/Viewport/Rows/Row",
+   "kind": "Image",
+   "rect": [
+    712,
+    520,
+    1208,
+    544
+   ],
+   "visible": [
+    712,
+    520,
+    1208,
+    544
+   ],
+   "color": "#1E2A38FF",
+   "alpha": 1.0,
+   "sprite": "RowBox",
+   "raycast": false,
+   "selectable": false,
+   "maskOnly": false,
+   "canvasOrder": -10,
+   "depth": 143
+  },
+  {
+   "path": "InGameScene/UI Canvas/GamePanels/StationGridEntityPanel/MainPanel/Content/PowerGridPanel/MainContent/tables/StationGridTable/Scroll/Viewport/Rows/Row/Group",
+   "kind": "Image",
+   "rect": [
+    712,
+    522,
+    715,
+    542
+   ],
+   "visible": [
+    712,
+    522,
+    715,
+    542
+   ],
+   "color": "#E05A5AFF",
+   "alpha": 1.0,
+   "sprite": "",
+   "raycast": false,
+   "selectable": false,
+   "maskOnly": false,
+   "canvasOrder": -10,
+   "depth": 144
+  },
+  {
+   "path": "InGameScene/UI Canvas/GamePanels/StationGridEntityPanel/MainPanel/Content/PowerGridPanel/MainContent/tables/StationGridTable/Scroll/Viewport/Rows/Row/NameArea/Icon",
+   "kind": "Image",
+   "rect": [
+    722,
+    522,
+    742,
+    542
+   ],
+   "visible": [
+    722,
+    522,
+    742,
+    542
+   ],
+   "color": "#FFFFFFFF",
+   "alpha": 1.0,
+   "sprite": "ShieldGenerator",
+   "raycast": false,
+   "selectable": false,
+   "maskOnly": false,
+   "canvasOrder": -10,
+   "depth": 145
+  },
+  {
+   "path": "InGameScene/UI Canvas/GamePanels/StationGridEntityPanel/MainPanel/Content/PowerGridPanel/MainContent/tables/StationGridTable/Scroll/Viewport/Rows/Row/NameArea/Name",
+   "kind": "TextMeshProUGUI",
+   "rect": [
+    748,
+    524,
+    900,
+    540
+   ],
+   "visible": [
+    748,
+    524,
+    900,
+    540
+   ],
+   "color": "#FFFFFFFF",
+   "alpha": 1.0,
+   "sprite": "",
+   "raycast": false,
+   "selectable": false,
+   "maskOnly": false,
+   "canvasOrder": -10,
+   "depth": 146,
+   "text": "Shield Generator"
+  },
+  {
+   "path": "InGameScene/UI Canvas/GamePanels/StationGridEntityPanel/MainPanel/Content/PowerGridPanel/MainContent/tables/StationGridTable/Scroll/Viewport/Rows/Row/Count",
+   "kind": "TextMeshProUGUI",
+   "rect": [
+    910,
+    524,
+    940,
+    540
+   ],
+   "visible": [
+    910,
+    524,
+    940,
+    540
+   ],
+   "color": "#FFFFFFFF",
+   "alpha": 1.0,
+   "sprite": "",
+   "raycast": false,
+   "selectable": false,
+   "maskOnly": false,
+   "canvasOrder": -10,
+   "depth": 147,
+   "text": "x1"
+  },
+  {
+   "path": "InGameScene/UI Canvas/GamePanels/StationGridEntityPanel/MainPanel/Content/PowerGridPanel/MainContent/tables/StationGridTable/Scroll/Viewport/Rows/Row",
+   "kind": "Image",
+   "rect": [
+    712,
+    546,
+    1208,
+    570
+   ],
+   "visible": [
+    712,
+    546,
+    1208,
+    570
+   ],
+   "color": "#1E2A38FF",
+   "alpha": 1.0,
+   "sprite": "RowBox",
+   "raycast": false,
+   "selectable": false,
+   "maskOnly": false,
+   "canvasOrder": -10,
+   "depth": 148
+  },
+  {
+   "path": "InGameScene/UI Canvas/GamePanels/StationGridEntityPanel/MainPanel/Content/PowerGridPanel/MainContent/tables/StationGridTable/Scroll/Viewport/Rows/Row/Group",
+   "kind": "Image",
+   "rect": [
+    712,
+    548,
+    715,
+    568
+   ],
+   "visible": [
+    712,
+    548,
+    715,
+    568
+   ],
+   "color": "#E05A5AFF",
+   "alpha": 1.0,
+   "sprite": "",
+   "raycast": false,
+   "selectable": false,
+   "maskOnly": false,
+   "canvasOrder": -10,
+   "depth": 149
+  },
+  {
+   "path": "InGameScene/UI Canvas/GamePanels/StationGridEntityPanel/MainPanel/Content/PowerGridPanel/MainContent/tables/StationGridTable/Scroll/Viewport/Rows/Row/NameArea/Icon",
+   "kind": "Image",
+   "rect": [
+    722,
+    548,
+    742,
+    568
+   ],
+   "visible": [
+    722,
+    548,
+    742,
+    568
+   ],
+   "color": "#FFFFFFFF",
+   "alpha": 1.0,
+   "sprite": "Turret",
+   "raycast": false,
+   "selectable": false,
+   "maskOnly": false,
+   "canvasOrder": -10,
+   "depth": 150
+  },
+  {
+   "path": "InGameScene/UI Canvas/GamePanels/StationGridEntityPanel/MainPanel/Content/PowerGridPanel/MainContent/tables/StationGridTable/Scroll/Viewport/Rows/Row/NameArea/Name",
+   "kind": "TextMeshProUGUI",
+   "rect": [
+    748,
+    550,
+    900,
+    566
+   ],
+   "visible": [
+    748,
+    550,
+    900,
+    566
+   ],
+   "color": "#FFFFFFFF",
+   "alpha": 1.0,
+   "sprite": "",
+   "raycast": false,
+   "selectable": false,
+   "maskOnly": false,
+   "canvasOrder": -10,
+   "depth": 151,
+   "text": "Turret"
+  },
+  {
+   "path": "InGameScene/UI Canvas/GamePanels/StationGridEntityPanel/MainPanel/Content/PowerGridPanel/MainContent/tables/StationGridTable/Scroll/Viewport/Rows/Row/Count",
+   "kind": "TextMeshProUGUI",
+   "rect": [
+    910,
+    550,
+    940,
+    566
+   ],
+   "visible": [
+    910,
+    550,
+    940,
+    566
+   ],
+   "color": "#FFFFFFFF",
+   "alpha": 1.0,
+   "sprite": "",
+   "raycast": false,
+   "selectable": false,
+   "maskOnly": false,
+   "canvasOrder": -10,
+   "depth": 152,
+   "text": "x1"
+  },
+  {
+   "path": "InGameScene/UI Canvas/GamePanels/StationGridEntityPanel/MainPanel/Content/PowerGridPanel/MainContent/tables/StationGridTable/Scroll/Viewport/Rows/Row",
+   "kind": "Image",
+   "rect": [
+    712,
+    572,
+    1208,
+    596
+   ],
+   "visible": [
+    712,
+    572,
+    1208,
+    596
+   ],
+   "color": "#1E2A38FF",
+   "alpha": 1.0,
+   "sprite": "RowBox",
+   "raycast": false,
+   "selectable": false,
+   "maskOnly": false,
+   "canvasOrder": -10,
+   "depth": 153
+  },
+  {
+   "path": "InGameScene/UI Canvas/GamePanels/StationGridEntityPanel/MainPanel/Content/PowerGridPanel/MainContent/tables/StationGridTable/Scroll/Viewport/Rows/Row/Group",
+   "kind": "Image",
+   "rect": [
+    712,
+    574,
+    715,
+    594
+   ],
+   "visible": [
+    712,
+    574,
+    715,
+    594
+   ],
+   "color": "#E05A5AFF",
+   "alpha": 1.0,
+   "sprite": "",
+   "raycast": false,
+   "selectable": false,
+   "maskOnly": false,
+   "canvasOrder": -10,
+   "depth": 154
+  },
+  {
+   "path": "InGameScene/UI Canvas/GamePanels/StationGridEntityPanel/MainPanel/Content/PowerGridPanel/MainContent/tables/StationGridTable/Scroll/Viewport/Rows/Row/NameArea/Icon",
+   "kind": "Image",
+   "rect": [
+    722,
+    574,
+    742,
+    594
+   ],
+   "visible": [
+    722,
+    574,
+    742,
+    594
+   ],
+   "color": "#FFFFFFFF",
+   "alpha": 1.0,
+   "sprite": "Wall",
+   "raycast": false,
+   "selectable": false,
+   "maskOnly": false,
+   "canvasOrder": -10,
+   "depth": 155
+  },
+  {
+   "path": "InGameScene/UI Canvas/GamePanels/StationGridEntityPanel/MainPanel/Content/PowerGridPanel/MainContent/tables/StationGridTable/Scroll/Viewport/Rows/Row/NameArea/Name",
+   "kind": "TextMeshProUGUI",
+   "rect": [
+    748,
+    576,
+    900,
+    592
+   ],
+   "visible": [
+    748,
+    576,
+    900,
+    592
+   ],
+   "color": "#FFFFFFFF",
+   "alpha": 1.0,
+   "sprite": "",
+   "raycast": false,
+   "selectable": false,
+   "maskOnly": false,
+   "canvasOrder": -10,
+   "depth": 156,
+   "text": "Wall"
+  },
+  {
+   "path": "InGameScene/UI Canvas/GamePanels/StationGridEntityPanel/MainPanel/Content/PowerGridPanel/MainContent/tables/StationGridTable/Scroll/Viewport/Rows/Row/Count",
+   "kind": "TextMeshProUGUI",
+   "rect": [
+    910,
+    576,
+    940,
+    592
+   ],
+   "visible": [
+    910,
+    576,
+    940,
+    592
+   ],
+   "color": "#FFFFFFFF",
+   "alpha": 1.0,
+   "sprite": "",
+   "raycast": false,
+   "selectable": false,
+   "maskOnly": false,
+   "canvasOrder": -10,
+   "depth": 157,
+   "text": "x1"
+  }
+ ]
+}

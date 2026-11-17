@@ -585,6 +585,50 @@ class StyleTest(unittest.TestCase):
             self.assertTrue(mine and all("delta E 0.0 (on screen)" in s for s in mine), summaries)
         self.assertEqual(failures, [])
 
+    W4412 = Path(__file__).resolve().parent / "fixtures" / "w4412-station-grid-1920-classic-big-grid-power-{}.json"
+
+    def station_grid(self, side):
+        """The Station Grid window at 1920x1080 classic, big-grid-power, built in w4475 on the shape of w4412's
+        censuses (paths from StationGridTable.cs RowView.Create; the real censuses stayed on biscuit and the portal's
+        review folder, out of reach of the fixing machine): before, 9 of 11 rows and "+2 more"; after, the window 16 px taller
+        and all 11 rows, Radiator and Spawner Chest added inside their groups, so every row below them moved down."""
+        return json.loads(Path(str(self.W4412).format(side)).read_text(encoding="utf-8"))
+
+    def test_pooled_rows_pair_by_their_name_when_the_list_shows_more(self):
+        # w4412: PR #3713's Style line read Rows/Row/Group delta E 33.7/13.8/50.3 for strips whose colour had not
+        # changed: pairing by place met each row with the one that stood there before the list grew.
+        summaries, failures = ul.style(self.station_grid("before"), self.station_grid("after"),
+                                       "StationGridEntityPanel/MainPanel", touched_fragments=["StationGridEntityPanel"])
+        self.assertEqual(failures, [])
+        strips = [s for s in summaries if s.startswith("Rows/Row/Group")]
+        self.assertEqual(len(strips), 11, summaries)
+        self.assertEqual(sum("delta E 0.0 (tint)" in s for s in strips), 9, strips)
+        new = sorted(s for s in strips if "not shown before" in s)
+        self.assertEqual(new, ["Rows/Row/Group (touched): row 'Radiator' not shown before, not measured",
+                               "Rows/Row/Group (touched): row 'Spawner Chest' not shown before, not measured"])
+
+    def test_a_row_that_changed_colour_is_still_caught_when_the_list_shows_more(self):
+        after = self.station_grid("after")
+        name_y = next(e["rect"][1] for e in after["elements"] if e.get("text") == "Turret")
+        for e in after["elements"]:
+            if e["path"].endswith("Rows/Row/Group") and e["rect"][1] < name_y < e["rect"][3]:
+                e["color"] = "#00FF00FF"
+        summaries, failures = ul.style(self.station_grid("before"), after, "StationGridEntityPanel/MainPanel",
+                                       touched_fragments=["StationGridEntityPanel"])
+        self.assertEqual(len([f for f in failures if f.startswith("Rows/Row/Group")]), 1, failures)
+
+    def test_rows_with_shared_or_missing_names_still_pair_by_place(self):
+        for drop in (("Row/NameArea/Name",), ("Row/NameArea/Name", "Row/Count")):
+            before, after = self.station_grid("before"), self.station_grid("after")
+            for c in (before, after):
+                c["elements"] = [e for e in c["elements"] if not e["path"].endswith(drop)]
+            row = next(e for e in after["elements"] if e["path"].endswith("Rows/Row"))
+            # Without the Name text a row's first text is its count, "x1" on every row: shared, so not a name to pair by.
+            self.assertEqual(ul.row_name(row, after), "x1" if len(drop) == 1 else None)
+            summaries, _ = ul.style(before, after, "StationGridEntityPanel/MainPanel",
+                                    touched_fragments=["StationGridEntityPanel"])
+            self.assertFalse(any("not shown before" in s for s in summaries), summaries)
+
     W3919 = Path(__file__).resolve().parent / "fixtures" / "w3919-connector-pills-1280-classic-{}.json"
 
     def connector(self, side, tint_chosen=False):

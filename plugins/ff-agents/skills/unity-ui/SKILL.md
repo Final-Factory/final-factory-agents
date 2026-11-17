@@ -243,7 +243,10 @@ census (`<shot>.json`: small, clipped, off-screen and overlapping text, covered 
   Station Info pins, no Player Inventory and no docked leg, so a UI PR on that lane takes its `Pinned:` line from this tour. A small touched
   piece (one craft-queue slot) is measured by `ui_layout.py check --touched <it> --ref <it>`, against its own look before
   (its twin is the element at the same path standing at the same place in its window: clones that share a path pair by a
-  `sibling` index when the census carries one, else by reading order inside the window, so a chosen pill meets the chosen one
+  `sibling` index when the census carries one, then pooled list rows by their name text when every row on both sides has a
+  distinct one (w4412: the Station Grid list grew by two rows and pairing by place read delta E 33.7/13.8/50.3 on
+  `Rows/Row/Group` strips whose colour had not changed; a row not shown before reads `row '<name>' not shown before, not
+  measured`), else by reading order inside the window, so a chosen pill meets the chosen one
   even after the window moved, w3585, w3919: matched by screen place, a moved Connector window's chosen pill met the unchosen
   one, delta E 27.8 for the same tint; a touched
   element with no twin before reads `new, no twin before, not measured` and does not fail)
