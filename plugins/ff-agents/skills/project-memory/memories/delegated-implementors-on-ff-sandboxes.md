@@ -21,8 +21,8 @@ git -C "$D" diff > "$TMPDIR/g4.patch" && git apply "$TMPDIR/g4.patch"
 ```
 
 - **A player at another commit** (an old commit, an A/B arm or a bisect leg) is built in the sandbox, one commit at a
-  time: `switch_branch` with create_from (or `git checkout --detach <sha>` with the editor stopped), `build_player.sh`
-  on the sandbox, move the player out of the tree, then the next commit. Never a full clone of the game repo: the guard
+  time: `switch_branch` with create_from (or `git checkout --detach <sha>` with the editor stopped), `scripts/nightly/build_player.sh`
+  on the sandbox (it writes the player to the shared player cache (`<worker root>/player-cache/<sha>-<os>`, outside the tree), so leave it there, since the next leg on that computer reuses it (w4614)), then the next commit. Never a full clone of the game repo: the guard
   refuses one, `scratch_clone.sh` is retired and `build_player.sh` refuses a project in a temp folder (w3703: w3683's
   clone reached 43 GB on V:, w3682's `--library` clone 48 GB on F:; w3177: ten clones held about 180 GB). The sparse
   clone above checks out no LFS file at all, so it stays cheap and the guard lets it through.
