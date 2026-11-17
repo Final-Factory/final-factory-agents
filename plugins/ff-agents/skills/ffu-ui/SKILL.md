@@ -342,3 +342,19 @@ Measure each of these on the still beside the mock before a critic round; each o
   shrinking the page size the person picked (Ben: "Use A, the single column with 6 techs a page").
 - **The detail shows a tech of the open tab**: the critic graded a Locked tab whose detail kept the hinted Available
   tech UGLY; fall back to the shown page's first row (`research.rs` `shown`).
+
+## Dropdown lists in a window (w4397, ffu #875, three ui-critic rounds)
+
+- **`inspector::highlight()` re-inks the focused node's children** with `BUTTON_FOCUS_TEXT`, not only its fill: a
+  focused filter field's placeholder and magnifier went bright, which the critic graded off the mock. Restore their
+  colour after highlight (`route.rs` `list()`, the hint at 122, 150, 168).
+- **A theme fill token is also a shape** (`theme.rs` `fill`): giving an add button `BUTTON_FOCUS` to show its list is
+  open drew the focus brackets on it. Add a distinct token (`frame::BUTTON_OPEN` maps to `Shape::Pick`: the button's
+  own fill, the accent ring, no brackets).
+- **A list row needs its own focus**: the panels' 5 px brackets on 22 px rows were graded UGLY twice. Rows take
+  `Shape::Row` (`frame::ROW_FOCUS`: the chosen row's blue, a 1 px accent outline, thin brackets 2 logical px off,
+  `render.rs` `ROW_BRACKET_*`) and `Corners::Square`, since a cut corner clashed with the brackets.
+- **Keep focus inside an open list** with `Spec::modal()`: every other control gets `Node::inert`, and `UiTree::hit`
+  and the arrow graph skip it.
+- **Rebuild the release client before every critic round**: a stills script that only runs the binary shot the old
+  build, and a round was spent grading stale stills.
