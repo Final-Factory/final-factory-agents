@@ -198,6 +198,16 @@ census (`<shot>.json`: small, clipped, off-screen and overlapping text, covered 
   at 60 fps is vsync-bound: compare the markers' ms per frame, not the frame time. (4) On a big computer call
   `timed_place` before `bench_queue.py timed`, and start the ticket as its own `run_in_background` task (a trailing `&`
   is refused, hook w3731); a script that waits for `granted` in the ticket's log runs the legs.
+- **Pins need a census beside a window that holds items (w4207).** `ui_layout.py pins` counts a pin as "not shown" in
+  every census it is absent from, and `pr_evidence.py` wants 0 not shown. The Player Inventory (`MiniInventory`) shows
+  only beside a building window with `_showPlayerInventory` (`EntityPanel.cs:376`: a Cargo Hold, not a Connector);
+  `ffauto:ui.open|inventory` opens `InvAndCraft`, not that pin, and selecting a building closes it. So give the tour one
+  census with a Cargo Hold (or another item-holding building) selected and the hover card up, at 1920x1080, 1280x800
+  undocked and 1280x800 docked (`LAYOUT=docked` leg), run `pins` over those, and check the touched window's own
+  censuses for 0 broken separately (w4207's `make_tour.py`, FinalFactory #3628). Two PR traps from the same run: `gh pr
+  edit` on FinalFactory fails with a Projects (classic) GraphQL deprecation error, so set the body with `gh api -X PATCH
+  repos/<owner>/<repo>/pulls/<n> -F body=@<file>`; and `publish_review` renames a name already in the topic
+  (`critic.md` became `critic-2.md`), so the PR's Critic line takes the path it answers.
 - **Title-screen tour traps (w4162).** (1) A tour of a title-screen dialog passes no `-ffAutomationRole solo`: that
   role starts a new game, so the title menu is gone ("ui.modmismatch: no title menu"); with no game ticked,
   `quit_save_check.py` still found no quit save on w4162's legs. (2) `hide:` takes a kind selector,
