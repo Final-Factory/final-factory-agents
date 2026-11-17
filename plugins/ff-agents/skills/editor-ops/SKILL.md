@@ -93,6 +93,24 @@ FinalFactory2_clone_0, FinalFactory3, FinalFactory4, …). Do NOT hardcode a pro
 matching instance differs per working copy. An unpinned run can execute against — and report
 results from — the *wrong* project. Alternatively pass `unity_instance` per call.
 
+### A Unity call failed: match the message, take its one next step (w4501)
+
+In w4501's pass over every agent's transcript (2026-11-17 00:00 to 08:00 UTC, measured), about 36 of
+some 75 Unity failures were calls made before the bridge was up: just after a start, a compile or a
+reload. Agents spent one to three failed calls each before they waited. Do the step on the right
+first, not a second identical call:
+
+| The message | What it means | The next step |
+|---|---|---|
+| `No Unity instances are currently connected` / `No Unity Editor instances found`, right after `unity` start or restart | the editor process is up, the project is still loading | poll `mcp__machine__unity` status until it says `running` (its description: "the MCP bridge follows once the project has loaded"), or wait for `StdioBridgeHost started on port` in the editor log, in one `until` loop; then pin |
+| the same, mid-session, after a compile or a test run | a reload's sub-second drop, cached 5 s | the section below: wait 2 s, then re-pin by port |
+| `refresh_unity` `timed out after 60s waiting for editor readiness` | a slow compile and reload (10 to 31 s reloads on lothdesktop, measured); the compile still runs | don't call it again: wait for `Domain Reload Profiling` in the editor log or the status to go idle, then `read_console` for `error CS` |
+| `unity-bridge.py`: `bridge closed the connection` / `Connection refused` mid-script | the bridge dropped for a reload | `until python scripts/unity-bridge.py ping --project-path <abs>; do sleep 2; done`, then retry the call once |
+| `Command TCS timed out` / `Timeout receiving Unity response` three times running | the main thread is starved or hung (b0e2d247 on biscuit: 52 in a row, then the editor crashed) | stop sending calls; read the editor log; if it is hung, `mcp__machine__unity` restart (force for a frozen one) |
+| `No such tool available: mcp__UnityMCP__<tool>`, the server connected | the server is mid-reload or does not offer that tool | wait for the reload; for a console read, grep the editor log for `error CS` meanwhile |
+| `UnityMCP (ECONNREFUSED)` at session start on biscuit (Linux) | no MCP-for-Unity stdio server there | go straight to `scripts/unity-bridge.py` |
+| `Compilation failed` / `CS0246` from `execute_code` | a short game type name: snippets take no `using` | the game repo's `Documentation/Execute-Code-Snippets.md` (the full names; ~13 such failures in that window) |
+
 ### "No Unity Editor instances found" mid-session — transient, re-pin by PORT
 
 Discovery drops a perfectly healthy editor for a fraction of a second around domain reloads and

@@ -288,7 +288,8 @@ Measure each of these on the still beside the mock before a critic round; each o
 - **Check an ffu PR's Evidence with `pr_evidence.py --repo Final-Factory/ffu --pr N`, after `gh pr create`** (w4302, ffu
   #857): a local `--body-file` run, with `--repo` and `--files-file` too, applied the game repo's rules to
   `crates/ffu-ui` and asked for `Kind:`, a claims table and `Not verified:`; the `--pr` run on the same body answered
-  "PASS: no game code or assets changed" (as for #810 and #849). Fix the body with `gh pr edit` if it fails.
+  "PASS: no game code or assets changed" (as for #810 and #849). Fix the body with `gh api -X PATCH repos/Final-Factory/ffu/pulls/<n> -F body=@<file>` if it fails
+  (`gh pr edit` exits 1 there on the Projects (classic) deprecation).
 - **The Landing Zone has no build-menu entry** (w4302): `inspector::kind_item(Kind::LandingZone, ..)` returns `None`,
   so an alert tile or card for it names `ffu_sim::content::LANDING_ZONE` directly.
 - The Write and Edit tools may refuse to create a file in an ffu slot (w4106, m5): write it in `$TMPDIR` and copy it

@@ -358,6 +358,10 @@ carried over ([lesson](lessons/research-the-decision-not-the-topic.md#name-the-p
 
 One file each under `lessons/`: the rule, why (the incident, dated), how to apply.
 
+- [A failed call changes its form before it runs again](lessons/a-failed-call-changes-its-form-before-it-runs-again.md):
+  lothsahn, 2026-11-17 (w4501): read the error, name its cause, change the call; an identical retry only for a transient
+  you can name. 8 hours of transcripts held about 49 unintended Bash exits, about 36 Unity calls sent before the bridge
+  was up and about 13 `execute_code` compiles failing on a short type name.
 - [Hold the bench lock as briefly as the question allows](lessons/settle-your-own-guesses.md#hold-the-bench-lock-as-briefly-as-the-question-allows-w1628-2026-10-20): lothsahn,
   2026-10-20: "A benchmark with 90% fidelity that runs twice as fast as better one is likely the right choice." The
   shortest run that answers the question, early stop, shared tickets for untimed work (w1628: BEAST held 15.5 of 16 h);

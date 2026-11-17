@@ -180,6 +180,10 @@ this (the heartbeat clock is a Stopwatch, and UPS changes each step's Dt). Full 
    markers, because `read_console` generally does not surface plain `Debug.Log` (only warnings and
    errors) — poll game state instead of grepping for log lines.
    **Caveat:** code is wrapped as a *method body* — no `using` directives, use fully-qualified names.
+   Look a type's full name up before the call (`git grep -n -w -E "(class|struct|enum) <Name>" -- Assets/Scripts`,
+   then its file's `namespace` line), never guess it: about 13 calls failed to compile on a short name in w4501's
+   8-hour pass (2026-11-17, measured), one session four times in nine minutes. The game repo's
+   `Documentation/Execute-Code-Snippets.md` has the wrapper's `using` lines and the names that failed.
 2. **Trigger-file channel — keyboard input only** (`execute_code` cannot synthesize input).
    Write one command into `dev_command.trigger` at the project root with the Write tool.
    `DevCommandWatcher` (`Assets/Editor/DevCommandWatcher.cs`, `[InitializeOnLoad]`) polls it on
