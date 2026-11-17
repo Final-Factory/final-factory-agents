@@ -368,6 +368,15 @@ census (`<shot>.json`: small, clipped, off-screen and overlapping text, covered 
   windows, and use `ffauto:observe.state|nearby|x|z|r` to find a real structure before `ui.selecttile`. (4) In a wait
   loop, `pgrep -f "<script name>"` matches the loop's own shell command line and never ends; wait on a marker line in
   the job's output file instead.
+- **Four traps of a world-marker check in a tour (w4593, FinalFactory #3836, Mac development player).** (1) `pointer.click`
+  does not change the selection in a tour player: select with `ffauto:ui.selecttile|x|z`. For an Inserter Bot or a Cargo
+  Barge it matches `Placeable.OriginalTile`, the tile it was placed on, not where it stands now; "nothing at tile" means
+  the wrong tile: probe the tiles around the blueprint once and note the ones that answer. (2) Selecting a unit opens its
+  panel and the Player Inventory across the top of the screen, and a world marker under them is hidden (the barge's far
+  dock was): place the player (`ffauto:player.setposition`) so the subject sits in the lower half of the screen.
+  (3) `ffauto:camera.zoom|<n>` (DevOnly, a Development player) sets an absolute zoom; `pointer.wheel` adds up from leg to
+  leg. (4) A tour's `record` frames are JPGs stored upside down, with `times.txt` beside them: flip them (`vflip`) when
+  you encode, and set the input rate from `times.txt` (it differs per clip), then `fps=60`.
 - **Six traps of a tooltip and window regression check (w2290, FinalFactory #2642, Windows development player).**
   (1) A recipe cannot be set on a station-deck crafter from a tour: `ffauto:...setrecipe` with a tile looks up TileY 0,
   and the no-tile form needs exactly one `ShipAssemblerMarker` crafter ("found 0"), so a crafter output slot's recipe
