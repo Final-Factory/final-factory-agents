@@ -46,3 +46,15 @@ no focus theft but does move the real cursor; ask for a hidden desktop next time
   Poll `ffauto:wait.status` until it is playable, then wait for the story to end before the first placement. **Blueprint
   ghost range rings show only while the blueprint is held near a station**; held in empty space they show none, so a
   ring check needs a station built first.
+- **An OS-key tour of a built player (w4558, 2026-11-17: Alt-view regression check, real SendInput keys in a windowed
+  1280x720 player).** Four more traps, each cost a run:
+  - **Your own SendInput resets the desktop idle clock** (`GetLastInputInfo`), so `player_slots.py launch`'s idle check
+    refuses the next leg ("desktop idle 36s"). Wait for about 90 s with no input before each leg, in the script.
+  - **The opening intro holds the agent channel at 409** (not "playing") on a fresh `-ffSoloNewGame`. Hold Backspace for
+    about 1.6 s on the focused window ("Hold to skip", `SkipHold.HoldSeconds` 0.8 s); a short tap does not skip it.
+  - **The bug reporter overlay (Alt+Shift+U, `BugReportHotkey`) does not close on Escape.** Every command answers 409 until
+    it closes. Click its X, at about (901, 45) of a 1280x720 client area.
+  - **A developer build turns circuits on by default.** Pass `-ffFeatures=-circuits` for an off leg, or `circuits` to be
+    explicit, and confirm with the `[FeatureToggles]` line in Player.log.
+  - The stale `session-<pid>.json` trap above hit again: keep a "newer than the launch" check in the driver itself
+    (`SINCE` in w4558's tour.py, published at `/srv/fff/review/w4558-input-regressions/pub-tour.py.txt`).
