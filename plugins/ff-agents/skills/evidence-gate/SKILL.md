@@ -157,6 +157,9 @@ carried over ([lesson](lessons/research-the-decision-not-the-topic.md#name-the-p
 - **A tool's "lost" and a subagent's file are guesses until checked** ([lesson](lessons/settle-your-own-guesses.md#a-tools-lost-and-a-subagents-file-are-guesses-until-checked-w3627-2026-11-08)).
   A `lost_lines.py` line is lost only when it is gone on origin/master (the tool says gone, still there or rewritten); a
   read-only subagent (`code-analyst`, `Explore`, `scout`) answers in its reply, so never wait on a file from it (w3627).
+- **A subagent's "ruled out" is a guess until you re-open it** ([lesson](lessons/settle-your-own-guesses.md#a-subagents-ruled-out-is-a-guess-until-you-re-open-it-w4344-w4599-2026-11-17)).
+  Re-open or re-run each subagent claim your result rests on, a negative one first, and say which you checked; steps that
+  chain on each other's output stay in your own loop (w4344, w4599; done checklist line 13).
 - **A cause is named only from a repro under the reporter's conditions** ([lesson](lessons/settle-your-own-guesses.md#name-a-cause-only-from-a-repro-under-the-reporters-conditions-w844-w2448-2026-10-28)).
   Before a report says "the cause", list the reported save, mods, settings, machine/GPU and exact symptom beside the
   repro's; remove each difference or show the cause with and without it, and say which conditions were matched.

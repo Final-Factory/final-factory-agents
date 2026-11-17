@@ -146,3 +146,7 @@ holds, or the report says what is left instead of DONE.
    with a note naming what supersedes it (`gh pr close <n> --comment "Superseded by ..."`; a `SUPERSEDED: wNNN by <what>`
    line in the report), whoever opened it ([lesson](../lessons/say-done-per-request.md#close-what-other-work-superseded-naming-what-covers-it-w3248-2026-11-06), w3248: #3254 stayed
    open beside #3244 on master because "no PR of mine replaces it").
+13. **Subagent claims re-checked.** Every claim the report or the change rests on that came from a subagent (a `file:line`,
+    a "ruled out", a test result) you re-opened or re-ran yourself, and the report says which; a claim you did not check is
+    labelled as the subagent's guess ([lesson](../lessons/settle-your-own-guesses.md#a-subagents-ruled-out-is-a-guess-until-you-re-open-it-w4344-w4599-2026-11-17),
+    w4344, w4599).
