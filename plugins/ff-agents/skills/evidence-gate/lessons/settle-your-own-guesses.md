@@ -558,3 +558,21 @@ Four traps from fixing the 2026-11-16 nightly regressions (w4444, lothdesktop), 
 4. **A rerun that ends `env` while a person plays on that PC is void** (the player-yield, w1894: the bench stops the
    test players when a person starts the game; 7 of 11 reruns in w4444 were void). Do not count it as pass or fail: run
    it again after the game closes, and say in the report which runs were void.
+
+## A fork that shows on an older commit and not on master: A/B the fixes merged since, first (w4505, 2026-11-17)
+
+**Rule.** When a desync reproduces on the commit a report or probe came from and not on `origin/master`, do not
+root-cause it on the old commit yet. List what merged between them on the systems the fork touches
+(`git log <probe>..origin/master --format='%h %ad %s' -- <paths>`, and the merge titles naming the same symptom or
+object), pick the likeliest, cherry-pick it onto the probe (`git cherry-pick --no-commit`, local only), build, and
+rerun the same witness pair. Identical on the forked object names the fix that closed it; still forked, take the next
+candidate. Only when none does is the old commit worth instrumenting.
+
+**Why.** w4505 (an idle fleet ship's heading mirrored on a client after a recovery serve): hours of per-entity Move
+logging on the w4471 probe (2f99d80ea4) traced the turn to a stale float velocity but not its source. One A/B then
+settled it: the probe plus w4461's commit 3e678c2858 (#3741, duplicate formation slots healed every heartbeat, not only
+on load) gave the client the host's heading on every heartbeat of the serve's epoch (float witness, Linux pair, Mono).
+
+**How to apply.** The candidate list costs one `git log`; read the messages, not only the titles (#3741's said "a
+joining or recovering client healed the served save ... the live host" kept the duplicates). Report the fix by its PR
+and the A/B, and say whether master's own run of the same pair is identical too.
