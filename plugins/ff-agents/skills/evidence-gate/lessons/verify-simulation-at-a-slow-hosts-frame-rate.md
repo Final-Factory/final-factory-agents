@@ -206,7 +206,7 @@ Mac-host pair (m5 hosts, BEAST joins through `lab.pair-m5-beast.json`) names its
 Linux: `ffnightly.py` `default_lab()`) starts host and client side by side on one computer and compares their
 fingerprints there. That is the check. Hold the host near one frame per heartbeat against the uncapped client, so the
 frame-order fork a same-speed pair misses shows up (the rule at the top of this file):
-`--peer-arg host=-ffFeelProbe --peer-arg host=-ffFeelFps --peer-arg host=20 --peer-arg host=-ffFeelVsync --peer-arg host=0`.
+`--slow-host 20`, which adds the host's `-ffFeelProbe -ffFeelFps 20 -ffFeelVsync 0`.
 - A requester on Windows or Linux (lothdesktop, biscuit) that has built the head's player and passed the host-only
   `--dry` (w2963) runs the PR's scenarios itself, in its own sandbox
   (`ffnightly.py run --sha <head> --scenarios-from <head> --scenario <each> --out "$TMPDIR/mp-<time>"` plus the flags

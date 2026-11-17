@@ -229,14 +229,20 @@ Not verified: the Bats' slot lag (simulation, follow-up PR)
 - **A PR's scripted MP check runs on one computer, yours when it can** (w4596, 2026-11-17, lothsahn: "A minor loss in
   coverage is acceptable if it can result in significant speed ups"): `ffnightly.py` on the default lab
   (`lab.win.json`, `lab.linux.json`) runs host and client side by side on one computer, the host held at 20 fps
-  (`--peer-arg host=-ffFeelProbe --peer-arg host=-ffFeelFps --peer-arg host=20 --peer-arg host=-ffFeelVsync
-  --peer-arg host=0`). On Windows or Linux, once your own player build and `--dry` passed (w2963), run the PR's MP
+  (`--slow-host 20`, which adds the host's `-ffFeelProbe -ffFeelFps 20 -ffFeelVsync 0`). On Windows or Linux, once your own player build and `--dry` passed (w2963), run the PR's MP
   scenarios yourself (`--sha <head> --scenarios-from <head>`) and report that run: no `request_pair`. From a Mac,
   `request_pair` `legs: 1` (until FF Factory takes 1, the default 2). Two computers at once only for a cross-OS pair
   (w1692), Steam (w2459), a timed pair, the network or join path itself, or a desync seen only across machines. The
   Evidence row says "one computer: default lab, host held at 20 fps". 21 pairs on 2026-11-17: median 64 min filed to
   done, 17 min of it waiting for two computers at once (measured, `work_timing`)
   ([lesson](../lessons/verify-simulation-at-a-slow-hosts-frame-rate.md#a-prs-scripted-mp-check-runs-on-one-computer-the-requesters-own-when-it-can-w4596-2026-11-17)).
+- **A relay or cross-machine pair runs `ffnightly.py preflight` before either leg builds** (w4600, 2026-11-17):
+  `python scripts/nightly/ffnightly.py preflight --lab <the lab or its copy> --scenario <each> [--scenarios-from <sha>]
+  [--add-relay-client]`, on the host leg, from the files alone. It refuses a `"windowed"` scenario on a `"headless"`
+  relay peer (w4572 and w4579 built both players first, 8 to 12 min each), a scenario peer the lab lacks (b of a
+  three-peer scenario, w4586) and a Mac client (w665); once `FF_PAIR_RELAY_KEY` is set, a placeholder key (w4572) or the
+  lab's `CLIENT_ADDRESS` left in the relay URL. `run` repeats the check for named scenarios before it launches anything.
+  Fix what it names before anyone builds.
 - **Each client leg proves it reaches the host before it builds or joins** (w2259): `python scripts/nightly/reach.py
   @<host machine>` run on the client's own machine ends `PICKED <ip>`, and the leg joins that IP; `UNREACHABLE` stops
   the leg at once with the addresses tried. A host address is a machine name (`@m3`, `lab_hosts.json`), never a copied

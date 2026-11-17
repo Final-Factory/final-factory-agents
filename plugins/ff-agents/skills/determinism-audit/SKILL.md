@@ -99,7 +99,7 @@ fingerprint verdict.
 
 **A PR's scripted MP check runs on one computer** (w4596, 2026-11-17): an `ffnightly.py run` of its `MP-*` scenarios on
 the default lab starts host and client side by side and compares them there; hold the host at 20 fps
-(`--peer-arg host=-ffFeelProbe --peer-arg host=-ffFeelFps --peer-arg host=20 --peer-arg host=-ffFeelVsync --peer-arg host=0`).
+(`--slow-host 20`, which adds the host's `-ffFeelProbe -ffFeelFps 20 -ffFeelVsync 0`).
 A requester on Windows or Linux runs them in its own sandbox after its build and `--dry`, a Mac requester files
 `request_pair` `legs: 1`, and two computers at once are only for a cross-OS pair, Steam, a timed pair, the network or
 join path itself, or a desync seen only across machines. The two-machine replay above is for a multiplayer gameplay fix
