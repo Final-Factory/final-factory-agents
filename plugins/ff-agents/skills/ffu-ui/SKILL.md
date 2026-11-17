@@ -325,3 +325,19 @@ Measure each of these on the still beside the mock before a critic round; each o
   (`render.rs` `KEY_CUT`, cut at the tiles' two corners) in a row `PROMPT_GAP` (4 logical, 6 px at 1080) above the
   tile (`hud.rs` `tray_tile`); round 3 found 0 BROKEN or UGLY. One corner family per row: check every small part
   (key, count, badge) against the tile it sits on before the critic round.
+
+## A full screen: the research picker (w4367, ffu #864)
+
+- **Played checks with no server**: `crates/ffu-ui/examples/research.rs` writes its scenes as snaps
+  (`research-{early,mid}.snap`), and `ffu --start <snap> --still|--clip out --research --press research.add,...`
+  presses T, clicks each named node where the screen lays it out, steps one tick per op and prints the sim's queue as
+  JSON. A local `--clip` drew only the `--inspect` panel before w4367: a new screen needs its own branch in the clip
+  loop, and `scene.builder.frame(..)` called each frame, or its hint frame never crawls.
+- **FF1's early tree is one chain**: a new sector has one Available tech, and skipped objectives pay research into the
+  pool, so "Research now" on the hinted tech can finish it at once; assert active or unlocked.
+- **A pager past 12 pages ran its dots out of the panel**: `frame::MAX_DOTS` (12) drops the rest; the gate caught it on
+  the Locked tab (26 pages).
+- **A screen that runs over the hotbar at 800 lines hides the HUD while open** (FF1's tech tree is modal), rather than
+  shrinking the page size the person picked (Ben: "Use A, the single column with 6 techs a page").
+- **The detail shows a tech of the open tab**: the critic graded a Locked tab whose detail kept the hinted Available
+  tech UGLY; fall back to the shown page's first row (`research.rs` `shown`).
