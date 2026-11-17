@@ -231,10 +231,13 @@ Not verified: the Bats' slot lag (simulation, follow-up PR)
   (`lab.win.json`, `lab.linux.json`) runs host and client side by side on one computer, the host held at 20 fps
   (`--slow-host 20`, which adds the host's `-ffFeelProbe -ffFeelFps 20 -ffFeelVsync 0`). On Windows or Linux, once your own player build and `--dry` passed (w2963), run the PR's MP
   scenarios yourself (`--sha <head> --scenarios-from <head>`) and report that run: no `request_pair`. From a Mac,
-  `request_pair` `legs: 1` (until FF Factory takes 1, the default 2). Two computers at once only for a cross-OS pair
+  `request_pair` `legs: 1` (ff-factory#1008). A check commit older than FinalFactory#3828 lacks
+  `preflight` and `--slow-host`: copy master's `scripts/nightly/ffnightly.py` over the worktree's after the build
+  and `git checkout` it back after the runs (a copy in `$TMPDIR` finds no repo, w4609). Two computers at once only for a cross-OS pair
   (w1692), Steam (w2459), a timed pair, the network or join path itself, or a desync seen only across machines. The
   Evidence row says "one computer: default lab, host held at 20 fps". 21 pairs on 2026-11-17: median 64 min filed to
-  done, 17 min of it waiting for two computers at once (measured, `work_timing`)
+  done, 17 min of it waiting for two computers at once (measured, `work_timing`). The first one-leg run (w4609, same commit as
+  the two-leg w4595) took 51 min filed to done, 17 of them work, while w4595 still waited for two computers
   ([lesson](../lessons/verify-simulation-at-a-slow-hosts-frame-rate.md#a-prs-scripted-mp-check-runs-on-one-computer-the-requesters-own-when-it-can-w4596-2026-11-17)).
 - **A relay or cross-machine pair runs `ffnightly.py preflight` before either leg builds** (w4600, 2026-11-17):
   `python scripts/nightly/ffnightly.py preflight --lab <the lab or its copy> --scenario <each> [--scenarios-from <sha>]
