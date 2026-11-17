@@ -2023,6 +2023,10 @@ def main(argv=None) -> int:
             files, changes = None, None
             print("note: no file list (--files-file, or --repo and --pr): the rules that read the changed files "
                   "(Balance, Used by, Deck, UI paths) did not run", file=sys.stderr)
+        # w4495: with the files known, answer as the merge check does; a docs-only PR (#3765) failed here and passed there.
+        if files is not None and not applies(files):
+            print("PASS: no game code or assets changed, so no Evidence section is needed")
+            return 0
     elif args.repo and args.pr:
         pr = json.loads(gh("pr", "view", str(args.pr), "--repo", args.repo, "--json", "body,files"))
         all_files = every_file(args.repo, args.pr, pr.get("files") or [])

@@ -205,9 +205,10 @@ Present but red, or the change cannot keep old saves loading: ask.
 under `Assets/` outside `Assets/Tests/`, `Assets/TestsSlow/`, `Assets/Editor/` and `Assets/Scripts/PlayModeTests/`
 (`.meta` and `.md` aside) needs the section (`applies()` and `NOT_GAME_CODE` in `pr_evidence.py`). Dev automation,
 diagnostics and ffauto commands under `Assets/Scripts/` count, though no player sees them. For those write
-`Kind: other`, a claims table and `Not verified:`. Check the draft against the PR's own files before you arm
-`blocked_on` `merge_on_green` or call `ff-pr merge`:
-`python "$FF_SKILLS/evidence-gate/pr_evidence.py" --body-file <body.md> --repo Final-Factory/FinalFactory --pr <n>`.
+`Kind: other`, a claims table and `Not verified:`. Before you arm `blocked_on` `merge_on_green` or call `ff-pr merge`,
+run the check merge runs, on the posted body:
+`python "$FF_SKILLS/evidence-gate/pr_evidence.py" --repo Final-Factory/FinalFactory --pr <n>` (a body not yet posted:
+`--body-file <body.md>` with the same `--repo` and `--pr`; before ff-agents 1.34.329 that form failed a docs-only PR).
 A draft PR never merges on green: `gh pr ready <n>` before you arm `merge_on_green`.
 
 **Why** (measured from the portal journal, 2026-11-16 20:00 to 2026-11-17 04:00 UTC). Two workers armed
