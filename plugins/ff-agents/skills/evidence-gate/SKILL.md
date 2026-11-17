@@ -516,7 +516,7 @@ One file each under `lessons/`: the rule, why (the incident, dated), how to appl
   other titles' size on one line, the same edge padding (`ui_look.py family`; w1761, Ben after a fresh critic passed it:
   "i dont like the differing border-radius values all smashed together"; checklist ui.md 33;
   [lesson](lessons/verify-ui-with-full-content-like-a-player.md#a-window-is-judged-beside-the-games-other-windows-corners-header-padding-w1818-2026-10-23)).
-- [A child popup over its own window is by design](lessons/a-child-popup-over-its-own-window-is-by-design.md): a picker
+- [A child popup over its own window is by design](lessons/a-ui-change-leaves-the-rest-of-the-screen-as-it-was.md#a-child-popup-over-its-own-window-is-by-design-w4504-2026-11-16): a picker
   or dialog a window opened for a choice covers that window by design. It is never a flaw, never STANDING and never
   handed up, while the same popup over another window or the HUD is still graded; `ui_layout.py check` counts it as
   `child popup` (w4504, lothsahn: "Never worry about overlap in cases like this.").

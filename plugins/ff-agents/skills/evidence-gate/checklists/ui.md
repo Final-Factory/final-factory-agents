@@ -477,7 +477,7 @@ control, and a redesign goes out as 2 or 3 clearly different options built from 
     make a selection and then returns to the prior window. Never worry about overlap in cases like this."). The same popup
     over another window or the HUD is graded as above. `ui_layout.py check` prints it as `CHILD POPUP`, apart from new,
     kept and standing; a check line from before ff-agents 1.34.330 counted it, so re-run it.
-    Lesson: [a child popup over its own window is by design](../lessons/a-child-popup-over-its-own-window-is-by-design.md).
+    Lesson: [a child popup over its own window is by design](../lessons/a-ui-change-leaves-the-rest-of-the-screen-as-it-was.md#a-child-popup-over-its-own-window-is-by-design-w4504-2026-11-16).
     Lesson: [UI overlaps follow the layer order](../lessons/a-ui-change-leaves-the-rest-of-the-screen-as-it-was.md#ui-overlaps-follow-the-layer-order-higher-over-lower-is-by-design-w2150-2026-10-25).
 35. **An approval ask explains every change, with a cropped, marked pair.** Before you ask a person to OK a change, each
     change has its own `## Change <n>` section, in plain words: Before (what the player did and saw, step by step), After
