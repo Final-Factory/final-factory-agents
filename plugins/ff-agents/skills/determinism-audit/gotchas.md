@@ -682,9 +682,11 @@ is `FpsTarget` in `LocalSettings/settings.json` (`game_data.py snapshot`, `put -
 
 w2133 (2026-10-25, the client of a LothDesktop-host pair for PR #2507) lost about 40 minutes to four traps:
 
-- **Build:** `scripts/nightly/build_player.sh` takes only `mac|win`. On Linux run
-  `FF_BUILD_DIR=$TMPDIR/<leg>/player FF_LOG_DIR=$TMPDIR/<leg>/logs bash scripts/audit/run_build_multiplayer_audit.sh --build-only`
-  (it takes its own Unity slot; one session with `-buildTarget StandaloneLinux64`).
+- **Build:** (since w4549) `bash scripts/nightly/build_player.sh <sandbox> <sha> linux` with no cache root: the machine's
+  shared player cache, reused by every later leg of that commit, one session with `-buildTarget StandaloneLinux64` under
+  the memory guard (`scripts/linux_build_memory.sh`: taskset -c 0-3, no 1g nursery, waits for 12 GB free; w4550 named
+  the 1g nursery and all-core Burst as the OOM cause). Before w4549 build_player.sh took only `mac|win` and Linux used
+  `run_build_multiplayer_audit.sh --build-only` into `$TMPDIR`.
 - **biscuit has 26 GB:** with another sandbox's editor and player up, the kernel OOM-killed the build's Unity during
   Burst AOT (`journalctl -k`: "Out of memory: Killed process ... (Unity)"; the build log ends "BeeDriver connection
   terminated" in GenerateNativePluginsForAssemblies). It leaves an orphan `bcl.exe +burstc` (7 GB; `ff-leftovers end`)
