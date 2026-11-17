@@ -990,6 +990,9 @@ class PinTest(unittest.TestCase):
         loaded["elements"].append(el("PersistentObjects/[Graphy]/FPS/Text", [10, 10, 80, 30]))
         loaded["layout"] = "docked"
         self.assertEqual(ul.layout_of(loaded), "title")
+        # w4513: w4451's stencil quad over the whole screen draws no colour (maskOnly), so it is no game element either.
+        loaded["elements"].append(dict(el("MarkerClipErase/Quad0", [0, 0, 1280, 800]), maskOnly=True))
+        self.assertEqual(ul.layout_of(loaded), "title")
         # w4159: the Workshop upload bar and a confirmation dialog over the Mods window are the title screen's own.
         def at(path, rect):
             return dict(el("x", rect), path=path)
