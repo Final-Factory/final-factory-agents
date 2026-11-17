@@ -327,7 +327,6 @@ whole verification. The repo's own `CLAUDE.md` is binding and longer; this skill
     hashcheck, test and clippy jobs do not exist at all, nothing was tested. On 2026-11-09, during GitHub incident
     tp8cghg7tlc4, run 42674382318 created 2 of its 12 jobs. Push an empty commit for a fresh `pull_request` run. The
     harness refuses `gh run rerun` of it, and a `workflow_dispatch` run on the same commit is not the PR's run.
-- **The Write tool cannot make a new file in an ffu slot** (w3831): a worker's Write may create files only in its game sandbox and its `$TMPDIR`, so a new `src/sector/comets.rs` in `$FFU_DIR` was refused. Write the new file in `$TMPDIR` and `cp` it into `$FFU_DIR`; edit existing files with Edit or a script file in `$TMPDIR`.
 - Put those exports in `$TMPDIR/rust.sh` and source it in every shell call: shell state does not persist.
 - **Never pipe an ffu command's stdout into `head`** (w2895). `ffu-headless ff1 import ... | head -c 400` panicked
   when `head` closed the pipe: Rust's `println!` panics on a broken pipe. The panic wrote a crash report under the
