@@ -213,8 +213,7 @@ folder's children) and prints the biggest children in GB, then run it once for e
 
 **Rule.** Build a player of the game repo at another commit (an old commit, an A/B arm, a bisect leg) in your own
 sandbox, one commit at a time: check the commit out (`switch_branch` with create_from, or `git checkout --detach <sha>`
-with the editor stopped), run `build_player.sh` on the sandbox, move the player out of the tree, then check out the next
-commit. Never a clone of the game repo in a temp folder (w3703, lothsahn: "The worker put a whole clone of the repo in
+with the editor stopped), run `scripts/nightly/build_player.sh` on the sandbox (it writes the player to the shared player cache (`<worker root>/player-cache/<sha>-<os>`, outside the tree), so leave it there, since the next leg on that computer reuses it (w4614)), then check out the next commit. Never a clone of the game repo in a temp folder (w3703, lothsahn: "The worker put a whole clone of the repo in
 the temp directory. It should not be doing this."): `scratch_clone.sh` is retired, `build_player.sh` refuses a project
 in a temp folder (exit 68), and FF Factory's guard refuses a full `git clone` of the game repo. w3683's clone reached
 43 GB on LothDesktop's V: and w3682's `--library` clone 48 GB on BEAST's F:, after this lesson had sent them to

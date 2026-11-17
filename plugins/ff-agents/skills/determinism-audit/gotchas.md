@@ -1218,8 +1218,7 @@ client "ffauto:..."`):
   902,382. Both legs clicked Delete that way.
 - **A leg's builds go in its sandbox, one commit at a time** (w3296, w3703): `switch_branch` the sandbox (editor
   stopped) to a new branch created from the PR's sha and run `build_player.sh` on the sandbox itself: it reused the
-  Library and built in 9.5 minutes. A baseline and a PR head: build one, move its player out of the tree, then the
-  other. Never a clone of the game repo in `$TMPDIR`: `scratch_clone.sh` is retired, `build_player.sh` refuses a project
+  Library and built in 9.5 minutes. A baseline and a PR head: build one (it writes the player to the shared player cache (`<worker root>/player-cache/<sha>-<os>`, outside the tree), so leave it there, since the next leg on that computer reuses it (w4614)), then the other. Never a clone of the game repo in `$TMPDIR`: `scratch_clone.sh` is retired, `build_player.sh` refuses a project
   in a temp folder (exit 68), and FF Factory's guard refuses a full `git clone` of the game repo (lothsahn: "The worker
   put a whole clone of the repo in the temp directory. It should not be doing this."; w3683's clone reached 43 GB on
   LothDesktop's V:, w3682's `--library` clone 48 GB on BEAST's F:).
