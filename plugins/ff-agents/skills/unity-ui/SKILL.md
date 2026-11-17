@@ -175,7 +175,13 @@ census (`<shot>.json`: small, clipped, off-screen and overlapping text, covered 
   player (seed w881: a station 12 tiles east never built its Spawner Chest, so `spawnerpower` failed; 14 tiles west
   built). Read each leg's `tour.log` for a failed setup before you read its stills. (3) A list fit that counts each row
   as one line overshoots its room when names wrap (`StationGridTable.FitHeight`): measure the gap from the last row (Net)
-  to the window frame in the census, before and after, and compare it with the reference panel's.
+  to the window frame in the census, before and after, and compare it with the reference panel's. **Don't blame the
+  list before you read the fit (w4487).** The French Station Grid's Net cut at 1280x720 classic 0.8 had no wrapped name
+  (every row `lines` 1): a HUD piece's drawn rect sat 0.01 units inside the window's side, `SelectionColumn.GrowDown`'s
+  strict `Keep` test took it as a floor, the window stopped at 559 instead of 599, and `WindowFit` scrolled the 1.7 units
+  its parts could not give. When one language's window is shorter, compare its placed rect and height with English first,
+  then run the leg with `-ffPanelTrace` and read the `[w4289 trace] grow down` and `[w4487 trace] fit` lines (max, want,
+  parts, scrolls) before you change a row count.
 - **Tour worlds on one station (w4268).** Structures you place with `ffauto:blueprint.place` join one station only
   when every gap between them holds a Connector facing Right (rotation 1, `blueprint('Connector', 1)` from the game
   repo's `scripts/deck_audit/build_audit_world.py`; it links the tiles left and right, `StationConnectionsSystem.cs`).
