@@ -198,6 +198,15 @@ census (`<shot>.json`: small, clipped, off-screen and overlapping text, covered 
   at 60 fps is vsync-bound: compare the markers' ms per frame, not the frame time. (4) On a big computer call
   `timed_place` before `bench_queue.py timed`, and start the ticket as its own `run_in_background` task (a trailing `&`
   is refused, hook w3731); a script that waits for `granted` in the ticket's log runs the legs.
+- **Regression-check traps (w4561).** (1) A regression check's critic takes its before from the commit before the
+  first suspect (`#NNNN^`), so a change another PR in the range made on purpose looks new: w4561's fresh ui-critic called
+  the French Station Grid "BROKEN, NEW" for growing 82 px and losing its title glyph, both w4412's own work. Pass each
+  in-range PR's ask to `ui_look.py pack` with `--words`, and answer any such flag in the report by naming the PR that
+  made the change. (2) A nightly scenario re-sized to a size it has no baseline for (w4561 ran `UI-w1052-deck-layout`'s
+  1280x800 legs at 1280x720) ends with `env no baseline`, which is no verdict. Run the same legs on the before player and
+  compare them still by still with `ui_layout.py check --before --after`. (3) In a seeded world with no fleet ships,
+  Tab never opens the Fleet panel, so a "fleet" still shows only the selection. Mark the Fleet panel not checked, or
+  give the world a ship first.
 - **Pins need a census beside a window that holds items (w4207).** `ui_layout.py pins` counts a pin as "not shown" in
   every census it is absent from, and `pr_evidence.py` wants 0 not shown. The Player Inventory (`MiniInventory`) shows
   only beside a building window with `_showPlayerInventory` (`EntityPanel.cs:376`: a Cargo Hold, not a Connector);
