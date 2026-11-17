@@ -564,7 +564,8 @@ re-run the leg, never a finding.
 ## 5. Check the pixels, then look at every still yourself
 
 `scripts/deck_audit/ui_check.py` in the game repo (numpy + Pillow; rects are image pixels from the
-top-left, or pass `--unity-y` for a tour `rect:` log line):
+top-left, or pass `--unity-y` for a tour `rect:` log line). Without them installed, run it as
+`uv run -q --no-project --with numpy --with pillow python3 scripts/deck_audit/ui_check.py flicker <clip dir> --unity-y` (w4488):
 
 ```sh
 python scripts/deck_audit/ui_check.py flicker <tour>/clip-hub-blueprints --rect 0,60,1280,800 --out flicker.png
@@ -647,6 +648,8 @@ still or a mock goes to anyone:
    words, and w3099's quoted window names and a rule, so a critic graded the asked-for move of the alert row BROKEN as
    unnamed (4 BROKEN; 0 with `--words`). Without `--words`, pack warns and carries the brief's ask and Done-when lines into
    `b/words.md` under their own heading, labelled as the brief's (w3111). Read `b/words.md` before you start the critic.
+   `--words` carries only the requester's own quoted words from the brief, never your design summary or description of the
+   change: the pack files them as the person's (w4488: caught and rebuilt before the critic ran).
    After a person picks among options, the next round's brief quotes their picks and the findings they accepted by
    picking, and carries every earlier brief's list of what the request adds (new panels, cards, a hotbar). A fresh critic
    knows none of it: w4014's first round on Ben's picked combination gave 3 BROKEN, each a decided item or a new element

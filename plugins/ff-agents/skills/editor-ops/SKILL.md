@@ -591,6 +591,8 @@ slots").
   package method not yet in the tree failed the build with CS1061 and cost an 8-minute bench build). Stage the next
   change outside the tree (`$TMPDIR`) and copy it in after the build ends, or once its log shows the player assemblies
   built (`PlayerScriptAssemblies/FFSpaghetti.dll`).
+  It refuses to start unless HEAD is the sha it builds (exit 65) and the tracked tree is clean (exit 66), and keeps what it
+  reverted as `restored.patch` beside the build (w4488).
 - **After you stop your editor, `git status` before you wait or end the turn, and `git checkout -- <path>` every asset
   it rewrote on its own.** An editor that runs or quits rewrites tracked assets nobody asked it to (seen: `Assets/Localization/
   LocalizationMasterTable Shared Data.asset`, `Assets/UI/Fonts/NotoSansKR-VariableFont_wght SDF.asset`). When your sandbox is
