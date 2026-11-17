@@ -97,6 +97,14 @@ sequence through real input on both peers. A direct child or another explicitly 
 drives the second peer. The playtest skill owns input and visual evidence; this skill owns the
 fingerprint verdict.
 
+**A PR's scripted MP check runs on one computer** (w4596, 2026-11-17): an `ffnightly.py run` of its `MP-*` scenarios on
+the default lab starts host and client side by side and compares them there, which is what every leg of a pair run did on
+its own computer. So a requester on Windows or Linux runs them in its own sandbox after its build and `--dry`, a Mac
+requester files `request_pair` `legs: 1`, and two or more legs are only for a check that needs computers at once (a pair
+lab, the relay, cross-OS, Steam, timed). The two-machine replay above is for a multiplayer gameplay fix driven by real
+input, not a PR's scripted check
+([lesson](../evidence-gate/lessons/verify-simulation-at-a-slow-hosts-frame-rate.md#a-default-lab-mp-check-runs-on-one-computer-the-requesters-own-when-it-can-w4596-2026-11-17)).
+
 **A BEAST peer runs from an ffsb sandbox** (Ben 2026-09-23): create one with `mcp__ffsb__create_sandbox`, build
 the Windows player in it, and launch it through a player slot, never from its `Builds/<leg>/` folder:
 `python scripts/nightly/player_slots.py launch <build folder or exe> -- <args>` (`--detach` returns at once), or

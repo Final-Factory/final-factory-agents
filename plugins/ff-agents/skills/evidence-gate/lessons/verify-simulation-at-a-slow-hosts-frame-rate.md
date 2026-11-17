@@ -200,6 +200,34 @@ words name an `MP-*` scenario takes no Mac (`shared/capacity.ts` `macRefusedScen
 unless it is cross-OS, its words name a pair lab or `pair_relay`, or they carry `FF_MAC_GPU_HANG_OK=<request>`. A real
 Mac-host pair (m5 hosts, BEAST joins through `lab.pair-m5-beast.json`) names its lab in the brief so a Mac may host it.
 
+## A default-lab MP check runs on one computer, the requester's own when it can (w4596, 2026-11-17)
+
+**Rule.** An `ffnightly.py run` of an `MP-*` scenario on the default lab (`lab.win.json` on Windows, `lab.linux.json` on
+Linux: `ffnightly.py` `default_lab()`) starts host and client side by side on one computer and compares them there. So
+a second leg running the same scenarios on another computer repeats the check: neither leg compares its players against
+the other leg's. One computer is the check. A requester on Windows or Linux (lothdesktop, biscuit) that has built the
+head's player and passed the host-only `--dry` (w2963) runs the PR's scenarios itself, in its own sandbox
+(`ffnightly.py run --sha <head> --scenarios-from <head> --scenario <each> --out "$TMPDIR/pair-<time>"`), and reports that
+run: no `request_pair`. A requester on a Mac, which cannot run an MP client (w3697), files `request_pair` with `legs: 1`
+(once FF Factory takes one leg, its w4596 change; until then the default 2). `request_pair` with two or more legs
+stays only for a run that needs two computers at once: a pair lab or the relay (a Mac host, `lab.pair-*.json`,
+`pair_relay.py`), a cross-OS pair for w1692's reasons, a Steam lobby or join (w2459), or a timed pair.
+
+**Why.** lothsahn asked (2026-11-17, w4596): "Please look to see if there's a way to speed up the pair and determinism
+syncs. A minor loss in coverage is acceptable if it can result in significant speed ups." Measured in FF Factory's
+`work_timing` over the 21 pair requests that finished 2026-11-17: filed-to-done median 64 min. Of that, the wait before
+the first leg started (two computers with room at once) had a median of 17 min and a mean of 33 min. Pairs filed
+2026-11-16 waited 3 h 45 min to 2 days (w4441 11 h 22 min, w4334 22 h 44 min, w4207 2.0 days), and pair runs were 19 %
+of all queue time across 197 requests. Each leg also builds or fetches its own player (8 to 34 min of a leg's work)
+although the requester had already built that head for its `--dry`. The second leg added only the same check on another
+computer and OS. It never tested cross-OS lockstep, which only a pair lab or the relay does.
+
+**How to apply.** Before `request_pair`, ask whether the check needs two computers at once (a pair lab, the relay,
+cross-OS, Steam, timed). If not, and your sandbox is on Windows or Linux, run the scenarios yourself. Otherwise, from a
+Mac, use `legs: 1`. The PR's `## Evidence` row names the computer and OS that ran it and says "one computer: default lab,
+host and client local". Coverage given up: the repeat of the same scenarios on a second computer and OS (a run-to-run
+timing repeat, not a cross-machine check). A change that can differ by platform still gets its cross-OS pair (w1692).
+
 ## A pair run is filed only on a commit that compiles (w2125, 2026-10-25)
 
 **Rule.** Before `request_pair` (a two-machine pair run), the commit its legs run must have compiled: a green

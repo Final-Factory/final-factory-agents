@@ -226,6 +226,16 @@ Not verified: the Bats' slot lag (simulation, follow-up PR)
   or Linux legs; only a pair lab or the relay (leg 1 hosts, the others join) lets a Mac host. w3669's m5 leg ended `env`
   3 times in 20 s after a 10-minute build
   ([lesson](../lessons/verify-simulation-at-a-slow-hosts-frame-rate.md#a-single-machine-mp-scenario-never-runs-on-a-mac-w3697-2026-11-08)).
+- **A default-lab MP check runs on one computer, yours when it can** (w4596, 2026-11-17, lothsahn: "A minor loss in
+  coverage is acceptable if it can result in significant speed ups"): `ffnightly.py` on the default lab
+  (`lab.win.json`, `lab.linux.json`) runs host and client side by side on one computer, so a second leg only repeats it.
+  On Windows or Linux, once your own player build and `--dry` passed (w2963), run the PR's MP scenarios yourself
+  (`--sha <head> --scenarios-from <head>`) and report that run: no `request_pair`. From a Mac, `request_pair` `legs: 1`
+  (until FF Factory takes 1, the default 2). Two or more legs only for a check that needs computers at once: a pair lab
+  or the relay, a cross-OS pair (w1692), Steam (w2459), timed. The Evidence row names the computer and says "one
+  computer: default lab, host and client local". 21 pairs on 2026-11-17: median 64 min filed to done, 17 min of it
+  waiting for two computers at once (measured, `work_timing`)
+  ([lesson](../lessons/verify-simulation-at-a-slow-hosts-frame-rate.md#a-default-lab-mp-check-runs-on-one-computer-the-requesters-own-when-it-can-w4596-2026-11-17)).
 - **Each client leg proves it reaches the host before it builds or joins** (w2259): `python scripts/nightly/reach.py
   @<host machine>` run on the client's own machine ends `PICKED <ip>`, and the leg joins that IP; `UNREACHABLE` stops
   the leg at once with the addresses tried. A host address is a machine name (`@m3`, `lab_hosts.json`), never a copied
