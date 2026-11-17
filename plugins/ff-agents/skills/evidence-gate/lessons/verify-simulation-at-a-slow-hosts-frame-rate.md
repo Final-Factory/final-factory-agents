@@ -211,8 +211,11 @@ frame-order fork a same-speed pair misses shows up (the rule at the top of this 
   `--dry` (w2963) runs the PR's scenarios itself, in its own sandbox
   (`ffnightly.py run --sha <head> --scenarios-from <head> --scenario <each> --out "$TMPDIR/mp-<time>"` plus the flags
   above), and reports that run: no `request_pair`.
-- A requester on a Mac, which cannot run an MP client (w3697), files `request_pair` with `legs: 1` (once FF Factory
-  takes one leg, its w4596 change; until then the default 2, each leg on the default lab).
+- A requester on a Mac, which cannot run an MP client (w3697), files `request_pair` with `legs: 1`
+  (ff-factory#1008). Measured on the first one (w4609, 2026-11-17): 34 min queued for one free Linux computer,
+  17 min of work (build 10, preflight under 1, runs 5), against the two-leg w4595 of the same commit that had not
+  started after 2 h 14 min. A host-only scenario that needs a remote client (MP-W1859) cannot run on one computer:
+  leave it out or keep a relay pair for it.
 - Two computers at once (a pair lab or the relay: `lab.pair-*.json`, `pair_relay.py`) only when the check needs them: a
   cross-OS pair for w1692's reasons, a Steam lobby or join (w2459), a timed pair, the network or join path itself
   (transport, relay, latency, rejoin over a real link), or a desync seen only across machines.
