@@ -577,6 +577,11 @@ slots").
   the build passes of the build audits, `run_agent_channel_smoke.sh --build`,
   `bench/capture_raw.sh` (game repo `Documentation/Audit-Script-Index.md`, "Unity slots").
   Launches nested inside a run pass straight through.
+- **`build_player.sh <sandbox> <sha> <mac|win|linux>` with no cache root uses the machine's shared player cache**
+  (w4549, `scripts/nightly/player_cache.py`): a commit already built there prints `cached: ... build skipped` (logged
+  in `<cache>/cache.log`) before any checkout check, so build a player for a pair, a rerun or a repeat diagnostic run
+  this way and never into `$TMPDIR`; never delete an entry (it evicts least recently used past 24 GB / 8 entries).
+  Commit a diagnostic patch so it gets its own cached sha; a flag or scenario needs no build.
 - **`build_player.sh` builds the checkout at its commit and reverts uncommitted tracked edits** (w1155: a probe change,
   a doc section and a report fix made while a build ran were gone after it). Commit before you start a build, and
   edit nothing in that tree until it ends; to build another commit (master for a before census), switch the sandbox
