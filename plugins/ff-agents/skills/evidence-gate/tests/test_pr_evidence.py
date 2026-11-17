@@ -1726,6 +1726,20 @@ class MergeGate3180Test(unittest.TestCase):
     def test_3180_as_fixed_passes(self):
         self.assertEqual(pe.check(*self.fixture("pr-3180-rejoin-ghost-fixed"))[0], [])
 
+    def test_body_file_on_a_docs_only_change_passes_like_the_merge_check(self):
+        """w4495: '--body-file' with the PR's files skipped applies(), so a docs-only PR (FinalFactory #3765, CLAUDE.md)
+        failed the pre-arm check on a missing Evidence section while '--repo --pr', the check merge runs, passed it."""
+        import subprocess
+        import tempfile
+        with tempfile.TemporaryDirectory() as tmp:
+            body, files = Path(tmp) / "body.md", Path(tmp) / "files.txt"
+            body.write_text("A docs-only change.\n\nRequest: w4495\n", encoding="utf-8")
+            files.write_text("M\tCLAUDE.md\nM\tdocs/HowToPlay.md\n", encoding="utf-8")
+            run = subprocess.run([sys.executable, str(HERE.parent / "pr_evidence.py"), "--body-file", str(body),
+                                  "--files-file", str(files)], capture_output=True, text=True, timeout=60)
+        self.assertEqual(run.returncode, 0, run.stdout + run.stderr)
+        self.assertIn("PASS: no game code or assets changed", run.stdout)
+
     def test_pr_without_repo_is_a_usage_error_with_a_non_zero_exit(self):
         import subprocess
         run = subprocess.run([sys.executable, str(HERE.parent / "pr_evidence.py"), "--pr", "3180"],
