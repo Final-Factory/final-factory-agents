@@ -30,6 +30,8 @@ alpha, sprite and drawing order) taken before and after a change, same save, siz
              path fragment, from --ref-census or the before census): a delta E over 10 (the most common colour, sampled from
              --shot/--ref-shot inside each panel's rect when given, which is what a player sees), an
              alpha off by more than 0.2 on the same art, or different art without screenshots: FAIL.
+             Clones that share a path pair by sibling index, then pooled list rows by their name text, then by
+             place in their window; a list row the before did not show is not measured (w4412).
 
   Covered    every text of an opened screen whose DRAWN glyph bounds (the census `textRect`, which can reach past the
   text      text's RectTransform when it wraps or overflows) lie under an opaque element drawn above it (w727: the
@@ -1341,13 +1343,67 @@ def window_origin(census: dict | None, path: str, cache: dict | None = None) -> 
     return found
 
 
+def row_name(e: dict, census: dict | None, cache: dict | None = None) -> str | None:
+    """The name text of the pooled list row `e` belongs to, or None. The row is the deepest element at e's own path or
+    one of its parents (within its window) that is one of several clones at that path, contains e's centre and holds
+    text under it: e itself for a row's background (`Rows/Row`), its parent row for the row's colour strip
+    (`Rows/Row/Group`). Its name is the text of a child whose name says `Name`, else its first text in reading order.
+
+    w4412: the Station Grid window grew to show two rows it had scrolled away, and pairing its rows by place met a
+    shown-before row with a new one: delta E 33.7/13.8/50.3 on `Rows/Row/Group` for strips whose colour had not
+    changed (Heat Exchanger and Radiator #00D8FF, Spawner Chest #2178C6 were the new rows)."""
+    if census is None:
+        return None
+    key = (id(census), e["path"], tuple(e["rect"]))
+    if cache is not None and ("row", key) in cache:
+        return cache[("row", key)]
+    index = cache.get(("paths", id(census))) if cache is not None else None
+    if index is None:
+        # {path: elements} and the texts, once per census: a tour census holds thousands of elements.
+        at: dict[str, list] = {}
+        for x in census.get("elements", []):
+            at.setdefault(x["path"], []).append(x)
+        index = (at, [x for x in census.get("elements", []) if x.get("text")])
+        if cache is not None:
+            cache[("paths", id(census))] = index
+    at, all_texts = index
+    r = e.get("visible") or e["rect"]
+    cx, cy = (r[0] + r[2]) / 2, (r[1] + r[3]) / 2
+
+    def holds(box, x, y):
+        return box[0] - 0.5 <= x <= box[2] + 0.5 and box[1] - 0.5 <= y <= box[3] + 0.5
+    parts = e["path"].split("/")
+    stop = len(block_of(e["path"], 2).split("/"))
+    found = None
+    for n in range(len(parts), stop, -1):
+        q = "/".join(parts[:n])
+        clones = at.get(q, [])
+        roots = [x for x in clones if holds(x["rect"], cx, cy)]
+        if not roots or len(clones) < 2:
+            continue
+        root = min(roots, key=lambda x: area(x["rect"]))["rect"]
+        texts = [x for x in all_texts if x["path"].startswith(q + "/")
+                 and holds(root, (x["rect"][0] + x["rect"][2]) / 2, (x["rect"][1] + x["rect"][3]) / 2)]
+        if texts:
+            named = [x for x in texts if "name" in x["path"].rsplit("/", 1)[-1].lower()]
+            found = min(named or texts, key=lambda x: (round(x["rect"][1] / 4), x["rect"][0]))["text"].strip() or None
+            break
+    if cache is not None:
+        cache[("row", key)] = found
+    return found
+
+
+NOT_SHOWN = {"not shown": True}  # twin(): a pooled row whose name the other census does not show
+
+
 def twin(e: dict, cands: list[dict] | None, mine: list[dict] | None = None, here: dict | None = None,
          there: dict | None = None, cache: dict | None = None):
     """The element of `cands` (the same path in the other census) that is `e`. A unique path pairs by path. Clones that
     share a path (a row of `Pill/Panel`s) pair by their `sibling` index when both censuses carry one, else by their
     rank in reading order inside the window (`mine`: e's own clones in `here`; `cands`' window in `there`), else, when
     the two censuses hold a different number of them, by the largest overlap, then the nearest centre, measured from
-    each window's top-left. None when the other census has nothing at that path (a new element).
+    each window's top-left. None when the other census has nothing at that path (a new element); NOT_SHOWN for a
+    pooled list row (row_name()) whose name the other census does not show, all names known and unique on both sides.
 
     w3919: the Connector window moved 204 px left and 52 px down at 1280x800 classic (a row it gained no longer fit its
     column), and pairing by screen overlap met the chosen (teal) pill with an unchosen one: delta E 27.8 for pills
@@ -1361,6 +1417,16 @@ def twin(e: dict, cands: list[dict] | None, mine: list[dict] | None = None, here
             return same[0]
     if len(cands) == 1 and (mine is None or len(mine) <= 1):
         return cands[0]
+    # Pooled list rows pair by their name text when every row on both sides has one and no two share it (w4412): a
+    # list that shows more rows than before reorders by place. A name the other side does not show is a row it did not
+    # show: no twin, rather than the row that stands in its place.
+    name = row_name(e, here, cache)
+    if name and mine:
+        ours = [row_name(x, here, cache) for x in mine]
+        theirs = [row_name(c, there, cache) for c in cands]
+        if all(ours) and all(theirs) and len(set(ours)) == len(ours) and len(set(theirs)) == len(theirs):
+            same = [c for c, t in zip(cands, theirs) if t == name]
+            return same[0] if same else NOT_SHOWN
     ox, oy = window_origin(here, e["path"], cache)
     tx, ty = window_origin(there, e["path"], cache)
 
@@ -1399,6 +1465,9 @@ def changed_panels(before: dict | None, after: dict, touched: list[str] | None =
     result = []
     for e in pa:
         old = twin(e, pb.get(e["path"]), mine.get(e["path"]), after, before, cache)
+        if old is NOT_SHOWN:
+            # A row the list did not show before (w4412): content of a pooled list, nothing on master to measure.
+            continue
         if old is None:
             result.append(dict(e, why="new"))
             continue
@@ -1526,6 +1595,9 @@ def style(before: dict | None, after: dict, ref_fragment: str, shot=None, ref_sh
         ref = base
         if e["why"] == "touched" and own:
             ref = twin(e, own.get(e["path"]), clones.get(e["path"]), after, ref_from, cache)
+            if ref is NOT_SHOWN:
+                summaries.append(f"{name} (touched): row '{row_name(e, after, cache)}' not shown before, not measured")
+                continue
             if ref is None:
                 # w3585: the planner's new Table/Graph switch (`View/Pill/Panel`) has no twin on master, and the window's
                 # fill is no measure of a pill (delta E 36.7, its chosen mark 79.1): say so rather than fail on it.
