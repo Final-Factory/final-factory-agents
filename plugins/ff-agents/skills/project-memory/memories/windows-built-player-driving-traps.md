@@ -58,3 +58,13 @@ no focus theft but does move the real cursor; ask for a hidden desktop next time
     explicit, and confirm with the `[FeatureToggles]` line in Player.log.
   - The stale `session-<pid>.json` trap above hit again: keep a "newer than the launch" check in the driver itself
     (`SINCE` in w4558's tour.py, published at `/srv/fff/review/w4558-input-regressions/pub-tour.py.txt`).
+- **A key probe's first taps miss until the ship deploys (w4607, 2026-11-17: the "lone Alt tap misses with circuits on"
+  were all such taps; 325/325 switched after it).** A new game starts the player controller stopped
+  (`GameInitializer.cs:394` `StartController(false)`) until `IntroController.OnDeployPlayer` starts it, which comes after
+  the solo bootstrap's `solo-ready` and after the intro's 409 ends. Every key in between is dropped by design
+  (`PlayerController.Update` returns while `StopController()`). Before the first key, poll `ffauto:view.mode` until its
+  answer has `control=True` (FinalFactory PR #3831; about 7 s on an M5); count no miss before it. Also wait for
+  `control=True` again after anything that holds the UI (the bug reporter, a story cinematic, pause). A dev player logs
+  every Alt tap as `[AltView] ...` in Player.log, and `press ignored, controller stopped: start= ...` names the stop.
+  - **A probe run overwrites the rolling autosaves** `_autosave_sp_0`..`_4` in the game's saves folder (SIGTERM skips
+    the quit autosave, so those stay). Snapshot them first: `python3 scripts/game_data.py snapshot --name <id> --save`.
