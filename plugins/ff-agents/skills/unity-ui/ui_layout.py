@@ -894,8 +894,10 @@ def title_screen(census: dict) -> bool:
     """w2799: every element is the title menu's (the Mods, Settings or New Game screen before a game): no game runs, so no
     HUD is up and the structured dock does not exist, and the screen has one layout. A menu opened in a game lists the
     HUD's elements beside it, so it is not taken for the title screen. A development player's overlays (IGNORE: the
-    Graphy fps counter) are not the game and do not count (w3768: they made a dev player's title census "3 not shown")."""
-    elements = [e for e in census["elements"] if not any(i in e["path"] for i in IGNORE)]
+    Graphy fps counter) are not the game and do not count (w3768: they made a dev player's title census "3 not shown"),
+    nor do mask-only graphics, which draw no colour (w4513: w4451's full-screen stencil quad `MarkerClipErase/Quad0`,
+    on every screen since, made each title census "undocked", asking for docked and Pinned censuses that cannot exist)."""
+    elements = [e for e in census["elements"] if not e.get("maskOnly") and not any(i in e["path"] for i in IGNORE)]
     return (any(e["path"].startswith(TITLE_MENU) for e in elements)
             and all(e["path"].startswith((TITLE_MENU,) + TITLE_OVERLAYS) for e in elements))
 
