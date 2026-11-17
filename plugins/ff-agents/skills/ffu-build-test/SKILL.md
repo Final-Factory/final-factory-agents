@@ -379,15 +379,36 @@ whole verification. The repo's own `CLAUDE.md` is binding and longer; this skill
 ## 2. The checks, in CI's order
 
 ```sh
-cargo fmt --all --check
-python3 tools/test_keep_sorted.py && python3 tools/keep_sorted.py   # CI's lint job
+PY=python3; $PY -c '' 2>/dev/null || PY=python      # Windows: python3 is the Store stub (exit 49), python is real
+# CI's lint job (ci.yml `lint`), step by step:
+cargo fmt --all --check && cargo fmt --manifest-path fuzz/Cargo.toml --check
 ./tools/check_sim_rules.sh
-cargo clippy --workspace --all-targets --all-features -- -D warnings
+$PY tools/test_row_numbers.py && $PY tools/row_numbers.py check --base origin/main --prs
+$PY tools/test_check_row_docs.py && $PY tools/check_row_docs.py check --base "$(git merge-base origin/main HEAD)" --body-file <your PR body file>
+$PY tools/test_keep_sorted.py && $PY tools/keep_sorted.py
+$PY tools/test_step_probe.py && $PY tools/test_stallprobe.py && $PY tools/test_overload_audit.py
+cargo clippy --workspace --all-targets --all-features --locked -- -D warnings
+cargo check --manifest-path fuzz/seeds/Cargo.toml --locked --target-dir target
+cargo check --manifest-path fuzz/Cargo.toml --bins --locked --target-dir target
+bash tools/ci-runners/runner_health_test.sh          # sweep_target_test.sh too, on Linux only (below)
+# then the check and test jobs:
 cargo test --workspace --all-features
 cargo run --release -p ffu-headless -- hashcheck --golden golden/hashcheck.txt
 cargo run --release -p ffu-headless -- crosscheck --threads 1,4,16 --golden golden/crosscheck
 ```
 
+- **Run the whole lint block before every push, `check_row_docs.py` included** (w4510). It needs only python and git on
+  Windows, macOS and Linux; no CI-only tool. It enforces docs/PLAN.md "Taking a row": a row's status or new row goes in
+  `docs/rows/<Id>.md` and its FF1 notes in `docs/oracle/<Id>.md`, never an added PLAN.md table line or ff1-oracle.md
+  line, unless the PR body has a line `Plan-edit: <why>`. CI reads that body from the PR event, so pass the same file
+  you give `ff-pr push --body-file` (an open PR's: `gh pr view <n> --json body --jq .body > "$TMPDIR/body.txt"`), and use
+  the merge-base, not `origin/main`, for `--base` on a branch older than main. ffu #867 (w4493) and #869 (w4492) each
+  went red twice on this step before a fix; run locally, it exits 1 on #869's 9fc831b839 and 0 on its fix ec25332e25,
+  and on #867's 97e0d3fbb2 exits 1 with an empty body and 0 with its `Plan-edit:` line (measured, lothdesktop, w4510).
+  A body edit alone does not turn a red run green: re-running a job reuses the old event, so push again after it (#867
+  pushed b616ee6e6c for that).
+- `sweep_target_test.sh` fails on Windows (NTFS reads do not move access times) and skips on macOS (no GNU find);
+  CI runs it on Linux. Run it there, or leave it to CI, unless you changed `tools/ci-runners/` (measured, w4510).
 - Run what your change touches locally (`cargo test -p <crate>`); CI runs all of them on Linux and clippy, tests and
   hashcheck on Windows and ARM macOS.
 - **Run the lint job's `keep_sorted.py` too; it is a separate CI job** (w4039, ffu #724). Kind, op and section lists sit
