@@ -84,3 +84,16 @@ answered by this file: neither shortens the frame.
 - The lever is a shorter chain: fewer declared writers (w3408 found `ConstructionBotTransitSystem` asking RW for a
   `[ReadOnly]` FleetShip lookup), or work moved off the chain's critical path.
 - Report the wait as unchanged when it is, beside the job you cut.
+
+**w4534 (2026-11-17, Just_Play 0.50.0.107, m3 editor with Burst on, bench ticket t00001471): seen again, and what did
+shorten the frame.** Dropping `ResearchProgressionSystem`'s `CompleteAllTrackedJobs` and moving
+`GuardianMountRecordSystem`'s copy into a job moved 5 ms to `FFInitializationBuffer` and 2.9 ms to
+`FFPostTransformBuffer` (1.46 -> 4.32 ms). The frame only drifted. The worker approach above worked: a per-thread raw
+timeline found `FleetFormationIndexHealSystem:HealJob` as one sample a frame (5.46 ms mean, 25.6 ms max), the longest
+single job on the critical path at heartbeat start, with about 60% of worker time idle. Game PR #3785 splits it into a
+parallel read-only duplicate check plus the old serial heal, which now runs only when a roster has a duplicate. That
+took PlayerLoop on heartbeat frames from 61.7/67.4 to 56.1/60.6 ms, interleaved in one session. ResearchProgression's
+wait fell 5.0 -> 1.1 ms without touching its sync. w4534 had not read this file first and spent one A/B relearning it.
+**How to apply:** start a perf pass at this file. Rank long single-sample jobs in the worker timeline, then make the
+longest one parallel or skippable. A job that is serial for an order-dependent rule (cascades) can often take a parallel
+read-only "is there anything to do" check, provided the serial pass changes nothing whenever that check says no.
