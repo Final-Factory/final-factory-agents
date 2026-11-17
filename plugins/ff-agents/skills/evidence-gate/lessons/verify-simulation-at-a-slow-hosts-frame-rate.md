@@ -200,6 +200,47 @@ words name an `MP-*` scenario takes no Mac (`shared/capacity.ts` `macRefusedScen
 unless it is cross-OS, its words name a pair lab or `pair_relay`, or they carry `FF_MAC_GPU_HANG_OK=<request>`. A real
 Mac-host pair (m5 hosts, BEAST joins through `lab.pair-m5-beast.json`) names its lab in the brief so a Mac may host it.
 
+## A PR's scripted MP check runs on one computer, the requester's own when it can (w4596, 2026-11-17)
+
+**Rule.** `ffnightly.py run` of an `MP-*` scenario on the default lab (`lab.win.json` on Windows, `lab.linux.json` on
+Linux: `ffnightly.py` `default_lab()`) starts host and client side by side on one computer and compares their
+fingerprints there. That is the check. Hold the host near one frame per heartbeat against the uncapped client, so the
+frame-order fork a same-speed pair misses shows up (the rule at the top of this file):
+`--peer-arg host=-ffFeelProbe --peer-arg host=-ffFeelFps --peer-arg host=20 --peer-arg host=-ffFeelVsync --peer-arg host=0`.
+- A requester on Windows or Linux (lothdesktop, biscuit) that has built the head's player and passed the host-only
+  `--dry` (w2963) runs the PR's scenarios itself, in its own sandbox
+  (`ffnightly.py run --sha <head> --scenarios-from <head> --scenario <each> --out "$TMPDIR/mp-<time>"` plus the flags
+  above), and reports that run: no `request_pair`.
+- A requester on a Mac, which cannot run an MP client (w3697), files `request_pair` with `legs: 1` (once FF Factory
+  takes one leg, its w4596 change; until then the default 2, each leg on the default lab).
+- Two computers at once (a pair lab or the relay: `lab.pair-*.json`, `pair_relay.py`) only when the check needs them: a
+  cross-OS pair for w1692's reasons, a Steam lobby or join (w2459), a timed pair, the network or join path itself
+  (transport, relay, latency, rejoin over a real link), or a desync seen only across machines.
+
+**Why.** lothsahn asked (2026-11-17, w4596): "Please look to see if there's a way to speed up the pair and determinism
+syncs. A minor loss in coverage is acceptable if it can result in significant speed ups." Measured in FF Factory's
+`work_timing` over the 21 pair requests that finished 2026-11-17: filed-to-done median 64 min. Of that, the wait before
+the legs started (two computers with room at once) had a median of 17 min and a mean of 33 min. Pairs filed on
+2026-11-16 waited 3 h 45 min to 2 days (w4441 11 h 22 min, w4334 22 h 44 min, w4207 2.0 days). Pair runs were 19 % of all
+queue time across 197 requests.
+
+The legs' own timelines (six pairs, w4586 w4578 w4579 w4577 w4572 w4545, all an m5 or lothdesktop host with a biscuit
+client through the relay):
+- the scenario runs took 1.5 to 20 min;
+- the host waited 4 to 15 min for the client leg's Linux build (biscuit has one Unity slot) and its relay key;
+- relay setup failures cost 7 to 12 min each in four of the six (a windowed scenario on the headless relay lab, twice; a
+  placeholder key; a Mac peer);
+- each leg built its own player, although the requester had already built that head for its `--dry`.
+
+On one computer every one of those steps but the run itself goes away. What the cross-machine pair added was a Mac
+against Linux on a real link, which w1692 already asks for only when the change can differ by platform. The frame-rate
+gap that pairs found bugs with (w356) comes back through the host's 20 fps hold.
+
+**How to apply.** Before `request_pair`, ask whether the check needs two computers at once (the list above). If not and
+your sandbox is on Windows or Linux, run the scenarios yourself with the host held at 20 fps. From a Mac, `legs: 1`. The
+PR's `## Evidence` row names the computer and says "one computer: default lab, host held at 20 fps". Coverage given up:
+the Mac/Linux codegen and the real network link of a relay pair, kept for the cases listed.
+
 ## A pair run is filed only on a commit that compiles (w2125, 2026-10-25)
 
 **Rule.** Before `request_pair` (a two-machine pair run), the commit its legs run must have compiled: a green
