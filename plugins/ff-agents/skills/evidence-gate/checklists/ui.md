@@ -123,6 +123,12 @@ anyone says done.
 the hotbar, while each PR checked its own panel; #1272 turned the Blueprints window opaque navy).
 The census recipe and `ui_layout.py` are in the `unity-ui` skill, `layout-census.md`.
 
+**A before of a toggle-gated change, taken on a development build, starts with the toggle off** (w4628). A toggle that
+is on by default in development builds (the `FeatureToggle`'s last argument: `station-multiselect`, `circuits`) is on
+there, so the before already shows the feature. Start the before player with `-ffFeatures=-<id>` to show what players
+have, and confirm the `[FeatureToggles]` line in Player.log (w4628: the first Keybindings before already listed "Undo
+Station Order").
+
 11. **No new overlap between always-on HUD, and opened panels done properly.** A layout census
     before and after, same save and size, with the whole HUD showing (hotbar and ability row,
     minimap and its side buttons, every slide-out opened, top bar, objectives, a selected building
