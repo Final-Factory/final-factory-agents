@@ -304,7 +304,8 @@ screen; on desktop three labels stopped fitting, the two windows left their defa
     both elements named, the overlap rect, NOT ALLOWED or allow-listed with the requester's words. Take the census with the
     windows in reach open: a Cargo Hold or Command Core selected and the Player Inventory up, at 1280x800 UI 0.8 classic,
     1920x1080 and docked. A new one, or one left between windows the change moved, fails (`pr_evidence.py`); one both
-    censuses show and nothing moved is STANDING, which the report names. **Never measure a window overlap from the rects
+    censuses show and nothing moved is STANDING, which the report names. A popup over the window that opened it (a
+    picker, a dialog) is a `CHILD POPUP`, by design and never counted (item 34, w4504). **Never measure a window overlap from the rects
     by hand and call it clean, and never accept "overlaps: 0" from the HUD-block count as covering windows**: w961's strip
     stood 11 px over the Player Inventory and w978's worker measured it by hand because `overlaps` said 0 for a window
     (Ben: "UI should be clean and flowy"). The allow-list is `hud-clusters.json` `windowOverlaps`, one entry per pair
@@ -469,6 +470,14 @@ control, and a redesign goes out as 2 or 3 clearly different options built from 
     elements of one layer over each other, a HUD piece over a window (a hover card or tooltip over a window is accepted: Ben, 2026-11-07, w3344, of the Low power card over the open Player Inventory's title bar: "It's fine that the low power hover panel covers text. It's a temporary world space panel that appears on hover."),
     and text cut off. The Inventory/Crafting window and a structure's window are mutually exclusive (Ben,
     2026-10-24): both open at once is a regression to report, and a forced-open still of them is not graded.
+    **A child popup over the window that opened it is never a finding** (w4504): before you report, note, or hand up an
+    overlap, ask who opened the thing on top. A picker, filter, colour picker or confirmation dialog a window opened for a
+    choice that returns to it covers that window by design, and is left out of Flaws, STANDING and every count, with no
+    "standing, noted" line (lothsahn, 2026-11-16: "These are popup dialogs from the prior window where the user has to
+    make a selection and then returns to the prior window. Never worry about overlap in cases like this."). The same popup
+    over another window or the HUD is graded as above. `ui_layout.py check` prints it as `CHILD POPUP`, apart from new,
+    kept and standing; a check line from before ff-agents 1.34.330 counted it, so re-run it.
+    Lesson: [a child popup over its own window is by design](../lessons/a-child-popup-over-its-own-window-is-by-design.md).
     Lesson: [UI overlaps follow the layer order](../lessons/a-ui-change-leaves-the-rest-of-the-screen-as-it-was.md#ui-overlaps-follow-the-layer-order-higher-over-lower-is-by-design-w2150-2026-10-25).
 35. **An approval ask explains every change, with a cropped, marked pair.** Before you ask a person to OK a change, each
     change has its own `## Change <n>` section, in plain words: Before (what the player did and saw, step by step), After

@@ -253,7 +253,55 @@ def opened_prefix(path: str, patterns: list[str]) -> str | None:
 
 
 def opened_patterns(spec: dict | None) -> list[str]:
-    return list(((spec or {}).get("openedPanels") or {}).get("paths", []))
+    """hud-clusters.json `openedPanels`, then the child popups (popup_patterns): a picker or dialog is a panel the player
+    opens and closes too."""
+    paths = list(((spec or {}).get("openedPanels") or {}).get("paths", []))
+    return paths + [p for p in popup_patterns(spec) if p not in paths]
+
+
+# Child popups (w4504). A picker, dialog or other popup a window opens for a choice, after which the player returns to that
+# window, may cover the window that opened it: by design, never a flaw, never standing (lothsahn, 2026-11-16, of the
+# Circuit Module's "Choose an entity" and "Choose an item" pickers over the Circuit Module window at 1280x720). Over any
+# other window or the HUD it is graded as any window is. The game opens its pickers and dialogs under the `Modal` object
+# (ModalParent, Assets/Scripts/UI/Panels/ModalParent.cs; CircuitView.OpenPicker instantiates the item picker there), so the
+# census path does not say which window opened one: hud-clusters.json `childPopups.parents` names a pair, and without one
+# the parent is the open window the popup covers most (it opens beside or over its own window, PlaceBeside).
+CHILD_POPUP_WORDS = ('lothsahn, 2026-11-16, w4504: "These are popup dialogs from the prior window where the user has to '
+                     'make a selection and then returns to the prior window. Never worry about overlap in cases like this."')
+DEFAULT_POPUPS = ["Modal/*", "ConfirmationModalParent", "*Dialog", "*Picker", "*PickerPanel", "LogisticsRequestFilterPanel",
+                  "CUIColorPicker"]
+
+
+def popup_patterns(spec: dict | None) -> list[str]:
+    """The child-popup patterns: DEFAULT_POPUPS plus hud-clusters.json `childPopups.paths`."""
+    extra = list(((spec or {}).get("childPopups") or {}).get("paths", []))
+    return DEFAULT_POPUPS + [p for p in extra if p not in DEFAULT_POPUPS]
+
+
+def is_popup(label: str, spec: dict | None) -> bool:
+    """Whether a window label (opened_prefix's) is a child popup's: the popup patterns end exactly where it ends."""
+    return opened_prefix(label, popup_patterns(spec)) == label
+
+
+def popup_parents(rects: dict, spec: dict | None) -> dict:
+    """{popup label: the label of the window that opened it} for each popup among `rects` (window labels and their union
+    rects): a hud-clusters.json `childPopups.parents` entry ({"popup": pattern, "parents": [patterns]}) whose window is
+    open, else the other open window it covers most. A popup that covers no window has no parent here."""
+    entries = ((spec or {}).get("childPopups") or {}).get("parents", [])
+    out = {}
+    for label, r in rects.items():
+        if not is_popup(label, spec):
+            continue
+        others = [o for o in rects if o != label and not o.startswith(label + "/") and not label.startswith(o + "/")]
+        named = [o for e in entries if path_has(label, e["popup"]) for o in others
+                 if any(path_has(o, p) for p in e["parents"])]
+        if named:
+            out[label] = named[0]
+            continue
+        best = max(((area(inter(r, rects[o])), o) for o in others), default=(0.0, None))
+        if best[0] > 0:
+            out[label] = best[1]
+    return out
 
 
 def backdrop_patterns(spec: dict | None) -> list[str]:
@@ -409,11 +457,25 @@ def opened_over_hud(census: dict, patterns: list[str], depth: int = 2, min_px: f
     return out
 
 
-def covered_text(census: dict, patterns: list[str], min_share: float = 0.2, min_px: float = 16.0) -> list[dict]:
+def window_rects(census: dict, patterns: list[str]) -> dict:
+    """{window label: the union rect of its solid elements} for every window open in the census (opened_prefix's labels)."""
+    rects: dict[str, list] = {}
+    for e in census["elements"]:
+        label = opened_prefix(e["path"], patterns)
+        if label and solid(e) and area(e.get("visible") or e["rect"]) >= 4:
+            r = e.get("visible") or e["rect"]
+            rects[label] = union([rects[label], r]) if label in rects else list(r)
+    return rects
+
+
+def covered_text(census: dict, patterns: list[str], min_share: float = 0.2, min_px: float = 16.0,
+                 spec: dict | None = None) -> list[dict]:
     """Texts of an opened screen whose drawn glyph bounds (`textRect`) lie under an opaque element drawn above them (w727:
     the Technology tab's "Excess Research 0.0" label wrapped to a second line under the hub's tab bar; every other check
     compared RectTransform boxes, and the label's box was clear of the bar). Returns [{"path", "text", "by", "share", "rect"}].
-    A text clipped by a mask is skipped: the census has no mask rect for glyphs that overflow its box."""
+    A text clipped by a mask is skipped: the census has no mask rect for glyphs that overflow its box. With `spec`, a text
+    under a popup the text's own window opened is not covered (w4504: the player makes the choice and returns to it)."""
+    parents = popup_parents(window_rects(census, patterns), spec) if spec is not None else {}
     texts = [e for e in census["elements"] if e.get("text") and e.get("textRect") and not any(i in e["path"] for i in IGNORE)
              and opened_prefix(e["path"], patterns) and area(e["textRect"]) >= 4
              and all(abs(a - b) <= 1 for a, b in zip(e.get("visible") or e["rect"], e["rect"]))]
@@ -426,6 +488,8 @@ def covered_text(census: dict, patterns: list[str], min_share: float = 0.2, min_
         best = None
         for c in covers:
             if above(c, t) is not True:
+                continue
+            if parents and parents.get(opened_prefix(c["path"], patterns) or "") == opened_prefix(t["path"], patterns):
                 continue
             both = inter(tr, c.get("visible") or c["rect"])
             px = area(both) if both[2] > both[0] and both[3] > both[1] else 0.0
@@ -593,8 +657,9 @@ def block_allowance(spec: dict | None, a: str, b: str) -> str | None:
 def window_overlaps(census: dict, spec: dict | None, depth: int = 2, min_px: float = 16.0) -> list[dict]:
     """Every overlap that involves an open window (w981): window x window and window x always-on HUD block, one entry per
     pair of owners and verdict, {"a", "b" (labels), "kind", "px", "rect" (the union of the overlapping parts), "status"
-    ('hosting' | 'allowed' | 'not allowed'), "why" (the quote or source), "example"}. HUD x HUD pairs are `overlaps`';
-    a window the dock hosts as a tab is not an overlap with the dock."""
+    ('hosting' | 'allowed' | 'child popup' | 'not allowed'), "why" (the quote or source), "example"}. HUD x HUD pairs are
+    `overlaps`'; a window the dock hosts as a tab is not an overlap with the dock, and a popup over the window that opened
+    it is a 'child popup', by design (w4504, popup_parents)."""
     patterns, backdrops = opened_patterns(spec), backdrop_patterns(spec)
     transient = transient_patterns(spec)
     items = []
@@ -608,6 +673,8 @@ def window_overlaps(census: dict, spec: dict | None, depth: int = 2, min_px: flo
     for e, _, label in items:
         r = e.get("visible") or e["rect"]
         rects[label] = union([rects[label], r]) if label in rects else list(r)
+    windows = {label for _, kind, label in items if kind == "W"}
+    parents = popup_parents({k: v for k, v in rects.items() if k in windows}, spec)
     found: dict[tuple, dict] = {}
     for i in range(len(items)):
         a, ka, la = items[i]
@@ -625,7 +692,10 @@ def window_overlaps(census: dict, spec: dict | None, depth: int = 2, min_px: flo
             px = area(both)
             if px < max(min_px, 0.05 * min(area(ra), area(rb))):
                 continue
-            verdict = allowance(spec, census, rects, a, la, b, lb)
+            if parents.get(la) == lb or parents.get(lb) == la:
+                verdict = ("child popup", CHILD_POPUP_WORDS)
+            else:
+                verdict = allowance(spec, census, rects, a, la, b, lb)
             status, why = verdict if verdict else ("not allowed", "")
             first, second = sorted(((la, a), (lb, b)), key=lambda t: t[0])
             key = (first[0], second[0], status)
@@ -681,6 +751,8 @@ def window_overlap_text(v: dict, spec: dict | None) -> str:
     text = f"{unit_name(v['a'], spec)}  x  {unit_name(v['b'], spec)}: {v['px']:.0f} px2, overlap rect {rect_text(v['rect'])}"
     if v["status"] == "not allowed":
         return text
+    if v["status"] == "child popup":
+        return f"{text}; a popup over the window that opened it, by design: {v['why']}"
     return f"{text}; {'hosted by the dock' if v['status'] == 'hosting' else 'allowed'}: {v['why']}"
 
 
@@ -1949,15 +2021,20 @@ def run_check(args) -> int:
     failed |= bool(new) or bool(kept)
 
     wd = window_diff(before, after, spec, args.block_depth, args.tolerance)
-    allowed = [v for v in window_overlaps(after, spec, args.block_depth) if v["status"] != "not allowed"]
+    fine = window_overlaps(after, spec, args.block_depth)
+    allowed = [v for v in fine if v["status"] in ("allowed", "hosting")]
+    popups = [v for v in fine if v["status"] == "child popup"]
     print(f"Window overlaps: {wd['after']} not allowed after, {wd['before']} before, {len(wd['new'])} new, {len(wd['kept'])} kept "
           f"between windows the change moved, {len(wd['standing'])} standing; {len(allowed)} allow-listed with the requester's "
-          f"words (hud-clusters.json windowOverlaps) (ui_layout.py, whole screen, open windows against the HUD and each other)")
+          f"words (hud-clusters.json windowOverlaps); {len(popups)} child popup(s) over the window that opened them, by design "
+          f"(w4504) (ui_layout.py, whole screen, open windows against the HUD and each other)")
     for label, rows in (("NEW", wd["new"]), ("KEPT", wd["kept"]), ("STANDING", wd["standing"])):
         for v in rows[:15]:
             print(f"  {label}: {window_overlap_text(v, spec)}")
     for v in allowed[:15]:
         print(f"  ALLOWED: {window_overlap_text(v, spec)}")
+    for v in popups[:15]:
+        print(f"  CHILD POPUP: {window_overlap_text(v, spec)}")
     failed |= bool(wd["new"]) or bool(wd["kept"])
 
     # w1475: what the before census fails the same way is standing, listed and not counted, as the window overlaps are
@@ -2007,8 +2084,8 @@ def run_check(args) -> int:
             print(f"  {kind}: {line}")
     failed |= bool(problems)
 
-    cb = {covered_key(f) for f in covered_text(before, patterns)}
-    ca = covered_text(after, patterns)
+    cb = {covered_key(f) for f in covered_text(before, patterns, spec=spec)}
+    ca = covered_text(after, patterns, spec=spec)
     new_cov = [f for f in ca if covered_key(f) not in cb]
     print(f"Covered text: {len(ca)} text(s) of opened screens under an opaque element after, {len(cb)} before, "
           f"{len(new_cov)} new (ui_layout.py, drawn glyph bounds: needs `textRect` in the census"
@@ -2086,16 +2163,19 @@ def run_overlaps(args) -> int:
         print(f"  {short(a)}  x  {short(b)}: {v['px']:.0f} px2, e.g. {short(v['example'][0], 2)} / {short(v['example'][1], 2)}{tail}")
     windows = window_overlaps(census, spec, args.block_depth)
     bad = [v for v in windows if v["status"] == "not allowed"]
-    print(f"{len(bad)} window overlap(s) not allowed, {len(windows) - len(bad)} allow-listed (open windows against the HUD "
-          f"blocks and each other, hud-clusters.json windowOverlaps)")
+    popups = [v for v in windows if v["status"] == "child popup"]
+    print(f"{len(bad)} window overlap(s) not allowed, {len(windows) - len(bad) - len(popups)} allow-listed (open windows "
+          f"against the HUD blocks and each other, hud-clusters.json windowOverlaps), {len(popups)} child popup(s) over the "
+          f"window that opened them, by design (w4504)")
     for v in windows:
-        print(f"  {'NOT ALLOWED' if v['status'] == 'not allowed' else 'ALLOWED'}: {window_overlap_text(v, spec)}")
+        tag = {"not allowed": "NOT ALLOWED", "child popup": "CHILD POPUP"}.get(v["status"], "ALLOWED")
+        print(f"  {tag}: {window_overlap_text(v, spec)}")
     return 1 if bad else 0
 
 
 def run_covered_text(args) -> int:
     spec = json.loads(Path(args.clusters or default_clusters()).read_text(encoding="utf-8"))
-    found = covered_text(load(args.census), opened_patterns(spec))
+    found = covered_text(load(args.census), opened_patterns(spec), spec=spec)
     print(f"{len(found)} text(s) of opened screens drawn under an opaque element above them")
     for f in found:
         print(f"  {covered_text_line(f)}")

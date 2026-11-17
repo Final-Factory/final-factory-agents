@@ -554,6 +554,21 @@ class WindowOverlapTest(unittest.TestCase):
         self.assertEqual(problems, [])
         self.assertTrue(any("2 window overlap(s) stand" in n for n in notes), notes)
 
+    def test_a_child_popup_over_its_own_window_is_neither_a_problem_nor_a_note(self):
+        # w4504: the Circuit Module's entity picker over the Circuit Module window. lothsahn: "These are popup dialogs from the
+        # prior window where the user has to make a selection and then returns to the prior window. Never worry about
+        # overlap in cases like this."
+        problems, notes = pe.check(self.body(extra="; 1 child popup(s) over the window that opened them, by design (w4504)"))
+        self.assertEqual(problems, [])
+        self.assertFalse(any("window overlap" in n for n in notes), notes)
+
+    def test_an_old_line_that_counted_a_picker_points_at_the_new_tool(self):
+        # a line without the child-popup count is from ui_layout.py before 1.34.330, which counted a picker as a new overlap
+        self.assertIn("re-run ui_layout.py check from ff-agents 1.34.330", self.reasons(self.body(new=1)))
+        new_tool = self.body(new=1, extra="; 0 child popup(s) over the window that opened them, by design (w4504)")
+        self.assertIn("'Window overlaps:' has 1 new", self.reasons(new_tool))
+        self.assertNotIn("re-run ui_layout.py check", self.reasons(new_tool))
+
 
 class ShapeAndEyeTest(unittest.TestCase):
     """w1396: Ben, 2026-10-16, on stills a worker and an orchestrator had both passed: "the light panel is really messed up

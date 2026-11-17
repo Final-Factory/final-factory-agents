@@ -71,6 +71,15 @@ that state:
 - a draggable window simply sitting somewhere (over the HUD, at an edge, off-centre) that the player can move;
 - a live value that changed between stills (a charge, a count, a timer, a rate), a different selection or save;
 - a crop's edge, a development read-out ("Agent control ON", Debug Info) or a tour's own marker.
+
+**Not a finding either: a child popup over its own window (w4504).** A popup a window opens for a choice and that returns
+to it (an entity or item picker, a filter, a colour picker, a confirmation dialog) covers that window by design, its
+title and text included. It is not a flaw, not STANDING and not setup: leave it out of every section and count (lothsahn,
+2026-11-16, of the Circuit Module's entity picker: "These are popup dialogs from the prior window where the user has to
+make a selection and then returns to the prior window. Never worry about overlap in cases like this."). The same popup
+over an unrelated window or a HUD block is graded by the layer rules, as a hover card is (it may cover lower layers, and
+two pieces one hover opens may not cover each other). `ui_layout.py check` counts it as `child popup`.
+
 Item 5's "while the screen has room" means room the window gets with the windows the game opens for those steps, where it
 opens them, in a fresh session. If the pack cannot show whether a neighbour came from the game or from the tour, write
 SETUP? and ask for the still from a fresh session; do not grade it either way.
