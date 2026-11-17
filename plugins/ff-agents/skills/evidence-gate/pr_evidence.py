@@ -632,7 +632,9 @@ def window_overlap_problems(section: str, brief: str | None = None) -> tuple[lis
     HUD, each pair allowed only by a quoted entry of hud-clusters.json `windowOverlaps`. A new or kept one fails; one that
     was there before and neither window moved is a note. The way out for an overlap the requester asked for is an
     `intended (who): "their words"` on the line, the words found word for word in the brief, or (for good) an allow-list
-    entry in a harness PR."""
+    entry in a harness PR. A popup (a picker, a dialog) over the window that opened it is by design and never counted
+    (lothsahn, 2026-11-16, w4504: "Never worry about overlap in cases like this."): the tool prints it as a `child popup`,
+    neither a problem nor a standing note here."""
     line = field(section, "Window overlaps")
     if not line:
         return (["UI change with no 'Window overlaps:' line: run ui_layout.py check (ff-agents 1.26.25 or later) on the "
@@ -648,6 +650,8 @@ def window_overlap_problems(section: str, brief: str | None = None) -> tuple[lis
                      "ui_layout.py check's line"], [])
         counts[name] = int(found.group(1))
     bad = counts["new"] + counts["kept"]
+    # w4504: a line from ui_layout.py before 1.34.330 has no child-popup count, and counted a picker over its own window
+    popups_known = re.search(r"\d+\s+child popup", text) is not None
     if bad:
         what = f"{counts['new']} new and {counts['kept']} kept"
         intended = WINDOW_INTENDED.search(text)
@@ -655,7 +659,10 @@ def window_overlap_problems(section: str, brief: str | None = None) -> tuple[lis
             problems.append(f"'Window overlaps:' has {what} overlap(s) of an open window with the HUD or another window: "
                             f"fix them (the windows keep clear of each other), or quote the requester asking for it, "
                             f"intended (who): \"their words\"; the tool lists them as NEW / KEPT with both elements and "
-                            f"the overlap rect (w981: the Station strip 11 px over the Player Inventory)")
+                            f"the overlap rect (w981: the Station strip 11 px over the Player Inventory)"
+                            + ("" if popups_known else
+                               "; a popup over the window that opened it (a picker, a dialog) is by design (lothsahn, w4504): "
+                               "re-run ui_layout.py check from ff-agents 1.34.330 or later, which leaves it out of the count"))
         elif brief is None:
             problems.append("'Window overlaps:' is marked intended but there is no brief to check the quote against: run "
                             "with --brief <the brief from read_work>, or put the words in a 'Brief (who): \"...\"' line")

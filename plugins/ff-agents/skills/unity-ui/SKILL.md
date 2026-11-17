@@ -669,6 +669,11 @@ rect, NOT ALLOWED unless `hud-clusters.json` `windowOverlaps` holds the requeste
 strip stands above Station Info). Take the census with the windows in reach open (a Cargo Hold or Command Core selected).
 A new overlap or one kept between windows you moved fails; never measure rects by hand and call a window overlap clean
 (w961's strip stood 11 px over the Player Inventory and the HUD-block count said 0).
+**A child popup over its own window is by design (w4504):** a picker, filter, colour picker or confirmation dialog over the
+window that opened it prints as `CHILD POPUP` and is counted apart from new, kept and standing, with no note (lothsahn: "Never
+worry about overlap in cases like this."). Popups are found by path (`DEFAULT_POPUPS` plus hud-clusters.json
+`childPopups.paths`), and the opener is the open window the popup covers most unless `childPopups.parents` names it
+(`{"popup": "<pattern>", "parents": ["<pattern>"]}`). Over any other window or the HUD the popup is graded as usual.
 **Name both layers first (w2150):** "Before calling an overlap a defect, name both elements' layers; higher-over-lower is by design (Ben)". Lowest first: the game world; HUD info (Station Info, the
 Objectives card and the tutorial, its Skip button included); station and structure windows and the panels the player
 opens; temporary chat lines may cover a window, and the Objectives card (Ben, 2026-11-03, w2984: "It can appear over stuff because it's not always showing though"; hud-clusters.json allows the pair, and `ui_layout.py check` prints it ALLOWED, w2996), never Station Info (w2975: Loth reported Station Info under the chat as a regression). Chat rows show only for seconds after a line arrives, so a census with no line just posted checked nothing (w2975: w2920's and w2952's tours never posted one and missed Station Info under the chat; post with `ffauto:chat.send|<line>` right before each still, the game repo's `specs/w2975-chat-station-info/make_tour.py`). A higher layer over a lower one is not a finding and not a fix (Ben,

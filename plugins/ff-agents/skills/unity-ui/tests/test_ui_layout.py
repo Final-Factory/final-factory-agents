@@ -2095,5 +2095,83 @@ class PinHighlightFrameTest(unittest.TestCase):
         self.assertEqual(verdict, "broken", what)
 
 
+class ChildPopupTest(unittest.TestCase):
+    """w4504: the Circuit Module's entity picker opened over its own window was flagged as an overlap. lothsahn: "These are
+    popup dialogs from the prior window where the user has to make a selection and then returns to the prior window. Never
+    worry about overlap in cases like this." A popup over the window that opened it is a `child popup`, by design; the same
+    popup over an unrelated window or a HUD block is still graded."""
+    CIRCUIT, PICKER = "CircuitEntityPanel/MainPanel", "Modal/LogisticsRequestFilterPanel/Background"
+    GRID = "StationGridEntityPanel/MainPanel"
+
+    def statuses(self, census, spec=SPEC):
+        return {(o["a"].split("/")[-1], o["b"].split("/")[-1]): o["status"] for o in ul.window_overlaps(census, spec)}
+
+    def pair(self, census, a, b, spec=SPEC):
+        found = [o for o in ul.window_overlaps(census, spec) if {a, b} <= {o["a"].split("/")[-1], o["b"].split("/")[-1]}]
+        self.assertEqual(1, len(found), ul.window_overlaps(census, spec))
+        return found[0]
+
+    def test_a_picker_over_the_window_that_opened_it_is_a_child_popup(self):
+        census = screen((self.CIRCUIT, [600, 100, 1000, 600]), (self.PICKER, [650, 150, 900, 500]))
+        found = self.pair(census, "CircuitEntityPanel", "LogisticsRequestFilterPanel")
+        self.assertEqual("child popup", found["status"])
+        self.assertIn("lothsahn", found["why"])
+
+    def test_the_same_picker_over_an_unrelated_window_is_still_graded(self):
+        # the picker's own window sits clear on the left; the picker reaches over the Station Grid as well
+        census = screen((self.CIRCUIT, [100, 100, 500, 600]), (self.GRID, [700, 100, 1100, 600]),
+                        (self.PICKER, [300, 150, 800, 500]))
+        self.assertEqual("child popup", self.pair(census, "CircuitEntityPanel", "LogisticsRequestFilterPanel")["status"])
+        self.assertEqual("not allowed", self.pair(census, "StationGridEntityPanel", "LogisticsRequestFilterPanel")["status"])
+
+    def test_a_picker_over_a_hud_block_is_still_graded(self):
+        census = screen((STATION_INFO, [900, 560, 1180, 700]), (self.CIRCUIT, [100, 100, 500, 600]),
+                        (self.PICKER, [300, 150, 1000, 650]))
+        found = [o for o in ul.window_overlaps(census, SPEC) if o["kind"] == "window x HUD"]
+        self.assertEqual(["not allowed"], [o["status"] for o in found], found)
+
+    def test_a_named_parent_wins_over_the_largest_cover(self):
+        # the picker covers more of the Station Grid, but hud-clusters.json names the Circuit window as its opener
+        spec = json.loads(json.dumps(SPEC))
+        spec["childPopups"] = {"parents": [{"popup": "LogisticsRequestFilterPanel", "parents": ["CircuitEntityPanel"]}]}
+        census = screen((self.CIRCUIT, [100, 100, 500, 600]), (self.GRID, [520, 100, 1100, 600]),
+                        (self.PICKER, [450, 150, 900, 500]))
+        self.assertEqual("child popup", self.pair(census, "CircuitEntityPanel", "LogisticsRequestFilterPanel", spec)["status"])
+        self.assertEqual("not allowed", self.pair(census, "StationGridEntityPanel", "LogisticsRequestFilterPanel", spec)["status"])
+        self.assertEqual("child popup", self.pair(census, "StationGridEntityPanel", "LogisticsRequestFilterPanel")["status"])
+
+    def test_check_passes_a_picker_opened_over_its_window_with_no_standing_note(self):
+        before = screen((self.CIRCUIT, [600, 100, 1000, 600]))
+        after = screen((self.CIRCUIT, [600, 100, 1000, 600]), (self.PICKER, [650, 150, 900, 500]))
+        code, out = Cmd.run(before, after, spec=SPEC)
+        line = the_line(out, "Window overlaps")
+        self.assertIn("0 not allowed after", line)
+        self.assertIn("0 new", line)
+        self.assertIn("0 standing", line)
+        self.assertIn("1 child popup", line)
+        self.assertIn("CHILD POPUP", out)
+        # the control: the same picker over an unrelated window that the before census did not hold is a new overlap
+        grid = screen((self.CIRCUIT, [100, 100, 500, 600]), (self.GRID, [700, 100, 1100, 600]))
+        code, out = Cmd.run(grid, screen((self.CIRCUIT, [100, 100, 500, 600]), (self.GRID, [700, 100, 1100, 600]),
+                                         (self.PICKER, [300, 150, 800, 500])), spec=SPEC)
+        self.assertEqual(1, code)
+        self.assertIn("1 new", the_line(out, "Window overlaps"))
+
+    def test_text_of_the_opener_under_its_picker_is_not_covered_text(self):
+        label = dict(path=f"{GP}/{self.CIRCUIT}/Title", kind="TextMeshProUGUI", rect=[320, 160, 580, 190],
+                     visible=[320, 160, 580, 190], color="#FFFFFFFF", alpha=1.0, sprite="", raycast=False, selectable=False,
+                     maskOnly=False, canvasOrder=0, depth=1000.5, text="Circuit Module", textRect=[320, 160, 580, 190])
+        grid_label = dict(label, path=f"{GP}/{self.GRID}/Title", text="Station Grid", depth=1001.5)
+        for case, extra, expect in (("opener", [], []), ("unrelated", [(self.GRID, [700, 100, 1100, 600])], ["Station Grid"])):
+            census = screen((self.CIRCUIT, [300, 100, 700, 600]), *extra, (self.PICKER, [450, 150, 800, 500]))
+            census["elements"].insert(1, label)
+            if extra:
+                grid_label.update(rect=[720, 160, 880, 190], visible=[720, 160, 880, 190], textRect=[720, 160, 880, 190])
+                census["elements"].insert(3, grid_label)
+            found = [f["text"] for f in ul.covered_text(census, OPENED, spec=SPEC)]
+            self.assertEqual(expect, found, case)
+            self.assertIn("Circuit Module", [f["text"] for f in ul.covered_text(census, OPENED)], case)
+
+
 if __name__ == "__main__":
     unittest.main()

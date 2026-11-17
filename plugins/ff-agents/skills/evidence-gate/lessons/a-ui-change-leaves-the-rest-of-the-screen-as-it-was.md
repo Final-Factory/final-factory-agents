@@ -1,6 +1,6 @@
 ---
 name: a-ui-change-leaves-the-rest-of-the-screen-as-it-was
-description: "A UI change proves it left the rest of the screen as it was: a whole-screen layout census before and after (whole HUD showing, every slide-out open) with no new overlap between always-on HUD blocks, no anchored cluster drifting more than 2 px, and every touched panel's measured colour and alpha within reach of a classic panel's. A panel the player opens on purpose and can close may cover the HUD, if it draws on top, is clickable, stays on screen and gives the HUD back (Ben, w732 and w742). Move only what the person asked to move: every moved element at 1920x1080, 1280x800 and 1280x800 docked is listed and asked for in the brief's own words, or put back, and the places Ben fixed himself (hud-pins.json) hold in every census (Ben, w826 and w894: \"stop moving panels around that I don't ask you to move around\"). The same holds for every option and mock offered before the PR: an option moves only what the person named, checked by ui_layout.py options against master and the ui-critic (Ben, w1429: "getting extremely worried you guys moved the fucking station controls panel when i told you not to twelve times"). Checked by the released pr_evidence.py, not an older copy. Open windows against each other and the HUD are measured by ui_layout.py (Window overlaps:), never by eye (w981). A screen with no census (a web page, an FF Factory portal mock) is checked on its stills by still_moves.py (w4153)."
+description: "A UI change proves it left the rest of the screen as it was: a whole-screen layout census before and after (whole HUD showing, every slide-out open) with no new overlap between always-on HUD blocks, no anchored cluster drifting more than 2 px, and every touched panel's measured colour and alpha within reach of a classic panel's. A panel the player opens on purpose and can close may cover the HUD, if it draws on top, is clickable, stays on screen and gives the HUD back (Ben, w732 and w742). Move only what the person asked to move: every moved element at 1920x1080, 1280x800 and 1280x800 docked is listed and asked for in the brief's own words, or put back, and the places Ben fixed himself (hud-pins.json) hold in every census (Ben, w826 and w894: \"stop moving panels around that I don't ask you to move around\"). The same holds for every option and mock offered before the PR: an option moves only what the person named, checked by ui_layout.py options against master and the ui-critic (Ben, w1429: "getting extremely worried you guys moved the fucking station controls panel when i told you not to twelve times"). Checked by the released pr_evidence.py, not an older copy. Open windows against each other and the HUD are measured by ui_layout.py (Window overlaps:), never by eye (w981). A screen with no census (a web page, an FF Factory portal mock) is checked on its stills by still_moves.py (w4153). A popup a window opened for a choice (a picker, a dialog) over that window is by design: never a flaw, STANDING or note; over another window or the HUD it is graded (w4504)."
 date: 2026-10-09
 ---
 
@@ -443,3 +443,36 @@ new pair read as a defect until Ben allowed it by name. A third correction of on
   (same layer; lesson
   the w1911 section above), and
   it must still draw on top of the HUD (checklist item 11).
+
+## A child popup over its own window is by design (w4504, 2026-11-16)
+
+**The rule.** Before you call an overlap a flaw, ask who opened the thing on top. If a window opened it for the player to
+make a choice, and the player then goes back to that window (an entity or item picker, a request filter, a colour
+picker, a confirmation dialog), it covers its own window by design. It is not a flaw, not STANDING and not a note, and
+it is never handed up. Leave it out of Flaws and out of every count. The same popup over **another** window, or over a
+HUD block, is graded by the usual layer rules (checklists/ui.md, item 34). So are two pieces that one hover shows over
+each other (a hover card and its tooltip).
+
+**Why.** In w4381 a fresh ui-critic flagged the Circuit Module's entity picker for covering the Circuit Module window
+it was opened from, and the finding got handed up. lothsahn, 2026-11-16, w4504: "These are popup dialogs from the prior
+window where the user has to make a selection and then returns to the prior window. Never worry about overlap in cases
+like this. Please make sure you don't highlight overlap for popup windows that overlay their parent window." That was
+the second correction of this kind. The first was w4304/w4341 (r257: "Can't the user move windows around? Are you
+flagging non-differences as problems?"), which taught the critic to drop test setup but did not cover popups over their
+parent. The tools gave no help either: `ui_layout.py check` counted the picker as a new window overlap, and
+`pr_evidence.py` failed it.
+
+**How to apply.**
+- The critic (agents/ui-critic.md, item 6) writes the pair as "<popup> (child popup of <window>) over <window>" and
+  leaves it out of Flaws. The rubric's "Not a finding" section says the same.
+- `ui_layout.py check` and `overlaps` print the pair as `CHILD POPUP` and count it on the `Window overlaps:` line as
+  "N child popup(s) over the window that opened them, by design (w4504)", apart from new, kept and standing.
+  `covered_text` skips the opener's text that sits under its popup. Popups are found by path (`DEFAULT_POPUPS`: the
+  `Modal/*` children, `*Picker`, `*Dialog`, `LogisticsRequestFilterPanel`, and more) plus hud-clusters.json
+  `childPopups.paths`. The game opens them under `Modal`, so the opener is the open window the popup covers most,
+  unless hud-clusters.json names it (`childPopups.parents`: `{"popup": "<pattern>", "parents": ["<pattern>"]}`). Every
+  pair is printed, so a wrong guess can be seen. Tests: `ChildPopupTest` in unity-ui/tests/test_ui_layout.py.
+- `pr_evidence.py` never counts a child popup. When a `Window overlaps:` line has no child-popup count, it came from a
+  tool older than 1.34.330, so a new or kept overlap there also points to the re-run (`WindowOverlapTest` in
+  evidence-gate/tests).
+- `make_tour.py` in the game repo has no overlap census of its own, so nothing changed there.

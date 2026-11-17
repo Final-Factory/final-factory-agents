@@ -80,7 +80,9 @@ brief's reasoning or the worker's notes, given only what a person would see.
    "standing, noted". Only one marked `player hits it: yes` (a player meets it in normal play: the same steps in a fresh
    session, with the windows the game opens for them, in their language) goes in your report to the person as "worth a fix?", for their
    orchestrator to decide; you never hand_up_requests it yourself unless the person asked for follow-ups. Minor findings
-   are never handed up. Then a new pack of the new stills, and
+   are never handed up. A popup over the window that opened it (a picker, a dialog) is not a finding at all: not
+   noted, not counted, never handed up (w4504; design-rubric.md, "Not a finding either"). If a critic lists one,
+   strike it with that line rather than passing it on. Then a new pack of the new stills, and
    a new critic. After three rounds with one still open, the person gets the options and the critic's report, not a
    fourth nudge.
 5. **The pull request** carries `Critic: <critic.md> (pack <id>, run R): N stills, M broken or ugly found (S standing,
