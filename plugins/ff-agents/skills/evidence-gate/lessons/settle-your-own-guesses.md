@@ -611,3 +611,28 @@ failure costs as much as a useful step.
    "A Unity call failed"). On a `refresh_unity` 60 s timeout, poll; do not call it again.
 3. A trap you hit twice, or one not in the two notes above, goes into them before DONE (checklist
    [done](../checklists/done.md) item 11).
+
+## A subagent's "ruled out" is a guess until you re-open it (w4344, w4599, 2026-11-17)
+
+**Rule.** A subagent's reply is a summary of reads you did not see. Before a claim from it decides your next step or goes
+into a report as a finding, re-open its `file:line` or re-run its check yourself, and say in the report which claims you
+re-checked. A negative claim ("ruled out", "never reached", "no caller") counts only with the search and scope that ruled
+it out, and is the one to re-check first. Hand a subagent only work whose context you would throw away (independent legs,
+one per suspect; a broad search; a fresh critic); a step that chains on another step's output stays in your own loop.
+
+**Why.** On 2026-11-16, w4344 (how a client's landing-zone paste reached the host) sent a `code-analyst` to check the
+client and host paste paths; it ruled landing zones out of the request path. Reading the cut-and-judge code itself, the
+worker found "landing zones do go through this request and the analyst's 'ruled out' was wrong" (m5, session 52034477,
+04:21Z), before anything rested on it. The habit that caught it is already common: w4532 ("Four code-analyst subagents
+did a first pass. I re-checked every IMPLEMENTED call myself") and w4113 ("Read, by a code-analyst subagent with
+file:line evidence; I re-checked the order and the saved fields myself"). Anthropic's "Building agents: When to fold
+subagents into your main agent loop" (read 2026-11-17 for w4599, Ben: "can you ingest this for the ryding harness
+generally?") names the cause: "Each call still hands back a lossy summary", split by problem type is a "telephone game",
+and the main agent should "verify the conclusion against real data". The general rule is in every Ryding Factory worker's
+brief ("Fewer model calls"); this lesson holds the game's roles and examples.
+
+**How to apply.**
+- In a `code-analyst`, `Explore` or `scout` brief, ask for each negative claim with the search that made it (pattern,
+  folders) and for the `file:line` of each positive one.
+- On a crown-jewel surface, a subagent's claim is only a candidate (CLAUDE.md, "Crown jewels stay with the parent").
+- Done checklist line 13 checks it.
