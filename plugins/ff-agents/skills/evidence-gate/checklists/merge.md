@@ -1,7 +1,13 @@
 # Merges: the Evidence section
 
 For a pull request that changes what a player sees, or simulation, save or netcode state, or that
-claims to fix a reported bug. Docs, tools and tests of existing behaviour need none of this.
+claims to fix a reported bug. Docs, tools and tests of existing behaviour need none of this, but in the game repo
+`pr_evidence.py` decides by the files: any file under `Assets/` outside `Tests/`, `TestsSlow/`, `Editor/` and
+`Scripts/PlayModeTests/` needs the section, dev automation and diagnostics under `Assets/Scripts/` included (write
+`Kind: other`, a claims table and `Not verified:`). Run `pr_evidence.py --body-file <body> --repo <repo> --pr <n>`
+before you arm `merge_on_green`, and `gh pr ready <n>` first if the PR is a draft (w4495: #3748 and #3760 were refused
+after green CI, #3741 as a draft;
+[lesson](../lessons/merge-your-own-pr.md#the-evidence-check-reads-the-files-not-the-topic-a-draft-never-merges-w4495-2026-11-16)).
 
 Merge your own pull request once its verification is done and CI is green (in the game repo: the
 required `Test in editmode`, which on a PR runs only the touched tests; the whole suite runs after the merge in the master batch, w1180). Don't leave it open

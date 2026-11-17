@@ -207,7 +207,9 @@ carried over ([lesson](lessons/research-the-decision-not-the-topic.md#name-the-p
   Before you ask (`waiting_on_person`, `decide_work ask`, `ask_person`, a relayed `[needs you]`), read the request's
   notes and log and those of the other requests its worker holds: an answer given after the question was raised is the
   answer, so pass it on. One question on several requests is asked once (w1812; Ben: "i already answered this why are
-  you asking me in the waiting on input for this still").
+  you asking me in the waiting on input for this still"). FF Factory refuses an ask the person's notes may settle
+  (w2756): read the note it names; if it leaves something open, call again with `decided_override`, never the same call
+  (six refusals in 8 h, w4495). A design pick puts each option's own stills in that option (w2664).
 - **A decided UI change gets no look OK** ([lesson](lessons/a-person-wait-is-declared-not-polled.md#a-decided-ui-change-gets-no-look-ok-w2084)).
   Before any question for Ben, read every note of his on the request and its related requests, from the start. His
   wording or behaviour added as plain text in an existing component, nothing else moved, merges on green with his words
@@ -234,6 +236,10 @@ carried over ([lesson](lessons/research-the-decision-not-the-topic.md#name-the-p
   "weeks to months"). Rewrite each as scope (files and systems touched, surfaces, risk,
   dependencies) or as a measured agent wall-clock time or cost from a named comparable run,
   labelled measured. No comparable run: scope only.
+- **The Evidence check reads the files, not the topic** ([lesson](lessons/merge-your-own-pr.md#the-evidence-check-reads-the-files-not-the-topic-a-draft-never-merges-w4495-2026-11-16)).
+  A game-repo PR with any file under `Assets/` outside the test and editor folders needs `## Evidence`, automation and
+  diagnostics included. Run `pr_evidence.py --body-file <body> --repo <repo> --pr <n>` and `gh pr ready` a draft before
+  you arm `merge_on_green` (w4495: #3748 and #3760 refused after green CI, #3741 as a draft).
 - **On ff-factory, `npm run prepush` before every push** ([lesson](lessons/merge-your-own-pr.md#before-the-push-the-repos-own-pre-push-check-ff-factory-w924-2026-10-10)).
   Push only when it passes; report any `SKIPPED` step (a tool missing on the machine) instead of ignoring it.
 - **Ask for the go-live moment before big content reaches a Steam branch** ([lesson](lessons/ask-before-content-goes-live.md)).

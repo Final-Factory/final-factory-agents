@@ -94,6 +94,13 @@ answered: "i already said it looks good and asked for the fog to be a blueish no
   all of them; no `[needs you]` when the answer is already logged; `ask_person` and `decide_work ask` refuse a repeat once,
   with the person's words (ff-factory `docs/orchestrators.md`, "Questions for a person"). A refusal from them is the
   answer: pass it on.
+- FF Factory also refuses `waiting_on_person` and `ask_person` when the person's own notes on the request, of any date,
+  may settle the question (w2756: "lothsahn's notes may settle question 1 of 1", "their note of <time> may settle it").
+  Read the note it names before the first call, not after the refusal. If it answers, act on it. If it leaves something
+  open, call again with `decided_override` saying what the note leaves open for each question. Never send the same
+  call again. Measured 2026-11-16 20:00 to 2026-11-17 04:00 UTC (w4495, portal journal): six such refusals, two of
+  them workers' `waiting_on_person` (w4359, w4431) and four orchestrators' `ask_person` (w4334, w4431, w2895 twice). On
+  w4431 the worker and then its orchestrator were refused on the same note of Ben's.
 
 ## A decided UI change gets no look OK (w2084)
 
@@ -294,6 +301,12 @@ question. Its "send the same call again" bypass let any refused call through on 
   newest first. Inline the one that shows what is asked; never a whole folder's iterations.
 - When you build a gate: test it with an input written the way the brief tells callers to write it (ids in their field,
   not the words). An escape hatch is an explicit, logged field with a reason, never "call again".
+- **A design pick carries each answer's own stills** (w2664): when the answers are alternative looks (mocks, layouts,
+  models), each option's `description` inlines its own `![what](<review path>)` stills, up to 4, and `no_previews` is
+  never accepted for it. Stills only in the question, or none, are refused ("Not shown: ... picks between designs").
+  Publish each option's stills with `publish_review` first and put the answered paths in that option. Measured
+  2026-11-16 (w4495, portal journal): worker 6f0a89ea's padlock-chip card was refused twice in one minute, the second
+  call with the question reworded and the same gap.
 
 ## A wait for a kind of event takes any such event, not one pull request (w3424, 2026-11-08)
 

@@ -198,3 +198,28 @@ allowed, though old saves loaded.
 **How to apply.** Before asking about a save-format change, check that an old-save load test is in the diff and ran
 green. Present: no question, merge on the usual gates. Missing: write it first (that is the work, not a question).
 Present but red, or the change cannot keep old saves loading: ask.
+
+## The Evidence check reads the files, not the topic; a draft never merges (w4495, 2026-11-16)
+
+**Rule.** Whether a game-repo pull request needs `## Evidence` is `pr_evidence.py`'s rule, not the topic's: any file
+under `Assets/` outside `Assets/Tests/`, `Assets/TestsSlow/`, `Assets/Editor/` and `Assets/Scripts/PlayModeTests/`
+(`.meta` and `.md` aside) needs the section (`applies()` and `NOT_GAME_CODE` in `pr_evidence.py`). Dev automation,
+diagnostics and ffauto commands under `Assets/Scripts/` count, though no player sees them. For those write
+`Kind: other`, a claims table and `Not verified:`. Check the draft against the PR's own files before you arm
+`blocked_on` `merge_on_green` or call `ff-pr merge`:
+`python "$FF_SKILLS/evidence-gate/pr_evidence.py" --body-file <body.md> --repo Final-Factory/FinalFactory --pr <n>`.
+A draft PR never merges on green: `gh pr ready <n>` before you arm `merge_on_green`.
+
+**Why** (measured from the portal journal, 2026-11-16 20:00 to 2026-11-17 04:00 UTC). Two workers armed
+`merge_on_green` on PRs whose bodies had no Evidence section, took them for tooling, and were refused after green CI
+("the Evidence check refused it ... no 'Kind:' line ... no claims table ... no 'Not verified:' line"): w4470's #3748
+(`LocalMultiplayerAutomationBootstrap.cs`, `DesyncReportCollector.cs`) and w4478's #3760
+(`LocalMultiplayerAutomationCommandRunner.cs`, an ffauto command). Each was resumed to write the section and merge by
+hand, one round trip apiece. w4461's #3741 was armed while still a draft and refused with "Pull Request is still a
+draft". This checklist's own opening ("Docs, tools and tests of existing behaviour need none of this") read as covering
+tooling under `Assets/`; it does not.
+
+**How to apply.** Before `ff-pr push`, list the PR's files (`git diff --name-only origin/master...HEAD`). Any under
+`Assets/` outside the four test and editor folders: the body gets `## Evidence`. Run the checker on the draft body and
+read its verdict alone (the w978 section above), then arm the wait. FF Factory checking this when the wait is armed is
+tracked as an FF Factory request from w4495.
