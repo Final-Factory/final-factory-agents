@@ -141,7 +141,7 @@ holds, or the report says what is left instead of DONE.
    A tool call that failed twice in one form during the work (a shell trap, a Unity call sent before the bridge was up,
    an `execute_code` type name) is in project-memory `agent-shell-traps-by-machine` or editor-ops, "A Unity call failed",
    or was added there ([a failed call changes its form before it runs
-   again](../lessons/a-failed-call-changes-its-form-before-it-runs-again.md), w4501).
+   again](../lessons/settle-your-own-guesses.md#a-failed-call-changes-its-form-before-it-runs-again-w4501-2026-11-17), w4501).
 12. **Superseded work closed.** Before DONE: any PR or work request you found fully covered by other work is closed
    with a note naming what supersedes it (`gh pr close <n> --comment "Superseded by ..."`; a `SUPERSEDED: wNNN by <what>`
    line in the report), whoever opened it ([lesson](../lessons/say-done-per-request.md#close-what-other-work-superseded-naming-what-covers-it-w3248-2026-11-06), w3248: #3254 stayed

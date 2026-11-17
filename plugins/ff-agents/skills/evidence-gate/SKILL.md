@@ -358,7 +358,7 @@ carried over ([lesson](lessons/research-the-decision-not-the-topic.md#name-the-p
 
 One file each under `lessons/`: the rule, why (the incident, dated), how to apply.
 
-- [A failed call changes its form before it runs again](lessons/a-failed-call-changes-its-form-before-it-runs-again.md):
+- [A failed call changes its form before it runs again](lessons/settle-your-own-guesses.md#a-failed-call-changes-its-form-before-it-runs-again-w4501-2026-11-17):
   lothsahn, 2026-11-17 (w4501): read the error, name its cause, change the call; an identical retry only for a transient
   you can name. 8 hours of transcripts held about 49 unintended Bash exits, about 36 Unity calls sent before the bridge
   was up and about 13 `execute_code` compiles failing on a short type name.
