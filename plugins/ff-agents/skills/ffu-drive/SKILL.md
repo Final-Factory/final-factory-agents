@@ -89,6 +89,12 @@ $B/ffu --start factory:250000:1 --frames 600 --stats frames.json              # 
 space pauses, `[` and `]` slow and speed the clock, F12 saves `ffu-shot-N.png` in the working folder, 1 to 5 pick
 belt, miner, crafter, sink and remove (Tab the next), R rotates, a left click places and a right click removes.
 `--pack DIR` draws each kind that has a baked model in DIR's `*.ffpack` (`ffu-bake` writes them). Always give a window `--seconds N` so nothing you start outlives your work.
+**A still or clip for a person is drawn as Ben plays** (w4431, Ben on flat stills: "but why is it 2d ugly sprites?"):
+`--look looks/ffu.look` (its 52 degree 3D camera, ffu #698/#723) and `--pack DIR` with models, never the bare flat
+path (no look, no pack: top-down coloured quads). FFU ships no building models yet; the approved look was tuned on the
+throwaway blockout pack, `python tools/mock-w4008/blockout_gen.py` from branch `w4008-ffu-3d-mock` (34 kinds; no
+landing_zone, crafter or assembler), plus a sky pack. A kind with no model in the pack still draws as a flat tile on
+z=0 under the meshes: say so beside the still, and never invent a model for it (FF1's exported models, PLAN M2.21).
 A still of a live window on Windows (a `--connect` client, a launcher check): run `window_shot.ps1 -Out shot.png`
 (beside this file) while the window runs. Never use a desktop grab: on BEAST other sandboxes' editors sit on top, and in
 w3321 the grab showed slot2's Unity and none of the client. The script uses PrintWindow on the window itself, which drew
