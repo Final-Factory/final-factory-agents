@@ -11,6 +11,14 @@ Mechanics: the game repo's `Documentation/Bench-Lock.md`.
       `bench_queue.py timed --what "<what>"` in the background across calls (`timed --release` after), `--bench
       exclusive` for a batch run. The report names the ticket beside its numbers; a number taken without one is a guess
       about a busy machine (w1892: an hour of editor micro-benchmarks on a LothDesktop at 100% CPU, none held).
+- [ ] **From an old checkout, the ticket comes from master's `bench_queue.py`** (w4704, 2026-11-18, LothDesktop: a
+      rules-5 copy in slot2's checkout of 7838ea1c, rebuilding an old player, and a rules-6 copy waited on each other,
+      and nothing on the machine was granted for 82 minutes). On an A/B base, an old player rebuild or any branch without
+      `origin/master` merged in: `git show origin/master:scripts/bench/bench_queue.py > "$TMPDIR/bench_queue.py"` and
+      take `timed`/`run` with that copy. A script that sources `quiet_gate.sh` gets master's `bench_queue.py` and
+      `quiet_gate.sh` put in place first. Since FinalFactory PR #3890 (`RULES_VERSION` 7) a newer copy decides for older
+      tickets, so this case cannot deadlock again, but an old copy still grants itself by its old rules. Game repo
+      `Documentation/Bench-Lock.md`, "Using it" and "Tickets from two rule versions".
 - [ ] **An editor timing loop goes in chunks of a few seconds per `execute_code` call** (w4016, 2026-11-12: 220
       iterations of `DeterminismStateFingerprint.Compute`, 0.3-0.45 s each, is minutes in one call; a call past about
       10 s times out at the bridge, keeps running, and can run twice). Samples accumulate across calls in
