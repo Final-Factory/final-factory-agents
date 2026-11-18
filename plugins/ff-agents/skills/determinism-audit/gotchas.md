@@ -32,7 +32,7 @@ load-bearing for future runs even where the original defect is fixed.
 - [Mute the real audio path — `-batchmode -nographics` does not touch FMOD](#automation-mute) (049)
 - [Fixture determinism can be CPU-load-dependent even with no cross-peer comparison — unverified](#fixture-load-dependence) (055 R35)
 - [Host-frame profiling: a probe, not a determinism gate](#perf-probe) (055 flag lane 3)
-- [A big save: the full capture keeps the client out; the runtime detector and a capped host](#big-save-pair) (w780; bench stops and a too-heavy client, w2567)
+- [A big save: the full capture keeps the client out; the runtime detector and a capped host](#big-save-pair) (w780; bench stops and a too-heavy client, w2567; a host alone before the join, and a served save does not replay the fight, w4649)
 - [Old against new in one pair: a PR's A/B switches on one peer](#ab-switch-one-peer) (w1115)
 - [Reading a pair's witness-compare.txt: pose distance is the verdict](#witness-pose-distance) (w1555)
 - [A world-generation pair: drive the host post-join, compare lists, keep the client yours](#worldgen-pair) (w2271; world objects from saves, ffnightly deletes local saves, w2386; a `nearby` probe grid, rich asteroids by ore amount, UTC checkpoints, w2889)
@@ -665,6 +665,19 @@ growth table's `max pose distance` after heartbeat 1. With the S1 fixed-point mo
 10,296 heartbeats; on master one pose was 19 units apart by heartbeat 709. Heartbeat 1's large distance on the
 player's own ship is the host's pose before the ship is placed: leave it out. Quote the windows and the largest
 distance per run, alongside the runtime detector's verdict.
+- **w4649, 2026-11-18 (biscuit, a host and a headless client side by side, a report's e1 served save of 28k entities,
+  PR #3859's red/green): a hand-launched host simulates while it waits for its client.**
+  - From `host-ready` the host ran at 20 UPS alone (6,594 heartbeats in 330 s, read with
+    `ffauto:observe.state|session`; `observe.state` with no scope is refused). So "the host runs alone N minutes
+    first" is only a client launched N minutes after `host-ready`, inside the host's 900 s peer wait.
+  - Poll `ffauto:desync.stats` on the host's agent channel once a minute and keep the last answer: once the client's
+    dwell ends, `clients` is empty. Both runs compared about 3,160 of 3,160 over heartbeats 8..25,300 in 21.5 minutes.
+  - **A served save replays the world, not the player's input.** Before you size a RED window, read the fork's
+    heartbeat in the report's correlation id (`1-45376-1`: epoch 1, heartbeat 45,376, about 38 minutes after the
+    join). A 21.5-minute window cannot reach it, and with no one driving, the fight that forked may never start.
+    RED and GREEN both ran clean, so the run showed neither the bug nor the fix. A RED that must fork needs a served
+    save from a later fork (`..._2-832-1_host_served-...-e2.zip`, 832 heartbeats after a recovery) or a window past
+    the first fork's heartbeat.
 
 ## A Linux client leg on biscuit: build, headless launch, a scripted paste {#linux-client-leg}
 
