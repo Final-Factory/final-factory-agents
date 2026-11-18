@@ -69,6 +69,11 @@ Mechanics: the game repo's `Documentation/Bench-Lock.md`.
       "Nx faster" goal is met (or not) on own work, with the wait stated beside it. Insert a probe marker at a line
       found by grepping its text (`grep -n "^      CompleteDependency();" | head -1`), never at a line number written down
       before later edits: a sed at a stale number broke the compile, and that timing leg ran the old assembly.
+      Before a profile report ranks removing a wait as a fix with an expected gain, find the next full sync in the same
+      frame (a command-buffer playback, any structural change, `CompleteAllJobs`) and check whether it waits for the
+      same jobs; if it does, price the fix at 0 (w4717, r306 fix 1: GuardianMountRecordSystem's 3.03 ms wait on the
+      transform hierarchy moved whole into FFPostTransformBufferSystem's playback, +3.10 ms; frame 23.45 against
+      23.33 ms, biscuit, measured; Final-Factory/FinalFactory PR #3907).
 - [ ] **An editor leg times warm Burst code** (w2338, 2026-10-27, biscuit, Mall save, commit e947f566c4). A leg that
       starts a minute after an editor start can time jobs Burst has not compiled yet. Measured on one commit: LeechSystem
       0.623 / 3.317 ms per heartbeat at 6 / 20 Leeches one minute after a start, 0.158 / 0.193 ms in a warm pass. Both
