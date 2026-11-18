@@ -636,3 +636,30 @@ brief ("Fewer model calls"); this lesson holds the game's roles and examples.
   folders) and for the `file:line` of each positive one.
 - On a crown-jewel surface, a subagent's claim is only a candidate (CLAUDE.md, "Crown jewels stay with the parent").
 - Done checklist line 13 checks it.
+
+## Speeding up a slow test: time it warm and alone first, prove an A/B, name the ticket right (w4691, 2026-11-18)
+
+**Rule.** The daily test speed-up job (lothsahn: "finds the 5 slowest tests and optimized them to go faster") ranks
+fixtures by the master batch's NUnit XMLs, but a CI time is not the time to beat. Before editing a picked fixture, time
+it alone in the warm editor (MCP `run_tests` with that fixture's `test_names`, `include_details`), under an exclusive
+ticket, and read where its seconds are. A fixture whose warm time is far below its CI time is paying a cold load
+(localization tables, assets) that whichever test runs first pays; caching inside the test does not move it.
+
+**Why (w4691, 2026-11-18, m3).** `LocalizationCacheLocaleSwitchTest` took 6.56 s on CI and 0.96 s warm;
+`LongLanguagePanelsTests` 8.62 s on CI and 4.16 s warm, spread evenly over 23 cases at 0.12-0.15 s each. A per-language
+row cache, a cached `FindInScene` (`CircuitViewKeptTest`) and precomputed uncached strings all measured within noise
+after the edit (4.19/3.92 s, 4.18 s, 0.84 s) and were dropped. The one real gain was in game code, not the test:
+`FpHullBuilder` scanned dead faces (#3885, `FpHullBuilderTest` 7.38 → 5.6 s). The first ticket was refused: a
+`bench_queue.py timed --what` containing the word "test" exits 78, "not timed work".
+
+**How to apply.**
+- Read the warm per-case times first. Cost spread evenly over cases (one prefab instantiate each) or held in setup is
+  a cold load or the thing under test; look for the hot loop in the code the test calls instead.
+- Name the ticket `"<wNNN> A/B timing leg: <what>"`, never with the word "test".
+- A bake-time or simulation-adjacent speed-up is proven bit-identical by a temporary EditMode A/B test: copy master's
+  class verbatim under a new name, run both on many inputs (w4691: 180 clouds, 4 to 3000 points, coplanar and duplicate
+  heavy, 5 tolerances) and compare raw fp values; delete both files and their `.meta` before committing, and cite the
+  run in the PR's Evidence.
+- A fixture tried with no safe gain counts as tried for a week: on 2026-11-18, `StationStructureChangeNoTransientTest`
+  (w635 already runs its 120 cases in one world; the time is the settle it checks) and `CircuitViewKeptTest` (about
+  0.4 s per window prefab instantiate). Skip them in the ranking until 2026-11-25.

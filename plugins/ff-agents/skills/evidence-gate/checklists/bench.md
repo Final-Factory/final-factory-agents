@@ -262,3 +262,8 @@ Mechanics: the game repo's `Documentation/Bench-Lock.md`.
       all legs in ONE `bench_queue.py run --mode exclusive` ticket (a ticket per leg re-queued for about 42 min each,
       measured); windowed legs pass `--peer-arg solo=-ffNoAdaptiveVSync` (`FramePacer.cs:474`) or cap at 60 fps; a rerun
       that ended `env` because a person played on that PC is void, run it again after the game closes.
+- [ ] **A test speed-up starts from the fixture's warm time, not its CI time** (w4691, 2026-11-18; [lesson](../lessons/settle-your-own-guesses.md#speeding-up-a-slow-test-time-it-warm-and-alone-first-prove-an-ab-name-the-ticket-right-w4691-2026-11-18)):
+      time the fixture alone in the warm editor with per-case details before editing (CI 6.56 s against 0.96 s warm for
+      `LocalizationCacheLocaleSwitchTest`: cold table loads); name the ticket `"<wNNN> A/B timing leg: ..."` (a `--what`
+      with "test" exits 78); a bake or simulation-adjacent speed-up carries a temporary A/B test against a renamed
+      verbatim copy of master's class, deleted before commit.
