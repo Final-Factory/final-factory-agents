@@ -124,6 +124,21 @@ changed code runs) in your first report and in the PR description.
 - [ ] The fork does not reproduce on `origin/master`: A/B the fixes merged since the report's commit (cherry-pick the
       likeliest onto it, rerun the same pair) before root-causing the old commit; a merged fix closes it by its PR
       ([lesson](../lessons/settle-your-own-guesses.md#a-fork-that-shows-on-an-older-commit-and-not-on-master-ab-the-fixes-merged-since-first-w4505-2026-11-17), w4505).
+      Not when the cause still stands on master by a test, and the fork needs both a player's fight and peers whose
+      entity indices differ (a roll from `RandomSystem.GetRandomForEntity`). A served-save replay with nobody playing
+      gives neither. w4648 (PR #3859, 2026-11-18) ran two such replays and master never forked:
+      - the e1 save, with the host alone 341 s first: 3,163 heartbeats;
+      - the e2 save, 832 heartbeats before the player's fork, with the host alone 66 s: 2,249 heartbeats.
+
+      Then one pair run is a no-new-fork check, not a reproduction. Rest the red/green on the failing-first test and
+      each report's dump diff, put the missing reproduction in the PR's `Not verified:` line, and file no third replay.
+- [ ] A diagnosis's claim about content ("the only prefab with a collider under a spinner") is checked by an editor
+      scan of every prefab, not copied from the diagnosis. In w4648 a scan of 2,496 prefabs found two more,
+      IndomitableObelisk and SingularityVessel; on master the obelisk's collider followed a rotation that
+      `PresentationRotatorSystem` writes every frame.
+- [ ] A save copy that you or a subagent's or pair leg's brief puts in the game's saves folder is named
+      `ffa-<session>-<name>.zip`. w4648's brief said `ffa-w4648e2.zip`, and the worker's cleanup hook refused to
+      delete it.
 - [ ] Every `Report:` line is confirmed in that report's own dump, not only the one FFBox diagnosed: diff
       both peers' Detail lines of the forked surface per tile (w3222: the `ContainersDetail` entries
       grouped by tile; each of the five reports differed only at the stacked-box tile, with equal counts).
