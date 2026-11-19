@@ -663,3 +663,29 @@ after the edit (4.19/3.92 s, 4.18 s, 0.84 s) and were dropped. The one real gain
 - A fixture tried with no safe gain counts as tried for a week: on 2026-11-18, `StationStructureChangeNoTransientTest`
   (w635 already runs its 120 cases in one world; the time is the settle it checks) and `CircuitViewKeptTest` (about
   0.4 s per window prefab instantiate). Skip them in the ranking until 2026-11-25.
+
+## A test proves a fix RED with the fix reverted where the game calls it, not only in the helper (w4770, 2026-11-19)
+
+**Rule.** When a fix adds a helper (a sizing, a layout cut, a lookup) and the game calls it from one place, a test that
+calls the helper directly proves the helper, not the fix. To prove a test guards the fix, revert the fix at its call
+site (call the old code there, size to the old value, skip the call) and see the test go RED. If it stays green, write
+the test that drives the caller, as the game does, and prove that one RED at the call site.
+
+**Why (w4770, 2026-11-19, m5, the nightly merge review's RED-first duty).** Two fixes whose own tests passed at HEAD
+did not catch the fix being reverted where the game uses it:
+- #3925 (w4748): `StationGroupPanelTest.WholeRows_EndsOnTheLastRowThatFits` stayed green with `StationGroupPanel.Fit`
+  sized to `_maxList`. It went RED only when `WholeRows`' own body was reverted (expected 76, was 100). The new
+  `AScrollingList_EndsOnAWholeRow`, which drives `Fit`, went RED: the row from 439.9 to 484.8 was cut at 460.
+- #3900 (w4708): `SetFromCircuitsLabelFitsEveryLanguageTest` runs the label's sizing on its own. The new
+  `SetFromCircuitsLabelInsideTheRecipeWindowTest`, which builds the real switch into main.unity's recipe picker at the
+  1280x720 room, went RED in 8 of 11 locales with `FitLabels` a no-op (en drawn to 266.1 against the row edge at 241.0).
+- The same review found `PlanTargets_TwoStations_LineUpInTheFormation` green with #3925's footprint-centre offset
+  dropped; only the off-centre case added for it (`...OffCentreCores_LineUpByTheirBuildings`) went RED.
+
+**How to apply.**
+- For each fix, list the edits that make it work for a player, not only the new function: the call that uses it, the
+  value it is sized to, the input that makes it matter (an off-centre core, a long locale).
+- A RED leg reverts one of those at a time, locally, and is put back with `git checkout -- <file>` before anything is
+  committed. Never push a reverted leg.
+- Report each fix as "covered by <test>" with the RED line from that leg; a test that stayed green on a leg is named
+  as covering only what it did catch.

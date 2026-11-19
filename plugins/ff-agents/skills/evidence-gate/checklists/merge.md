@@ -43,6 +43,8 @@ and 1280x720 (`UI-w2976-hud-with-chat`). A PR that makes a red check pass by cha
 an assert loosened, a scenario moved; #2971 after #2923) shows the outcome measured with the gameplay change in and
 out before it merges
 ([lesson](../lessons/measure-against-what-the-player-sees.md#a-check-proves-the-outcome-in-every-state-on-the-claimed-path-w2976-2026-11-03)).
+A test named as the fix's guard goes RED with the fix reverted at its call site, not only in the helper it adds
+([lesson](../lessons/settle-your-own-guesses.md#a-test-proves-a-fix-red-with-the-fix-reverted-where-the-game-calls-it-not-only-in-the-helper-w4770-2026-11-19), w4770).
 
 **Code that hands a person's words to "the" worker of a request has a test with two workers on it** (w3117, 2026-11-05):
 on w2895 Ben's note named worker aa60d124 and ffu #202, and FF Factory's update_work sent it to b4440e1e as the answer to
