@@ -301,6 +301,10 @@ to its pull request. For #1137's change the selection ran in 75 s against 376 s 
   w1499, BEAST slot4): `test_names ["CombatMoverFingerprintTest"]` ran `total 0` and answered `resultState Passed`;
   `Tests.Multiplayer.CombatMoverFingerprintTest` ran 22. Copy the names `test_select.py` prints, and read `summary.total`:
   0, or fewer than the class holds, means the filter matched nothing.
+- **An empty `test_names` runs the whole suite** (measured 2026-11-19, w4790, biscuit slot3): a timing script whose name
+  list came out empty (a heredoc that never ran) called `run_tests` with `test_names []` and started all 21,289
+  FFEditorTests cases, holding the machine's only Unity slot until a forced restart. A script that calls `run_tests`
+  refuses an empty name list before it calls.
 - **An `[Explicit]` test named by its class is skipped** (measured 2026-11-13, w4081, m3 slot1): `test_names
   ["TestsSlow.Circuits.CircuitCalculationBenchmark"]` answered `resultState Passed` with `skipped 1, passed 0` and logged
   nothing; the method's full name (`...CircuitCalculationBenchmark.AThousandLines_CostPerHeartbeat`) ran it. Name the
