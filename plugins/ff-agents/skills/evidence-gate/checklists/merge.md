@@ -239,6 +239,13 @@ Not verified: the Bats' slot lag (simulation, follow-up PR)
   done, 17 min of it waiting for two computers at once (measured, `work_timing`). The first one-leg run (w4609, same commit as
   the two-leg w4595) took 51 min filed to done, 17 of them work, while w4595 still waited for two computers
   ([lesson](../lessons/verify-simulation-at-a-slow-hosts-frame-rate.md#a-prs-scripted-mp-check-runs-on-one-computer-the-requesters-own-when-it-can-w4596-2026-11-17)).
+- **A master merge after a passed pair run asks `pair_rerun_check.py` before any repeat** (w4737, 2026-11-19): `python scripts/nightly/pair_rerun_check.py
+  --passed <the commit the run passed at>` reads the PR's own diff and each merge's `M^1..M` diff since the pass. It says yes when the
+  merge changes a file the PR changes, sim code declaring a type the PR's changed lines use (or using one it declares), or the op
+  queue or heartbeat core, or when the PR's own game code changed. On no, the earlier run stands and the Evidence row quotes the `no` line
+  with both commits. On yes, run the one-leg command it prints (`--slow-host 20`, or `request_pair` `legs: 1` from a Mac), never a
+  two-leg repeat by default. w4572 re-ran a 79 min two-leg pair on PR #3784 for w4520's HaulerCommand change (r290)
+  ([lesson](../lessons/verify-simulation-at-a-slow-hosts-frame-rate.md#a-pair-run-after-a-master-merge-repeats-only-when-the-merge-touches-the-prs-ops-and-as-one-leg-w4737-2026-11-19)).
 - **A relay or cross-machine pair runs `ffnightly.py preflight` before either leg builds** (w4600, 2026-11-17):
   `python scripts/nightly/ffnightly.py preflight --lab <the lab or its copy> --scenario <each> [--scenarios-from <sha>]
   [--add-relay-client]`, on the host leg, from the files alone. It refuses a `"windowed"` scenario on a `"headless"`
