@@ -52,8 +52,9 @@ way. Tests under `Assets/Tests/` that only exercise existing simulation behavior
   `read_console` for `error CS`. A green suite alone does not prove your code compiled. Confirm
   every new `.cs` got its `.meta`.
 - Run the tests your change touches: `python scripts/test_select.py` prints the `run_tests`
-  arguments (exact `test_names`), or FULL SUITE, in which case run all of `FFEditorTests`.
-  Report which you ran, the job id and the counts. CI runs the whole suite on the PR.
+  arguments (exact `test_names`); on FULL SUITE it prints the merge gate's list, which you run
+  instead, never all of `FFEditorTests` (w4735). Report which you ran, the job id and the counts.
+  The PR's gate and master-batch run the whole suite.
 - If you cannot get a clean compile after two fix rounds, stop and report the errors; the driver
   will re-run the task on implementor.
 
