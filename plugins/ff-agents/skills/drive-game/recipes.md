@@ -660,3 +660,21 @@ multiplayer Esc menu, before and after the fix (FinalFactory PR #3267).
 - **A station's grid entity index changes between loads of the same save (w3776, 2026-11-09).** Station 203132 of
   bigAmazingSaveForTrailer was grid entity 209992 in one load (its 528 items and 1138 Sprawl tiles matched). Never carry
   an entity index from one load to the next: find the station again by its station id, its items or a tile it owns.
+
+## Shift + click copy and paste on a structure in the editor (w4744, 2026-11-19)
+
+The real `InventoryAction` copy/paste path, driven from `execute_code` in play mode. It checked that a tutorial step
+counts a paste (the "Copy and paste recipes" card went 0/3 → 3/3 on a player's save).
+
+- **Find the camera by name.** `Camera.main` was null in play mode (the scene's camera is not tagged MainCamera), so use
+  `Camera.allCameras.First(c => c.name == "Main Camera")` and `WorldToScreenPoint(tileCenter)` for the pointer position.
+- **Copy:** `UI.InputHelper.InjectKey(KeyCode.LeftShift, 30)`, then
+  `PlayerController.AutomationPointer.MoveTo(screenPos)` and `.Click(1)` (right). Pump frames with
+  `EditorApplication.Step()` for a few frames between the move and the click, so the hover raycast lands on the
+  structure first.
+- **Paste:** the same, with `.Click(0)` (left) on each target, and inject Shift again before each click (one injected hold
+  can run out over a long sequence; an injection per click is cheap). End with `AutomationPointer.Clear()`.
+- **A copied connector filter pastes through `InventoryAction.PasteClipboardFilter`, a recipe through the recipe
+  branch beside it.** Each one asks for its own counts, so test both kinds of paste when a step or stat counts pastes.
+- **A save load hangs while the editor is paused.** Set `EditorApplication.isPaused = false` and `Time.timeScale = 1`
+  before loading, then poll with short `execute_code` calls (one long call timed out).
