@@ -284,3 +284,6 @@ Mechanics: the game repo's `Documentation/Bench-Lock.md`.
       `LocalizationCacheLocaleSwitchTest`: cold table loads); name the ticket `"<wNNN> A/B timing leg: ..."` (a `--what`
       with "test" exits 78); a bake or simulation-adjacent speed-up carries a temporary A/B test against a renamed
       verbatim copy of master's class, deleted before commit.
+      A CI time far above both the warm time and a lone batchmode run is the long CI process (w4759): look in the
+      case's call path for `GC.Collect` and `FindObjectOfType`/`.Instance` reads in loops; discard the first run after
+      a recompile (Burst compile).

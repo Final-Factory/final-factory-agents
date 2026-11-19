@@ -663,6 +663,22 @@ after the edit (4.19/3.92 s, 4.18 s, 0.84 s) and were dropped. The one real gain
 - A fixture tried with no safe gain counts as tried for a week: on 2026-11-18, `StationStructureChangeNoTransientTest`
   (w635 already runs its 120 cases in one world; the time is the settle it checks) and `CircuitViewKeptTest` (about
   0.4 s per window prefab instantiate). Skip them in the ranking until 2026-11-25.
+- **A CI time 10-500x the warm time, with a lone batch run fast too, is the long CI process** (w4759, 2026-11-19,
+  biscuit). Five fixtures took 14-17 s in master batch run 44495501674 and 0.05-2.3 s run alone through
+  `MergeGateTestRunner` in batchmode (measured), so neither batch mode nor a cold start explains them. The cost was
+  what a 40-minute run makes slow: an explicit `GC.Collect()` in the code under test (`PerfProbe.Arm`, called twice
+  by `PerfProbeTest.Disarm_RestoresThePlayerLoopExactly`, 16 s in CI) collects a heap grown by every earlier test; a
+  `SingletonMono.Instance` read with no instance in EditMode is a `FindObjectOfType` on every read, over everything
+  earlier tests leaked (`Header.CanvasScale` each frame, `HeaderRestoreTest` 1.2 s a 120-frame case in CI, 2 ms
+  warm). Grep the slow case's call path for `GC.Collect`, `FindObjectOfType` and `.Instance` reads in loops before
+  timing; fix with a seam whose default is the old code and that the test sets to what EditMode answers anyway
+  (#3937: `PerfProbe.CollectAtArm`, `Header.CanvasScaleProvider`). The warm A/B shows such a gain only in part
+  (PerfProbeTest 1.07 to 0.02 s); CI's per-case times after the merge are its real proof.
+- **Throw away the first run after a recompile**: the first `EcsTestBase` case that runs a Burst system then pays its
+  Burst compile once (w4759: `StationGridCalculatorTest` 16.2 s on that run, 1.4 s on the next two).
+- Tried with no safe gain on 2026-11-19 (skip until 2026-11-26): `NetworkDeterminismAuditReportTest` (its cost is the
+  16,385 and 32,769 records it needs to pass the legacy limits) and `StationGridCalculatorTest` (one fresh ECS world
+  per case from `EcsTestBase`; ~130 ms a case in CI).
 
 ## A test proves a fix RED with the fix reverted where the game calls it, not only in the helper (w4770, 2026-11-19)
 
