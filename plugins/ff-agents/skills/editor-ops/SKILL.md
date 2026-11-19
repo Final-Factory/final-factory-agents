@@ -310,9 +310,13 @@ to its pull request. For #1137's change the selection ran in 75 s against 376 s 
 - Give `run_tests` an `init_timeout` of 120000. A call that answers "Timeout receiving Unity
   response" may still have queued the run: poll `get_test_job`, or wait for the editor log's
   "Restored Interaction Mode after test run", before asking again, or the runs stack up.
-- Run the full fast suite (`FFEditorTests`) when the selector prints FULL SUITE (the test
-  framework, asmdefs, `Packages/`, `ProjectSettings/`, `Assets/Resources/` configs, or a
-  selection above 60% of the suite's time) or when someone asks for it. Pass both
+- **Never run the whole fast suite locally because the selector printed FULL SUITE** (lothsahn, w4735; report r290:
+  five local whole-suite runs of 37-50 min each on lothdesktop took about 2.7 h of w4488's build day, and four of the
+  five failed on unrelated timing or environment tests). On FULL SUITE (the test framework, asmdefs, `Packages/`,
+  `ProjectSettings/`, or a selection above 60% of the suite's time) `test_select.py` prints the merge gate's list,
+  the same as `python .github/scripts/merge-gate-tests.py --base origin/master --local --names-out "$TMPDIR/gate.txt"`; run those `test_names`. The pull request's
+  `Test in editmode` and master-batch's whole-suite run after the merge (which bisects and reverts a red batch) cover
+  the rest. Run all of `FFEditorTests` only when a person asks for it. Pass both
   `FFEditorTests` and `FFEditorTestsSlow` (or all EditMode assemblies) only when all tests are
   explicitly requested; run slow tests only if asked.
 - **Never run the suite in an editor that has been in play mode since it started.** A play session

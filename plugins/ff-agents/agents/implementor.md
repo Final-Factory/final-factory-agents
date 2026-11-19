@@ -29,8 +29,9 @@ Working rules:
 - Tests: new/changed behavior gets EditMode coverage extending `EcsTestBase` where the
   task specifies; run the tests your change touches through the PINNED MCP instance (list
   `mcpforunity://instances`, match this project's path, `set_active_instance`):
-  `python scripts/test_select.py` prints the `run_tests` arguments (exact `test_names`), or
-  FULL SUITE, in which case run all of `FFEditorTests`. CI runs the whole suite on the PR.
+  `python scripts/test_select.py` prints the `run_tests` arguments (exact `test_names`); on
+  FULL SUITE it prints the merge gate's list, which you run instead, never all of `FFEditorTests`
+  (w4735). The PR's gate and master-batch run the whole suite.
   A test that asserts on timing is its own test, tagged `[Category("Performance")]`; a functional
   test never carries the tag (evidence-gate `lessons/verify-simulation-at-a-slow-hosts-frame-rate.md#a-timing-test-is-tagged-performance-and-checks-nothing-else-w1690-2026-10-21`).
 - Compile-verify per repo rules: `refresh_unity`, await the fresh domain reload, check
