@@ -504,14 +504,67 @@ class ScreenStringTest(unittest.TestCase):
         self.assertEqual([uk.hex_of(f["colour"]) for f in result["loud"]], ["#57B2D0"])  # as with a [w, h] screen
 
     def test_colour_and_pack_run_on_the_tour_census(self):
-        with redirect_stdout(io.StringIO()):
-            code = uk.main(["colour", f"{RealCaseTest.R2}::{self.CENSUS}"])
-        self.assertIn(code, (0, 1))  # a verdict, not a crash
         with tempfile.TemporaryDirectory() as d:
+            census = json.loads(self.CENSUS.read_text(encoding="utf-8"))
+            census["screen"] = "450x310"  # the stop-list crop's own size, so the w4779 size check passes
+            path = Path(d) / "census.json"
+            path.write_text(json.dumps(census), encoding="utf-8")
             with redirect_stdout(io.StringIO()):
-                code = uk.main(["pack", "--after", f"{RealCaseTest.R2}::{self.CENSUS}", "--ref", str(RealCaseTest.R1),
+                code = uk.main(["colour", f"{RealCaseTest.R2}::{path}"])
+            self.assertIn(code, (0, 1))  # a verdict, not a crash
+            with redirect_stdout(io.StringIO()):
+                code = uk.main(["pack", "--after", f"{RealCaseTest.R2}::{path}", "--ref", str(RealCaseTest.R1),
                                 "--out", str(Path(d) / "pack")])
             self.assertEqual(code, 0)
+
+
+class CensusSizeTest(unittest.TestCase):
+    """w4779 (2026-11-19): in the editor, PlayModeWindow.SetCustomRenderingResolution(1920, 1080) made
+    ScreenCapture write a 1920x1080 PNG while Screen.width/height and the DeckTour census stayed at the Game view's
+    1974x980, so `colour` sampled every text box about 100 px off. colour and pack now refuse a census whose screen is
+    not the still's size."""
+
+    def run_cmd(self, argv):
+        err = io.StringIO()
+        with redirect_stdout(io.StringIO()), redirect_stderr(err):
+            code = uk.main(argv)
+        return code, err.getvalue()
+
+    def census(self, d: str, screen) -> Path:
+        census = json.loads(ScreenStringTest.CENSUS.read_text(encoding="utf-8"))
+        census["screen"] = screen
+        path = Path(d) / f"census-{len(list(Path(d).glob('*.json')))}.json"
+        path.write_text(json.dumps(census), encoding="utf-8")
+        return path
+
+    def test_colour_refuses_the_w4779_editor_census_beside_a_bigger_png(self):
+        with tempfile.TemporaryDirectory() as d:
+            png = Path(d) / "controls.png"
+            uk.write_png(png, uk.Still(1920, 1080, bytes(1920 * 1080 * 3)))
+            code, err = self.run_cmd(["colour", f"{png}::{self.census(d, [1974.0, 980.0])}"])
+            self.assertEqual(code, 2)
+            self.assertIn("1974x980", err)
+            self.assertIn("1920x1080", err)
+
+    def test_colour_refuses_a_before_whose_census_is_another_size(self):
+        with tempfile.TemporaryDirectory() as d:
+            good, bad = self.census(d, "450x310"), self.census(d, "1920x1080")
+            code, err = self.run_cmd(["colour", f"{RealCaseTest.R2}::{good}", "--before", f"{RealCaseTest.R1}::{bad}"])
+            self.assertEqual(code, 2)
+            self.assertIn("450x310", err)
+
+    def test_pack_refuses_a_census_of_another_size(self):
+        with tempfile.TemporaryDirectory() as d:
+            census = self.census(d, "1920x1080")
+            code, err = self.run_cmd(["pack", "--after", f"{RealCaseTest.R2}::{census}", "--ref", str(RealCaseTest.R1),
+                                      "--out", str(Path(d) / "pack")])
+            self.assertEqual(code, 2)
+            self.assertIn("same frame", err)
+
+    def test_a_census_of_the_stills_size_passes(self):
+        with tempfile.TemporaryDirectory() as d:
+            code, _ = self.run_cmd(["colour", f"{RealCaseTest.R2}::{self.census(d, [450, 310])}"])
+            self.assertIn(code, (0, 1))
 
 
 if __name__ == "__main__":

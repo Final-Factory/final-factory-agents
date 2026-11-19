@@ -798,6 +798,21 @@ def split_standing(after: dict, before: dict) -> dict:
     return dict(after, loud=keep["loud"], bleed=keep["bleed"], fails=keep["fails"], standing=standing)
 
 
+def same_size(still: Still, census: dict | None, still_path, census_path) -> dict | None:
+    """The census, refused when its "screen" is not the still's size: its rects are screen pixels, so colour and pack
+    would sample text and windows that far off (w4779: the editor's custom rendering resolution made a 1920x1080 PNG
+    while Screen.width/height and the census stayed at the Game view's 1974x980, and colour sampled boxes ~100 px off)."""
+    if census is None:
+        return None
+    screen = ul.screen_size(census.get("screen"))
+    if screen and (round(screen[0]), round(screen[1])) != (still.width, still.height):
+        raise ValueError(f"{census_path}: its screen is {round(screen[0])}x{round(screen[1])} but {still_path} is "
+                         f"{still.width}x{still.height}; take the PNG and the census in the same frame at the same size "
+                         "(set the Game view's rendering resolution to its window size, or read Screen.width/height "
+                         "first; w4779)")
+    return census
+
+
 def run_colour(args) -> int:
     def split(spec: str):
         still, _, census = spec.partition("::")
@@ -815,11 +830,13 @@ def run_colour(args) -> int:
         census = ul.load(census_path) if census_path else (
             censuses[i] if i < len(censuses) else (censuses[0] if len(censuses) == 1 else None))
         rects = [parse_rect(r) for r in args.rect or []]
+        census = same_size(still, census, path, census_path or "the --census census")
         result = judge(still, census, list(rects), Path(path).stem, same, measured)
         if i < len(befores):
             b_path, b_census = befores[i]
-            before = judge(load_still(b_path), ul.load(b_census) if b_census else census, list(rects), Path(b_path).stem,
-                           same, {})
+            b_still = load_still(b_path)
+            b_census_data = same_size(b_still, ul.load(b_census), b_path, b_census) if b_census else census
+            before = judge(b_still, b_census_data, list(rects), Path(b_path).stem, same, {})
             result = split_standing(result, before)
             measured["before"] = True
         results.append(result)
@@ -1298,8 +1315,10 @@ def run_pack(args) -> int:
         rects = [parse_rect(r) for r in args.rect or []]
         if census_path and census_path.startswith("@"):
             rects = [parse_rect(census_path[1:])]
-        elif not rects and census_path:
-            rects = [r for _, r in window_rects(ul.load(census_path))]
+        elif census_path:
+            census = same_size(image, ul.load(census_path), still_path, census_path)
+            if not rects:
+                rects = [r for _, r in window_rects(census)]
         for k, rect in enumerate(rects, start=1):
             x0, y0, x1, y1 = clamp_rect([rect[0] - 12, rect[1] - 12, rect[2] + 12, rect[3] + 12], image.width, image.height)
             panel = image.crop((x0, y0, x1, y1))

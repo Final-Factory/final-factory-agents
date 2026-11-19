@@ -64,6 +64,15 @@ they hold, scroll views whose content cannot scroll, windows using little of the
 flat fills with their colour. Fix what it lists before you build a player. It is a quick check, not
 the verdict: the verdict is a built player (section 4).
 
+**An editor still and its census must be the same size (w4779).** `PlayModeWindow.SetCustomRenderingResolution(1920,
+1080, ...)` makes `ScreenCapture.CaptureScreenshot` write a 1920x1080 PNG, but `Screen.width/height` and the DeckTour
+census (`Diagnostics.DeckTour.LayoutCensusForTests()`, internal, by reflection) stay at the Game view window's own size
+(1974x980 on m3), so `ui_look.py colour png::census` sampled every text box about 100 px off. Set the custom rendering
+resolution to the window's own size, or read `Screen.width/height` first and use that; take the PNG and the census in
+the same frame; and check the census's `screen` equals the PNG's size before `colour` or `pack`. Both now refuse a
+census of another size (exit 2, naming both sizes). `manage_camera screenshot` without a camera returns a 256x256 world
+render with no UI overlay: use `ScreenCapture.CaptureScreenshot` into `$TMPDIR` for a UI still.
+
 ## 4. Verify in a built player, with full content
 
 The game repo's Deck tour (`Assets/Scripts/Diagnostics/DeckTour.cs`; `docs/UI-Architecture.md`
