@@ -888,6 +888,15 @@ class UsedByTest(unittest.TestCase):
         self.assertIn("MEASURED needs a built-player before/after",
                       "\n".join(pe.check(unmeasured, self.FILES_1076)[0]))
 
+    def test_a_pure_rename_needs_no_used_by(self):
+        """w4798, #3980: a pack moved out of Resources renames 410 shaders and materials and changes none."""
+        files = ["Assets/Pack/Content/Fx.mat", "Assets/Pack/Content/Fx.shadergraph"]
+        renamed = {f: ("R", 0) for f in files}
+        self.assertEqual(pe.used_by_problems("", files, renamed), [])
+        edited = dict(renamed, **{"Assets/Pack/Content/Fx.mat": ("R", 4)})
+        self.assertIn("Fx.mat with no '## Used by' section", pe.used_by_problems("", files, edited)[0])
+        self.assertIn("with no '## Used by' section", pe.used_by_problems("", files)[0])
+
     def test_a_material_counts_as_visual(self):
         self.assertTrue(pe.VISUAL_PATH.search("Assets/Art/Materials/Glow.mat"))
         self.assertTrue(pe.VISUAL_PATH.search("Assets/Art/Shaders/AsteroWorldSprite.ShaderGraph"))

@@ -293,9 +293,12 @@ def user_basis_problem(basis: str) -> str | None:
     return None
 
 
-def used_by_problems(body: str, files: list[str] | None) -> list[str]:
-    """A changed shader or material: every user the tool found has a row and a basis (w438)."""
-    changed = shared_assets(files)
+def used_by_problems(body: str, files: list[str] | None, changes: dict | None = None) -> list[str]:
+    """A changed shader or material: every user the tool found has a row and a basis (w438). A pure rename (gh's
+    RENAMED with no line changed) keeps its GUID and its contents, so nothing draws differently and it needs no row
+    (w4798, #3980: a third-party pack's 410 shaders and materials moved out of Resources; their table ran to 150 KB,
+    past GitHub's 65,536-character body limit). Without change letters every file still counts."""
+    changed = [f for f in shared_assets(files) if (changes or {}).get(f, ("?", 1)) != ("R", 0)]
     if not changed:
         return []
     section = evidence_section(body or "", "Used by")
@@ -1676,7 +1679,7 @@ def check(body: str, files: list[str] | None = None, brief: str | None = None,
     if ffu_art and not any(f.startswith("Assets/") for f in files or []):
         # FFU's pull requests carry their own evidence; the art lines are what this script holds them to (w2895).
         return ffu_art_problems(body, ffu_art), []
-    used_by =used_by_problems(body, files) + balance_problems(body, files)
+    used_by = used_by_problems(body, files, changes) + balance_problems(body, files)
     section = evidence_section(body or "")
     if section is None:
         return (["no '## Evidence' section: say what each claim of this pull request rests on "
