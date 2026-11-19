@@ -285,6 +285,42 @@ pool lost 4,000 raw of 24,000 on an engaged heartbeat's rescale. After a local p
 rerun w3005 passed the first time (2,396 heartbeats, no divergence). w3004 added `BurstManagedArrayGuardTest` for the
 BC1028 class; the build and the dry run catch the rest.
 
+## A pair run after a master merge repeats only when the merge touches the PR's ops, and as one leg (w4737, 2026-11-19)
+
+**Rule.** A PR whose pair run (or one-computer MP check) passed, and that then merges `origin/master`, asks the game
+repo's `python scripts/nightly/pair_rerun_check.py --passed <the commit the run passed at>` (head `HEAD`, base
+`origin/master` by default) before it files anything. It reads the PR's own diff and each merge's `M^1..M` diff since the
+pass, and answers `re-run needed: yes/no, because ...`:
+- yes when what came in changes a file the PR changes, changes simulation code (FFSystems, FFComponents, FFCore,
+  NetworkOperations, PlayerController/Actions, ...) that declares a type the PR's changed lines use or whose changed lines
+  use a type the PR declares, or changes `NetworkOperationQueues.cs`, `HeartbeatSystem.cs` or FFNetcode; and when the
+  PR's own game code or scenarios changed after the pass. The toggle list and the ffauto command tables count only when
+  their changed lines use the PR's own types.
+- no otherwise: merge, then merge the PR on green CI with the earlier run as its evidence. The Evidence row names
+  the passed commit, the head, and the check's `no` line.
+- On yes (exit 1) run it again as ONE leg, the command it prints: `ffnightly.py run --slow-host 20 --sha <head>
+  --scenarios-from <head> --scenario <each>` on your own Windows or Linux computer after your player build and `--dry`,
+  or `request_pair` `legs: 1` from a Mac. Use two computers only for the reasons in the section above. Exit 2 (the
+  passed commit is not in the head's history) means the pair runs again.
+
+It matches names, not data flow. A merge that changes a system the PR's ops reach only through components it never
+names reads as no. A PR that adds only a scenario has no code surface, so its repeat is the nightly's job. Each reason
+lists its match, so a reviewer can judge a borderline yes.
+
+**Why.** r290 (w4611, lothsahn's analysis of station multi-select, w4488) measured a 79 min two-leg repeat
+pair run, w4572 on PR #3784, needed only because merging master brought in w4520's HaulerCommand change after w4544's
+pair had passed. No rule told that repeat apart from a merge of unrelated files. lothsahn filed the fix (w4737): "Repeat
+a pair run after a master merge only when the merge touches the PR's ops, and as one leg". Measured with the check
+(FinalFactory#3921):
+- On the w4572 case (passed `6a16a2732f`, head `a437250ffd`) it says yes. `HaulerCommandPayloads.cs` declares
+  `HaulerCommandKind` and `AddMoveStopPayload`, which the PR's `HaulerCommandOperations.cs` uses.
+- On #3784's earlier merges `1f971a5966` (3 files) and `2a9ed42c4c` (114 files, 32 of them combat and rail systems) it
+  says no.
+- Over 60 real `origin/master` merges into sandbox branches it said yes on 2.
+
+**How to apply.** Write down the commit every pair or one-computer run passed at. After each master merge, run the
+check before `ff-pr push`, quote its first line in the PR's Evidence, and file a run only on yes.
+
 ## A client leg reaches the host from its own machine first (w2259, 2026-10-26)
 
 **Rule.** An address that works from one machine is a claim about that machine only. Before a client leg builds or

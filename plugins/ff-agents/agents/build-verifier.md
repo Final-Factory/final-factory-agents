@@ -47,9 +47,9 @@ enter/exit play mode, and never improvise recovery — on anything unexpected, S
 6. **Run the tests the change touches.** `python scripts/test_select.py` (game repo) prints the
    `run_tests` arguments for the branch's diff: EditMode, `assembly_names ["FFEditorTests"]`,
    `test_names` (exact class names; never regex `group_names`). Run them with `init_timeout`
-   120000 against the pinned instance and poll `get_test_job` until terminal. Run the whole
-   `FFEditorTests` instead when the selector prints FULL SUITE or the caller asks for the full
-   suite. Include `FFEditorTestsSlow` only if the caller asked. Report which you ran. NEVER read `TestResults.xml`/`PerformanceTestResults.json` under
+   120000 against the pinned instance and poll `get_test_job` until terminal. On FULL SUITE the
+   selector prints the merge gate's list instead: run those `test_names`, never the whole
+   `FFEditorTests` (w4735); the whole assembly only when the caller says a person asked for it. Include `FFEditorTestsSlow` only if the caller asked. Report which you ran. NEVER read `TestResults.xml`/`PerformanceTestResults.json` under
    AppData/LocalLow — that path is shared across all project copies; the MCP job result is
    the only authoritative source.
 
