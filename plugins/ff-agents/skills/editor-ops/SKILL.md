@@ -310,6 +310,12 @@ to its pull request. For #1137's change the selection ran in 75 s against 376 s 
 - Give `run_tests` an `init_timeout` of 120000. A call that answers "Timeout receiving Unity
   response" may still have queued the run: poll `get_test_job`, or wait for the editor log's
   "Restored Interaction Mode after test run", before asking again, or the runs stack up.
+- **A job that "failed to initialize (tests did not start within timeout)" has wedged the runner: restart the
+  editor, never retry** (w4740, r290: w4628 on biscuit, 2026-11-17 16:28-16:43, lost 15 min to three in a row, at
+  `init_timeout` 120000, 400000 and 200000). The plugin's `TestRunnerService.RunTestsAsync` keeps its `_operationLock`
+  until that run's task ends, which a run that never started never does, so every later job waits on the lock and
+  fails the same way, whatever its timeout. `mcp__machine__unity restart` (`force: true` if it hangs), re-pin, run
+  again; the full list then passed in 128 s. The game repo's `test-job-wedge-warn.sh` hook says so on the answer.
 - **Never run the whole fast suite locally because the selector printed FULL SUITE** (lothsahn, w4735; report r290:
   five local whole-suite runs of 37-50 min each on lothdesktop took about 2.7 h of w4488's build day, and four of the
   five failed on unrelated timing or environment tests). On FULL SUITE (the test framework, asmdefs, `Packages/`,
@@ -648,6 +654,12 @@ crashed.
 Claude Code kills a `run_in_background` Bash task at its default 30 minutes, and the time spent waiting in the slot
 queue counts: `run_build_multiplayer_audit.sh --build-only` queued 24 min for biscuit's single Unity slot and was killed
 just after the grant, costing ~30 min and leaving a stale `Temp/UnityLockfile` to delete before the retry.
+No task runs past 2 h (7200000 is the most it takes), and the queue still counts: w4488's player build on LothDesktop
+queued 1 h 50 min and was killed 10 min into the build (2026-11-17, r290). **Where the queue may be long** (`unity-slot
+status` shows others waiting), start it as `unity-slot run --detach [--log <file>] ... -- <command>` (w4740,
+ff-factory#1035): the wait and the run go on in a process of their own and it prints a job id at once; then
+`unity-slot wait <id>` in a background task follows the log and exits with the command's code, and is simply run again
+if that task is cut off. The job keeps your session, so `ff-leftovers end` still ends it.
 
 **Stopping a background task does not stop what it started** (w3198, lothdesktop 2026-11-06). Claude Code's
 `TaskStop` on a `run_in_background` Bash task that runs a looping script (a sweep launching one player per leg under

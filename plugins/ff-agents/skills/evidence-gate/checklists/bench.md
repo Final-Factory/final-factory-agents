@@ -57,6 +57,10 @@ Mechanics: the game repo's `Documentation/Bench-Lock.md`.
       refused `-ffAutomationPreConnectCommand`. A leg that must open a window or press something before the sample needs
       a switch the game reads at boot (w2470 used `-ffUiOpenBench`, which opens and closes the panels first). Check that
       the build you time has that switch: a build from before it ignores it.
+- [ ] **A file a `timed_run` player reads goes in its build folder, passed by a path from there** (w4740, r290: w4591
+      lost three calls, 2026-11-17). The player starts in the build folder on the timing machine, so a `$TMPDIR` path
+      means nothing there and is refused: copy the file beside the exe and pass `-ffDeckTour tour.json`. Since
+      ff-factory#1035 `-ffName=value` passes like `-ffName value`.
 - [ ] **Shortest run that answers the question.** The question and the smallest difference that would change the
       decision are written down. The legs, sample and settle are the shortest that can show it (a few percent: two
       rounds of 30 to 60 s on a quiet machine), and the round count is a cap.
