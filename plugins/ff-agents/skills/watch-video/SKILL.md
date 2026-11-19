@@ -211,6 +211,13 @@ Recording notes:
   `sheet.jpg`, and adjust if the layout differs.
 - The editor throttles when it isn't focused, and a covered editor may render slowly. A built player
   from the slot pool gives the truest clip.
+- **A built player's clip on a Linux PC** (w4807, biscuit, 2026-11-19: before/after clips at 60 fps, 57 s each, the
+  game at 290-300 fps, measured): run the scenario windowed (`"windowed": true`) on an Xvfb display and record that
+  display with the ffmpeg bundled in imageio-ffmpeg (`uv run -q --no-project --with imageio-ffmpeg python3 -c "import
+  imageio_ffmpeg;print(imageio_ffmpeg.get_ffmpeg_exe())"`; it has x11grab: `-f x11grab -framerate 60 -video_size
+  1280x720 -i :<display>`), started beside `ffnightly.py run`. One build covers an A/B: give the before arm its launch
+  flag with `--peer-arg host=<flag>`. A scratch scenario outside the repo runs through a three-line wrapper that imports
+  `ffnightly_linux` and sets `ffnightly.SCENARIOS` to its folder before `ffnightly.main()`.
 - **A shader A/B clip on a Linux PC** (w2348, biscuit, 2026-10-27; `record_clip.py` covers only Windows and macOS, and
   biscuit has no ffmpeg): record it in the editor with `UnityEditor.Media.MediaEncoder` (a VP8 `.webm` on Linux).
   In one `execute_code` or `unity-bridge.py eval_file` call, render the game camera into a 1920x1080 RenderTexture at
