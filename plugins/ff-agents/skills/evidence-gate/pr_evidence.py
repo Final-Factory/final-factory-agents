@@ -1727,7 +1727,10 @@ def check(body: str, files: list[str] | None = None, brief: str | None = None,
     if not unverified or not unverified[1]:
         problems.append("no 'Not verified:' line: name what you could not check, or write 'nothing'")
 
-    ui_files = [f for f in files or [] if UI_PATH.search(f) and not NOT_GAME_CODE.search(f)]
+    # A pure rename (RENAMED, no line changed) draws nothing differently: w4798's #3980 moved a VFX pack whose
+    # Textures/UI/ folder matched UI_PATH and pulled in every UI rule for files nobody edited.
+    ui_files = [f for f in files or [] if UI_PATH.search(f) and not NOT_GAME_CODE.search(f)
+                and (changes or {}).get(f, ("?", 1)) != ("R", 0)]
     ui = "ui" in kinds or ("visual" in kinds and bool(ui_files))
     not_ui = field(section, "Not UI")
     if not_ui and not_ui[1] and ui:
