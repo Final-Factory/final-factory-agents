@@ -302,7 +302,7 @@ Not verified: the Bats' slot lag (simulation, follow-up PR)
 - **FULL SUITE from `scripts/test_select.py` means the merge gate's list, never a local whole-suite run** (lothsahn,
   w4735; r290: five local runs of 37-50 min cost w4488 about 2.7 h, four red on unrelated timing tests). Run the list it
   prints (`python .github/scripts/merge-gate-tests.py --base origin/master --local --names-out "$TMPDIR/gate.txt"`); the PR's gate and master-batch run the rest
-  ([lesson](../lessons/never-run-the-whole-suite-locally.md)).
+  ([lesson](../lessons/merge-your-own-pr.md#full-suite-means-the-merge-gates-list-never-a-local-whole-suite-run-w4735-2026-11-19)).
 - **Run `scripts/test_select.py` again after every commit, not once per branch** (w4079, 2026-11-13): a later commit
   can widen the selection. A new `ValidationScenarios/*.ffbp.txt` fixture selects `BlueprintPasteBefore2334DigestTest`,
   which hashes every blueprint not in its `FilesAddedAfter2334` list; w4079 added `w4079-calc-two-modules.ffbp.txt`
