@@ -293,9 +293,12 @@ def user_basis_problem(basis: str) -> str | None:
     return None
 
 
-def used_by_problems(body: str, files: list[str] | None) -> list[str]:
-    """A changed shader or material: every user the tool found has a row and a basis (w438)."""
-    changed = shared_assets(files)
+def used_by_problems(body: str, files: list[str] | None, changes: dict | None = None) -> list[str]:
+    """A changed shader or material: every user the tool found has a row and a basis (w438). A pure rename (gh's
+    RENAMED with no line changed) keeps its GUID and its contents, so nothing draws differently and it needs no row
+    (w4798, #3980: a third-party pack's 410 shaders and materials moved out of Resources; their table ran to 150 KB,
+    past GitHub's 65,536-character body limit). Without change letters every file still counts."""
+    changed = [f for f in shared_assets(files) if (changes or {}).get(f, ("?", 1)) != ("R", 0)]
     if not changed:
         return []
     section = evidence_section(body or "", "Used by")
@@ -1676,7 +1679,7 @@ def check(body: str, files: list[str] | None = None, brief: str | None = None,
     if ffu_art and not any(f.startswith("Assets/") for f in files or []):
         # FFU's pull requests carry their own evidence; the art lines are what this script holds them to (w2895).
         return ffu_art_problems(body, ffu_art), []
-    used_by =used_by_problems(body, files) + balance_problems(body, files)
+    used_by = used_by_problems(body, files, changes) + balance_problems(body, files)
     section = evidence_section(body or "")
     if section is None:
         return (["no '## Evidence' section: say what each claim of this pull request rests on "
@@ -1724,7 +1727,10 @@ def check(body: str, files: list[str] | None = None, brief: str | None = None,
     if not unverified or not unverified[1]:
         problems.append("no 'Not verified:' line: name what you could not check, or write 'nothing'")
 
-    ui_files = [f for f in files or [] if UI_PATH.search(f) and not NOT_GAME_CODE.search(f)]
+    # A pure rename (RENAMED, no line changed) draws nothing differently: w4798's #3980 moved a VFX pack whose
+    # Textures/UI/ folder matched UI_PATH and pulled in every UI rule for files nobody edited.
+    ui_files = [f for f in files or [] if UI_PATH.search(f) and not NOT_GAME_CODE.search(f)
+                and (changes or {}).get(f, ("?", 1)) != ("R", 0)]
     ui = "ui" in kinds or ("visual" in kinds and bool(ui_files))
     not_ui = field(section, "Not UI")
     if not_ui and not_ui[1] and ui:

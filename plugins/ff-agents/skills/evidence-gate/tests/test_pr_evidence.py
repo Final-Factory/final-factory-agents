@@ -888,6 +888,25 @@ class UsedByTest(unittest.TestCase):
         self.assertIn("MEASURED needs a built-player before/after",
                       "\n".join(pe.check(unmeasured, self.FILES_1076)[0]))
 
+    def test_a_pure_rename_needs_no_used_by(self):
+        """w4798, #3980: a pack moved out of Resources renames 410 shaders and materials and changes none."""
+        files = ["Assets/Pack/Content/Fx.mat", "Assets/Pack/Content/Fx.shadergraph"]
+        renamed = {f: ("R", 0) for f in files}
+        self.assertEqual(pe.used_by_problems("", files, renamed), [])
+        edited = dict(renamed, **{"Assets/Pack/Content/Fx.mat": ("R", 4)})
+        self.assertIn("Fx.mat with no '## Used by' section", pe.used_by_problems("", files, edited)[0])
+        self.assertIn("with no '## Used by' section", pe.used_by_problems("", files)[0])
+
+    def test_a_pure_rename_under_ui_keeps_the_ui_rules_off(self):
+        """w4798, #3980: the pack's Textures/UI/ folder moved with it; renamed, no screen changed."""
+        body = ("## Evidence\n\nKind: visual\n\n| Claim | Basis | Where |\n|---|---|---|\n"
+                "| The effects still play | MEASURED: built-player before/after clips of each effect | review/a.mp4 |\n")
+        files = ["Assets/Pack/Content/Textures/UI/KeyA.png"]
+        renamed = pe.check(body, files, changes={files[0]: ("R", 0)})[0]
+        edited = pe.check(body, files, changes={files[0]: ("M", 3)})[0]
+        self.assertFalse([p for p in renamed if "UI change" in p], renamed)
+        self.assertTrue([p for p in edited if "UI change" in p], edited)
+
     def test_a_material_counts_as_visual(self):
         self.assertTrue(pe.VISUAL_PATH.search("Assets/Art/Materials/Glow.mat"))
         self.assertTrue(pe.VISUAL_PATH.search("Assets/Art/Shaders/AsteroWorldSprite.ShaderGraph"))
