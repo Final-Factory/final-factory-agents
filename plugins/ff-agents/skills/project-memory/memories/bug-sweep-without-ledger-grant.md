@@ -43,6 +43,19 @@ third-party "Cruiser combat expansion" mod, the late forks with `forkedSinceLoad
 so none of them was a game bug. Reports that came from the lab (`nightly-solo`, `-ffDebugHang`,
 `[LocalMultiplayerAutomation]`) say so in their logs.
 
+**Reports older than 14 days, and the portal's counts** (w4874, 2026-11-20; lothsahn's orchestrator: "That's 19 hang
+reports unaccounted for"). `list_ffbox_files` `what: reports` reads FFBox's live store, which keeps 14 days. The
+portal's signature counts ("hang:1.0.0: 21 reports, 8 senders") are FF Factory's own grouping over its whole intake
+log, not over the store (`groupIntake(p.intake(2000))`, ff-factory `src/shared/intake.ts:21`). A sweep whose total must
+match those counts lists every report from FFBox's conversation history instead:
+- run `fetch_ffbox_history` with `agent_class ""`, `turns 1`, `chars 600` and `empty true`;
+- grep the file for `[0-9]{8}T[0-9]{6}Z-(hang|crash|desync)-[0-9a-f]{10}`.
+
+Every report has its own `ffdiagnose` conversation titled `diagnose <kind> <id>`. A second `fetch_ffbox_history`
+with `agent_class ffdiagnose`, `after` and `before` around those ids gives each verdict and version. The history
+carries no sender ids. On w4874 the store held 2 hangs and 14 crashes; the history held all 21 and 33 of the 1.0.0
+line, 19 hangs and 17 crashes of them from before the store's window.
+
 **Unmerged `ffbox/*` branches.** Look each one up on master
 (`git merge-base --is-ancestor`, `git log --grep`): a worker often lands the same fix through its
 own PR (FFBox d1210 → #2313, d1202/d1207 → #2267).
