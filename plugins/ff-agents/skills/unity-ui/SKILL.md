@@ -195,6 +195,13 @@ census (`<shot>.json`: small, clipped, off-screen and overlapping text, covered 
   Deck, so Settings > Keybindings draws controller glyphs (Redo's button is empty), and a `key` step does not switch it.
   Run with `-ffDeckTourLive` and, after the Keybindings tab is open, `{"setup": "steamLayout:community"}` then a wait:
   the list redraws with keyboard labels. The setup before the tab click makes the click fail (FinalFactory #4015).
+- **A shot already writes its census; a `census:` step with a relative path lands in the repo (w4935).** Every `shot`
+  writes `<shot>.png`, `<shot>.json` (the tour check report) and `<shot>.layout.json` (the layout census) in the
+  `-ffDeckTourOut` folder. A `{"census": "<relative path>"}` step resolves against the player's working directory, the
+  repo root when you launch from it, and left untracked `panel` and `pins` files there. Drop census steps, or give one an
+  absolute path under the out folder. `ui_layout.py` and `ui_look.py ... png::census` take `<shot>.layout.json`; given
+  `<shot>.json` they refuse it as a tour check report. On Windows they are Windows python: pass `cygpath -m` paths, not
+  Git Bash `/f/...` ones.
 - **Tour worlds on one station (w4268).** Structures you place with `ffauto:blueprint.place` join one station only
   when every gap between them holds a Connector facing Right (rotation 1, `blueprint('Connector', 1)` from the game
   repo's `scripts/deck_audit/build_audit_world.py`; it links the tiles left and right, `StationConnectionsSystem.cs`).
