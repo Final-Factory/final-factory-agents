@@ -98,6 +98,9 @@ jobs:
       - name: Tool tests (ui_layout.py)
         run: python3 -m unittest discover -s plugins/ff-agents/skills/unity-ui/tests -p 'test_*.py' -v
 
+      - name: Tool tests (record_clip.py, w4823)
+        run: python3 -m unittest discover -s plugins/ff-agents/skills/watch-video/tests -p 'test_*.py' -v
+
       - name: FFU skills name ffu commands only (ffu PLAN.md M0.8, w2895)
         run: python3 -m unittest discover -s plugins/ff-agents/skills/ffu-build-test/tests -p 'test_*.py' -v && python3 plugins/ff-agents/skills/ffu-build-test/check_ffu_skills.py
 
