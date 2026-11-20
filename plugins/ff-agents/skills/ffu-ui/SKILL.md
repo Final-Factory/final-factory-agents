@@ -52,6 +52,12 @@ code until they pick (UI checklist item 0, w2895 and w4008; FP.21's 32 pages of 
 - **A still of an opened panel from the built client** (w2895, ffu #652): `ffu --start world.snap --still out.png
   --inspect X,Y --press A,B` opens the inspector of the building at X,Y and presses the named nodes in order before
   the still. The FF1 world: `ffu-headless ff1 import tools/world/ff1-trailer-staging-0.50.0.54.zip`.
+- **Aim FF1-world stills and clips at its base, not its centre** (w4852, w4853). The centre (1291,1248) is empty space.
+  The base is at about `--view 820,1680,10`; at zoom 10 the whole base fits, and at 56 each connector's chevrons can be
+  read. `--connect ... --still` takes no pilot, adds no ship ("0 new owners") and fits the whole sector. A clip that
+  places on the FF1 world needs a free-build import (`ff1 import <zip> --free-build`): on the charging world a new
+  pilot's ship holds nothing, so every place is refused ("the ship holds no connector"). `--autodrag N:FACING` (w4853)
+  holds that rotation during the drag.
 - **Before each critic round, check every tile in a row has one width in every still**: ui-critic round 4 of FP.21
   graded the hold grid BROKEN for closed slots narrower than open ones.
 
