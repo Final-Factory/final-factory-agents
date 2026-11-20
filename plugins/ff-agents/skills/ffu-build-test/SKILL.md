@@ -1412,6 +1412,15 @@ never rewritten (`tools/check_snapshot_compat.sh BASE_REF` holds it in CI). No t
   until a peer catches up must leave ticks after the hold, or keep the peer at its pace all through. The dilation
   test held A before its last tick, so the credits A took then were due on a tick that never ran ("B's sink took
   nothing", job 128216280042).
+- **A loose shard's ack trails what it took by a disk sync: a harness that paces on `taken()` sends its held acks
+  first** (w4886, ffu #913, CI run 44696540306). Since w4035 a shard acknowledges a batch only once its inbound body is
+  on disk, and only from a later tick (`Peer::catch_up`), while a loose peer at its floor waits for the *ack*. The
+  dilation test's B waited on what it had *taken*, so with a slow sync A sat at its floor one short of B's ack and B
+  waited for A's tick ("B: its pace: past the deadline", then "shard A has not ended 180s later"). `s.send_held()`
+  before every pace wait fixed it. Reproduce such a hang in seconds with `FFU_WAL_PLANT_SYNC_MS=5` (main: 2 of 2 hung;
+  fixed: 50/50), not by load: on idle BEAST main passed 200/200. In a load leg, keep each copy's output and cap each
+  run (`timeout 150 ... --nocapture > hN-run.log`): w4886's first leg sent its copies to /dev/null, three of them hung
+  once, and nobody could say which test it was (a second leg of 2572 kept runs never showed it again).
 - **A probe's round logs go in a folder of its own job** (`$RUNNER_TEMP/<what>-${{ github.run_id }}-<leg>`): the ffu
   runners check out with `clean: false`, so a `round-*.log` an earlier leg left in the workspace was read into a later
   leg's summary (w3271, probe #327: 301 ms "a write took" lines came from a planted leg's stale `round-5.log`).
