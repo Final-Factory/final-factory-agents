@@ -243,6 +243,17 @@ Recording notes:
 - **Sound**: `record_clip` records video only, and a player started with an automation role is muted.
   For a clip with sound, and on a desktop shared with other agents' windows, record the game's own frames
   and that one process's audio: project-memory `beast-clip-capture-and-slot-launch-traps`, items 1 and 11.
+- **Linux (biscuit): `record_clip` has no Linux path** (it knows Windows and macOS only). What worked (w4883,
+  2026-11-20, a windowed two-peer ffnightly scenario): copy the game repo's `scripts/nightly/lab.linux.json` to `$TMPDIR`
+  with each peer on its own private Xvfb (`"host"` `DISPLAY :N`, `"a"` `:N+1`, a free `port`), start both Xvfbs at
+  1280x720x24 (`Documentation/Linux-Native-Build.md`, unpacked as a user), and run `ffnightly_linux.py run --lab <copy>`.
+  Each display then shows one game window and nothing else, so record it whole with ffmpeg
+  `-f x11grab -framerate 60 -video_size 1280x720 -draw_mouse 0 -i :N+1` (imageio-ffmpeg's ffmpeg has x11grab), started by a
+  script that waits for the scenario's step line in ffnightly's output. Stop each Xvfb by its pid afterwards.
+  `watch_video` there also needs `ffprobe`, which neither the system nor imageio-ffmpeg provides: put static-ffmpeg's
+  `bin/linux` first on PATH (`uv run --with static-ffmpeg python3 -c "import static_ffmpeg.run as r;
+  print(r.get_or_fetch_platform_executables_else_raise())"`), and run it with `uv run --script` so its own packages
+  (OpenCV) install.
 
 ## Run it
 
