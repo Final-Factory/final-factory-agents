@@ -223,6 +223,19 @@ Measure each of these on the still beside the mock before a critic round; each o
   Merge-on-green's Evidence check (`pr_evidence.py`) counts any `ui.wgsl` edit as an art change. It refuses a PR
   without `Reference capture:` (the real-client still of what the change replaces) and `Art language:` (the two solid
   colours and the HDR accent, or "none") lines: run it on the PR before `blocked_on` (w4264 lost a merge to it).
+- **Dim a 0-count tile in its own colours, never grey, when tiers differ only by colour** (w4423, ffu #874). The
+  building tabs' 0 tiles first used `Spec::grey` (GREY_ICON with the colour stripped). ui-critic round 3 graded the
+  Logistics tab UGLY: FF1's Inserter Bot, Fast and Express (blue, crimson, green) became three identical dark
+  silhouettes. `Spec::dim` (render.rs: the GREY_ICON tint with `extra.x` 0, no shader change) keeps each icon's hue at
+  about 1/6 to 1/10 of a held tile's brightness. Round 4 graded it OK.
+- **Count a tab row's width in the longest locale before you add tabs** (w4423). Two more icon tabs pushed the Crafting
+  panel's row past the panel at 1280x800, by 2 px in en and 20 px in pt-BR, and `tests/gate.rs` failed 429 times
+  (`craft.tab.build_logistics leaves its parent`). The fix lets the icon tabs shrink only when the row overflows
+  (`flex_shrink` 1 and `min_size.width` 20 on the icon tabs, 0 on the text tab). Add every new tab's pages to
+  gate.rs's views.
+- **Take FFU stills on the FF1 import world, not `scenario::factory`** (w4423, lothsahn: "why in the screenshot does it
+  show belts? We don't have belts in FF1."). factory's Belt, Miner, Crafter and Sink are FFU skeleton kinds (w2757)
+  with no FF1 equivalent. Use `ffu-headless ff1 import tools/world/ff1-trailer-staging-0.50.0.54.zip --pilot pilot`.
 - **A merge where git interleaves two appended functions**: run `git merge-file --diff-algorithm=patience` on the
   `:1:`/`:2:`/`:3:` stages (`git show :2:<file>`); the conflicts come out as whole blocks to keep both of (w4246).
 - **A still of an animated HUD part catches one phase: judge the frame you pick from the clip** (w4275, ffu #832).
