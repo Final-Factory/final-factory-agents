@@ -106,6 +106,15 @@ whole verification. The repo's own `CLAUDE.md` is binding and longer; this skill
   first leg for about 10 min of ticket t00006942. Stopping the task then released the ticket while its next legs ran
   unticketed. Wait on named pids (`aff & P=$!; leg ...; wait $P`), and before each leg check the holder still runs
   (`ps -p $TPID > /dev/null || exit 4`). The rerun under t00006945 did 12 runs in 80 s.
+- **A queued ticket can outlive the background task that waits for it: start a long-queued A/B detached** (w4837, ffu
+  #898). The queue serves strict priority (`Documentation/Bench-Lock.md`, w4620), so on lothdesktop two
+  normal-priority tickets (t00008631, t00008640) waited about 3 h 20 min behind another sandbox's high-priority editor
+  tickets. Both background tasks running `bench_queue.py timed` were killed at Claude Code's task limit while still
+  queued, so the wait was lost both times. When `bench_queue.py status` shows a queue, start the script
+  detached instead. On Windows, use PowerShell `Start-Process` of Git Bash's `bash.exe` on a wrapper that redirects its
+  own output (`setsid` is not in Git Bash, and PowerShell commands must use `V:/ffw/...` paths, not `/v/ffw`). Then
+  `wake_me`. Once the log says `granted`, keep a background task watching for the script's last marker line: a held
+  ticket with no turn or task of yours running is revoked (w3715 warns first).
 - **Fit each lock's legs into its 30-minute turn, CI wait included** (w3980, ffu #668). Once a worker waits behind you,
   the wait for CI jobs (up to 20 min) counts in your turn, and the queue then lets timing start beside the CI jobs.
   w3980 planned 6 trailer runs (about 4.5 min each) and 6 FF1 tiled 5x8 runs (2 ticks, about 150 s each) for one lock.
