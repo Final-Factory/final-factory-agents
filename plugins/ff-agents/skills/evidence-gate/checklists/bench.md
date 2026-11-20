@@ -8,7 +8,7 @@ Mechanics: the game repo's `Documentation/Bench-Lock.md`.
       that is a time, from a bench script's leg or from a snippet in your editor (`unity-bridge.py eval`/`eval_file`,
       MCP `execute_code`: Stopwatch, ProfilerRecorder, realtimeSinceStartup, in-job counters), a local Performance test
       or a profiler capture, you hold an exclusive ticket: `unity-bridge.py ... --timed "<what>"` for one call,
-      `bench_queue.py timed --what "<what>"` in the background across calls (`timed --release` after), `--bench
+      `bench_queue.py timed --what "<what>"` in the background across calls, one for all of an A/B's legs (`timed --release` once, after the last), `--bench
       exclusive` for a batch run. The report names the ticket beside its numbers; a number taken without one is a guess
       about a busy machine (w1892: an hour of editor micro-benchmarks on a LothDesktop at 100% CPU, none held).
 - [ ] **From an old checkout, the ticket comes from master's `bench_queue.py`** (w4704, 2026-11-18, LothDesktop: a
@@ -142,7 +142,8 @@ Mechanics: the game repo's `Documentation/Bench-Lock.md`.
 - [ ] **Each leg fits its turn; the queue enforces it** (w1832, lothsahn: "The harness should let workers run with
       the exclusive lock for at most 30 minutes. They should get a warning at 25 minutes. Once their turn is over, if
       they need more time they can apply for a new exclusive lock and they go to the back of the queue"). Plan each
-      leg well inside 30 minutes and each build or shared job inside an hour, and give the lock back between legs.
+      leg well inside 30 minutes and each build or shared job inside an hour. Keep one ticket across an A/B's legs and
+      give it back when the A/B ends or the next leg would not fit its turn (w4924, below), never per leg.
       For `bench_queue.py` tickets, the queue ends a turn only while another worker waits behind it (a `timed_run`
       gives its lock back after 24 minutes regardless, w3711): an exclusive turn at 30 minutes, a shared
       group an hour after its newest ticket started once a timed leg waits. A warning always comes 5 minutes before,
@@ -162,7 +163,7 @@ Mechanics: the game repo's `Documentation/Bench-Lock.md`.
 - [ ] **Priority counts** (w1860, lothsahn: "If a higher priority job holds the lock and all jobs below it are lower
       priority, it should retain the lock until done"). Only a waiter of the holder's request priority or higher starts
       its clock; with only lower-priority work waiting the holder keeps the lock until it lets go. That is no reason to
-      hold it longer: give it back between legs anyway. A timed leg can wait behind other sandboxes' running editors
+      hold it longer: give it back when the A/B ends. A timed leg can wait behind other sandboxes' running editors
       and players, which hold shared tickets for their whole life (yours ride along), up to the shared group's hour.
 - [ ] **At the warning, commit and push** the work-in-progress branch (lothsahn: "Workers should be encouraged to push
       their uncommitted work at the warning threshold so they can be scheduled on other machines").
@@ -205,7 +206,7 @@ Mechanics: the game repo's `Documentation/Bench-Lock.md`.
       `$TMPDIR`. An exclusive turn closes the machine's editors and ends other workers' batch builds.
 - [ ] **The machine is yours while you hold it, and only then** (w1750). Your own players and clips pass the lock (the same `FF_SESSION_ID`, or inside `bench_lock`); other workers' are refused until you give it back, so give it back between legs. Not covered: a player already running when you were granted (your `quiet` gate waits for its CPU).
 - [ ] **Nothing under the lock but the leg.** The Unity slot is taken before the ticket. Builds and digests run
-      outside it, and the lock is given back between legs.
+      outside it, and the lock is given back when the A/B ends or its turn is used up.
 - [ ] **A GPU leg at the display's refresh rate is capped, not measured** (w2421, 2026-10-27, lothdesktop). A
       LightingBench/`zoom_run.sh` summary row at exactly the refresh rate (60.00 fps) with `present_wait_avg` near one
       frame (about 14 ms) and GPU ms near 13 was held by the display: from 16:11 every windowed player sat there, master
@@ -275,6 +276,18 @@ Mechanics: the game repo's `Documentation/Bench-Lock.md`.
       `nmcli con modify --temporary "<ssid>" 802-11-wireless.powersave 2` or `802-11-wireless.bssid <node>`, then
       `nmcli con up "<ssid>"` (a few seconds' blip; wait for CI jobs to end). Split the path first: ping the router from
       the host itself, so the far machine's own Wi-Fi (m3 lost one ping every ~9.4 s on 6 GHz) is not counted twice.
+- [ ] **A timed A/B gates done only when the request's goal is a performance number** (lothsahn, 2026-11-20, w4924:
+      "Timed tests gate only perf-goal requests; others merge and time after"). A frame time, a CPU budget or a
+      speed-up as the goal: the timed leg is part of done. Any other change that may move performance merges on green
+      CI; hand up its timing after the merge (`hand_up_requests`: what to time, on which machine, against which
+      commit, "revert it if it regresses") so the timing and any revert are a tracked request, and report DONE. Never
+      hold such a request open, or Blocked, on a bench queue or a `timed_run`.
+- [ ] **One ticket per A/B** (w4924, r341: lothdesktop 2026-11-19/20, w4787 took 18 exclusive tickets for one A/B,
+      held 44 min and waited 314, measured). A bash script ends each leg with `quiet_gate.sh`'s `bench_leg_done`
+      (keeps the ticket while the turn has room, gives it back once the next leg would pass 25 minutes), not
+      `bench_unlock`; across tool calls one `bench_queue.py timed` stays held for every leg and arm, released once.
+      `bench_queue.py` prints "re-locks" on stderr and `report` counts it when a session takes a new exclusive ticket
+      within 10 minutes of releasing a short one: that is the per-leg pattern, fix the script.
 - [ ] **An ad hoc PERF A/B or rerun batch** (w4444, 2026-11-16; [lesson](../lessons/settle-your-own-guesses.md#ad-hoc-perf-and-rerun-legs-one-exclusive-ticket-adaptive-vsync-off-a-void-rerun-is-rerun-w4444-2026-11-16)):
       all legs in ONE `bench_queue.py run --mode exclusive` ticket (a ticket per leg re-queued for about 42 min each,
       measured); windowed legs pass `--peer-arg solo=-ffNoAdaptiveVSync` (`FramePacer.cs:474`) or cap at 60 fps; a rerun

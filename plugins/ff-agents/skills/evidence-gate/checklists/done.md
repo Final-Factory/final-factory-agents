@@ -12,6 +12,10 @@ holds, or the report says what is left instead of DONE.
    open", whatever the PR's "Not verified" says. A failed run is explained with evidence (`git
    merge-base --is-ancestor <fix> <build>`, the fixture fixed and rerun), never waved off (w704:
    DONE on unit tests, reopened when the live run read 0 of 100).
+   A timed A/B is a Done item only when the request's goal is a performance number (lothsahn, w4924: "Timed tests
+   gate only perf-goal requests; others merge and time after"); for any other change, the after-merge timing is a
+   follow-up you hand up (`hand_up_requests`, reverting the change if it regresses), and it does not hold DONE
+   ([bench](bench.md)).
    A built-player run counts only from the player you launched: its pid from your `launch --detach`, its session
    file from `player_slots.py mine` ([w1856](../lessons/research-the-route-before-you-say-cant.md#drive-only-the-player-you-launched-w1856-2026-10-23):
    the newest session file was another worker's player).
