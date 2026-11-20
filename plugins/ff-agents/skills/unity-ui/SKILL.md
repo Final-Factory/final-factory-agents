@@ -226,6 +226,19 @@ census (`<shot>.json`: small, clipped, off-screen and overlapping text, covered 
   edit` on FinalFactory fails with a Projects (classic) GraphQL deprecation error, so set the body with `gh api -X PATCH
   repos/<owner>/<repo>/pulls/<n> -F body=@<file>`; and `publish_review` renames a name already in the topic
   (`critic.md` became `critic-2.md`), so the PR's Critic line takes the path it answers.
+- **Three traps of a station group window change on a loaded save (w4827, w4829, FinalFactory #4009, Linux development
+  player, biscuit).** (1) A flying group gives the pins census no building to select: `ffauto:ui.selectstation` answers
+  "no mobile station" and `ui.selecttile` on a flying station "nothing at tile". Place a Cargo Hold in open space below
+  the group and select that: `inventory.add|Cargo Hold|1`, `player.setposition|<x>|<z-8>`, `blueprint.place|<blueprint('Cargo
+  Hold')>|<x>|<z>` (`build_audit_world.blueprint`), `heartbeats|2`, `blueprint.drop`, wait 20, `ui.selecttile|<x>|<z>`,
+  then `pointer.moveto|<x>|<y>|screen` over a station for the hover card and `ui.open|playerinventory`: one shot then holds
+  all 8 pins, and in the docked layout it is what puts the dock on screen, so the census counts as docked. Make
+  `{"layout": ...}` the tour's first step, and give `ui_layout.py` the `<shot>.layout.json` beside each still, not the
+  `<shot>.json` check report. Recipe: the game repo's `specs/w4827-spacing-250/tour/make_census.py`. (2) A clip under 30 fps,
+  which `pr_evidence.py` refuses, is not the change until master's build records the same tour slower or no slower minutes
+  apart: w4827's spacing view recorded at 9.9 fps on the branch and 10 fps on master 92f8dc7 at load 22-51; a loop that
+  waits for the 1-minute load (`/proc/loadavg`) under 16 before each try recorded 83 fps on its second try. (3) In the group
+  window's Land mode a left click deselects the group under automation: land with a right-click, `pointer.click|1`.
 - **Title-screen tour traps (w4162).** (1) A tour of a title-screen dialog passes no `-ffAutomationRole solo`: that
   role starts a new game, so the title menu is gone ("ui.modmismatch: no title menu"); with no game ticked,
   `quit_save_check.py` still found no quit save on w4162's legs. (2) `hide:` takes a kind selector,
