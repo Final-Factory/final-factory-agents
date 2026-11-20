@@ -678,3 +678,26 @@ counts a paste (the "Copy and paste recipes" card went 0/3 → 3/3 on a player's
   branch beside it.** Each one asks for its own counts, so test both kinds of paste when a step or stat counts pastes.
 - **A save load hangs while the editor is paused.** Set `EditorApplication.isPaused = false` and `Time.timeScale = 1`
   before loading, then poll with short `execute_code` calls (one long call timed out).
+
+## Cutting and restoring a station's power in a multiplayer scenario (w4814, 2026-11-20)
+
+How w4814 (the pair run of PR #3979, bots skipping containers below 50% power) took one Networked Storage Hold's power
+satisfaction 1 → 0 → 1 → 0 → 1 on both peers, in an ffnightly.py MP scenario with no editor. Its `commands.jsonl` is in
+attachment att_y8ddk9bw6kon; code checked on FinalFactory master f3708fc28.
+
+- **Give the station one producer you can take away**, such as an Advanced Solar Panel placed by the scenario's blueprint
+  beside the hold, and keep spares in the host's inventory: `ffauto:inventory.add|Advanced Solar Panel|2`.
+- **Cut:** `ffauto:construction.remove|<x>|<z>` on the panel (2|-6 there). Its grid drops the panel's output at once,
+  before any bot comes to take it down: a producer marked for removal is ignored
+  (`StationGridCalculationSystem.IgnoresProducer`, `MarkedForRemoval.Is`, around :797). The hold read 0 on the next
+  power dump on both peers.
+- **Restore:** `ffauto:construction.placeitem|Advanced Solar Panel|<x>|<z>|0` from the host's inventory. Power returns
+  once a bot has built it, so leave time for that before the leg that needs power back.
+- **What does not work:**
+  - `ffauto:construction.deleteimmediate` refuses a solar panel with `not-immediate-deletable-class`: only hauler
+    stations, ephemeral structures and out-of-play tasks or pending placements may go at once
+    (`NetworkOperations/Unbuild/UnbuildValidator.cs`, around :211).
+  - `ffauto:circuit.set` on the panel changes nothing unless its station grid holds a working Circuit Module: a circuit
+    acts only while its grid holds a powered module (`CircuitEvaluationSystem` summary, around :29-37).
+- **Read it on both peers** with `ffauto:grids.dumpstate` before and after each step, so the report shows the crossing
+  rather than assuming it.
