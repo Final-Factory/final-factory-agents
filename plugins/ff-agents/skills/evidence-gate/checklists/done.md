@@ -44,7 +44,8 @@ holds, or the report says what is left instead of DONE.
    looping or writing a huge `.output` file ([clean up after yourself](../lessons/clean-up-after-yourself.md), w899).
    **Nothing you started still runs** (w1196, w1197): `ff-leftovers list` shows nothing of your session, or you ended
    what it listed (game players, Xvfb and its window manager, ffmpeg, background jobs, servers) and the report says
-   what. **No `ff-leftovers end` until `grep -c FF_LEFTOVERS_CALLERS "$(command -v ff-leftovers)"` prints 1 or more**:
+   what. **Run `ff-leftovers end` alone, in its own command** (w4871, 2026-11-20, beast: `ff-leftovers end; bash both.sh`
+   as one background command ended the stills job it had just started, the session's own leftover). **No `ff-leftovers end` until `grep -c FF_LEFTOVERS_CALLERS "$(command -v ff-leftovers)"` prints 1 or more**:
    before FF Factory's w1222 fix it ended the worker's own Claude process on Windows; end what `list` shows by pid
    ([not `end` before the w1222 fix](../lessons/clean-up-after-yourself.md#not-ff-leftovers-end-before-the-w1222-fix)). Every player you started had a quit timer (`-ffSoloQuitAfterSeconds`). A run you keep going while you
    are stopped has a `wake_me` check-in set for it, due when it ends: that check-in is what keeps it from the leftover

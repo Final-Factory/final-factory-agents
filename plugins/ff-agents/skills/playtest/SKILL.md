@@ -330,7 +330,9 @@ also moves the pointer; move it back to the intended point before any click.
 1. **Drive** with the real-input commands: `pointer.*` (world clicks; placement needs
    press → ~25 pumped frames → release; CLOSE open panels first — they occlude world clicks,
    which is correct behavior), `ui.open/close/click/set/read` (content selectors:
-   `CraftButton[item=Bat]`, `ListItem[text=save_name]`), `movement.goto|x|z` (closed-loop —
+   `CraftButton[item=Bat]`, `ListItem[text=save_name]`; `ui.open|<panel>` is not a toggle: a second call answers
+   "already open (no-op)", and right after another panel a first call can fail `bad_arguments`, so retry until the reply
+   says "opened", w4871), `movement.goto|x|z` (closed-loop —
    don't hand-compute flight legs), `mining.until|<ore>|<count>`, plus the networked verbs
    (`construction.*`, `research.*`, `setting.*`). `construction.place` takes a BLUEPRINT
    string, not an item name — place structures via the real UI instead.
