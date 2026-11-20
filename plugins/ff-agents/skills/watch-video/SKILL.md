@@ -153,6 +153,17 @@ Recording notes:
   `ScreenCapture.CaptureScreenshot` and writes an ECS census to a CSV. Then stamp each PNG with its time and the census
   (PIL) and encode a 10 fps time-lapse (`ffmpeg -framerate 10 -i s%04d.jpg`). It is neither real rate nor a built player,
   so say so in the notes. Worked example: `/srv/fff/review/w1667/` (Final-Factory/FinalFactory#2118).
+- **Ships in unexplored space come out black or hidden in an editor clip; reveal the fog first** (w4940/w4944,
+  lothdesktop, 2026-11-20): the first take of a raid flying home crossed fogged space, and the ships could not be seen.
+  Before you film ships outside the explored area, run `Quantum.QuantumCommandInterface.Instance.ExploreFogOfWar()`
+  from `execute_code`, or use a save whose explored area covers the whole path, or a built player. On a dense base,
+  defences kill a forced raid (`AttackPriorityCalculatorSystem.AttackCountOverride`) before it engages anything you can
+  frame: stage a lone target in open space and attack-move the raiders onto it (`AttackMoveData`), and write every
+  staged step in the review notes. The time-lapse recipe above (`ScreenCapture.CaptureScreenshot` from an
+  `EditorApplication.update` callback, the camera following the ships' centroid) rendered right while lothdesktop's
+  display was off (`Win32_DesktopMonitor` Availability 8): there `gfxcapture` and `ddagrab` gave no frame and `gdigrab`
+  gave white or hours-old frames, so `record_clip` now stops there instead of falling back to `gdigrab`. Worked
+  example: review topic `w4940-raid-retreat`.
 - **BEAST's shared desktop (w1232, 2026-10-13): go straight to the game's own frames.** `record_clip --pid` on a
   built player: `ddagrab` delivered no frame, and the `gdigrab` fallback recorded the FF Factory dashboard window
   covering the player (80 s of the wrong picture, exit 0). Its ffmpeg (2025-07 git) has no `gfxcapture`. Again in

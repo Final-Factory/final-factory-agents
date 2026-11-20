@@ -62,5 +62,21 @@ class PickGamePid(unittest.TestCase):
         self.assertFalse(rc.is_player_process({"name": "finalfactory_tool.py", "exe": "finalfactory_tool.py"}))
 
 
+
+class GdigrabFallback(unittest.TestCase):
+    def test_display_off_refuses_gdigrab_when_window_capture_also_failed(self):
+        # w4944: gfxcapture and ddagrab both gave no frame (display off); gdigrab then recorded white, stale frames
+        msg = rc.gdigrab_fallback_refusal(has_gfxcapture=True, gfx_failed=True)
+        self.assertIsNotNone(msg)
+        self.assertIn("gfxcapture and ddagrab both delivered no frame", msg)
+        self.assertIn("FF_CLIP_GRAB=gdigrab", msg)
+
+    def test_no_gfxcapture_still_refuses(self):
+        self.assertIn("no gfxcapture", rc.gdigrab_fallback_refusal(has_gfxcapture=False, gfx_failed=False))
+
+    def test_gfxcapture_not_tried_may_fall_back(self):
+        # FF_CLIP_GRAB=ddagrab or no hwnd: the window capture never ran, so its failure says nothing about the display
+        self.assertIsNone(rc.gdigrab_fallback_refusal(has_gfxcapture=True, gfx_failed=False))
+
 if __name__ == "__main__":
     unittest.main()
