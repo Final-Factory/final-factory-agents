@@ -364,6 +364,41 @@ was removed with `com.unity.pipeline` in w533.)
 - **Editor tests** (slow): `Assets/TestsSlow/` — FFEditorTestsSlow
 - **Play mode tests**: `Assets/Scripts/PlayModeTests/` — FFPlayModeTests
 
+### Every run is recorded: the per-test history (w4922)
+
+lothsahn, w4922: "This should be built as a query able database so that we can look at which tests false positive the
+most and fix them. And we can look at which tests never catch real bugs to consider removing tests that don't provide any
+real coverage."
+
+**Recording is not your step.** The game repo's `Assets/Editor/TestHistoryRecorder.cs` writes each run in your editor
+(`run_tests`, the Test Runner, a batch `-runTests`) to `Library/FFTestHistory/`. Your machine's daemon sends it to the
+portal, which tags it with the machine, sandbox, request and session. CI runs reach the portal from their artifacts:
+the PR gate, the master batch with its bisect verdict, and the release push.
+
+**Labels.** The portal labels each failure by itself; no auto label replaces one a person set.
+
+- `fp`: the test passed again with nothing changed (a re-run at the same commit, the batch's confirm run, or a local
+  re-run with the same files), or after only tests or files outside the game changed.
+- `detect`: the master batch's bisect named the merge that broke it, or the test passed again after only game code
+  changed.
+- `unknown`: both changed, the batch could not pin it, the local base moved, or the test did not pass again within 7 days.
+
+**Query it with the `test_history` tool** (read-only; orchestrators and workers):
+
+- `{query:"slowest"}`;
+- `{query:"false_positives", byRate:true, minRuns:5}`;
+- `{query:"detections"}`;
+- `{query:"never_caught", days:30}`;
+- `{query:"failures", label:"pending"}`;
+- `{query:"test", test:"<ClassName>"}`;
+- `{query:"sql", sql:"SELECT ..."}`: SELECT only, at most 200 rows.
+
+The tables and example SQL: FF Factory `docs/test-history.md`.
+
+**Before you call a red test flaky,** look at its history with `{query:"test", test:"<ClassName>"}`: a record of `fp`
+labels is evidence, and a first failure is not. `never_caught` and the false-positive ranking only suggest: removing,
+loosening or re-tagging a test is a person's decision.
+
 ### Before ANY test run: Burst must be ENABLED, and finished compiling
 
 Burst compilation is an editor setting that can be off, and it does not announce itself. Check
