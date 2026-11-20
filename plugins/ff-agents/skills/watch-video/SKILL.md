@@ -58,6 +58,13 @@ with a smooth built-game clip (recorded as below), and you stop the Live view an
    "ffauto:..."` fires any other command, and `--pre` runs set-up first. Frame the effect first (e.g.
    `ffauto:camera.zoom|600`, UI hidden). The clip is a constant-60-fps MP4 in `<tmp>/vfx_clips/`, with
    `<clip>.json` recording when the effect fired. `watch_video` anchors on that time.
+   **Beside a scenario run** (`ffnightly.py run --scenario`, which leases this worker's player slot and starts the game
+   itself): `--player` follows the lease to the game the runner started (its child, else the player running from that
+   slot's folder), never the windowless runner (w4823: it took the ffnightly python, pid 28000, and failed with "no
+   visible window"). Start it once the game window is up; before that it says the runner "runs no game yet".
+   **It can take up to 13 s to start recording** (measured on lothdesktop: w4805's MARK at 19:23:20, its clip stamped
+   19:23:33; 3 s and 1 s in other takes), so a recorder started on a short leg's log line misses the leg (a 9 s pad turn was lost). Start
+   ONE long clip (`--seconds` the whole scenario) when the scenario prints its MARK, and cut the legs from it after.
    **Not beside another worker's timed run** (w1750, lothsahn: "Why is the game player running if the worker has an exclusive lock on beast?"): while another worker holds the machine's bench lock for a timed run, `player_slots.py launch` (every launch path), `record_clip` and FF Factory's shell guard refuse a player or a clip there, with `bench lock held by worker <id> (...), until HH:MMZ`. Move the work to another machine, or wait: `--bench-wait <s>` (or `FF_BENCH_WAIT_S`) waits up to that long and starts when the hold ends. Your own timed run's players pass. `python scripts/bench/bench_queue.py status` shows the queue; the game repo's `Documentation/Bench-Lock.md`, "No players or clips beside a timed run". `record_clip` exits 76 when refused.
 3. **Review** (`--review`/`--brief` runs it for you): `watch_video clip.mp4 --mode vfx --brief look.md
    [--compare approved.mp4] [--frames 2.4-3.1]`. Read `report.md`, then LOOK at `frames.jpg` (every

@@ -92,7 +92,8 @@ def player_pid():
     if os.environ.get("FF_SESSION_ID") and os.path.exists(slots):
         r = subprocess.run([sys.executable, slots, "mine", "--one"], capture_output=True, text=True)
         if r.returncode == 0:
-            return int(json.loads(r.stdout)["pid"])
+            lease = json.loads(r.stdout)
+            return game_pid_for_lease(int(lease["pid"]), lease.get("slot"))
         if "invalid choice" not in r.stderr:  # a checkout older than w1856 has no `mine`: fall through
             sys.exit(f"record_clip: {r.stderr.strip().removeprefix('ERROR: ')} (or pass --pid <the pid launch printed>)")
     pids = running_player_pids()
@@ -102,6 +103,87 @@ def player_pid():
         sys.exit(f"record_clip: {len(pids)} FinalFactory players run here (pids {', '.join(map(str, pids))}), and which is "
                  "yours is unknown: pass --pid with the one you launched (player_slots.py launch --detach printed it)")
     return pids[0]
+
+
+def process_table():
+    """Every process on this computer: [{pid, ppid, name, exe}] (exe may be empty where the OS hides it)."""
+    if WIN:
+        out = subprocess.run(["powershell", "-NoProfile", "-Command",
+                              "Get-CimInstance Win32_Process | Select-Object ProcessId,ParentProcessId,Name,"
+                              "ExecutablePath | ConvertTo-Json -Compress"], capture_output=True, text=True).stdout
+        rows = json.loads(out or "[]")
+        rows = rows if isinstance(rows, list) else [rows]
+        return [{"pid": int(r["ProcessId"]), "ppid": int(r["ParentProcessId"] or 0), "name": r.get("Name") or "",
+                 "exe": r.get("ExecutablePath") or ""} for r in rows]
+    out = subprocess.run(["ps", "-axo", "pid=,ppid=,command="], capture_output=True, text=True).stdout
+    procs = []
+    for line in out.splitlines():
+        parts = line.split(None, 2)
+        if len(parts) == 3 and parts[0].isdigit() and parts[1].isdigit():
+            procs.append({"pid": int(parts[0]), "ppid": int(parts[1]), "name": os.path.basename(parts[2].split()[0]),
+                          "exe": parts[2]})
+    return procs
+
+
+def is_player_process(p):
+    """A built Final Factory player (finalfactory.exe / .app / .x86_64), never a python or shell running a script."""
+    if PLAYER_PROCESS.search(p.get("exe") or ""):
+        return True
+    name = p.get("name") or ""
+    return bool(re.match(r"finalfactory", name, re.IGNORECASE)) and not re.search(r"\.(py|sh|ps1)$", name, re.IGNORECASE)
+
+
+def in_player_slot(p, slot):
+    """The process runs from player slot `slot` ("3-0": <players>/slot3-0/...)."""
+    return bool(slot) and bool(re.search(rf"[\\/]slot{re.escape(str(slot))}[\\/]", p.get("exe") or "", re.IGNORECASE))
+
+
+def pick_game_pid(lease_pid, slot, procs, has_window):
+    """The game behind a player-slot lease. `player_slots.py launch` holds the lease on the player itself, but a runner
+    that leases the slot and launches the game (ffnightly.py run --scenario) holds it on its own python pid, which has no
+    window (w4823, 2026-11-19: `record_clip --player` chose pid 28000, the ffnightly runner, and recorded nothing). So:
+    the lease pid when it is a player; else the player processes below it in the process tree; else the players
+    running from the lease's slot folder. Several: the one in the lease's slot, then the ones with a visible window.
+    Returns (pid, None) or (None, why)."""
+    by_pid = {p["pid"]: p for p in procs}
+    me = by_pid.get(lease_pid)
+    if me is None or is_player_process(me):
+        return lease_pid, None  # a player itself (or gone: the caller's window check says so)
+    kids = {}
+    for p in procs:
+        if p["pid"] != p["ppid"]:
+            kids.setdefault(p["ppid"], []).append(p)
+    below, todo = [], [lease_pid]
+    while todo:
+        for c in kids.get(todo.pop(), []):
+            if c["pid"] != lease_pid and c not in below:
+                below.append(c)
+                todo.append(c["pid"])
+    cands = [p for p in below if is_player_process(p)]
+    if not cands:
+        cands = [p for p in procs if is_player_process(p) and in_player_slot(p, slot)]
+    if len(cands) > 1 and any(in_player_slot(p, slot) for p in cands):
+        cands = [p for p in cands if in_player_slot(p, slot)]
+    if len(cands) > 1 and any(has_window(p["pid"]) for p in cands):
+        cands = [p for p in cands if has_window(p["pid"])]
+    who = f"pid {lease_pid} ({me.get('name') or 'no name'}), which holds player slot {slot}"
+    if not cands:
+        return None, (f"{who}, is not a player and runs no game yet (a scenario run starts it a few seconds after its "
+                      "lease): wait for the game window, or pass --pid")
+    if len(cands) > 1:
+        return None, (f"{who}, runs {len(cands)} games (pids {', '.join(str(p['pid']) for p in cands)}): pass --pid "
+                      "with the one to record")
+    return cands[0]["pid"], None
+
+
+def game_pid_for_lease(lease_pid, slot):
+    pid, why = pick_game_pid(lease_pid, slot, process_table(),
+                             (lambda p: bool(win_windows(p))) if WIN else (lambda p: True))
+    if pid is None:
+        sys.exit(f"record_clip: {why}")
+    if pid != lease_pid:
+        print(f"  the lease holder pid {lease_pid} is not the game: recording its game, pid {pid} (slot {slot})")
+    return pid
 
 
 def running_player_pids():
@@ -250,6 +332,15 @@ def mac_recorder():
 
 def win_client_rect(pid, with_hwnd=False):
     """Screen rect (x, y, w, h) of the pid's largest visible window's client area, in pixels (and its hwnd)."""
+    found = win_windows(pid)
+    if not found:
+        sys.exit(f"record_clip: no visible window for pid {pid}")
+    _, x, y, w, h, hwnd = max(found)
+    return (x, y, w, h, hwnd) if with_hwnd else (x, y, w, h)
+
+
+def win_windows(pid):
+    """The pid's visible windows: [(area, x, y, w, h, hwnd)] of each client area."""
     from ctypes import wintypes
     try:
         ctypes.windll.shcore.SetProcessDpiAwareness(2)
@@ -270,10 +361,7 @@ def win_client_rect(pid, with_hwnd=False):
             found.append((r.right * r.bottom, pt.x, pt.y, r.right, r.bottom, int(hwnd or 0)))
         return True
     user32.EnumWindows(cb, 0)
-    if not found:
-        sys.exit(f"record_clip: no visible window for pid {pid}")
-    _, x, y, w, h, hwnd = max(found)
-    return (x, y, w, h, hwnd) if with_hwnd else (x, y, w, h)
+    return found
 
 
 # A desktop grab (ddagrab, gdigrab) records the screen, so any window drawn over the player lands in the clip. On BEAST
@@ -511,7 +599,8 @@ def main():
 def record():
     ap = argparse.ArgumentParser(description="Record a short 60 fps clip of the running game while an effect plays.")
     tgt = ap.add_mutually_exclusive_group(required=True)
-    tgt.add_argument("--player", action="store_true", help="the built player this worker launched (player_slots.py mine; w1856)")
+    tgt.add_argument("--player", action="store_true", help="the built player this worker launched, or the game a scenario run (ffnightly.py run --scenario) "
+                     "started from this worker's player slot (player_slots.py mine; w1856, w4823)")
     tgt.add_argument("--unity", nargs="?", const="", metavar="PROJECT",
                      help="the Unity editor open on PROJECT (default: this git checkout)")
     tgt.add_argument("--pid", type=int, help="any process id with a game window")
