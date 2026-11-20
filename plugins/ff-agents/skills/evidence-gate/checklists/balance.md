@@ -27,7 +27,7 @@ base's parked player meets no camp at all, and its edge is where the Build 108 r
    second refuses to start (`player_slots.SlotRequired: ... no free player slot`, w1465, 2026-10-20). A light stage
    (BAL-mid-lifeastwo) took 4.3 and 6.8 minutes there. Copy the lab fixtures (`<nightly history>/fixtures/w1440-*.zip`) into your history folder's `fixtures/` first. A
    leg costs 7 to 17 wall minutes on the light saves, about 40 on MeltCPU and over an hour on Just Play (three lanes on a
-   busy lothdesktop, measured, w1440), so name the stages your change can move: a change that reaches one band runs that
+   busy lothdesktop, measured, w1440; w4943, 2026-11-20: Just Play took 9.5 to 11 minutes a side beside lifeastwo with `--jobs 3`, measured), so name the stages your change can move: a change that reaches one band runs that
    band's stages and one neighbour on each side, and says which; anything that touches late raids runs
    `BAL-end-justplay`, the save the runaway was reported on.
 
@@ -38,6 +38,17 @@ base's parked player meets no camp at all, and its edge is where the Build 108 r
    also judges attacks, camps and guards apart against `stages.<stage>.spread` (mean ± max(3 sd, 1), from three or
    more runs: `balance_lane.py spread`), and flags awake-ship growth as a performance signal; a curve change re-measures
    that spread too.
+
+   **Stay in your turn while a hand run plays** (w4943, 2026-11-20). The runner holds shared bench tickets, and a
+   check-in (`wake_me`) does not keep them: FF Factory's leftovers sweep ended a detached `ffnightly.py`, its bash and
+   both players 2 minutes after the turn ended (daemon.log 20:49:22Z: "holds bench ticket(s), which its check-in or
+   request does not keep"). Start it detached (`nohup bash <script> &`, so the 2 h task limit cannot cut it) and wait
+   in the turn with foreground loops of under 10 minutes on its progress file.
+
+   **One extra camp flag is not a cause until two passes a side agree** (w4943). Frontier camp metrics vary run to run
+   on one build by more than the spread band's margin: BAL-mid-lifeastwo-frontier `campShipHpMean` on ff4c43e939 read
+   7,823, 7,880 and 7,653 on three passes against a 7,806 floor, so the third flag w4940 saw on the after build (7,785)
+   showed up on the before build in the next pass. The saved-spot stages repeat exactly; compare those directly.
 
    **Where the saves are.** The `lab:` stages (BAL-end-justplay, BAL-late-lifesave, BAL-end-meltcpu: `w1440-*.zip`) need
    their lab fixtures, and BEAST has none (no `w1440-*.zip` anywhere under F:/ffw, checked 2026-10-20, w1243); the
