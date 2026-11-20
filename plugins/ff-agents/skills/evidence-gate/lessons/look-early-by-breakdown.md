@@ -92,6 +92,12 @@ safe:
    and "the option moves the digest" goes unproven (w4062, 2026-11-13: the first option arm used a
    group none of the transferred items were in; with the items' own category it moved the hash at
    HEAD and fell back to the no-option hash under the revert patch).
+7. **Before you call a mutant "not caught", run the mutated system's own test class too**, not only
+   the suspect PR's tests. w4900 (2026-11-20) called two `EnemyCampEconomySystem` mutants (the dropped
+   budget write-back at :244, a doubled `AbsorptionRate` at :233) uncaught after running only the
+   three pressure tests; `CampEconomyTest` failed 5 and 3 times on them (w4909). Find that class with
+   `grep -rl <SystemName> Assets/Tests`. When you read a mutant run, check `failures_capped` in
+   `get_test_job`: its failure list stops at 25, so count failures from its summary, not the list.
 
 **Why.** w2124 (2026-10-25), the nightly regression check of blueprint and circuit copy. Three PRs
 had re-pinned `BlueprintPasteBefore2334DigestTest`: #2461 (connector circuit filters), #2369
