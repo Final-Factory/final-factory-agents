@@ -505,6 +505,7 @@ def start_windows(pid, raw, seconds, fps, monitor):
     # (w1934, lothdesktop, 2026-10-25: ddagrab gave no frame, the gdigrab fallback recorded another sandbox's Unity
     # splash window over the player, exit 0; gfxcapture on the player's hwnd gave the right picture in 3 of 3 clips).
     grab_mode = os.environ.get("FF_CLIP_GRAB", "")
+    gfx_failed = False
     if grab_mode not in ("ddagrab", "gdigrab") and hwnd and ffmpeg_has_filter("gfxcapture"):
         gfx = (f"gfxcapture=hwnd={hwnd}:max_framerate={fps}:capture_cursor=0,hwdownload,format=bgra,"
                f"fps={fps},crop=trunc(iw/2)*2:trunc(ih/2)*2:0:0")
@@ -518,6 +519,7 @@ def start_windows(pid, raw, seconds, fps, monitor):
         proc.wait()
         if os.path.exists(raw):
             os.remove(raw)
+        gfx_failed = True
         print("  gfxcapture delivered no frame in 8 s: falling back to ddagrab (FF_CLIP_GRAB=ddagrab starts there)")
     mons = win_monitors()
     idx = monitor
@@ -537,12 +539,32 @@ def start_windows(pid, raw, seconds, fps, monitor):
         sys.exit("record_clip: the player is pinned on top but still covered by "
                  + ", ".join(f"{t!r} (pid {p})" for t, p in covering)
                  + ". A desktop grab would record it. Move or close it, or use an ffmpeg 8+ with gfxcapture.")
-    proc = start_desktop_grab(raw, seconds, fps, idx, x, y, w, h, left, top, grab_mode)
+    proc = start_desktop_grab(raw, seconds, fps, idx, x, y, w, h, left, top, grab_mode, gfx_failed)
     watch_covering(hwnd, (x, y, w, h), proc)
     return proc
 
 
-def start_desktop_grab(raw, seconds, fps, idx, x, y, w, h, left, top, grab_mode):
+def gdigrab_fallback_refusal(has_gfxcapture, gfx_failed):
+    """Why ddagrab's failure must not fall back to gdigrab, or None when the fallback may run.
+
+    w4944 (lothdesktop, 2026-11-20): the display was off (Win32_DesktopMonitor Availability 8), so gfxcapture and
+    ddagrab both gave no frame and gdigrab recorded white frames, a desktop picture hours old (its clock read 12:53 at
+    15:34), exit 0. When the window capture failed too, nothing is composing the desktop: refuse."""
+    if not has_gfxcapture:
+        return ("record_clip: ddagrab delivered no frame, and this ffmpeg has no gfxcapture (ffmpeg 8+), so the only "
+                "fallback is gdigrab, a copy of the desktop that records whatever window covers the player. Put an "
+                "ffmpeg 8+ first on PATH (e.g. https://www.gyan.dev/ffmpeg/builds/ffmpeg-release-essentials.zip "
+                "unzipped in $TMPDIR) and run again, or set FF_CLIP_GRAB=gdigrab to accept a desktop grab.")
+    if gfx_failed:
+        return ("record_clip: gfxcapture and ddagrab both delivered no frame, so nothing is composing the desktop (the "
+                "display is off or asleep, or the session is locked); gdigrab would record a stale or white picture "
+                "with exit 0 (w4944). Record the game's own frames instead: -ffFeelProbe <csv> -ffFeelFrames <dir> "
+                "-ffFeelFramesAt <start>+<seconds> (SKILL.md, 'The game's own frames'), or in the editor "
+                "ScreenCapture.CaptureScreenshot, which renders with the display off. FF_CLIP_GRAB=gdigrab forces it.")
+    return None
+
+
+def start_desktop_grab(raw, seconds, fps, idx, x, y, w, h, left, top, grab_mode, gfx_failed=False):
     grab = (f"ddagrab=output_idx={idx}:framerate={fps}:draw_mouse=0:"
             f"offset_x={x - left}:offset_y={y - top}:video_size={w}x{h}")
     if encoder_works("h264_nvenc"):
@@ -575,11 +597,9 @@ def start_desktop_grab(raw, seconds, fps, idx, x, y, w, h, left, top, grab_mode)
         # gdigrab copies the desktop, whatever covers the player: on BEAST it recorded the FF Factory dashboard (w1232)
         # and other sandboxes' windows (w2195, 2026-10-26), exit 0 both times. Its ffmpeg (2025-07) has no gfxcapture;
         # an ffmpeg 8+ first on PATH recorded the window itself. Fall back only when asked for.
-        if not ffmpeg_has_filter("gfxcapture"):
-            sys.exit("record_clip: ddagrab delivered no frame, and this ffmpeg has no gfxcapture (ffmpeg 8+), so the only "
-                     "fallback is gdigrab, a copy of the desktop that records whatever window covers the player. Put an "
-                     "ffmpeg 8+ first on PATH (e.g. https://www.gyan.dev/ffmpeg/builds/ffmpeg-release-essentials.zip "
-                     "unzipped in $TMPDIR) and run again, or set FF_CLIP_GRAB=gdigrab to accept a desktop grab.")
+        refusal = gdigrab_fallback_refusal(ffmpeg_has_filter("gfxcapture"), gfx_failed)
+        if refusal:
+            sys.exit(refusal)
         print("  ddagrab delivered no frame in 8 s: falling back to gdigrab (set FF_CLIP_GRAB=gdigrab to start there)")
     return subprocess.Popen(["ffmpeg", "-v", "error", "-y", "-f", "gdigrab", "-framerate", str(fps), "-draw_mouse", "0",
                              "-offset_x", str(x), "-offset_y", str(y), "-video_size", f"{w}x{h}", "-i", "desktop",
