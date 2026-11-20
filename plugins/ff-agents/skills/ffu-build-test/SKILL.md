@@ -386,6 +386,38 @@ whole verification. The repo's own `CLAUDE.md` is binding and longer; this skill
 
 ## 2. The checks, in CI's order
 
+**Before every ffu push, run `ci_local.sh` (beside this file) in your checkout, after merging `origin/main` in** (ben,
+w4917: ffu PR #876 went red on a CI step its worker had not run; in w4889 running every step caught a failing
+`ffu-client` test before the push). It reads `.github/workflows/ci.yml` at your HEAD and runs every step of its `lint`
+and `check` jobs as written there, so a step CI adds runs here with no change to the script:
+
+```sh
+bash "$FF_SKILLS/ffu-build-test/ci_local.sh" [PR] [BODY_FILE]   # Codex/no FF_SKILLS: the plugin's skills/ffu-build-test/
+#   PR: the pull request's number (its body is read with gh); BODY_FILE: the file you give `ff-pr push --body-file`.
+#   Before the PR exists, give BODY_FILE alone: the row checks then run as on a new pull request.
+#   --list prints the plan; --jobs lint runs one job (check holds the whole `cargo test --workspace`, the long part)
+```
+
+- It prints one `PASS`, `FAIL` or `SKIP` line per step, writes each step's log to `$TMPDIR/step-<job>-<NN>-<name>.log`,
+  and prints the last 30 lines of every failed step. Every step runs after a failure too, so one run names every red.
+  Exit 0 all passed, 1 a step failed, 2 no plan. On ffu main c919026a on lothdesktop it planned 30 steps, ran 15 and
+  all passed in about 25 min with a warm slot target: clippy 26 s, the test build 269 s, `cargo test --workspace` 994 s,
+  the lavapipe step 189 s (measured, w4917). `--jobs lint` alone took under 2 min.
+- It skips only runner upkeep, each with its reason on the `SKIP` line: PATH and temp setup, `actions/*`, `rustup
+  toolchain install`, `keep_target.sh`, `runner_health.sh`; and on Windows and macOS `sweep_target_test.sh` (`--all`
+  runs it). It puts cargo (`CARGO_HOME`, `~/.cargo`, else `$FF_WORKER_ROOT/tools/cargo`) and on Windows cmake on PATH
+  itself, and a `python3` shim over the Store stub.
+- **Drift stops it**: a step with an `if:` it cannot evaluate, a `${{ }}` it does not know, a key or a shell it does not
+  expect ends the plan with exit 2 naming the step. Teach `ci_local.py` the new form (and its test), never skip it.
+- Local differences, each kept small on purpose: `git fetch --depth=1` runs without `--depth` (it would make the shared
+  clone behind an ffu slot shallow); `--target-dir target` becomes your `CARGO_TARGET_DIR`; the workflow's
+  `CARGO_INCREMENTAL` and `CARGO_PROFILE_DEV_DEBUG` are left out so your warm target is reused (`--ci-cargo-env` keeps
+  them); the lavapipe step's `lavapipe-captures/` moves out of your tree into the run folder it names.
+- It does not run the `test`, `clippy`, `hashcheck`, `crosscompare` or `check-release` jobs (other OSes and release
+  builds); hashcheck and crosscheck by hand, below, when your change touches the sim.
+
+The same steps by hand, for reading or running one:
+
 ```sh
 PY=python3; $PY -c '' 2>/dev/null || PY=python      # Windows: python3 is the Store stub (exit 49), python is real
 # CI's lint job (ci.yml `lint`), step by step:
@@ -405,7 +437,7 @@ cargo run --release -p ffu-headless -- hashcheck --golden golden/hashcheck.txt
 cargo run --release -p ffu-headless -- crosscheck --threads 1,4,16 --golden golden/crosscheck
 ```
 
-- **Run the whole lint block before every push, `check_row_docs.py` included** (w4510). It needs only python and git on
+- **Run the whole lint block before every push, `check_row_docs.py` included** (w4510; `ci_local.sh` does). It needs only python and git on
   Windows, macOS and Linux; no CI-only tool. It enforces docs/PLAN.md "Taking a row": a row's status or new row goes in
   `docs/rows/<Id>.md` and its FF1 notes in `docs/oracle/<Id>.md`, never an added PLAN.md table line or ff1-oracle.md
   line, unless the PR body has a line `Plan-edit: <why>`. CI reads that body from the PR event, so pass the same file
@@ -583,6 +615,8 @@ never rewritten (`tools/check_snapshot_compat.sh BASE_REF` holds it in CI). No t
 
 ## 4. Land it: PR, CI with gh, merge your own
 
+- Before every push, merge `origin/main` in and run `ci_local.sh [PR] <body file>` (section 2) until it prints no
+  `FAIL` (w4917).
 - Push your branch, `gh pr create -R Final-Factory/ffu --base main --title ... --body-file ...`, with
   `Request: wNNN` (or `Part of: wNNN`) in the body.
 - CI runs on ffu's own runners, one job at a time each: `ffu-linux` (biscuit's four and FFBox's ffu containers),
