@@ -269,6 +269,11 @@ carried over ([lesson](lessons/research-the-decision-not-the-topic.md#name-the-p
   Its screen (refresh, VRR, fullscreen mode), GPU and mods: a feel trace and a profiler capture there before any code; a
   cause modelled elsewhere is a guess (w2448: adaptive vSync built for a fixed-refresh model, while the laptop ran G-SYNC
   and a mod's 6.3 ms `Update` delayed one frame in ten).
+- **A timed A/B gates done only for a performance goal; one ticket for all its legs** ([bench](checklists/bench.md)).
+  lothsahn, w4924: "Timed tests gate only perf-goal requests; others merge and time after". Any other change merges
+  on green CI and hands up its after-merge timing, reverted if it regresses. An A/B keeps one exclusive ticket across
+  its legs (`bench_leg_done`, one held `timed`); a ticket per leg queued at the back each time (w4787: 18 tickets, 314
+  min waiting).
 - **A speed-up is one build, switched off and on, back to back** ([lesson](lessons/settle-your-own-guesses.md#a-speed-up-is-one-build-switched-off-and-on-back-to-back-w1069-2026-10-13)).
 - **An A/B on one machine: prove the action happened, run both builds at once and swap the CPU sets** ([lesson](lessons/settle-your-own-guesses.md#an-ab-on-one-machine-check-the-thing-happened-and-run-both-builds-at-once-w1329-2026-10-15)).
   Before you report a performance gain, measure the same build with the change switched off and on, back to back on

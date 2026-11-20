@@ -135,7 +135,8 @@ subdivide their work to not hold the exclusive lock longer than 1 hour at a time
 queue enforces a shorter rule itself: "The harness should let workers run with the exclusive lock for at most 30
 minutes. They should get a warning at 25 minutes", pre-emption "should not occur if there's no other workers waiting
 in line", and a shared group ends an hour after its newest start once a timed leg waits, always after a 5-minute
-warning. Give the lock back between legs or rounds and queue again; at the warning, commit and push your work.
+warning. Keep ONE ticket for all of an A/B's legs and give it back when the A/B ends or its turn is used up, never per
+leg (w4924, below); at the warning, commit and push your work.
 
 **Why.** On 2026-10-20 (00:00 to 15:58 UTC, measured from each machine's transcripts and run logs; the game repo's
 `Documentation/Bench-Lock.md`):
@@ -166,11 +167,13 @@ Where the time went:
 4. Untimed work (a determinism pair, a functional repro, a census, a Steam launch check) takes
    `bench_lock --shared`. A build takes no `bench_lock` at all, because `build_player.sh` and `ff_unity_slot` queue
    their own shared ticket.
-5. Give the lock back between legs, and do builds and digests outside it.
+5. Keep one ticket across an A/B's legs (`quiet_gate.sh`'s `bench_leg_done` after each leg, not `bench_unlock`: it
+   keeps the ticket while the turn has room and gives it back once the next leg would pass 25 minutes). Do builds and
+   digests outside it.
 6. After the run, `python scripts/bench/bench_queue.py report` shows your holds and whom they kept waiting. Put the
    lock time beside the result in your report.
 7. Plan each exclusive hold to end within an hour: split a long run into holds of an hour or less, each given back
-   (`bench_unlock`, then `bench_lock` again, which requeues you). Past an hour `bench_unlock` warns you, `bench_status`
+   (`bench_leg_done` does it between legs; `bench_unlock`, then `bench_lock` again, requeues you). Past an hour `bench_unlock` warns you, `bench_status`
    shows the hold over the rule, and `report` flags it with your request; nothing kills your leg for it.
 8. Decide on enough signal. Once every arm's gap is clear of the run-to-run spread (or all are inside the noise), stop
    and write the decision with the numbers and the spread; more rounds are for a question the data has not answered
@@ -227,11 +230,13 @@ this had no transcript tool.
    - One call: `python scripts/unity-bridge.py eval_file --project-path <p> <file.cs> --timed "<what>"`.
    - Several calls, interleaved arms, or MCP `execute_code` reads: run
      `python scripts/bench/bench_queue.py timed --what "<what>" --minutes 20` with `run_in_background`, wait for its
-     `granted` line, time, then run `bench_queue.py timed --release`.
+     `granted` line, time every leg and arm under that one ticket, then run `bench_queue.py timed --release` once.
+     A `--timed` call made while it is held takes no ticket of its own.
    - A script of calls: `bench_queue.py run --mode exclusive --reason timing --what "<what>" -- bash <script>`.
    - A batch Performance run: `unity-slot run --bench exclusive --bench-reason timing -- ...`.
 2. The usual bench rules apply. Keep it as short as the question allows. A turn is 30 minutes while someone waits,
-   with a warning at 25. Give the ticket back between legs ([checklist](../checklists/bench.md)).
+   with a warning at 25. Keep one ticket across an A/B's legs, never a release and a new ticket per leg: each new one
+   queues at the back, and `bench_queue.py` warns on such a re-lock (w4924, [checklist](../checklists/bench.md)).
 3. If a snippet reads a clock only for a timeout, say so with a `// ff-not-timing: <why>` comment (or `--not-timing
    "<why>"`). It runs without a ticket and is logged.
 4. Put the ticket in the report next to the numbers (`bench_queue.py report`). A number taken without one is a guess
@@ -545,6 +550,9 @@ out new ways to do things better, update the harness".
 ## Ad hoc PERF and rerun legs: one exclusive ticket, adaptive vSync off, a void rerun is rerun (w4444, 2026-11-16)
 
 Four traps from fixing the 2026-11-16 nightly regressions (w4444, lothdesktop), each with the check that catches it.
+w4924 (r341) measured the first trap's cost machine-wide: on lothdesktop 2026-11-19/20 one A/B (w4787) took 18 exclusive
+tickets, held 44 min and waited 314; w4773 took 14, w4882 11, w4757 10. The cap was never passed (longest hold 30.0 min,
+revoked). Since then `quiet_gate.sh`'s `bench_leg_done` keeps the ticket between legs and `bench_queue.py` names a re-lock.
 
 1. **All legs of an ad hoc PERF A/B run inside ONE `bench_queue.py run --mode exclusive` ticket.** A script that took a
    ticket per leg went to the back of the queue each time; the first leg waited about 40 minutes and the next about 42
