@@ -84,6 +84,11 @@ cargo test --release -p ffu-ui
   `None`.
 - **Example stills use real items** (`ffu_sim::content` constants), never made-up ids: the wreck example's ids `100 +
   slot * 5` drew whatever items those ids happen to be, which a critic reads as a wrong panel (w3968).
+- **A connected still set needs a fresh `ffu-server` for every shot** (w4866, ffu #903). The client's `--autoloot` loots
+  the start wreck once. With one server shared across 14 shots, only the first client opened the Hold, and the later
+  shots' edit steps (`--hotbar-edit`) never fired. Their stills looked plausible and showed nothing. Start a server per
+  shot on its own port (`47800+n`, each under `timeout`). Check each client log for every step it fired before you
+  grade a still. A step clip must also run until its last step has played, not a fixed 2 s after the loot.
 - New visible text goes into `crates/ffu-ui/src/locale.rs` with every locale's string. A CJK character outside the
   cut fonts means re-cutting them with `tools/subset_cjk_fonts.py`.
 

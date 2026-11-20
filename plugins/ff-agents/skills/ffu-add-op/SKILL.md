@@ -27,6 +27,15 @@ If players may send it, give it to the agent API too: `crates/ffu-agent/src/lib.
 and its `discover` schema; run the fuzz target `agent_line` (`tools/fuzz.sh 60 agent_line`) on the new request shape. If the server sends it as world
 content (as `Op::Turret` and `Op::Spawner`), say so in the doc comment and refuse it from other senders.
 
+**After every merge of `origin/main`, check the numbers and your new kinds again** (w4866, ffu #903). ffu #905 merged op
+74 and snapshot section 48 first; the merge of main into #903, which had taken the same two, went through with no
+conflict and left two arms with each number. Run `tools/row_numbers.py check --base origin/main --prs --pr <n>` after
+each fetch and merge: it names the duplicate and which PR moves (the one opened later). Then rewrite your unmerged
+fixture. A later merge of main (ffu #898) moved the outbox route that listed the crossing `MsgKind`s, and the conflict
+was resolved by taking main's block, which dropped `ShipHotbar` from the list. After each merge, grep the crates for
+the kinds or ops yours sits beside (`grep -rn "MsgKind::ShipHull" crates`), and check that every list holding them
+holds yours too (`MsgKind::ALL`, `is_ship`, the route's `matches!`, the sector's inbox match).
+
 ## Prove it
 
 - A unit test in the subsystem: the op applies at the next tick, not before (`submit` with a tick that has passed is
