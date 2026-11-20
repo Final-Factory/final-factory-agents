@@ -400,7 +400,9 @@ bash "$FF_SKILLS/ffu-build-test/ci_local.sh" [PR] [BODY_FILE]   # Codex/no FF_SK
 
 - It prints one `PASS`, `FAIL` or `SKIP` line per step, writes each step's log to `$TMPDIR/step-<job>-<NN>-<name>.log`,
   and prints the last 30 lines of every failed step. Every step runs after a failure too, so one run names every red.
-  Exit 0 all passed, 1 a step failed, 2 no plan.
+  Exit 0 all passed, 1 a step failed, 2 no plan. On ffu main c919026a on lothdesktop it planned 30 steps, ran 15 and
+  all passed in about 25 min with a warm slot target: clippy 26 s, the test build 269 s, `cargo test --workspace` 994 s,
+  the lavapipe step 189 s (measured, w4917). `--jobs lint` alone took under 2 min.
 - It skips only runner upkeep, each with its reason on the `SKIP` line: PATH and temp setup, `actions/*`, `rustup
   toolchain install`, `keep_target.sh`, `runner_health.sh`; and on Windows and macOS `sweep_target_test.sh` (`--all`
   runs it). It puts cargo (`CARGO_HOME`, `~/.cargo`, else `$FF_WORKER_ROOT/tools/cargo`) and on Windows cmake on PATH
