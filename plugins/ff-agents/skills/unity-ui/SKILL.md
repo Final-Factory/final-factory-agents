@@ -191,6 +191,10 @@ census (`<shot>.json`: small, clipped, off-screen and overlapping text, covered 
   its parts could not give. When one language's window is shorter, compare its placed rect and height with English first,
   then run the leg with `-ffPanelTrace` and read the `[w4289 trace] grow down` and `[w4487 trace] fit` lines (max, want,
   parts, scrolls) before you change a row count.
+- **Keyboard labels on a tour need the Live Deck and a keyboard layout (w4879).** The tour hands the game a scripted
+  Deck, so Settings > Keybindings draws controller glyphs (Redo's button is empty), and a `key` step does not switch it.
+  Run with `-ffDeckTourLive` and, after the Keybindings tab is open, `{"setup": "steamLayout:community"}` then a wait:
+  the list redraws with keyboard labels. The setup before the tab click makes the click fail (FinalFactory #4015).
 - **Tour worlds on one station (w4268).** Structures you place with `ffauto:blueprint.place` join one station only
   when every gap between them holds a Connector facing Right (rotation 1, `blueprint('Connector', 1)` from the game
   repo's `scripts/deck_audit/build_audit_world.py`; it links the tiles left and right, `StationConnectionsSystem.cs`).
