@@ -97,6 +97,12 @@ the batch verdict's run id; MEASURED: the diff over the culprit's files is empty
 <merge>^1 <revert head> -- <its files>`), `Tests:` with the revert PR's counts, `Determinism audit: not needed: <that
 empty diff>`, `Save compatibility:` and `Not verified:`.
 
+**Before you push a revert, find the later tests that pin what you revert** (w4915, 2026-11-20, PR #4035): `git revert`
+removes only the reverted PR's own tests, while a later PR (a regression check, a pin) may assert its behaviour too.
+Grep the tests for the PR number and its request id (`git grep -n "#4014\|w4876" -- Assets/Tests Assets/TestsSlow`) and
+fix each hit in the revert PR. Reverting #4014 left w4896's `BlockedOutputSkipEquivalenceTest` asserting the 50% hold:
+the first CI run failed 2 of 1,648 and cost a CI cycle on a release-blocking revert.
+
 **A culprit whose test asserts a value is unknown may only clash with a neighbour** (w3644, 2026-11-08): a PR's fast
 gate ran on the master of its last push, so a PR merged in between can make its test wrong without its code being
 wrong. #3401's test called circuit set mode 3 unknown; #3406, merged just before it, had made 3..27 packed modes. Before
