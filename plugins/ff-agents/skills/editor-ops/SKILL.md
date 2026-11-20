@@ -364,6 +364,54 @@ was removed with `com.unity.pipeline` in w533.)
 - **Editor tests** (slow): `Assets/TestsSlow/` — FFEditorTestsSlow
 - **Play mode tests**: `Assets/Scripts/PlayModeTests/` — FFPlayModeTests
 
+### Every run is recorded: the per-test history (w4922)
+
+lothsahn, w4922: "This should be built as a query able database so that we can look at which tests false positive the
+most and fix them. And we can look at which tests never catch real bugs to consider removing tests that don't provide any
+real coverage."
+
+**Recording is not your step** (lothsahn, w4922: "the actual test executions should be ingested deterministically with
+every work order"). The game repo's `Assets/Editor/TestHistoryRecorder.cs` writes every Unity test run on an FF Factory
+machine (`run_tests`, the Test Runner, a batch `-runTests` with or without `-testResults`, `MergeGateTestRunner`, in your
+sandbox or a temp worktree) to the machine's spool, `$FF_WORKER_ROOT/test-history/`, from the run's start. Your machine's
+daemon sends it to the portal, which tags it with your request: by the session in the record (a batch run from your
+shell carries `FF_SESSION_ID`), else by the sandbox's worker, else marks it untagged. A run cut short (a crash, a kill, a
+hung editor you restarted) is kept as `incomplete` after two hours. CI runs reach the portal from their artifacts: the PR
+gate, the master batch with its bisect verdict, and the release push. Not recorded: Python `scripts/tests`, FF Factory's
+`npm test`, ffu's `cargo test`, the nightly e2e, and a person's own editor outside FF Factory. The full route table: the
+game repo's `Documentation/Test-History.md`.
+
+**Labels.** The portal labels each failure by itself, and no automatic label replaces one set by hand.
+
+- `fp`: the test passed again with nothing changed (a re-run at the same commit, the batch's confirm run, or a local
+  re-run with the same files), or after only tests or files outside the game changed.
+- `detect`: the master batch's bisect named the merge that broke it, or the test passed again after only game code
+  changed.
+- `unknown`: both changed, the batch could not pin it, the local base moved, or the test did not pass again within 7 days.
+
+**Label by hand only what you established** (lothsahn: "I realize some notes and classifications may come workers"):
+`{query:"set_label", failureId:<id from failures>, label:"fp"|"detect"|"unknown", reason:"<what showed it>"}`. The
+portal records it as `worker:<your session>` (an orchestrator's as `person:<name> ...`); a worker never replaces a
+person's label.
+
+**Query it with the `test_history` tool** (orchestrators and workers; every query reads only, `set_label` aside):
+
+- `{query:"slowest"}`;
+- `{query:"false_positives", byRate:true, minRuns:5}`;
+- `{query:"detections"}`;
+- `{query:"never_caught", days:30}`;
+- `{query:"failures", label:"pending"}`;
+- `{query:"test", test:"<ClassName>"}`;
+- `{query:"local_runs", request:"wNNN"}`: one request's local runs and how each was tagged; `untagged:true` for runs
+  with no request;
+- `{query:"sql", sql:"SELECT ..."}`: SELECT only, at most 200 rows.
+
+The tables and example SQL: FF Factory `docs/test-history.md`.
+
+**Before you call a red test flaky,** look at its history with `{query:"test", test:"<ClassName>"}`: a record of `fp`
+labels is evidence, and a first failure is not. `never_caught` and the false-positive ranking only suggest: removing,
+loosening or re-tagging a test is a person's decision.
+
 ### Before ANY test run: Burst must be ENABLED, and finished compiling
 
 Burst compilation is an editor setting that can be off, and it does not announce itself. Check
