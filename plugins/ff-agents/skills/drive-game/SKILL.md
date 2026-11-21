@@ -174,6 +174,12 @@ this (the heartbeat clock is a Stopwatch, and UPS changes each step's Dt). Full 
 
 ## Control channels
 
+**From a shell** (no MCP tools, a script, a remote editor) use `scripts/unity-bridge.py`'s fixed commands, never a
+hand-built loop (lothsahn, w4966): `play`, `stop-play`, `pause`/`unpause`, `ffauto "pointer.clear" "ui.open|X"`
+(or `ffauto -` with one command per line), `wait-for --match <text> --ffauto "<cmd>"`, `eval-file -` for a
+snippet, `wait-ready` after a restart. Each is one bounded call with a one-line answer; the table is editor-ops
+`references/recovery.md`, "From a shell: the fixed commands".
+
 1. **`execute_code` — the primary surface.** Compiles via Roslyn on macOS AND Windows
    (`"compiler":"roslyn"`). Use it to inspect/mutate live ECS state, drive uGUI menus by reflection,
    call `SaveGameManager`, and pump frames. It is also the RIGHT way to check Log-level progress
