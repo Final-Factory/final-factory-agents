@@ -70,3 +70,6 @@ For any `rm`, `Remove-Item`, `del`, `rd`, `git clean`, `shutil.rmtree` or clean-
    the rebuild it causes (a cold Unity start, the build it adds), and put that measured cost in the PR. The build machines
    have no spare CPU: LothDesktop is almost always full, and a cold Unity start is slow
    ([lesson](../lessons/clean-up-after-yourself.md#a-discarded-cache-is-a-rebuild-prune-only-stale-entries-measure-the-cost-state-it-in-the-pr-w2765); lothsahn on w2752: "A cold unity station is quite slow so we should make sure to not do it often").
+   The other way round too: a purge or clean rebuild that is there on purpose (the nightly deletes `Library/ShaderCache`
+   every night so a corrupted cache is regenerated, w4869) is a safeguard, and keeping that cache to save the rebuild
+   is a person's decision ([merge checklist](merge.md), "A PR that turns off, skips or removes a CI or build safeguard").

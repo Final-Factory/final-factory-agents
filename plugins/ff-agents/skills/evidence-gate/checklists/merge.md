@@ -19,6 +19,20 @@ never `pr_evidence.py ... | tail && ff-pr merge`, whose exit is tail's (w4145: #
 failure was "a newer checker is released", so no harm). Take the newest installed checker
 (`ls -d <plugin cache>/ff-agents/* | sort -V | tail -1`) when `$FF_SKILLS` names an older one.
 
+**A PR that turns off, skips or removes a CI or build safeguard is a person's decision, not yours to merge** (w4817,
+w5025, 2026-11-21). Read your workflow, build-script and test-runner diff for anything it narrows: a check or job
+deleted or made conditional, a folder taken out of a cache purge or clean, a compile mode turned off
+(`UNITY_BURST_DISABLE_COMPILATION`, `--burst-disable-compilation`, IL2CPP to Mono), a test category excluded,
+`continue-on-error`, a looser timeout. For each: (1) find why it is there (`git log -S`/`git blame` on the line, its
+comment, the docs and the request or PR that added it); (2) write what coverage is lost; (3) try a fix that keeps it
+(wait for Burst instead of turning it off; speed the build another way instead of keeping a cache the nightly clears);
+(4) if removal still looks right, hand it up with `waiting_on_person` and do not merge it. The PR carries a
+`## Safeguard` paragraph with all four and who decided. A person's removal for one gate or branch (master's Burst-off
+gate, w1759) is not a precedent for the next: w5025 carried it to pre-1.0 and lothsahn reversed it ("No, we need to run
+tests with burst"), as w4869 reversed #3988's ShaderCache cap ("the point of the nightly build was to clear and rebuild
+the shader cache")
+([lesson](../lessons/research-the-decision-not-the-topic.md#a-ci-or-build-safeguard-is-removed-only-after-you-know-why-it-is-there-w4817-w5025-2026-11-21)).
+
 **Read the PR's base and the trunk rule again just before you merge** (w1065, 2026-10-12): a base can change after
 you open the PR. When w1137 retired `develop`, GitHub moved every open PR based on it to `master`, and the branch's own
 CLAUDE.md still said develop. `gh pr view <n> --json baseRefName`, and the rule from `git show origin/master:CLAUDE.md`,
