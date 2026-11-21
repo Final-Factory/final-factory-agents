@@ -487,6 +487,13 @@ class StyleTest(unittest.TestCase):
         summaries, _ = ul.style(None, hud(), "InventoryPanel", touched_fragments=["InventoryPanel"])
         self.assertEqual(summaries, [])
 
+    def test_a_missing_reference_panel_is_named_on_the_style_line(self):
+        # w5048: `--touched UpgradeTool` with no classic twin open printed "Style: nothing checked" and hid the failure.
+        _, out = Cmd.run(hud(), hud(), extra=["--touched", "InventoryPanel", "--ref", "NoSuchPanel"])
+        line = the_line(out, "Style")
+        self.assertIn("no reference panel matching 'NoSuchPanel'", line)
+        self.assertNotIn("nothing checked", line)
+
     def test_an_animated_element_is_listed_not_measured(self):
         # w4288: a glow that pulses on the clock is caught at another phase in each still (PR #3665, delta E 44.8).
         after = hud()

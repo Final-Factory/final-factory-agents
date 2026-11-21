@@ -2107,7 +2107,8 @@ def run_check(args) -> int:
     ref_census = load(args.ref_census) if args.ref_census else None
     summaries, failures = style(before, after, args.ref, args.shot, args.ref_shot, ref_census, args.touched,
                                 animated=animated_patterns(spec))
-    print("Style: " + ("; ".join(summaries) if summaries else "nothing checked"))
+    # w5048: a missing --ref panel fails with no summary: say why on this line, not "nothing checked".
+    print("Style: " + ("; ".join(summaries) if summaries else "; ".join(failures) if failures else "nothing checked"))
     for f in failures:
         print(f"  STYLE: {f}")
     failed |= bool(failures)
