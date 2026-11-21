@@ -163,6 +163,8 @@ Station Order").
     changed, and every panel the census sees change, against a classic reference panel
     (`--ref`, the Inventory by default) on screen (`--shot`/`--ref-shot`): delta E 10 or less, the
     same art, the same see-through. A sentence ("keeps its translucent look") is not a check.
+    **A window with no classic twin in the census** (w5048, UpgradeTool): pass `--touched <window> --ref <window>` to
+    `ui_layout.py check`; without it Style names the missing reference panel and `pr_evidence.py` has no Style line to accept.
     **A translucent panel whose art the change does not touch** (title-menu panels: Mods, lobby settings): its on-screen
     delta E against another panel measures the animated background behind both (w1314: master's own unchanged Mods panel
     read 8.9 at 1920x1080 and 21.3 at 1280x800 against `P3_LobbySettings`), and `--ref` naming the touched panel itself is
