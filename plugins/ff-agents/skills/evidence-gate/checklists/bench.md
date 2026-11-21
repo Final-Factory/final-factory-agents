@@ -265,7 +265,14 @@ Mechanics: the game repo's `Documentation/Bench-Lock.md`.
       join launched 5 min late and the host's window ran out). Hold the ticket wait with `run_in_background`, never a
       foreground until-loop: a blocking call hid the next GO for 6 min. `ff-leftovers end` ends every background job of
       your session, your own `bench_queue.py timed` holder included, so ending a finished player between joins dropped
-      the ticket twice; re-take it at once, or let the player end by its own timeout.
+      the ticket twice; re-take it at once, or let the player end by its own timeout. Again in w5040 (BEAST, 2026-11-21,
+      a route-arrow A/B): `ff-leftovers end` between legs stopped the holder ("its starter bash ... was stopped") and the
+      lock went mid-A/B. A/B legs that each launch a player: give each player its own `-ffSoloQuitAfterSeconds`, wait
+      for its exit, then start the next side; `ff-leftovers end` only after `bench_queue.py timed --release`.
+- [ ] **Wait on a Windows player's exit by its WINPID or its slot path, never `ps -W` column 1** (w5040, BEAST,
+      2026-11-21). Git Bash `ps -W` prints PID PPID PGID WINPID ...: a Windows pid matched against column 1 never
+      matched, the script went on while the players ran, and their quit autosaves landed after the save restore. Match
+      column 4, or simpler wait until `ps -W | grep -i finalfactory | grep -qi 'players\\<slot>'` finds nothing.
 - [ ] **A network latency leg from a Linux host on Wi-Fi checks the radio before blaming the network** (w3925,
       2026-11-11, biscuit: ping p99 to the router 409 ms, then 12-17 ms after the fixes). Read
       `iw dev <if> get power_save` (on is the NetworkManager default), `iw dev <if> link` (which mesh node and its
