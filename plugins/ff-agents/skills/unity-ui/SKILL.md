@@ -177,6 +177,10 @@ census (`<shot>.json`: small, clipped, off-screen and overlapping text, covered 
   the change. A move `moves` lists far from what you changed gets one re-run of that leg before it goes in `Moved:`.
   FF Factory's Bash guard also refuses any command whose text holds the player exe's file name, a grep of a build log
   included: wait on a build by its background notice.
+- **No `timeout` inside `game_data.py run` on Windows (w5032).** In `python scripts/game_data.py run -- timeout -s TERM
+  <n> ...` the command runs through Windows, where `timeout` is `TIMEOUT.EXE` ("Invalid syntax"), so the player never
+  starts and the leg makes no stills. End a tour player with `-ffSoloQuitAfterSeconds <n>` (and `-ffDeckTourQuit`)
+  instead (`specs/w5032-hub-tab-font/tour/run_tour.sh`).
 - **Tour traps from w4120.** (1) A `record` clip's frames (`<clip>/NNNNN.jpg`) are stored upside down: `ui_check.py
   flicker` reads them as they are, but a reviewable mp4 needs `ffmpeg -framerate 60 -i <clip>/%05d.jpg -vf vflip ...`,
   and you look at one frame before you publish (w4120 published two flipped mp4s first). (2) The player's seeded world
