@@ -257,6 +257,33 @@ Two adjacent traps:
   in ONLY one of the two revisions (e.g. a type the newer rev added must be ABSENT after an
   older-rev checkout), then force `recompile` if wrong.
 
+### From a shell: the fixed commands, never a hand-built chain (w4966)
+
+lothsahn, 2026-11-21 (w4966): "Claude keeps trying to run bash commands ... Can we update its instructions so that's no
+longer necessary, possibly by either putting that in a hardcoded shell script or something? That way it doesn't
+accidentally damage the install somehow?" When a shell drives the editor (no MCP tools, a script, a remote editor), use
+`scripts/unity-bridge.py`'s fixed commands. Each is one call with its own bounded wait (`--timeout` bounds the whole
+command), prints one line, and exits 0 ok, 2 usage, 3 no bridge, 4 timed out, 5 editor error or failure, 6 timing
+refused. `--project-path` defaults to the checkout the script sits in.
+
+| Instead of | Run |
+|---|---|
+| a `for`/`until` loop of `status` and `sleep` until "ready" | `python scripts/unity-bridge.py wait-ready` |
+| `call refresh_unity` then a wait loop; a snippet calling `RequestScriptReload` | `python scripts/unity-bridge.py reload-and-wait` (leaves play mode first; waits for a FRESH domain reload; on a failed compile exits 5 with the `error CS` lines; clears the `.cs` dirty-state hook and names a new file's missing `.meta`) |
+| `eval 'EditorApplication.isPlaying = true/false;'` and a wait | `play` / `stop-play` |
+| `eval 'EditorApplication.isPaused = ...'` | `pause` / `unpause` |
+| an eval or heredoc around `LocalMultiplayerAutomationCommandRunner.TryExecute("ffauto:...")` | `ffauto "pointer.clear" "ui.open\|Research"`, or `ffauto -` with one command per line on stdin: stops at the first failed command (exit 5), waits each command's completion delay |
+| `call run_tests` then a `get_test_job` poll loop | `run-tests --tests Tests.UI.FooTest,Tests.X.BarTest` (`--tests-file <file>`, or `--selected` for `scripts/test_select.py`'s pick; Performance excluded): prints `passed N of N`, exit 5 on a failure **or when no test matched** |
+| a `for` loop re-running an eval until it prints READY | `wait-for --match READY <file.cs \| - \| --ffauto "<cmd>">` |
+| `cat > file.cs <<EOF` then `eval_file file.cs` | `eval-file - <<'EOF' ... EOF` (reads stdin; no file to write or delete) |
+
+A raw test job that matched nothing answers `total 0` and `resultState "Passed"`: a bare class name
+(`GraphicCanvasRendererGuardTest`) did that on slot2 (measured, w4966); `run-tests` calls it a failure, names must be
+namespace-qualified (`Tests.UI.GraphicCanvasRendererGuardTest`). The game repo's `bridge-chain-warn.sh` hook warns, and
+names the command, when a Bash call builds one of the chains on the left; the fixed commands (not `eval-file`/`wait-for`,
+which run arbitrary C#) are on its `.claude/settings.json` allowlist. Branches older than w4966's merge have only
+`ping | status | eval | eval_file | call`.
+
 ### Shell access to the editor: `scripts/unity-bridge.py`, not a second channel
 
 The game repo removed `com.unity.pipeline` and its loopback HTTP server (w533, PR #1154, merged

@@ -39,6 +39,8 @@ The editor is usually OCCLUDED, so the player loop is FROZEN except when you pum
 
 - Issue commands via `execute_code`:
   `Behaviours.Multiplayer.LocalMultiplayerAutomationCommandRunner.TryExecute("ffauto:...", out var r); return r;`
+  From a shell, `python scripts/unity-bridge.py ffauto "<cmd>" ...` (or `ffauto -`, one command per line) does it in
+  one call and stops at the first failed command; never wrap `TryExecute` in an eval or heredoc chain (w4966).
 - Pump frames in ≤600 `UnityEditor.EditorApplication.Step()` calls **per execute_code call,
   cumulative across loops in the call** (a 3000-step total wedges the bridge past its timeout).
 - `waituntil` NEVER blocks interactively: it returns `wait-N registered ...` immediately.

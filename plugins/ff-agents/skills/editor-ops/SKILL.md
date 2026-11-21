@@ -16,6 +16,12 @@ and collect each job's result. Local tests and local subagents do not substitute
 This is the full operational detail behind the game repo CLAUDE.md's Build & Test kernel, kept
 here so it loads on demand. The rules below are binding, not advisory.
 
+**From a shell, drive the editor only with `scripts/unity-bridge.py`'s fixed commands** (lothsahn, w4966):
+`wait-ready`, `reload-and-wait`, `play`, `stop-play`, `pause`/`unpause`, `ffauto "<cmd>" ...`,
+`run-tests --tests A,B | --selected`, `wait-for --match <text>`, `eval-file -` (a heredoc). Never build a
+`for`/`until`/`sleep` loop around `status`, `call` or `eval`. The table of what each replaces:
+[`references/recovery.md`](references/recovery.md), "From a shell: the fixed commands".
+
 ## Runtime translation
 
 The workflows in this shared skill apply to both Claude Code and Codex. Use the native tools
@@ -105,7 +111,7 @@ first, not a second identical call:
 | `No Unity instances are currently connected` / `No Unity Editor instances found`, right after `unity` start or restart | the editor process is up, the project is still loading | poll `mcp__machine__unity` status until it says `running` (its description: "the MCP bridge follows once the project has loaded"), or wait for `StdioBridgeHost started on port` in the editor log, in one `until` loop; then pin |
 | the same, mid-session, after a compile or a test run | a reload's sub-second drop, cached 5 s | the section below: wait 2 s, then re-pin by port |
 | `refresh_unity` `timed out after 60s waiting for editor readiness` | a slow compile and reload (10 to 31 s reloads on lothdesktop, measured); the compile still runs | don't call it again: wait for `Domain Reload Profiling` in the editor log or the status to go idle, then `read_console` for `error CS` |
-| `unity-bridge.py`: `bridge closed the connection` / `Connection refused` mid-script | the bridge dropped for a reload | `until python scripts/unity-bridge.py ping --project-path <abs>; do sleep 2; done`, then retry the call once |
+| `unity-bridge.py`: `bridge closed the connection` / `Connection refused` mid-script | the bridge dropped for a reload | `python scripts/unity-bridge.py wait-ready` (one bounded call, w4966), then retry the call once |
 | `unity-bridge.py eval`: `bridge closed the connection` after about 30 s with no reload | the editor gave up waiting on a long eval, which **keeps running** in the editor (a second send logs "Suppressed duplicate command"); its return value is lost (measured 2026-11-19, w4801, biscuit: a timing eval of 3 runs and a probe lost their output twice) | keep each eval under about 20 s (one timed run per call, a loop of calls in a script), or have it write its result to a static field or file and read that in a second call; do not resend it while it runs |
 | `Command TCS timed out` / `Timeout receiving Unity response` three times running | the main thread is starved or hung (b0e2d247 on biscuit: 52 in a row, then the editor crashed) | stop sending calls; read the editor log; if it is hung, `mcp__machine__unity` restart (force for a frozen one) |
 | `No such tool available: mcp__UnityMCP__<tool>`, the server connected | the server is mid-reload or does not offer that tool | wait for the reload; for a console read, grep the editor log for `error CS` meanwhile |
