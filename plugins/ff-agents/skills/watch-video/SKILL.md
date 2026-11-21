@@ -62,6 +62,11 @@ with a smooth built-game clip (recorded as below), and you stop the Live view an
    itself): `--player` follows the lease to the game the runner started (its child, else the player running from that
    slot's folder), never the windowless runner (w4823: it took the ffnightly python, pid 28000, and failed with "no
    visible window"). Start it once the game window is up; before that it says the runner "runs no game yet".
+   **A nightly run's player pid, for `--pid`**: `python scripts/nightly/player_slots.py mine` names each player running
+   from your leased slots (`pid`, its `slot`: `K-0` the host, `K-1` the clients; `lease_pid` is the runner's), and
+   `running: false` until one is up (w4956, game repo #4067; before it, `mine` named the runner, 37488 against the host's
+   37576 on lothdesktop). On a checkout older than that: `Get-Process finalfactory` whose `Path` is under
+   `players\slotK-0` and whose `MainWindowHandle` is non-zero.
    **It can take up to 13 s to start recording** (measured on lothdesktop: w4805's MARK at 19:23:20, its clip stamped
    19:23:33; 3 s and 1 s in other takes), so a recorder started on a short leg's log line misses the leg (a 9 s pad turn was lost). Start
    ONE long clip (`--seconds` the whole scenario) when the scenario prints its MARK, and cut the legs from it after.
