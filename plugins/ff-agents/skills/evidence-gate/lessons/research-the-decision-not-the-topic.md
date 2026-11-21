@@ -1,6 +1,6 @@
 ---
 name: research-the-decision-not-the-topic
-description: "Research questions come from the choices you are about to make, each labelled measured, sourced or guess. The Reddit campaign of October 2026 was researched by topic, and its bid was never a question."
+description: "Research questions come from the choices you are about to make, each labelled measured, sourced or guess. The Reddit campaign of October 2026 was researched by topic, and its bid was never a question. A CI or build safeguard (a check, a cache purge, Burst or IL2CPP, a test category) is turned off or removed only after finding why it is there and saying what coverage is lost; prefer a fix that keeps it, and hand a removal up as a person's decision (w4817's ShaderCache cap, w5025's Burst-off gate, both reversed by lothsahn)."
 date: 2026-10-02
 ---
 
@@ -117,3 +117,52 @@ reading is caught before the person sees it. A fix whose diff is about the wrong
   listed, and was either asked for or put back.
 - Brief the critic with the `Reading:` block (the person's words and the part each refers to, not what you did). It
   fails an edit that left the named part as it was or changed another part instead.
+
+## A CI or build safeguard is removed only after you know why it is there (w4817, w5025, 2026-11-21)
+
+**Rule.** Before a change turns off, skips, caps or removes a safeguard in CI, a build or a test run (a check or a
+required job, a cache purge or a clean rebuild, a compile mode such as Burst or IL2CPP, a test category, a timeout, a
+retry limit, a validation step), you:
+
+1. **Find why it is there.** `git log -S '<the line>' -- <file>` or `git blame` on the line, the comment beside it, the
+   docs it names (`Documentation/CI-Runs.md`, the script's header), and the request or PR that added it (`Request: wNNN`
+   in its body). A comment that says "on purpose" or quotes a person ends the question: the safeguard stays.
+2. **Say what coverage is lost** if it goes, in one plain line: what bug class would no longer be caught, and where else
+   (if anywhere) it still is.
+3. **Prefer a fix that keeps it.** Make the slow or flaky thing fast or steady with the safeguard on: wait for Burst's
+   background compile instead of turning Burst off, speed the build some other way instead of keeping a cache the
+   nightly clears.
+4. **If removing it still looks right, hand it up as a decision**: `waiting_on_person` (or `hand_up_requests`) with the
+   reason it exists, the coverage lost, the fix you tried that keeps it, and your pick. Do not merge the removal on your
+   own judgment, however green CI is: CI cannot tell you what it has stopped checking.
+
+The PR that touches a safeguard says all four in a `## Safeguard` paragraph: why it exists (with its source), what is
+lost, the keeping fix you tried, and who decided.
+
+**Why.** Two corrections of the same kind from lothsahn in two days, both a worker making CI faster or steadier by
+taking a safeguard out, without asking why it was there:
+
+- w4817 (PR #3988, 2026-11-20) stopped the nightly from purging `Library/ShaderCache` below a 2 GB cap, to cut cold
+  shader compiles (over 2,000 s against 23 s warm, measured). lothsahn: "Wait a second, the point of the nightly build
+  was to clear and rebuild the shader cache so that if there was any corruption it would get regenerated". w4869
+  reverted it (PR #4005). The purge script's header now says so, and the game repo's
+  `NightlyShaderCachePurgeGuardTest` (w5030, PR #4113) fails a change that takes ShaderCache out of the purge.
+- w5025 (PR #4111, 2026-11-21) set `UNITY_BURST_DISABLE_COMPILATION=1` on pre-1.0's merge gate to stop a cold
+  synchronous Burst compile from stalling `HelpButtonTooltipTest` 285 s. lothsahn: "No, we need to run tests with
+  burst. It's critical because it can have impacts on system behavior". It is being undone by waiting for Burst's
+  background compile instead (w5028's PR #4112, w5029), the keeping fix step 3 asks for.
+
+In both the speed-up was measured and real; what was missing was the question why the cost was being paid. A safeguard
+costs time on every run and pays off once in a long while, so a worker looking at one slow run always sees only its
+cost.
+
+**How to apply.** Read the diff of your CI, workflow, build-script or test-runner change for anything it turns off or
+narrows: an env var or flag set to disable (`UNITY_BURST_DISABLE_COMPILATION`, `--burst-disable-compilation`,
+`-testCategory '!...'`, `continue-on-error: true`, `if: false`), a deleted step or job, a folder taken out of a purge or
+a clean, a check made conditional. Each one goes through the four steps before the PR leaves draft.
+
+A removal a person decided is the model, not a precedent to copy: master's merge gate runs Burst off because lothsahn
+chose it for that gate (w1759: "make them run much faster. Some coverage loss is acceptable"), and its comment in
+`.github/workflows/main.yml` names what moved to the Burst-on master batch. That decision covered master's gate only;
+w5025 carried it to pre-1.0 without asking and was reversed. A decision for one gate, branch or job is asked again for
+the next.

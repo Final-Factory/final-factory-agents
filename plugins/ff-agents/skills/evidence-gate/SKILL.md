@@ -383,6 +383,12 @@ One file each under `lessons/`: the rule, why (the incident, dated), how to appl
   and exclusive is only for exact timings or the whole machine.
 - [Research the decision, not the topic](lessons/research-the-decision-not-the-topic.md): the
   Reddit caps came from a topic survey; nobody asked what bid wins US auctions. Label every basis.
+- [A CI or build safeguard is removed only after you know why it is there](lessons/research-the-decision-not-the-topic.md#a-ci-or-build-safeguard-is-removed-only-after-you-know-why-it-is-there-w4817-w5025-2026-11-21):
+  before a change turns off, skips or removes a check, cache purge, compile mode (Burst, IL2CPP), test category or
+  other CI or build safeguard: find why it is there (blame, docs, the PR that added it), say what coverage is lost,
+  prefer a fix that keeps it (wait for Burst, not Burst off), and hand a removal up as a decision instead of merging
+  it. w4817 (#3988) stopped the nightly's ShaderCache purge and w5025 (#4111) turned Burst off in pre-1.0's gate, both
+  to make CI faster; lothsahn reversed both.
 - [Build the pick the person saw](lessons/research-the-decision-not-the-topic.md#build-the-pick-the-person-saw-its-still-checked-against-their-words-w1323-w2580-2026-10-31):
   a pick is named by its still and what it shows, checked against the person's own words before building, and the
   PR shows the build beside the picked still (`Picked:` line, `pr_evidence.py`; `--pick` before building). w1323
