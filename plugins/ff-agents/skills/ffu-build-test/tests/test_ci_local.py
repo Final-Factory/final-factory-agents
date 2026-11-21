@@ -170,16 +170,96 @@ def git_bash():
     return b
 
 
+class LocalEnv(unittest.TestCase):
+    def setUp(self):
+        self.tmp = Path(tempfile.mkdtemp())
+
+    def tearDown(self):
+        shutil.rmtree(self.tmp, ignore_errors=True)
+
+    def test_every_step_writes_python_output_as_utf8_unless_the_workflow_says(self):
+        wf = WORKFLOW.replace("  CARGO_TERM_COLOR: always\n", "  CARGO_TERM_COLOR: always\n  PYTHONIOENCODING: latin-1\n")
+        _, rows, _ = plan(self.tmp, wf)
+        s = Path(next(r[2] for r in rows if r[3] == "echo fmt ok")).read_text(encoding="utf-8")
+        self.assertIn("export PYTHONUTF8='1'", s)
+        self.assertIn("export PYTHONIOENCODING='latin-1'", s)  # the workflow's own value wins
+        self.assertNotIn("export PYTHONIOENCODING='utf-8'", s)
+
+    def test_step_minutes_column(self):
+        wf = WORKFLOW.replace("      - run: echo fmt ok\n", "      - run: echo fmt ok\n        timeout-minutes: 7\n")
+        code, rows, _ = plan(self.tmp, wf)
+        self.assertEqual(code, 0)
+        self.assertTrue(all(len(r) == 5 for r in rows), rows)
+        by = {r[3]: r[4] for r in rows}
+        self.assertEqual((by["echo fmt ok"], by["fuzz"], by["toolchain"]), ("7", "-", "-"))
+        code, _, _ = plan(self.tmp, wf.replace("timeout-minutes: 7", "timeout-minutes: ${{ inputs.t }}"))
+        self.assertEqual(code, 2)
+
+
 @unittest.skipUnless(git_bash() and shutil.which("git"), "needs bash and git")
 class EndToEnd(unittest.TestCase):
+    def setUp(self):
+        self.tmp = Path(tempfile.mkdtemp())
+        self.repo = self.tmp / "repo"
+        (self.repo / ".github" / "workflows").mkdir(parents=True)
+        (self.repo / "tools").mkdir()
+        (self.repo / "tools" / "check_sim_rules.sh").write_text("#!/bin/sh\n", encoding="utf-8")
+        subprocess.run(["git", "init", "-q", str(self.repo)], check=True)
+        fake = self.tmp / "bin"  # the script stops without a cargo; these steps never call it
+        fake.mkdir()
+        (fake / "cargo").write_text("#!/bin/sh\nexit 0\n", encoding="utf-8")
+        (fake / "cargo").chmod(0o755)
+        self.env = dict(os.environ, TMPDIR=str(self.tmp).replace("\\", "/"), CARGO_HOME=str(self.tmp))
+        for k in ("PYTHONUTF8", "PYTHONIOENCODING"):  # the run must set them itself
+            self.env.pop(k, None)
+
+    def tearDown(self):
+        shutil.rmtree(self.tmp, ignore_errors=True)
+
+    def run_local(self, wf, *args, **env):
+        (self.repo / ".github" / "workflows" / "ci.yml").write_text(wf, encoding="utf-8")
+        return subprocess.run([git_bash(), str(HERE / "ci_local.sh"), *args], cwd=self.repo,
+                              env=dict(self.env, **env), capture_output=True, text=True, encoding="utf-8")
+
+    def test_a_pr_body_with_an_emoji_passes_the_row_doc_read(self):
+        # ffu ci.yml's row-doc step prints the PR body to a file with Python; on Windows that wrote cp1252 and the
+        # robot emoji of the "Generated with Claude Code" line raised UnicodeEncodeError (w4987)
+        wf = """\
+jobs:
+  lint:
+    steps:
+      - name: the body is read
+        run: |
+          if [ "${{ github.event_name }}" = pull_request ]; then
+            python3 -c 'import json, os; print(json.load(open(os.environ["GITHUB_EVENT_PATH"]))["pull_request"].get("body") or "")' > "$RUNNER_TEMP/pr_body.txt"
+            python3 -c 'import sys; t = open(sys.argv[1], encoding="utf-8").read(); sys.exit(0 if chr(0x1F916) in t else 5)' "$RUNNER_TEMP/pr_body.txt"
+            python3 -c 'print(chr(0x1F916), "to stdout")'
+          fi
+"""
+        body = self.tmp / "body.md"
+        body.write_text("Row W1j.\n\n\U0001F916 Generated with [Claude Code](https://claude.com/claude-code)\n",
+                        encoding="utf-8")
+        r = self.run_local(wf, "--jobs", "lint", str(body))
+        self.assertEqual(r.returncode, 0, r.stdout + r.stderr)
+        self.assertRegex(r.stdout, r"PASS  lint-01-the-body-is-read")
+
+    def test_a_step_past_its_minutes_is_ended(self):
+        wf = """\
+jobs:
+  lint:
+    steps:
+      - name: hangs
+        run: echo started; sleep 120
+      - run: echo after the hang
+"""
+        r = self.run_local(wf, "--jobs", "lint", CI_LOCAL_STEP_MINUTES="0.05")
+        self.assertEqual(r.returncode, 1, r.stdout + r.stderr)
+        self.assertRegex(r.stdout, r"TIMEOUT lint-01-hangs .*ended after 0.05 min")
+        self.assertIn("| started", r.stdout)
+        self.assertRegex(r.stdout, r"PASS  lint-02-echo-after-the-hang")
+
     def test_pass_fail_lines_logs_and_tail(self):
-        tmp = Path(tempfile.mkdtemp())
-        try:
-            repo = tmp / "repo"
-            (repo / ".github" / "workflows").mkdir(parents=True)
-            (repo / "tools").mkdir()
-            (repo / "tools" / "check_sim_rules.sh").write_text("#!/bin/sh\n", encoding="utf-8")
-            wf = """\
+        wf = """\
 jobs:
   lint:
     steps:
@@ -197,26 +277,16 @@ jobs:
         env:
           FFU_REQUIRE_GPU: "1"
 """
-            (repo / ".github" / "workflows" / "ci.yml").write_text(wf, encoding="utf-8")
-            subprocess.run(["git", "init", "-q", str(repo)], check=True)
-            fake = tmp / "bin"  # the script stops without a cargo; these steps never call it
-            fake.mkdir()
-            (fake / "cargo").write_text("#!/bin/sh\nexit 0\n", encoding="utf-8")
-            (fake / "cargo").chmod(0o755)
-            env = dict(os.environ, TMPDIR=str(tmp).replace("\\", "/"), CARGO_HOME=str(tmp))
-            r = subprocess.run([git_bash(), str(HERE / "ci_local.sh")], cwd=repo, env=env, capture_output=True,
-                               text=True)
-            out = r.stdout
-            self.assertEqual(r.returncode, 1, out + r.stderr)
-            self.assertRegex(out, r"SKIP  lint-01-actions-checkout-v4")
-            self.assertRegex(out, r"PASS  lint-02-echo-fine")
-            self.assertRegex(out, r"FAIL  lint-03-red-one .*exit 4")
-            self.assertIn("| line-two", out)
-            self.assertRegex(out, r"PASS  lint-04-echo-after-the-red-one")
-            self.assertRegex(out, r"PASS  check-01-test-ffu-require-gpu-1")
-            self.assertTrue((tmp / "step-lint-03-red-one.log").exists())
-        finally:
-            shutil.rmtree(tmp, ignore_errors=True)
+        r = self.run_local(wf)
+        out = r.stdout
+        self.assertEqual(r.returncode, 1, out + r.stderr)
+        self.assertRegex(out, r"SKIP  lint-01-actions-checkout-v4")
+        self.assertRegex(out, r"PASS  lint-02-echo-fine")
+        self.assertRegex(out, r"FAIL  lint-03-red-one .*exit 4")
+        self.assertIn("| line-two", out)
+        self.assertRegex(out, r"PASS  lint-04-echo-after-the-red-one")
+        self.assertRegex(out, r"PASS  check-01-test-ffu-require-gpu-1")
+        self.assertTrue((self.tmp / "step-lint-03-red-one.log").exists())
 
 
 if __name__ == "__main__":
