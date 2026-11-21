@@ -228,7 +228,10 @@ Not verified: the Bats' slot lag (simulation, follow-up PR)
 - **A runtime-added `[Save]` buffer is kept or has a verdict** ([lesson](../lessons/verify-simulation-at-a-slow-hosts-frame-rate.md#a-runtime-added-save-buffer-is-kept-empty-or-says-why-it-need-not-be-w3850-2026-11-09);
   w3850): a new `AddBuffer`/`AddComponent` of a `[Save]` buffer on an entity whose prefab does not bake it adds the type
   to `ColumnarWorldCapture.KeepsEmptyBuffer` or to `EmptySaveBufferGuardTest`'s allow-list with the reason; the PR's
-  Save compatibility line says which. A generic-parameter add escapes the guard's scan: check it by hand.
+  Save compatibility line says which. A generic-parameter add escapes the guard's scan: check it by hand. A buffer added
+  at runtime that old saves never carry is the same case (w4975: `HaulerWaypointPace`, added by the first Hold append
+  and emptied when its stops go, went into `ColumnarWorldCapture.KeptEmpty`, else a joiner's station lacks it while the
+  host's keeps it, a census desync).
 - **A re-pinned digest or golden test says what its fixtures don't carry** ([lesson](../lessons/look-early-by-breakdown.md#a-digest-is-blind-to-fields-its-fixtures-never-carry-w2124-2026-10-25);
   w2124): the Tests line names each field the digest excludes and the assertion that pins its value, any feature the
   change touches that no fixture sets and the test that now sets it, and the mutant arm that went red.

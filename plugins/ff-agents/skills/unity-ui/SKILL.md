@@ -578,6 +578,12 @@ re-run the leg, never a finding.
   Windows capture rather than calling it real-rate. (3) `ui_layout.py moves` matches a block moved under another parent in
   the same place and prints it as "reparented, not counted" (w1487 put the map's arrow under GamePanels so windows draw
   over it; before, it read "gone from the screen", which the PR gate accepts only as asked).
+- **An open game window does not make a census docked (w4975, game PR #4082).** `ui_layout.py moves` and `pins` call a
+  census `docked` only when an element under `StructuredDock` or `StructuredStation` is on screen (`layout_of`), or the
+  census says `"layout"` itself. A tour leg with three stations selected and the Selected Stations window open has no
+  building in the dock, so its census reads `undocked` and the gate still misses the docked layout. Take the docked leg
+  from the pins census (the station tour, a building selected in the dock), and keep the window's own leg for its
+  `Style:` and stills.
 - **A merge review's census of every slide-out, four traps (w1737, Windows development players, game PR #2194).** (1) Never
   add `-ffAutomationRole solo` to a `-ffSoloNewGame` tour: the new game gets two `MePlayer` entities and the first ffauto
   step fails "GetSingleton() requires that exactly one entity exists ... there are 2" (stack `PlayersManager.Me`,

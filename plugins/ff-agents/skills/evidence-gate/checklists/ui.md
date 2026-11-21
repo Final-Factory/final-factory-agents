@@ -258,7 +258,9 @@ screen; on desktop three labels stopped fitting, the two windows left their defa
       PR with the person's words. It fails a quote that is not in the brief's quotations (#1392 quoted "Station Grid
       Information on the left of center", which nobody said), a Deck quote on a desktop line, a pinned element whose quote
       does not name it, a line that folds several elements together, and a `Moved:` or `Pinned:` line that leaves out a
-      screen or the docked layout.
+      screen or the docked layout. A census counts as docked only with a building's window in the dock: one with a game
+      window open instead (w4975: the Selected Stations window) reads `undocked`, so the docked leg comes from the pins
+      census (unity-ui, "An open game window does not make a census docked").
     - `ff-pr merge` and the merge-on-green pilot run `pr_evidence.py --repo --pr` with no `--brief`, so a PASS with
       `--brief` alone is not the gate: the PR's `Brief (Ben): "..."` line must hold every quote its `Moved:` and
       `Window overlaps:` lines use, and the last check before you push runs without `--brief` (w3258: #3283 passed with

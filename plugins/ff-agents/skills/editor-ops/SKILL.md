@@ -775,6 +775,16 @@ windows firewall") binds 127.0.0.1, and node runs from PATH (the root's `tools\n
 `$TMPDIR` ([lesson](../evidence-gate/lessons/clean-up-after-yourself.md#a-listener-binds-127001-or-runs-from-a-stable-path-never-from-tmpdir-w1742)).
 More: the game repo's `specs/075-nightly-e2e-regression/quickstart.md`.
 
+**`ffnightly.py` records no clip** (w4975, 2026-11-21): its scenario steps are `assert`, `do`, `launch`, `sleep`,
+`heartbeats`, `snapshot`, `screenshot`, `waitPlaying`, `mark`, `agree`, `poll`, `skipUntil`, `place`, `relaunch`,
+`restart`, `tutorialPlay` and `copySave` (`scripts/nightly/ffnightly.py`, the step dispatch), stills only. For a clip of
+a built player, launch it from the slot pool and record it with `record_clip.py --player` (`/ff-agents:watch-video`).
+
+**Never leave a stdin-reading command in a Bash call** (w4975, 2026-11-21: a stray `cat` with no file at the start of a
+command waited on stdin, and neither the PR body edit nor `ff-pr` after it ran for 20 minutes). The Bash tool's stdin
+stays open, so a bare `cat`, `read` or a tool that reads stdin when given no file hangs silently until the call's
+timeout. Give such a command its input, or pass `</dev/null`.
+
 **Not beside another worker's timed run** (w1750, lothsahn: "Why is the game player running if the worker has an exclusive lock on beast?"): while another worker holds the machine's bench lock for a timed run, `player_slots.py launch` (every launch path), `record_clip` and FF Factory's shell guard refuse a player or a clip there, with `bench lock held by worker <id> (...), until HH:MMZ`. Move the work to another machine, or wait: `--bench-wait <s>` (or `FF_BENCH_WAIT_S`) waits up to that long and starts when the hold ends. Your own timed run's players pass. `python scripts/bench/bench_queue.py status` shows the queue; the game repo's `Documentation/Bench-Lock.md`, "No players or clips beside a timed run".
 
 **A player build from a live editor can wait on a modal for good.** The first Addressables content build of a
