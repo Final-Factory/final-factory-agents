@@ -712,11 +712,16 @@ never rewritten (`tools/check_snapshot_compat.sh BASE_REF` holds it in CI). No t
   not a rerun of a flake). The gate fails closed both ways, so nothing went green by mistake.
 - **`gh pr edit --body-file` fails on ffu with "Projects (classic) is being deprecated"** (w3751): set the body with
   `gh api -X PATCH repos/Final-Factory/ffu/pulls/<n> -F body=@<file>`.
-- **A PR that changes only `docs/` runs no CI**: `ci.yml` has `pull_request: paths-ignore: ['docs/**']` (ffu #297).
-  A `ci:` wait on it ends after 10 min with "no CI run exists". Merge it straight away with `gh pr merge <n> --merge
-  --match-head-commit <head>` (w3382: ffu #395, a PLAN row, sat 10 min in such a wait).
-  `ff-pr status` and `ff-pr merge` answer "no workflow run on this head yet" and say to wait with `blocked_on`: they
-  do not know the filter, so check `mergeStateStatus` is `CLEAN` and merge with gh (w4073, ffu #754).
+- **A PR that changes only `docs/` runs no CI: merge it with `ff-pr merge` straight after `ff-pr push`, with no
+  `blocked_on` wait** (w5017). `ci.yml` has `pull_request: paths-ignore: ['docs/**']` (ffu #297), and a `ci:` wait on
+  such a PR ends after 10 min with "no CI run exists" (w3382: ffu #395). Since ff-factory #1067, ff-pr reads the
+  workflows at the PR's base when the head has no run: `ff-pr push` prints `CI: none will run: every changed file (N) is
+  filtered out: ci.yml pull_request paths-ignore [docs/**] ...` and `next: ff-pr merge (no CI to wait for)`, and
+  `ff-pr merge` merges with `--match-head-commit`. A PR that also changes one file outside `docs/` still waits for its
+  CI (`CI is expected: ci.yml runs: <file> is outside ...`), and a red run is still red: never merge around those.
+  Only an ff-pr older than #1067 (its merge says `no workflow run on this head yet` with no `CI is expected:`) needs the
+  hand route: `gh pr view <n> -R Final-Factory/ffu --json files --jq '.files[].path'` lists only `docs/` paths, then
+  `gh pr merge <n> -R Final-Factory/ffu --merge --match-head-commit <head>` (w4073 ffu #754, w4973 ffu #938).
 - **A Windows test job red with every test passed and `temp leak check: ... MSBuildTemp`** was the build, not a test:
   SDL3's `-sys` crates build through cmake and MSBuild when a runner rebuilds its target. The test jobs build with
   `cargo test ... --no-run` before `check_temp_leaks.sh` since ffu #249 (w2895); keep any new checked step that way.
