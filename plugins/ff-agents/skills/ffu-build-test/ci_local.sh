@@ -5,7 +5,10 @@
 # pull request merged into main. It reads .github/workflows/ci.yml at your HEAD (ci_local.py), so the steps cannot
 # drift from CI's; a step it cannot read stops it with exit 2 and names the step. Each step prints one line,
 # PASS, FAIL or SKIP (runner upkeep, with the reason), and logs to $TMPDIR/step-<job>-<NN>-<name>.log; a failed step
-# prints its last lines. Every step runs, after a failure too, so one run names every red.
+# prints its last lines. Every step runs, after a failure too, so one run names every red. A step that runs past its
+# `timeout-minutes`, else CI_LOCAL_STEP_MINUTES (default 60), is ended and prints TIMEOUT, so no step hangs the run
+# (w4987: a test of tools/ci-runners/postmerge_culprit.py hung for 20 min and more on BEAST). Every step runs with
+# PYTHONUTF8=1, as CI's Linux Python writes UTF-8 (w4987: the PR body's emoji stopped the row-doc step on Windows).
 #
 #   PR         the pull request number: row_numbers.py and check_row_docs.py check as on that PR, and its body is read
 #              with gh unless BODY_FILE is given
@@ -102,8 +105,13 @@ if ! git -C "$repo" merge-base --is-ancestor origin/main HEAD 2> /dev/null; then
 fi
 had_captures=0; [ -e "$repo/lavapipe-captures" ] && had_captures=1
 
+# The step timeout: coreutils timeout (Linux, Git Bash; gtimeout from Homebrew's coreutils on macOS), else none.
+step_minutes=${CI_LOCAL_STEP_MINUTES:-60}
+tmo=$(command -v timeout || command -v gtimeout || true)
+[ -z "$tmo" ] && [ "$list" = 0 ] && echo "note: no timeout or gtimeout on PATH; a step that hangs is not ended" >&2
+
 fails=0 n=0
-while IFS=$'\t' read -r verdict slug third name; do
+while IFS=$'\t' read -r verdict slug third name mins; do
   n=$((n + 1))
   if [ "$verdict" = SKIP ]; then
     printf 'SKIP  %-52s %s\n' "$slug" "($third)"
@@ -115,11 +123,21 @@ while IFS=$'\t' read -r verdict slug third name; do
   fi
   log="$tmp/step-$slug.log"
   start=$(date +%s)
-  bash --noprofile --norc "$third" < /dev/null > "$log" 2>&1
+  m=$step_minutes; [ "${mins:--}" != - ] && m=$mins
+  if [ -n "$tmo" ]; then
+    "$tmo" -k 30 "${m}m" bash --noprofile --norc "$third" < /dev/null > "$log" 2>&1
+  else
+    bash --noprofile --norc "$third" < /dev/null > "$log" 2>&1
+  fi
   rc=$?
   secs=$(($(date +%s) - start))
   if [ "$rc" = 0 ]; then
     printf 'PASS  %-52s %5ss  %s\n' "$slug" "$secs" "$name"
+  elif [ -n "$tmo" ] && { [ "$rc" = 124 ] || [ "$rc" = 137 ]; }; then
+    fails=$((fails + 1))
+    printf 'TIMEOUT %-50s %5ss  ended after %s min  %s\n' "$slug" "$secs" "$m" "$name"
+    echo "      log: $log; its last lines:"
+    tail -n 30 "$log" | sed 's/^/      | /'
   else
     fails=$((fails + 1))
     printf 'FAIL  %-52s %5ss  exit %s  %s\n' "$slug" "$secs" "$rc" "$name"

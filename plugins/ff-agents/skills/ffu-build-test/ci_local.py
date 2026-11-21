@@ -9,8 +9,9 @@ the plan with exit 2 instead of being dropped: that is the drift check.
     ci_local.py plan --repo <ffu checkout> --out <run folder> [--jobs lint,check] [--pr N] [--body-file F]
                      [--base main] [--all] [--ci-cargo-env]
 
-Writes <out>/plan.tsv, one line per step: RUN<TAB>slug<TAB>script<TAB>name, or SKIP<TAB>slug<TAB>reason<TAB>name,
-and one bash script per RUN step (its env exported, then its `run:` body). Stdlib only, Python 3.8+.
+Writes <out>/plan.tsv, one line per step: RUN<TAB>slug<TAB>script<TAB>name<TAB>minutes (the step's `timeout-minutes`,
+or `-`: ci_local.sh then uses its default), or SKIP<TAB>slug<TAB>reason<TAB>name<TAB>-, and one bash script per RUN
+step (its env exported, then its `run:` body). Stdlib only, Python 3.8+.
 """
 from __future__ import annotations
 
@@ -197,6 +198,11 @@ REWRITES = [
 # target your other cargo runs built (each flip rebuilds the workspace). --ci-cargo-env keeps them.
 CARGO_BUILD_ENV = {"CARGO_INCREMENTAL", "CARGO_PROFILE_DEV_DEBUG"}
 
+# Env every step gets unless the workflow sets it. CI's Linux runners write Python's stdout as UTF-8; Windows Python
+# writes it in the ANSI code page (cp1252), and the robot emoji of every PR body's "Generated with Claude Code" line
+# stopped the row-doc step with UnicodeEncodeError there (w4987).
+LOCAL_ENV = {"PYTHONUTF8": "1", "PYTHONIOENCODING": "utf-8"}
+
 
 def runner_os() -> str:
     return {"win32": "Windows", "darwin": "macOS"}.get(sys.platform, "Linux")
@@ -302,7 +308,7 @@ def plan(args) -> int:
             if reason is None and runner_os() != "Linux" and not args.all:
                 reason = next((why for test, why in LINUX_ONLY if test(step)), None)
             if reason:
-                rows.append(("SKIP", slug, reason, name))
+                rows.append(("SKIP", slug, reason, name, "-"))
                 continue
             if "run" not in step:
                 raise PlanError(f"job {job} step {n} ({name}) has neither run nor uses")
@@ -320,6 +326,8 @@ def plan(args) -> int:
             env["GITHUB_EVENT_PATH"] = event_path.as_posix()
             env["GITHUB_WORKSPACE"] = repo.as_posix()
             env["CI_LOCAL"] = "1"
+            for k, v in LOCAL_ENV.items():
+                env.setdefault(k, v)
             flags = "-eo pipefail" if shell == "bash" else "-e"
             script = out / f"{slug}.sh"
             lines = ["#!/usr/bin/env bash", f"set {flags}", f"cd {sh_quote(repo.as_posix())}"]
@@ -329,7 +337,10 @@ def plan(args) -> int:
                                 "env lines are supported")
             lines.append(run.rstrip("\n"))
             script.write_text("\n".join(lines) + "\n", encoding="utf-8", newline="\n")
-            rows.append(("RUN", slug, script.as_posix(), name))
+            mins = str(step.get("timeout-minutes", "")).strip()
+            if mins and not re.fullmatch(r"\d+(\.\d+)?", mins):
+                raise PlanError(f"job {job} step {n} ({name}): timeout-minutes {mins!r} is not a number")
+            rows.append(("RUN", slug, script.as_posix(), name, mins or "-"))
     with open(out / "plan.tsv", "w", encoding="utf-8", newline="\n") as f:
         for r in rows:
             f.write("\t".join(x.replace("\t", " ").replace("\n", " ") for x in r) + "\n")

@@ -407,6 +407,13 @@ bash "$FF_SKILLS/ffu-build-test/ci_local.sh" [PR] [BODY_FILE]   # Codex/no FF_SK
   toolchain install`, `keep_target.sh`, `runner_health.sh`; and on Windows and macOS `sweep_target_test.sh` (`--all`
   runs it). It puts cargo (`CARGO_HOME`, `~/.cargo`, else `$FF_WORKER_ROOT/tools/cargo`) and on Windows cmake on PATH
   itself, and a `python3` shim over the Store stub.
+- Every step runs with `PYTHONUTF8=1` and `PYTHONIOENCODING=utf-8` (unless the workflow sets them), as CI's Linux
+  Python writes UTF-8. Without them Windows Python writes stdout in cp1252, and the row-doc step's
+  `print(...body...)` died on the robot emoji of the PR body's "Generated with Claude Code" line
+  (`UnicodeEncodeError: 'charmap' codec can't encode character '\U0001f916'`; w4987, measured on lothdesktop).
+- No step hangs the run: one past its `timeout-minutes`, else `CI_LOCAL_STEP_MINUTES` (default 60), is ended and prints
+  `TIMEOUT` with its log's tail, and counts as a failure. On macOS that needs `gtimeout` (Homebrew coreutils); without
+  it the script says so and runs untimed.
 - **Drift stops it**: a step with an `if:` it cannot evaluate, a `${{ }}` it does not know, a key or a shell it does not
   expect ends the plan with exit 2 naming the step. Teach `ci_local.py` the new form (and its test), never skip it.
 - Local differences, each kept small on purpose: `git fetch --depth=1` runs without `--depth` (it would make the shared
@@ -477,6 +484,13 @@ cargo run --release -p ffu-headless -- crosscheck --threads 1,4,16 --golden gold
   found". Putting `/c/Python313` on PATH does not help, because that folder has no `python3.exe`. The fix is a folder
   (`$TMPDIR/pybin`) whose `python3` is a two-line script, `#!/bin/sh` then `exec /c/Python313/python "$@"`, put first
   on PATH. With it the script printed "sim rules ok" (w3459, measured).
+- **A bare `bash` from Python on Windows can be WSL's, and it can hang** (w4987). `subprocess.run(["bash", ...])`
+  goes to CreateProcess, which searches Python's folder, the current folder and System32 before PATH, so on BEAST
+  (where `C:\Windows\System32\bash.exe` is WSL's launcher) it starts WSL whatever Git Bash's PATH says. ffu's
+  `tools/test_postmerge_culprit.py` (lint-13) hung there for 20 to 40 min with no output in three workers' runs
+  (w4973, w4974, w4979) and passed in 22 s on lothdesktop, which has no System32 bash; ffu #935 made
+  `postmerge_culprit.py` run `shutil.which("bash")`. In tooling Python that shells out, resolve `bash` with
+  `shutil.which` (or Git Bash's full path), never the bare name; on Linux and macOS that is the same bash.
 - Build a player with `-p ffu-client`, never `--workspace`: `ffu-mcp` turns `agent-api` on and Cargo unifies features
   across one command's packages. `tools/check_compiled_out.sh` (CI) fails a player build that holds the agent API.
 - A golden image test that fails after a change: before re-blessing, render with `FFU_FALLBACK_ADAPTER=1
