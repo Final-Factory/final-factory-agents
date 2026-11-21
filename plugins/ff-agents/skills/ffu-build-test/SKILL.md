@@ -168,7 +168,10 @@ whole verification. The repo's own `CLAUDE.md` is binding and longer; this skill
   -p ffu-headless` rebuilt `deps/ffu_headless.exe` (09:12), while `target/release/ffu-headless.exe` stayed the
   17:47 build of the day before (a different size). A hashcheck and crosscheck run on it passed against the old code.
   Run or copy `$CARGO_TARGET_DIR/release/deps/ffu_headless.exe`, and check that the binary knows your change (a new JSON
-  field such as `hash_every`, or a changed hash) before you count a check.
+  field such as `hash_every`, or a changed hash) before you count a check. On macOS and Linux there is no plain
+  `deps/ffu_headless`, only `deps/ffu_headless-<hash>` (w4988: a brief's `release/deps/ffu_headless` failed on the m3
+  and biscuit): run `$CARGO_TARGET_DIR/release/ffu-headless` once its mtime is newer than the build, or the newest
+  `ls -t "$CARGO_TARGET_DIR"/release/deps/ffu_headless-* | grep -v '\.d$' | head -1`.
 - **Timing builds** (w3764): a build time is shared work, `bench_queue.py run --what "<what>" -- <cmd>`; `timed` refuses a
   name with "build" in it, and a loop `until grep -q granted` on its log then waits forever (w3764 lost 10 min). Stop a
   wait loop on `refused` too. Git Bash on Windows has no `bc`: subtract times with `awk "BEGIN{print $t1 - $t0}"`
