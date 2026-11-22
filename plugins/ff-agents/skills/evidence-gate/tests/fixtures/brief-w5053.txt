@@ -1,0 +1,8 @@
+Brief (ben): "Design question: Inventory opened by E over a building overlaps the building's window"
+Brief (ben, w5053): "it should behave like it did a year ago. the main UI panels for structures close if you press E to open inventory panels. please stop regressing this"
+Brief (ben, w2097): "if windows are open of any kind, E will close them. If no windows are open, E will open the inventory and craft main panels ... This is how it used to work like a year ago. This is how Factorio works."
+Brief (ben, note 13:44): "Selecting something still closes Inventory and Crafting (w2097)."
+Brief (ben, note 13:44): "Q2 (the Player Inventory jumping when the building's window closes, at 1280x800): with E closing the building's windows, check with real input (E, select, X) whether Q2 still happens."
+Brief (ben, note 13:44): "With a building's windows open, E closes them (and the selection)."
+Brief (ben, note 13:44): "Fix it to "stays where it was, at its size" only if it still happens"
+Brief (ben, note 13:45): "Check with real input that after the restore Inventory and a station selection can't be open together."

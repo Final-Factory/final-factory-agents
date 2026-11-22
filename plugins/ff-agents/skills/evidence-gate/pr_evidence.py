@@ -438,6 +438,12 @@ ASKED = re.compile(r"\basked\s*\(([^)]+)\)\s*:\s*[\"“](.{8,}?)[\"”]", re.IGN
 JUSTIFIED = re.compile(r"\bnot asked\s*:\s*justified\b", re.IGNORECASE)
 REVERTED = re.compile(r"\bnot asked\s*:\s*reverted\b", re.IGNORECASE)
 STATE = re.compile(r"\b(\d{3,4})\s*x\s*(\d{3,4})(?:\s+(undocked|docked|title))?", re.IGNORECASE)
+# w5112: one line marks a group of elements an asked rule closes, e.g. `- Gone (closed by the asked rule): GamePanels/
+# BuildInfoPanel, GamePanels/InvAndCraft: asked (ben): "With a building's windows open, E closes them"`. It covers only the
+# `gone from the screen` lines of the elements it names, never an element that moved somewhere else.
+GONE_GROUP = re.compile(r"^\s*[-*]\s+Gone\s*\(([^)]{3,})\)\s*:\s*(.+?)\s*:\s*(asked\s*\(.*)$", re.IGNORECASE)
+GONE_GROUP_START = re.compile(r"^\s*[-*]\s+Gone\b", re.IGNORECASE)
+GONE = re.compile(r":\s*gone from the screen\b", re.IGNORECASE)
 # The screens every layout change is censused on (w894: the Deck's docked layout is where Station Info and the hover card
 # were stacked top left, and no census looked at it).
 REQUIRED_STATES = ("1920x1080", "1280x800 undocked", "1280x800 docked")
@@ -525,7 +531,9 @@ def moved_problems(section: str, brief: str | None = None) -> tuple[list[str], l
     you to move around"). The `Moved:` line is `ui_layout.py moves` at 1920x1080, 1280x800 undocked and 1280x800 docked;
     each list line names one element and carries `asked (who): "their words"`, found word for word inside the brief's
     quotations (--brief, or the PR's 'Brief (who):' lines), naming the element when it is pinned (hud-pins.json), unless
-    the pinned element only changed height in place (resized_in_place, w1824). The line may be a `- ` / `* ` list item,
+    the pinned element only changed height in place (resized_in_place, w1824), or unless it is a `gone from the screen`
+    line of an element a `- Gone (why): <elements>: asked (who): "..."` line names (w5112: a rule that closes windows,
+    #4164). The line may be a `- ` / `* ` list item,
     as field() reads every other field (w3846). There
     is no other way to pass: `not asked: justified` was used for every unasked move it let through (#1397 moved Station
     Info and the hover card in the dock and passed). `not asked: reverted` does not count: re-take the after census."""
@@ -545,18 +553,46 @@ def moved_problems(section: str, brief: str | None = None) -> tuple[list[str], l
         problems.append(f"'Moved:' does not cover {', '.join(missing)}: compare before and after on every standard screen "
                         f"and layout (ui_layout.py moves labels each pair; w894: the Deck's docked layout moved Station "
                         f"Info and the hover card to the top left and no census looked at it)")
-    entries = []
+    entries, groups = [], []
     for line in lines[head + 1:]:
         if not line.strip():
             continue
         if not re.match(r"^\s*([-*]\s|\()", line):
             break
+        if GONE_GROUP_START.match(line):
+            groups.append(line)
+            continue
         found = MOVE_ENTRY.match(line)
         if found:
             state = re.sub(r"\s", "", found.group(1)).lower() + (f" {found.group(2).lower()}" if found.group(2) else "")
             entries.append((state, found.group(3).strip(), line))
     pinned = pins()
     accounted = 0
+    closed = {}  # element as moves prints it -> the group mark's quote, for the groups whose mark holds
+    for line in groups:
+        group = GONE_GROUP.match(line)
+        asked = ASKED.search(group.group(3)) if group else None
+        if not asked:
+            problems.append(f"'Moved:' group line \"{line.strip()[:80]}\" is not written `- Gone (why): <element>, "
+                            f"<element>: asked (who): \"their words\"`: name each element as ui_layout.py moves prints it "
+                            f"and give the requester's words for the rule that closes them (w5112)")
+            continue
+        quote = asked.group(2)
+        if brief is None:
+            problems.append(f"'Moved:' Gone ({group.group(1)}): no brief to check the quote against: put the requester's "
+                            f"words in a 'Brief (who): \"...\"' line of the PR, or run with --brief")
+            continue
+        if not in_brief(quote, brief):
+            problems.append(f"'Moved:' Gone ({group.group(1)}): the quote is not in the brief's quotations word for word: "
+                            f"\"{quote[:80]}\". Only the requester's own words are a target (checklists/ui.md, item 1)")
+            continue
+        for n in (n.strip() for n in group.group(2).split(",")):
+            if not n:
+                continue
+            if not any(GONE.search(l) and (nm == n or nm.endswith("/" + n)) for _, nm, l in entries):
+                problems.append(f"'Moved:' Gone ({group.group(1)}) names {n}, which no 'gone from the screen' line lists: "
+                                f"a group covers only the elements it names that the census shows gone (w5112)")
+            closed.setdefault(n, quote)
     for state, name, line in entries:
         bare = re.sub(r"\([^)]*\)", "", name)
         if "," in bare or re.search(r"\band\b", bare):
@@ -568,6 +604,15 @@ def moved_problems(section: str, brief: str | None = None) -> tuple[list[str], l
         if JUSTIFIED.search(line) and not asked:
             problems.append(f"'Moved:' {state} {name} is marked not asked: justified. A move nobody asked for is put back, "
                             f"then the after census is taken again; ask the requester first if it cannot be. {STOP}")
+            continue
+        group_quote = next((q for n, q in closed.items() if name == n or name.endswith("/" + n)), None)
+        if not asked and group_quote is not None and GONE.search(line) and not JUSTIFIED.search(line):
+            # Gone, not moved somewhere else: the group's asked rule closed it. A pinned element too (Station Info goes
+            # with the selection): its pin says where it stands while it is up (w5112, #4164).
+            accounted += 1
+            if not state.startswith("1280x800") and re.search(r"\bdeck\b", group_quote, re.IGNORECASE):
+                problems.append(f"'Moved:' {state} {name}: the group's quote asks for the Deck (\"{group_quote[:60]}\"), "
+                                f"not for this screen (w826)")
             continue
         if not asked:
             problems.append(f"'Moved:' {state} {name} is not marked: asked (who): \"their words\" when the requester asked "

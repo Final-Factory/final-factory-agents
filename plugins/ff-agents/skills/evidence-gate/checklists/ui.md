@@ -246,6 +246,14 @@ screen; on desktop three labels stopped fitting, the two windows left their defa
       to move on that screen**. Anything else goes back where it was and the after census is taken again. There is no
       "justified": #1397 marked Station Info and the hover card "not asked: justified" in the dock and passed, and Ben
       saw them at the top left.
+    - **A change that closes windows on purpose marks them as a group** (w5112: #4164, E closes every open window again,
+      passed only by leaving states 11 and 64 out of its census, whose 27 `gone from the screen` lines were all windows
+      the asked rule closes). Keep the state in the census, mark each of its gone lines `closed (the Gone line below)`,
+      and add one line per rule: `- Gone (closed by the asked rule, <state>): GamePanels/BuildInfoPanel,
+      GamePanels/InvAndCraft, Quad0: asked (ben): "With a building's windows open, E closes them (and the selection)."`,
+      each element as `moves` prints it. It covers only the `gone from the screen` lines of the elements it names,
+      pinned ones included (a pin says where a panel stands while it is up); a moved element, an element it does not
+      name, an unmarked pinned gone line, a quote not in the brief and a name with no gone line all still fail.
     - `ui_layout.py pins a-1920.json a-1280.json a-docked.json` checks the places Ben fixed himself
       (`hud-pins.json`: Station Info just above the abilities, the building hover card just above the minimap,
       the Player Inventory off the left edge) in every after census, whatever the parent looked like: the dock had stacked
