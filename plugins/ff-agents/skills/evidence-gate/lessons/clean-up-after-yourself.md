@@ -488,6 +488,29 @@ command is written out under `$TMPDIR` (after the portal deploy that carries w10
 - The w913 rule above already said "do not clean up"; w1079's worker did not count a rerun's output folders as clean-up.
   They are: never delete a folder to use it again.
 
+### What still reaches a person, counted (w5148, 2026-11-22)
+
+lothsahn: "I just got a bash request. Figure out why I get those and how to cut them down 90%". From 2026-10-23 to
+2026-11-22, 21 Bash commands from workers waited on a person or an orchestrator, from 0 to 595 minutes (measured from
+the portal's relay). Each one was one of Claude Code's own checks: either its dangerous-rm check, or a check that "did
+not finish" because it could not parse the command. Our hooks deny before it asks, so they raised none. FF Factory#1075
+answers most of these shapes in the session now: deletes in your own sandbox after your own `cd`, commands that only
+read, and a refusal of a command bash cannot parse. These shapes still ask a person, or get refused:
+
+- **No zsh-only expansions in Bash.** `${(f)VAR}`, `*(e:…:)` or `=(…)` leaves Claude Code's parser unable to finish.
+  Use a `while read` loop or the Grep tool instead.
+- **No `$(` or backquote inside a grep pattern.** w4540 ran `grep "subst\|\\$(\|x"`. Inside double quotes `\\$(` is a
+  backslash and then a command substitution, which never closed, so the command could only fail; it waited 4.7 h. Search
+  with the Grep tool, or put the pattern in single quotes.
+- **Delete only paths you wrote out.** An `rm` of `"$N/$(basename $d)"` (w2186), or of a name read in a
+  `while read f` loop (w2682), cannot be judged and asks. Write each path out, use a `for d in leg-*; do rm -rf
+  "$TMPDIR/$d"; done` loop with the use quoted, or `rm -rf "$(cat $TMPDIR/x.path)"` when that file holds one plain path
+  and nothing before the delete in the command changes it.
+- **Delete first, or `cd` once at the start.** A delete after an `eval` or a second `cd` cannot be read: one leading
+  `cd "$TMPDIR/x" &&` or `cd <your sandbox> &&`, then relative paths.
+- **Edit files with the Edit or Write tool, not a `python` heredoc.** A script that writes is never judged safe.
+- **Reading is the Read and Grep tools' job.** They never ask.
+
 ## A listener binds 127.0.0.1 or runs from a stable path, never from $TMPDIR (w1742)
 
 **Rule.** Windows Firewall shows an "allow access" prompt the first time a program path listens on any address but

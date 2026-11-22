@@ -468,6 +468,9 @@ One file each under `lessons/`: the rule, why (the incident, dated), how to appl
   first check counts from then, and a person's branch move is never a precondition or a question (lothsahn on w2440:
   "It's a dev build but you still upload the patch notes ... We've done that for ages"; on w2431: "Add the patch notes
   now"). `waiting_on_person` refuses a branch card.
+- [What still reaches a person](lessons/clean-up-after-yourself.md#what-still-reaches-a-person-counted-w5148-2026-11-22)
+  (w5148, 21 questions counted over 30 days): no zsh-only expansions, no `$(` in grep patterns, delete only paths
+  written out, one leading `cd`, edits through the Edit tool ([delete checklist](checklists/delete.md) item 8).
 - [Keep rm out of long commands](lessons/clean-up-after-yourself.md#keep-rm-out-of-long-commands-w63-w194-w1097): a deletion chained
   into a long command waits on a permission prompt nobody sees; in bypass mode only an `rm` of
   `$VAR/*` or `$VAR/{a,b}` (or a critical path) asks (measured, w1097). A new folder per run,
