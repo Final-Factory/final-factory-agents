@@ -713,3 +713,14 @@ did not catch the fix being reverted where the game uses it:
   committed. Never push a reverted leg.
 - Report each fix as "covered by <test>" with the RED line from that leg; a test that stayed green on a leg is named
   as covering only what it did catch.
+- **An input fix is guarded by a test that runs what the press runs** (w5091, 2026-11-22). #4138's
+  `StationOrderInputTests` (`StationOrderRule.Deselects`) and #4143's `StationWholeSelectionTest`
+  (`StationWholeSelection.StepBack`) stayed green with the wiring in `StationOrderInput.Update` and `UnitSelector.Update`
+  reverted. What worked: move the `Update`'s read into an `internal static` method with no behaviour change
+  (`UnitSelector.Escape(raycast, frame, uiLetsGo)`, `StationOrderInput.PressDeselects(frame, raycast)`,
+  `StationOrderInput.LeftClickOrder(...)`), add a test-only hook where EditMode has no camera
+  (`MouseRaycastSystem.PickNowForTests`), and drive it on an `EcsTestBase` world with `MouseRaycastSystem`'s private
+  `NativeReference` fields set by reflection. Each new test went RED on its fix reverted and GREEN with it (#4145).
+- **A fix with no behaviour code to revert is proven by planting the feared regression** (w5091): #4110 changed only a
+  comment, so its test was proven by making `TargetingSystem`'s query stop skipping `RaidRetreatMarker` locally and
+  seeing it go RED.
