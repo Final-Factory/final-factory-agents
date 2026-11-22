@@ -73,3 +73,7 @@ For any `rm`, `Remove-Item`, `del`, `rd`, `git clean`, `shutil.rmtree` or clean-
    The other way round too: a purge or clean rebuild that is there on purpose (the nightly deletes `Library/ShaderCache`
    every night so a corrupted cache is regenerated, w4869) is a safeguard, and keeping that cache to save the rebuild
    is a person's decision ([merge checklist](merge.md), "A PR that turns off, skips or removes a CI or build safeguard").
+8. **Will the command reach a person?** (w5148) Each delete in it is a path written out, a quoted `for` loop
+   over plain words, or one leading `cd` into your temp folder or sandbox. It has no zsh-only expansion and no `$(`
+   in a grep pattern. It edits through the Edit tool, not a heredoc script
+   ([lesson](../lessons/clean-up-after-yourself.md#what-still-reaches-a-person-counted-w5148-2026-11-22)).
