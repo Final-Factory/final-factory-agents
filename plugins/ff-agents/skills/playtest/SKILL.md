@@ -228,6 +228,24 @@ Measured on lothdesktop, 2026-10-28, a built player of FinalFactory f7901a742d:
 - **`pointer.wheel` over the Technology window pans the tech tree, not the list's ScrollRect.** A check that the list's
   scroll is kept needs another route: the code, or a list a wheel reaches.
 
+### Station selection in a built-player tour (w5087)
+
+On beast, 2026-11-22, w5087 (the nightly review of FinalFactory #4143, #4138 and #4140: station input, Escape and
+selection) compared built players of master 15f9b1c02d, its base 5d428ee033 and a fix, shot for shot.
+- **A tour's reset must never click the ground with a whole station selected.** Since #4074 a plain click on open space
+  with a whole station in Move flies it there, so the next leg starts with the station somewhere else. Reset with Q,
+  Escape steps or `ui.modal` reads, not a ground click.
+- **The channel cannot make a station box or press its group key.** A box is Ctrl+drag, or a plain drag on the open map
+  (`StationSelectInput.cs`). `pointer.holdkey|LeftControl` reaches only `InputHelper`, not the gesture's Ctrl, and
+  `pointer.drag` on the open map selected nothing on base and fix alike; the `savegroup` 3, m, 3, m group-key leg too.
+  Rest that path on an EditMode test through `StationSelectInput.SyncOrdinarySelection` and say so in the report.
+- **`blueprint.ghosts` reads only the held blueprint,** not a station's Move or Land preview: judge those from the shot.
+- **Compare builds only on the same tour file.** A fix run on a newer tour (a changed reset) differed from HEAD in shots
+  the fix never touched; rerun the base on the same file before you call a difference.
+- **Swap keybinds files with `game_data.py snapshot`, `put`, the leg and `restore --name`.** `game_data.py run` with a
+  `bash -c` command hung before the player started.
+- **`python scripts/unity-bridge.py run-tests --tests A,B` runs the merge gate's list** when MCP `run_tests` answers busy.
+
 ### Input timing bugs: sweep the click length at a pinned frame rate (w3988)
 
 On beast, 2026-11-12, w3988 (the nightly review of FinalFactory #3543, panning the open map with a right drag) checked
