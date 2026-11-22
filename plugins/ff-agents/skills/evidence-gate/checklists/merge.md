@@ -33,6 +33,15 @@ tests with burst"), as w4869 reversed #3988's ShaderCache cap ("the point of the
 the shader cache")
 ([lesson](../lessons/research-the-decision-not-the-topic.md#a-ci-or-build-safeguard-is-removed-only-after-you-know-why-it-is-there-w4817-w5025-2026-11-21)).
 
+**A change that reverses a person's recorded design asks that designer, not the requester** (w1290, w4937, w5096,
+2026-11-22). Before the first edit, `git blame` the lines you change and read the comments, docs and tests around
+them for a design a person recorded (`w2097 (Ben: "...")`). If the change reverses or contradicts it, hand it up to
+that person with both people's words and your pick; another owner's request does not settle it. The PR carries
+`Design reversal: asked <person> (<where>)` or `Design reversal: none`; `pr_evidence.py` asks for it beside a comment
+quoting Ben or lothsahn. Search the same way before asking a person a design question. #1731 replaced Ben's Overdriver
+formula and #4052 his E rule; Ben: "please stop regressing this"
+([lesson](../lessons/research-the-decision-not-the-topic.md#a-change-that-reverses-a-persons-recorded-design-asks-that-designer-first-w1290-w4937-w5096-2026-11-22)).
+
 **Read the PR's base and the trunk rule again just before you merge** (w1065, 2026-10-12): a base can change after
 you open the PR. When w1137 retired `develop`, GitHub moved every open PR based on it to `master`, and the branch's own
 CLAUDE.md still said develop. `gh pr view <n> --json baseRefName`, and the rule from `git show origin/master:CLAUDE.md`,

@@ -1779,3 +1779,119 @@ class MergeGate3180Test(unittest.TestCase):
         run = subprocess.run([sys.executable, str(HERE.parent / "pr_evidence.py"), "--pr", "3180"],
                              capture_output=True, text=True, timeout=60)
         self.assertNotEqual(run.returncode, 0, run.stdout + run.stderr)
+
+
+class DesignReversalTest(unittest.TestCase):
+    """w5096: a change beside a person's recorded design, or a description that says it reverses one, asks that person
+    and says so on a 'Design reversal:' line. Both failing cases merged on the requester's word: #4052 (w4937) changed
+    CloseAllPanels, named by the comment quoting Ben's w2097 rule, and wrote "This reverses part of w2097" (Ben: "please
+    stop regressing this"); #1731 (w1290) replaced Ben's Overdriver formula (Ben: "the old formula was right")."""
+
+    ROOT = HERE / "fixtures" / "design-w4937"
+    PATH = "Assets/Scripts/UI/UiController.cs"
+    FILES = [PATH]
+    BODY_4052 = ("**TL;DR:** E leaves the Mass Driver window open.\n\n"
+                 "- **This reverses part of w2097.** Ben's w2097 had E close the building's windows (the \"vice versa\" "
+                 "half). lothsahn's latest words ask the opposite: \"pressing E to open or close the inventory must not "
+                 "open, close or otherwise change the Mass Driver panel.\"\n")
+    BODY_1731 = ("Not verified: the tooltip text in a built player; whether Ben wants per-structure heat back as a design "
+                 "(his 2024 formula), which this PR replaces with the flat rate lothsahn described.\n")
+
+    def base(self, path):
+        f = self.ROOT / path
+        return f.read_text(encoding="utf-8") if f.is_file() else None
+
+    def diff(self, header, start, old, new, path=None):
+        """A one-hunk diff replacing old line `start` (text `old`) with `new`, with the base file's lines around it."""
+        path = path or self.PATH
+        lines = (self.ROOT / path).read_text(encoding="utf-8").splitlines()
+        before, after = lines[start - 4:start - 1], lines[start:start + 3]
+        self.assertEqual(lines[start - 1], old)
+        body = [" " + s for s in before] + ["-" + old, "+" + new] + [" " + s for s in after]
+        return (f"diff --git a/{path} b/{path}\n--- a/{path}\n+++ b/{path}\n"
+                f"@@ -{start - 3},7 +{start - 3},7 @@ {header}\n" + "\n".join(body) + "\n")
+
+    def problems(self, body, diff, base=True):
+        return pe.design_reversal_problems(body, self.FILES, diff, self.base if base else None)
+
+    def by_name(self):
+        return self.diff("public static bool CloseAllPanels()", 40, "    private bool CloseAllPanelsImpl()",
+                         "    private bool CloseAllPanelsImpl(bool keepSelection = false)")
+
+    def test_4052_changing_the_function_bens_comment_names_fails(self):
+        problems, hits = self.problems("**TL;DR:** E keeps the building's window.\n", self.by_name())
+        self.assertEqual(len(problems), 1, problems)
+        self.assertIn("UiController.cs:12 (Ben:", hits[0])
+        self.assertIn("CloseAllPanels(), which it names", hits[0])
+        self.assertIn("Design reversal: asked <person> (<where>)", problems[0])
+
+    def test_a_line_changed_beside_the_comment_fails(self):
+        diff = self.diff("private void HandleSelectionChangedEvent(Entity selectedEntity)", 18,
+                         "          ShowPlayerWindows(false);", "          // kept open")
+        problems, hits = self.problems("", diff)
+        self.assertTrue(problems)
+        self.assertIn("line 18 changed beside it", hits[0])
+
+    def test_4052s_description_alone_fails(self):
+        problems, hits = self.problems(self.BODY_4052, None)
+        self.assertTrue(problems)
+        self.assertEqual(len(hits), 1, hits)  # lothsahn is the requester here: quoting their ask is no reversal
+        self.assertIn("This reverses part of w2097", hits[0])
+
+    def test_1731s_description_fails(self):
+        problems, hits = self.problems(self.BODY_1731, None)
+        self.assertTrue(problems)
+        self.assertIn("whether Ben wants per-structure heat back", hits[0])
+
+    def test_asked_the_designer_or_none_passes(self):
+        for line in ("Design reversal: asked Ben (w5053's card, 2026-11-22)", "**Design reversal:** none: E still closes "
+                     "the building's windows, as w2097 has it"):
+            self.assertEqual(self.problems(self.BODY_4052 + "\n" + line + "\n", self.by_name())[0], [], line)
+
+    def test_an_answer_that_names_nobody_fails(self):
+        problems, _ = self.problems(self.BODY_4052 + "\nDesign reversal: lothsahn asked for it\n", self.by_name())
+        self.assertIn("says neither", problems[0])
+
+    def test_a_change_far_from_the_comment_passes(self):
+        diff = self.diff("private void Unrelated()", 28, "      var b = 2;", "      var b = 3;")
+        self.assertEqual(self.problems("Faster startup.\n", diff), ([], []))
+
+    def test_a_generic_callback_name_is_no_hit(self):
+        lines = {1: '// w9 (Ben: "the tick runs in Update")', 2: "// so Update stays short"}
+        self.assertEqual(len(pe.design_comments(lines)), 1)
+        diff = self.diff("public void Update()", 54, "      Tick();", "      Tick2();")
+        base = lambda p: "\n".join(lines.values()) + "\n" + "\n" * 60  # noqa: E731
+        self.assertEqual(pe.design_reversal_problems("", self.FILES, diff, base), ([], []))
+
+    def test_the_designer_quoted_as_requester_is_skipped(self):
+        body = 'Request: w9 (Ben: "make E keep the window open")\n'
+        self.assertEqual(self.problems(body, self.by_name()), ([], []))
+
+    def test_without_the_base_file_only_what_the_diff_shows_is_read(self):
+        self.assertEqual(self.problems("", self.by_name(), base=False), ([], []))
+        diff = self.diff("private void HandleSelectionChangedEvent(Entity selectedEntity)", 15,
+                         "        // under or over the building's windows, whose labels read through them.", "")
+        self.assertTrue(self.problems("", diff, base=False)[0])
+
+    def test_a_removed_test_line_naming_the_design_fails(self):
+        path = "Assets/Tests/UI/SelectionClosesInventoryTest.cs"
+        diff = (f"diff --git a/{path} b/{path}\n--- a/{path}\n+++ b/{path}\n@@ -10,3 +10,2 @@ public void E()\n"
+                "     {\n-      Assert.IsFalse(open, \"w2097 (Ben): the first E closes the building's panel\");\n     }\n")
+        problems, hits = pe.design_reversal_problems("", [path], diff)
+        self.assertTrue(problems)
+        self.assertIn("a test line naming Ben's design", hits[0])
+
+    def test_a_docs_only_pr_naming_ben_is_left_alone(self):
+        self.assertEqual(pe.design_reversal_problems("This replaces Ben's old note.", ["docs/x.md"], None), ([], []))
+
+    def test_main_reads_a_diff_file_and_its_base_dir(self):
+        import tempfile
+        with tempfile.TemporaryDirectory() as tmp:
+            body, files, diff = Path(tmp) / "b.md", Path(tmp) / "f.txt", Path(tmp) / "d.diff"
+            body.write_text("**TL;DR:** E keeps the building's window.\n", encoding="utf-8")
+            files.write_text("Assets/Tests/UI/X.cs\n", encoding="utf-8")
+            diff.write_text(self.by_name(), encoding="utf-8")
+            args = ["--body-file", str(body), "--files-file", str(files), "--diff-file", str(diff), "--offline"]
+            self.assertEqual(pe.main(args + ["--base-dir", str(self.ROOT)]), 1)
+            body.write_text("E keeps the window.\n\nDesign reversal: asked Ben (w5053)\n", encoding="utf-8")
+            self.assertEqual(pe.main(args + ["--base-dir", str(self.ROOT)]), 0)
