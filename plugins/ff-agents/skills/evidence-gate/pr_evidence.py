@@ -19,7 +19,7 @@ its 1:1 crop or slowed segment on 'Close-ups:' and, for occlusion, every surface
 w1567), a pick of a design, mock, model or asset named in the brief or the evidence carries its 'Picked:' line (the
 still the person picked, what it shows, their words, how they match, the build beside it; checklists/merge.md, w2669),
 art for FFU (an art/ folder, no Unity Assets/) names a capture of the reference as the built game shows it on 'Reference capture:' and the two main colours and the HDR accent on 'Art language:' (checklists/visual.md 5o, w2895),
-and a Deck-facing change says 'Real Deck: verified ...' or 'not verified on a real Deck' (checklists/deck.md). It cannot tell whether anyone looked carefully. Standard library only; `gh` for everything that reads GitHub.
+and a Deck-facing change says 'Real Deck: verified ...' or 'not verified on a real Deck' (checklists/deck.md). A change beside a comment quoting Ben's or lothsahn's design, or a description that says it reverses one, says 'Design reversal: asked <person> (<where>)' or 'Design reversal: none' (w5096; --diff-file D --base-dir B offline). It cannot tell whether anyone looked carefully. Standard library only; `gh` for everything that reads GitHub.
 
     pr_evidence.py --repo OWNER/NAME --pr N               check one pull request (exit 1 on FAIL)
     pr_evidence.py --repo OWNER/NAME --pr N --comment     the same, and post the verdict on it
@@ -42,6 +42,7 @@ import re
 import subprocess
 import sys
 from pathlib import Path
+from urllib.parse import quote
 
 MARKER = "evidence-gate:"
 KINDS = ("visual", "ui", "simulation", "other")
@@ -1672,6 +1673,171 @@ def balance_problems(body: str, files: list[str] | None) -> list[str]:
     return problems
 
 
+# A person's recorded design (w5096): a comment that quotes the person who decided how something behaves, as
+# `// w2097 (Ben: "...")`. A change beside one, a test line naming one, or a description that says it reverses one asks
+# that person first and says so on a 'Design reversal:' line. w1290 (#1731) replaced Ben's Overdriver formula and w4937
+# (#4052) wrote "This reverses part of w2097"; both merged on the requester's word and Ben reversed both
+# (lessons/research-the-decision-not-the-topic.md).
+DESIGNERS = r"Ben|[Ll]othsahn"
+DESIGN_QUOTE = re.compile(r"\((?:" + DESIGNERS + r")\b[^()\"\n]{0,60}:\s*\\?[\"“]")
+DESIGNER_NAME = re.compile(r"\b(" + DESIGNERS + r")\b")
+REVERSES = re.compile(r"\brevers\w*|\bundo(es|ne)\b|\breplac\w*|\binstead of\b|\bon purpose\b|\bcontradict\w*|"
+                      r"\bthe opposite\b|\boverrid\w*", re.IGNORECASE)
+DESIGN_LINE = re.compile(r"^[\s>*_-]*Design reversal\s*\**\s*:\s*\**\s*(.*)$", re.IGNORECASE | re.MULTILINE)
+DESIGN_CODE = re.compile(r"^Assets/.+\.(cs|hlsl|shader|compute|cginc|uss|uxml)$")
+DESIGN_TEST = re.compile(r"^Assets/(Tests|TestsSlow)/|/PlayModeTests/")
+DESIGN_NEAR = 5  # lines of the base file between a removed line and the comment block
+# Names a comment may give that say nothing about where the design lives.
+GENERIC_NAMES = {"Update", "LateUpdate", "FixedUpdate", "OnUpdate", "Start", "Awake", "OnEnable", "OnDisable", "OnCreate",
+                 "OnDestroy", "SetUp", "TearDown", "Execute", "Dispose"}
+# A designer whose words the description quotes is a requester: a change they asked for beside their own design is theirs
+# to make, so their comments do not count. Another person's do (#4052 quoted lothsahn and changed code beside Ben's).
+REQUESTER_QUOTE = re.compile(r"\b(" + DESIGNERS + r")\b[^\"\n]{0,50}:\s*[\"“]")
+COMMENT_LINE = re.compile(r"^\s*(//|/\*|\*|#)")
+HUNK = re.compile(r"^@@ -(\d+)(?:,\d+)? \+(\d+)(?:,\d+)? @@ ?(.*)$")
+
+
+def parse_diff(text: str | None) -> dict[str, list[dict]]:
+    """A unified diff (`gh pr diff`, `git diff`) -> {path: [hunk]}; a hunk is {'header', 'removed': [old line numbers],
+    'lines': [(kind, old line number or None, text)]}. A deleted file keeps its old path."""
+    files: dict[str, list[dict]] = {}
+    path, old_path, hunk, old = None, None, None, 0
+    for line in (text or "").splitlines():
+        if line.startswith("diff --git "):
+            m = re.match(r"diff --git a/(.+?) b/(.+)$", line)
+            path, old_path = (m.group(2), m.group(1)) if m else (None, None)
+            hunk = None
+            continue
+        if hunk is None and line.startswith("+++ "):
+            path = old_path if line[4:].strip() == "/dev/null" else (line[6:] if line[4:].startswith("b/") else path)
+            continue
+        m = HUNK.match(line)
+        if m and path:
+            hunk = {"header": m.group(3), "removed": [], "lines": []}
+            files.setdefault(path, []).append(hunk)
+            old = int(m.group(1))
+            continue
+        if hunk is None:
+            continue
+        if line.startswith("-"):
+            hunk["removed"].append(old)
+            hunk["lines"].append(("-", old, line[1:]))
+            old += 1
+        elif line.startswith("+"):
+            hunk["lines"].append(("+", None, line[1:]))
+        elif line.startswith(" ") or line == "":
+            hunk["lines"].append((" ", old, line[1:]))
+            old += 1
+    return files
+
+
+def design_comments(lines: dict[int, str]) -> list[tuple[int, int, str, str]]:
+    """{line number: text} of a file (or the part a diff shows) -> [(first line, last line, designer, the comment block
+    that quotes them)]."""
+    found = []
+    for n in sorted(lines):
+        m = DESIGN_QUOTE.search(lines[n])
+        if not m:
+            continue
+        block, k = [lines[n]], n + 1
+        while k in lines and COMMENT_LINE.match(lines[k]) and len(block) < 10:
+            block.append(lines[k])
+            k += 1
+        found.append((n, k - 1, DESIGNER_NAME.search(m.group(0)).group(1), " ".join(s.strip() for s in block)))
+    return found
+
+
+def header_name(header: str) -> str | None:
+    """The function a hunk header names (`public static bool CloseAllPanels()` -> CloseAllPanels); None for Unity's and
+    the test framework's callbacks (GENERIC_NAMES), which say nothing about where a design lives."""
+    m = re.search(r"(\w+)\s*(<[^<>]*>)?\s*\([^()]*\)?\s*\{?\s*$", header or "")
+    return m.group(1) if m and m.group(1) not in GENERIC_NAMES else None
+
+
+def requesters(body: str | None) -> set[str]:
+    """The designers whose words the description quotes (REQUESTER_QUOTE), lower-cased."""
+    return {m.group(1).lower() for m in REQUESTER_QUOTE.finditer(body or "")}
+
+
+def design_hits(diff_text: str | None, base_file=None, limit: int = 40, asked_by: set[str] = frozenset()) -> list[str]:
+    """Where a diff removes or changes game code beside a person's recorded design: within DESIGN_NEAR lines of a comment
+    quoting them in the file before the change, inside a function that comment names, or a removed test line that names
+    them; a designer in `asked_by` (the requesters) is skipped. `base_file(path)` gives the file before the change (None,
+    or past `limit` files: only what the diff shows)."""
+    hits, read = [], 0
+    for path, hunks in parse_diff(diff_text).items():
+        removed = [n for h in hunks for n in h["removed"]]
+        if not DESIGN_CODE.search(path) or not removed:
+            continue
+        lines = {n: t for h in hunks for _, n, t in h["lines"] if n is not None}
+        if base_file and read < limit:
+            read += 1
+            text = base_file(path)
+            if text is not None:
+                lines = {i + 1: t for i, t in enumerate(text.splitlines())}
+        seen = []
+        for n, last, who, block in design_comments(lines):
+            if who.lower() in asked_by:
+                seen.append(n)
+                continue
+            near = [r for r in removed if n - DESIGN_NEAR <= r <= last + DESIGN_NEAR]
+            named = [header_name(h["header"]) for h in hunks if h["removed"] and header_name(h["header"])
+                     and re.search(r"\b" + re.escape(header_name(h["header"])) + r"\b", block)]
+            if near or named:
+                where = f"line {min(near)}" + (f"-{max(near)}" if max(near) > min(near) else "") + " changed beside it" \
+                    if near else f"{named[0]}(), which it names, changed"
+                hits.append(f"{path}:{n} {block[block.find('('):][:80]}... ({where})")
+                seen.append(n)
+        if DESIGN_TEST.search(path):
+            for h in hunks:
+                for kind, n, t in h["lines"]:
+                    if (kind == "-" and DESIGNER_NAME.search(t) and (DESIGN_QUOTE.search(t) or re.search(r"\bw\d{3,}\b", t))
+                            and DESIGNER_NAME.search(t).group(1).lower() not in asked_by
+                            and not any(abs(n - s) <= DESIGN_NEAR for s in seen)):
+                        hits.append(f"{path}:{n} a test line naming {DESIGNER_NAME.search(t).group(1)}'s design changed: "
+                                    f"{t.strip()[:80]}")
+    return hits
+
+
+def body_reversals(body: str | None) -> list[str]:
+    """Sentences of a description that name a designer within 90 characters of a word saying the PR reverses, replaces
+    or undoes something; table rows, the 'Design reversal:' line and a requester's own words are left out."""
+    out, asked_by = [], requesters(body)
+    for line in (body or "").splitlines():
+        if DESIGN_LINE.match(line) or line.lstrip().startswith("|"):
+            continue
+        for sentence in re.split(r"(?<=[.!?])\s+", line):
+            names = [m.start() for m in DESIGNER_NAME.finditer(sentence) if m.group(1).lower() not in asked_by]
+            words = [m.start() for m in REVERSES.finditer(sentence)]
+            if any(abs(a - b) <= 90 for a in names for b in words):
+                out.append(sentence.strip()[:120])
+    return out
+
+
+def design_reversal_problems(body: str, files: list[str] | None, diff_text: str | None = None,
+                             base_file=None) -> tuple[list[str], list[str]]:
+    """A game PR that changes code beside a person's recorded design, or says it reverses one, carries
+    'Design reversal: asked <person> (<where>)' or 'Design reversal: none' (w5096). Returns (problems, hits)."""
+    if not any(f.startswith("Assets/") for f in files or []) and not parse_diff(diff_text):
+        return [], []
+    hits = (design_hits(diff_text, base_file, asked_by=requesters(body))
+            + [f"the description: {line}" for line in body_reversals(body)])
+    if not hits:
+        return [], []
+    m = DESIGN_LINE.search(body or "")
+    answer = m.group(1).strip().strip("*").strip() if m else ""
+    if answer.lower().startswith("none") or re.match(r"asked\s+\S+.*\(.+\)", answer, re.IGNORECASE):
+        return [], hits
+    listed = "; ".join(hits[:4]) + (f"; and {len(hits) - 4} more" if len(hits) > 4 else "")
+    if m:
+        return [f"'Design reversal: {answer}' says neither 'asked <person> (<where>)' nor 'none'; this PR touches a "
+                f"person's recorded design: {listed}"], hits
+    return [f"this PR changes code beside a person's recorded design, or says it reverses one ({listed}): read it; if the "
+            f"change reverses or contradicts it, ask that person first, saying who asked for which, and write 'Design "
+            f"reversal: asked <person> (<where>)'; if it keeps the design, write 'Design reversal: none' "
+            f"(lessons/research-the-decision-not-the-topic.md, w5096)"], hits
+
+
 def check(body: str, files: list[str] | None = None, brief: str | None = None,
           changes: dict | None = None) -> tuple[list[str], list[str]]:
     """Every reason the evidence is not ready (empty = PASS), and notes that do not fail it."""
@@ -1964,6 +2130,44 @@ def parse_files_file(text: str) -> tuple[list[str], dict]:
     return files, changes
 
 
+def design_inputs(args) -> tuple[str | None, object]:
+    """The diff and a reader of the files before it, for design_reversal_problems: --diff-file (and --base-dir), else
+    the PR's own diff and its merge base from GitHub."""
+    if args.diff_file:
+        base = Path(args.base_dir) if args.base_dir else None
+        return (Path(args.diff_file).read_text(encoding="utf-8"),
+                (lambda p: (base / p).read_text(encoding="utf-8") if (base / p).is_file() else None) if base else None)
+    if not (args.repo and args.pr):
+        return None, None
+    done = subprocess.run(["gh", "pr", "diff", str(args.pr), "--repo", args.repo], capture_output=True, text=True,
+                          encoding="utf-8")
+    if done.returncode:
+        print(f"note: gh pr diff failed ({done.stderr.strip()[:120]}): the design-reversal rule read only the "
+              f"description", file=sys.stderr)
+        return None, None
+    heads = json.loads(gh("pr", "view", str(args.pr), "--repo", args.repo, "--json", "baseRefOid,headRefOid"))
+    base = subprocess.run(["gh", "api", f"repos/{args.repo}/compare/{heads['baseRefOid']}...{heads['headRefOid']}",
+                           "--jq", ".merge_base_commit.sha"], capture_output=True, text=True, encoding="utf-8")
+    sha = base.stdout.strip() if not base.returncode else heads["baseRefOid"]
+
+    def base_file(path: str) -> str | None:
+        got = subprocess.run(["gh", "api", "-H", "Accept: application/vnd.github.raw",
+                              f"repos/{args.repo}/contents/{quote(path)}?ref={sha}"], capture_output=True, text=True,
+                             encoding="utf-8")
+        return None if got.returncode else got.stdout
+
+    return done.stdout, base_file
+
+
+def no_evidence_verdict(design: list[str]) -> int:
+    """No game code or assets changed, so no Evidence section; the design-reversal rule still holds (a test change)."""
+    if design:
+        print(verdict_text(design, []))
+        return 1
+    print("PASS: no game code or assets changed, so no Evidence section is needed")
+    return 0
+
+
 def main(argv=None) -> int:
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("--repo", help="OWNER/NAME")
@@ -1973,6 +2177,9 @@ def main(argv=None) -> int:
     ap.add_argument("--files-file", help="with --body-file: the changed paths, one per line")
     ap.add_argument("--brief", help="the request's brief (read_work's text): every asked (who): \"...\" quote on the "
                                      "'Moved:' list must be in it word for word (w826)")
+    ap.add_argument("--diff-file", help="with --body-file: the unified diff (git diff), read for code beside a person's "
+                                        "recorded design (w5096); with --repo and --pr it comes from gh pr diff")
+    ap.add_argument("--base-dir", help="--diff-file: a folder holding the changed files as they were before the change")
     ap.add_argument("--audit", action="store_true", help="list merged pull requests and their verdicts")
     ap.add_argument("--offline", action="store_true", help="skip the check that this copy is the released version")
     ap.add_argument("--since", help="--audit: merged on or after this date (YYYY-MM-DD)")
@@ -2036,24 +2243,25 @@ def main(argv=None) -> int:
             files, changes = None, None
             print("note: no file list (--files-file, or --repo and --pr): the rules that read the changed files "
                   "(Balance, Used by, Deck, UI paths) did not run", file=sys.stderr)
+        design, _ = design_reversal_problems(body, files, *design_inputs(args))
         # w4495: with the files known, answer as the merge check does; a docs-only PR (#3765) failed here and passed there.
         if files is not None and not applies(files):
-            print("PASS: no game code or assets changed, so no Evidence section is needed")
-            return 0
+            return no_evidence_verdict(design)
     elif args.repo and args.pr:
         pr = json.loads(gh("pr", "view", str(args.pr), "--repo", args.repo, "--json", "body,files"))
         all_files = every_file(args.repo, args.pr, pr.get("files") or [])
         body, files = pr.get("body") or "", [f["path"] for f in all_files]
         changes = changes_of(all_files)
+        design, _ = design_reversal_problems(body, files, *design_inputs(args))
         if not applies(files):
-            print("PASS: no game code or assets changed, so no Evidence section is needed")
-            return 0
+            return no_evidence_verdict(design)
     else:
         ap.error("give --repo and --pr, or --body-file, or --audit")
 
     brief = Path(args.brief).read_text(encoding="utf-8") if args.brief else None
     ANIMATED[:] = load_animated(args.repo, args.pr)
     problems, notes = check(body, files, brief, changes)
+    problems = design + problems
     if not args.offline:
         released = released_version()
         stale = stale_problem(own_version(), released)

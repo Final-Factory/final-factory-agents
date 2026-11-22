@@ -1,6 +1,6 @@
 ---
 name: research-the-decision-not-the-topic
-description: "Research questions come from the choices you are about to make, each labelled measured, sourced or guess. The Reddit campaign of October 2026 was researched by topic, and its bid was never a question. A CI or build safeguard (a check, a cache purge, Burst or IL2CPP, a test category) is turned off or removed only after finding why it is there and saying what coverage is lost; prefer a fix that keeps it, and hand a removal up as a person's decision (w4817's ShaderCache cap, w5025's Burst-off gate, both reversed by lothsahn)."
+description: "Research questions come from the choices you are about to make, each labelled measured, sourced or guess. The Reddit campaign of October 2026 was researched by topic, and its bid was never a question. A CI or build safeguard (a check, a cache purge, Burst or IL2CPP, a test category) is turned off or removed only after finding why it is there and saying what coverage is lost; prefer a fix that keeps it, and hand a removal up as a person's decision (w4817's ShaderCache cap, w5025's Burst-off gate, both reversed by lothsahn). A change that reverses a person's recorded design (a code comment quoting them, git blame, docs, tests) asks that designer before it merges, whoever requested it, and that search comes before asking a design question (w1290 #1731, w4937 #4052; Ben: \"please stop regressing this\")."
 date: 2026-10-02
 ---
 
@@ -166,3 +166,46 @@ chose it for that gate (w1759: "make them run much faster. Some coverage loss is
 `.github/workflows/main.yml` names what moved to the Burst-on master batch. That decision covered master's gate only;
 w5025 carried it to pre-1.0 without asking and was reversed. A decision for one gate, branch or job is asked again for
 the next.
+
+## A change that reverses a person's recorded design asks that designer first (w1290, w4937, w5096, 2026-11-22)
+
+**Rule.** Before you change how something behaves, look for a design a person already recorded for it:
+
+1. **Where designs are written down.** A code comment quoting a person beside the code (`w2097 (Ben: "...")`,
+   `(lothsahn: "...")`), `git log -S '<the line>'` and `git blame` on the lines you change (the request or PR that put
+   them there, `Request: wNNN` in its body), the docs for the system (`docs/HowToPlay.md`, `Documentation/<system>.md`),
+   and tests whose name or message names the design.
+2. **If your change reverses or contradicts it, the requester's word alone does not merge it**, even when the requester
+   is another owner of the game. Hand it up as a question to the person whose design it is (`waiting_on_person`, or your
+   report's blocker): what their design says, quoted, who now asks for what, quoted, and your pick. A request that
+   asks for the opposite of a recorded design is a disagreement between two people, not a spec.
+3. **The same look comes before you ask a person a UI or behaviour design question.** If a recorded design already
+   settles it, follow it and say where it is written; do not put the question on a card.
+
+The PR says which on one line: `Design reversal: asked <person> (<where>)` or `Design reversal: none` (it keeps the
+design, or no person's design covers it). `pr_evidence.py` asks for the line when the diff changes a line within 5
+lines of a comment quoting Ben or lothsahn, changes a function that comment names, removes a test line naming their
+design, or the description says it reverses or replaces their design; quoting the requester's own words is not a
+reversal of theirs.
+
+**Why.** Ben corrected the same kind of miss twice:
+
+- w1290 (PR #1731, 2026-10-15) made Overdrivers a flat 0.2 °C/s, replacing Ben's deliberate formula, on lothsahn's
+  description of the old flat rate. Ben: "What no the overdrivers producing flat .2c was wrong, the old formula was right
+  ... Ahhhh why did you change this to the wrong behavior again". No comment quoted Ben there; the git history held his
+  formula, and the PR's own description wondered "whether Ben wants per-structure heat back".
+- w4937 (PR #4052, 2026-11-20, a player report relayed by lothsahn) wrote "Reversed on purpose: Ben's w2097 had E close
+  the building's windows" and merged, although the comment at `UiController.cs:1347` quotes Ben's rule. Then w5053's
+  worker and the orchestrator asked Ben a design card about it. Ben: "it should behave like it did a year ago. the main
+  UI panels for structures close if you press E to open inventory panels. please stop regressing this".
+
+Both workers saw the design and changed it anyway because the person asking was an owner; neither asked the person
+whose design it was. The second then asked a question the comment already answered.
+
+**How to apply.** Before the first edit, `git blame` the lines you will change and read the comments around them; grep
+the system's docs and tests for the behaviour. Before a design question goes on a card, run the same search and drop
+any question it answers. `pr_evidence.py` sees only comments that quote a person; it cannot see a design held only in
+git history or a doc (w1290's was caught by its description, not its code), so the blame is yours. Measured on the
+150 game PRs merged up to #4151 (2026-11-22): the check would have stopped #4052 and #1731, and asked 5 others
+(#4150, #4135, #4090, #4079, #4074) for the line, each a change to code beside its own designer's comment in that
+designer's feature work, where `Design reversal: none` is the answer.
