@@ -250,6 +250,18 @@ selection) compared built players of master 15f9b1c02d, its base 5d428ee033 and 
   `bash -c` command hung before the player started.
 - **`python scripts/unity-bridge.py run-tests --tests A,B` runs the merge gate's list** when MCP `run_tests` answers busy.
 
+### Clipboard chords and boxes on a client (w5135)
+
+Measured on LothDesktop, 2026-11-22, a host and client of FinalFactory 4de4777b81 (PR #4183, waypoint cut, copy and
+paste) under ffnightly.py:
+- **Chords that are Input System actions go through `input.keys`; Ctrl+V does not.** `ffauto:input.keys|LeftCtrl@0:20,X@5:5`
+  (and `C`, `Z`, `LeftCtrl@0:20,LeftShift@0:20,Z@5:5` for redo) performed Cut, Copy, Undo and Redo. Paste reads
+  `InputHelper` (`PasteAction.PasteChordPressed`), so send `pointer.holdkey|LeftControl|20` then `pointer.holdkey|V|2`,
+  then `pointer.click|0` to place.
+- **Move the client's camera before a box.** The client's camera follows its own player, so walk it there first
+  (`movement.goto|<x>|<z>|...` in world units, tile*10+5; ffnightly.py refuses a client `player.setposition` after the join). A box that
+  starts under the hotbar selects nothing; the client's log shows `[InjectedClick] ... overUi=True`.
+
 ### Input timing bugs: sweep the click length at a pinned frame rate (w3988)
 
 On beast, 2026-11-12, w3988 (the nightly review of FinalFactory #3543, panning the open map with a right drag) checked

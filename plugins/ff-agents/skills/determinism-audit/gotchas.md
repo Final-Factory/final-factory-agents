@@ -641,6 +641,11 @@ w1115, 2026-10-12, nightly regression check of the Deck perf PRs (#1449, #1458, 
   verdict, and `compare_determinism_reports.sh` answers `No fingerprint lines found`. Add
   `--peer-arg host=-ffAutomationDeterminismAudit --peer-arg host=true --peer-arg a=-ffAutomationDeterminismAudit
   --peer-arg a=true`; the players' own logs (`<out>/<scenario>-try1/host.log`, `a.log`) then compare directly.
+  For a verdict with the hashes, end the scenario with `ffauto:audit.write|<label>-host` on the host and
+  `ffauto:audit.write|<label>-client` on the client, then run `scripts/audit/compare_determinism_reports.sh` and
+  `compare_audit_records.py` on the two reports (under `DeterminismAudit/Checkpoints/` in the game's data folder).
+  `desync.stats` alone is not that proof: it samples every 8th heartbeat and gives no hash value (w5135, LothDesktop,
+  2026-11-22: 374/374 samples matched; the two reports matched on all 2,954 heartbeats, `AC676ED3ADE3B258` on both).
 - **Measure the slow peer, do not assume it.** `-ffFeelProbe` writes `feel_probe_<pid>.csv` in the game's data root
   (header line has the full command line; `t0` in ns, `hb` the heartbeat): frames over the steady window give fps and
   UPS. On a loaded BEAST a `-ffFeelFps 60` peer reached 23 fps and a 20 fps host 12.7 fps at 11.7 UPS; report the
