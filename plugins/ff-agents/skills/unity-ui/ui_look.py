@@ -795,6 +795,17 @@ def _moved_twin(f: dict, before_loud: list[dict]) -> dict | None:
     return None
 
 
+def _same_weak_text(f: dict, g: dict, tol: float = 12) -> bool:
+    """Whether low-contrast text `f` (after) is text `g` the before still already read as weak (under 4.5:1): the same
+    element, words and place, drawn in the same two colours. The colours may come back swapped: a glyph that fills most of
+    its box is taken for the background (w5133: the hotbar's red "0" item count read #FF5C4C on #6C7897, 1.4:1, after and
+    #67363A on #FE5B4B, 3.1:1, on master, its pixels within 5/255 of each other)."""
+    if g["path"] != f["path"] or g["text"] != f["text"] or _iou(f["rect"], g["rect"]) < 0.5:
+        return False
+    near = lambda a, b: max(abs(x - y) for x, y in zip(a, b)) <= tol
+    return near(f["bg"], g["bg"]) or near(f["fg"], g["bg"]) or near(f["bg"], g["fg"])
+
+
 def split_standing(after: dict, before: dict) -> dict:
     """What the before still already had is STANDING (listed, not counted): a loud fill in the same place and colour, a
     bleed in the same row and control, a low-contrast text of the same element and words. What is left is this change's.
@@ -818,6 +829,7 @@ def split_standing(after: dict, before: dict) -> dict:
         (standing if same else keep)["bleed"].append(f)
     for f in after["fails"]:
         same = any(g["path"] == f["path"] and g["text"] == f["text"] for g in before["fails"])
+        same = same or any(_same_weak_text(f, g) for g in before.get("weak", []))
         (standing if same else keep)["fails"].append(f)
     return dict(after, loud=keep["loud"], bleed=keep["bleed"], fails=keep["fails"], standing=standing)
 

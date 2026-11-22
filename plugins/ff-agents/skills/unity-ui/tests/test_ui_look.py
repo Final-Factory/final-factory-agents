@@ -154,6 +154,25 @@ class StandingTest(unittest.TestCase):
         self.assertEqual(sorted(g["rect"][1] for g in out["loud"]), [300, 660])
 
 
+    def test_a_text_weak_on_master_in_the_same_colours_is_standing_even_swapped(self):
+        # w5133: the hotbar's red "0" item count, pixels within 5/255 of master's, read 1.4:1 after and 3.1:1 (weak) on
+        # master, where the glyph filling its box was taken for the background; it counted as one new low-contrast text.
+        path = "Hotbars/BuildBar/BuildItems/ItemSlot (7)/Count/CountText"
+        rect = [767.6, 730.2, 777.9, 747.5]
+        def t(fg, bg, text="0", r=rect, p=path):
+            return {"path": p, "text": text, "rect": r, "fg": fg, "bg": bg, "ratio": 1.4}
+        red, grey = (255, 92, 76), (108, 120, 151)
+        before = {"loud": [], "bleed": [], "fails": [], "weak": [t((104, 54, 57), (254, 91, 75))]}
+        after = {"loud": [], "bleed": [], "fails": [t(red, grey), t(red, grey, text="12"),
+                                                    t(red, (20, 20, 20), p=path + "2")], "bleed": []}
+        out = uk.split_standing(after, before)
+        self.assertEqual([f["text"] for f in out["standing"]["fails"]], ["0"])
+        self.assertEqual([f["text"] for f in out["fails"]], ["12", "0"])
+        # a text that was weak on master over another background is this change's
+        before["weak"] = [t((104, 54, 57), (20, 20, 200))]
+        self.assertEqual(len(uk.split_standing(after, before)["fails"]), 3)
+
+
 class BleedTest(unittest.TestCase):
     def test_see_through_chips_in_the_active_row_take_its_colour(self):
         s, census = stop_list(chip_alpha=0.09)
