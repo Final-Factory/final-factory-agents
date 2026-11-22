@@ -779,7 +779,11 @@ python "$FF_SKILLS/unity-ui/ui_layout.py" pins a-1920.json a-1280.json a-docked.
 
 `moves` prints the `Moved:` line and one line per HUD block that moved or resized more than 4 px, labelled with its
 screen and layout. Mark each `asked (Ben): "his words"` from inside the brief's quotation marks, naming that element on
-that screen, or put the element back; there is no "justified". `pins` checks the places Ben fixed himself
+that screen, or put the element back; there is no "justified". A change whose asked rule closes windows (w5112:
+#4164's E closes every open window) keeps those states in the census: each `gone from the screen` line says `closed (the
+Gone line below)`, and one `- Gone (why): <element>, <element>: asked (who): "the rule's words"` line names every element
+that rule closes, pinned ones included; it covers no move to another place and no element it does not name
+(evidence-gate `checklists/ui.md`, item 22). `pins` checks the places Ben fixed himself
 (`hud-pins.json`: Station Info just above the abilities, the hover card just above the minimap, the Player
 Inventory off the left edge; with `inventory-rail` on, the rail on the right with the hover card and Crafting left of
 it, w2651) in every census, whatever the parent looked like. Measured (editor): #1282 moved Station Info

@@ -847,6 +847,74 @@ class MovedTest(unittest.TestCase):
                                       self.fixture("brief-w873.txt")), "")
 
 
+class GoneGroupTest(unittest.TestCase):
+    """w5112: #4164 (w5053, E closes every open window again) closes windows on purpose, so `ui_layout.py moves` listed 27
+    'gone from the screen' lines in states 11 (E over the Mass Driver) and 64 (a group selected with Inventory open),
+    Station Info and the Player Inventory's pinned blocks among them. The check counted each as an unasked move, and the
+    PR passed only by leaving both states out of its census. One `- Gone (why): <elements>: asked (who): "..."` line now
+    marks a group an asked rule closes. MEASURED: the fixture is #4164's published moves.txt
+    (/srv/fff/review/w5053-e-closes-windows/moves.txt), states kept, and its Brief lines."""
+
+    def fixture(self, name):
+        return (HERE / "fixtures" / name).read_text(encoding="utf-8")
+
+    def problems(self, section):
+        return "\n".join(pe.moved_problems(section, self.fixture("brief-w5053.txt"))[0])
+
+    def moved(self):
+        return self.fixture("pr-4164-close-windows-moved.txt")
+
+    def without_groups(self, section):
+        return "\n".join(l for l in section.splitlines() if not l.startswith("- Gone ("))
+
+    def test_4164s_census_with_states_11_and_64_kept_passes(self):
+        self.assertEqual(self.problems(self.moved()), "")
+
+    def test_the_same_census_without_the_group_lines_fails_on_each_gone_window(self):
+        problems = self.problems(self.without_groups(self.moved()))
+        self.assertIn("'Moved:' 1920x1080 undocked GamePanels/BuildInfoPanel is not marked", problems)
+        self.assertIn("'Moved:' 1280x800 undocked GamePanels/StructuredHubPanel is not marked", problems)
+        self.assertIn("counts 30 move(s) but only 3", problems)
+
+    def test_an_unmarked_pinned_gone_line_still_fails(self):
+        # Station Info (BuildInfoPanel, pinned in hud-pins.json) left out of the group: its gone lines are unmarked.
+        section = self.moved().replace("state 11): GamePanels/BuildInfoPanel, ", "state 11): ")
+        problems = self.problems(section)
+        self.assertIn("'Moved:' 1920x1080 undocked GamePanels/BuildInfoPanel is not marked", problems)
+        self.assertIn("'Moved:' 1280x800 undocked GamePanels/BuildInfoPanel is not marked", problems)
+        self.assertIn("counts 30 move(s) but only 28", problems)
+
+    def test_a_pinned_gone_line_marked_with_the_raw_placeholder_still_fails_without_a_group(self):
+        section = self.without_groups(self.moved()).replace("closed (the Gone lines below)", "mark: ?")
+        self.assertIn("GamePanels/BuildInfoPanel is not marked", self.problems(section))
+
+    def test_a_group_does_not_cover_an_element_that_moved_somewhere_else(self):
+        # The Player Inventory moved x +518 at 1280x800: naming it in a Gone group is no mark for that move.
+        section = self.moved().replace(
+            "- 1280x800 undocked GamePanels/MiniInventory: x +518, y -38 px, size -15 x +107 px (was 26,194 593x244, now "
+            "551,103 578x352); 4 parts moved inside, largest HeaderContent/Header/TitleAndIcon x +525, y -91 px: asked "
+            "(ben): \"Q2 (the Player Inventory jumping when the building's window closes, at 1280x800)\"",
+            "- 1280x800 undocked GamePanels/MiniInventory: x +518, y -38 px, size -15 x +107 px (was 26,194 593x244, now "
+            "551,103 578x352): closed").replace("state 64): GamePanels/InvAndCraft,", "state 64): GamePanels/MiniInventory, "
+                                                "GamePanels/InvAndCraft,")
+        problems = self.problems(section)
+        self.assertIn("'Moved:' 1280x800 undocked GamePanels/MiniInventory is not marked", problems)
+        self.assertIn("names GamePanels/MiniInventory, which no 'gone from the screen' line lists", problems)
+
+    def test_a_group_quote_must_be_the_requesters_words(self):
+        section = self.moved().replace("E closes them (and the selection).", "E closes every window, by design.")
+        problems = self.problems(section)
+        self.assertIn("the quote is not in the brief's quotations word for word", problems)
+        self.assertIn("GamePanels/BuildInfoPanel is not marked", problems)
+
+    def test_a_group_line_with_no_asked_mark_fails(self):
+        section = self.moved() + "- Gone (closed by the rule): GamePanels/BuildInfoPanel\n"
+        self.assertIn("is not written `- Gone (why)", self.problems(section))
+
+    def test_a_group_with_no_brief_fails(self):
+        self.assertIn("no brief to check the quote against", "\n".join(pe.moved_problems(self.moved(), None)[0]))
+
+
 class UsedByTest(unittest.TestCase):
     """w438: a shader or material change lists everything that uses it. #1068 changed the sprite shader 25
     materials share and checked only the Alt-view icons; every range ring in 0.50.0.77 filled dark."""

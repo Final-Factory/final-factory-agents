@@ -83,7 +83,9 @@ to move around. It's driving me crazy."; [lesson](lessons/a-ui-change-leaves-the
 Never move, re-anchor, restack or regroup an existing panel, HUD element or hover panel unless the brief quotes the
 person asking for that exact element to move. Census 1920x1080, 1280x800 and 1280x800 docked; `ui_layout.py moves` and
 `pins`; `pr_evidence.py --brief` fails any move not asked for in the brief's own words and any broken pin
-([UI checklist](checklists/ui.md), item 22).
+([UI checklist](checklists/ui.md), item 22). Windows the asked change closes on purpose stay in the census: one `- Gone
+(why): <element>, <element>: asked (who): "..."` line marks the `gone from the screen` lines of the elements it names,
+pinned ones included, and nothing else (w5112, #4164).
 
 **Options and mocks too** (Ben, w1429, the fifth correction: "getting extremely worried you guys moved the fucking station
 controls panel when i told you not to twelve times"; [lesson](lessons/a-ui-change-leaves-the-rest-of-the-screen-as-it-was.md#options-and-mocks-move-only-what-the-person-named-w1429-2026-10-17)). An
