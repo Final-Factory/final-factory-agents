@@ -122,6 +122,17 @@ file or the source pack. A flaw that comes back round after round goes to Ben as
 near-match. The PR's `## Evidence` carries `Reference capture:` and `Art language:`, and
 `python3 <evidence-gate>/pr_evidence.py --repo Final-Factory/ffu --pr <n>` passes before you ask Ben or merge.
 
+- **Re-shoot every still after a main merge that touched the renderer, before the critic grades** (w4965, ffu #957):
+  w5099 (FF1's lights and reflection probe in `mesh.wgsl` and `looks/ffu.look`) landed while the PR was open, and the
+  merge moved every pair (mean change 5-20 levels a channel). The first critic had graded stills from the old shader.
+  Build `ffu` from the merged tree, shoot after (built-in packs) and before (`--pack <dir of main's old packs>`) with
+  that one binary, then run a fresh critic. A `--pack` folder must hold every built-in pack, `station_beam.ffpack`
+  included, or the load fails.
+- **FF1's glass is URP's specular setup, and its transparent blend is a plain alpha blend** (w4965): GlassDome has
+  `_WorkflowMode` 0 with a teal `_SpecColor`, and `_BlendModePreserveSpecular` 0, so Unity blends the whole colour at
+  the base alpha (0.141), as FFU's alpha blend does. The exporter writes `_SpecColor` as `KHR_materials_specular`; read
+  a material's `_WorkflowMode` and `_BlendModePreserveSpecular` before you match a transparent one.
+
 ## Tuning a look file (`--look`)
 
 `ffu --look looks/X.look` reads light, material, fog, sky, post-grade, camera and `ui.*` keys and reloads them live;
