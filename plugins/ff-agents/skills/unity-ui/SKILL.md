@@ -439,7 +439,7 @@ census (`<shot>.json`: small, clipped, off-screen and overlapping text, covered 
   `--touched HoverDescription --ref HoverDescription` with `--before` and `--shot/--ref-shot` (evidence-gate
   `checklists/ui.md` item 45).
   (4) A `ui_look.py colour` check of a panel that already had flaws fails on them: pass each still's before with
-  `--before <png>::<census>` in the same order, and old flaws count as standing. (5) The `Style:` line of a check of
+  `--before <png>::<census>` in the same order, and old flaws count as standing. A solid loud fill of the same colour and size as an unused before fill anywhere on the still is a moved element and standing too (w5119: a new filter row moved the research grid's tiles 30 px down and three tile strips read as new). (5) The `Style:` line of a check of
   one window took the Inventory as its reference (delta E 19.8) until `ui_layout.py check --touched X --ref X
   --ref-census <the before census>` compared it with its own before (0.0). (6) `ui_layout.py check` reported 3
   covered texts "before" even for HEAD against itself: compare the covered-text counts of both censuses, not its
