@@ -235,10 +235,14 @@ selection) compared built players of master 15f9b1c02d, its base 5d428ee033 and 
 - **A tour's reset must never click the ground with a whole station selected.** Since #4074 a plain click on open space
   with a whole station in Move flies it there, so the next leg starts with the station somewhere else. Reset with Q,
   Escape steps or `ui.modal` reads, not a ground click.
-- **The channel cannot make a station box or press its group key.** A box is Ctrl+drag, or a plain drag on the open map
-  (`StationSelectInput.cs`). `pointer.holdkey|LeftControl` reaches only `InputHelper`, not the gesture's Ctrl, and
-  `pointer.drag` on the open map selected nothing on base and fix alike; the `savegroup` 3, m, 3, m group-key leg too.
-  Rest that path on an EditMode test through `StationSelectInput.SyncOrdinarySelection` and say so in the report.
+- **A station box over the channel must cover the station's Command Core** (corrected by w5093, measured in a built
+  player of 1e9743adbc). `StationSelectInput.CollectCovered` takes only the stations whose
+  `Hauler.MoveableStructureReference` lies inside the box, so w5087's box over the station's other buildings selected
+  nothing, on base and fix alike. Over the core, a plain `pointer.drag` in the world, a Ctrl drag
+  (`pointer.holdkey|LeftControl|240` first: the box reads `InputHelper.GetKey`, which counts an injected key held) and a
+  drag on the open map each selected the station whole. The group key is `stationgroup.savegroup|N` and
+  `stationgroup.group|N`. One station goes to the ordinary selection, so `stationgroup.state` reads `selected 0/50`:
+  judge Move and Land from the shot. The ffauto reference's `pointer.drag` row says the same.
 - **`blueprint.ghosts` reads only the held blueprint,** not a station's Move or Land preview: judge those from the shot.
 - **Compare builds only on the same tour file.** A fix run on a newer tour (a changed reset) differed from HEAD in shots
   the fix never touched; rerun the base on the same file before you call a difference.
