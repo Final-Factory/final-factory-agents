@@ -2190,7 +2190,11 @@ def design_inputs(args) -> tuple[str | None, object]:
         print(f"note: gh pr diff failed ({done.stderr.strip()[:120]}): the design-reversal rule read only the "
               f"description", file=sys.stderr)
         return None, None
-    heads = json.loads(gh("pr", "view", str(args.pr), "--repo", args.repo, "--json", "baseRefOid,headRefOid"))
+    # The REST pull, not `gh pr view --json baseRefOid`: gh 2.46 (Ubuntu's, biscuit) has no baseRefOid, and the merge
+    # guard refused every merge there (w5140, ffu #962).
+    pull = json.loads(gh("api", f"repos/{args.repo}/pulls/{args.pr}",
+                         "--jq", "{baseRefOid: .base.sha, headRefOid: .head.sha}"))
+    heads = {"baseRefOid": pull["baseRefOid"], "headRefOid": pull["headRefOid"]}
     base = subprocess.run(["gh", "api", f"repos/{args.repo}/compare/{heads['baseRefOid']}...{heads['headRefOid']}",
                            "--jq", ".merge_base_commit.sha"], capture_output=True, text=True, encoding="utf-8")
     sha = base.stdout.strip() if not base.returncode else heads["baseRefOid"]

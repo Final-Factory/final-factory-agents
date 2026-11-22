@@ -209,6 +209,14 @@ whole verification. The repo's own `CLAUDE.md` is binding and longer; this skill
   `server.pace(n)` waits on that thread: the RED run of `a_malformed_op_is_dropped_and_counted_and_every_client_follows_on`
   took 722 s to fail. Receive what you need with `recv_timeout`, call `pace`, join the followers, then assert: RED then
   failed in 2.18 s (measured, lothdesktop).
+- **A compile error in a C dependency's own code on one runner is a stale build-script `out/`, not your change** (w5140,
+  ffu #962). check-release on ffu-biscuit-3 failed in sdl3-src's `SDL_waylanddatamanager.c` ("static declaration of
+  'sigtimedwait'"): the job before, a cancelled check-release, ran `keep_target.sh end` while its build still ran (cargo
+  and cmake outlive a cancel until the orphan clean-up), its `rm -rf target/release` made the live SDL configure fail a
+  probe, cmake cached `HAVE_SIGTIMEDWAIT` FALSE, and cmake-rs reused that cache. Read the configure log for probes it
+  never printed (they came from a cache), and the job before on the same runner (`gh api .../runs/<id>/jobs` per run,
+  by `runner_name`). Since #962 `drop_unfinished_runs.sh` removes a build-script dir whose `output` is missing or older
+  than `invoked.timestamp`, and `end` removes nothing while a build runs in `target/`.
 - **A served-shard test that moves something by wall time and then counts ticks fails on a loaded runner** (w3755,
   ffu #530). A loaded CI runner (biscuit, swap 100 % full) runs the shard under 16 ticks a second, so a ship flight
   paced by `Instant` crossed in 26 ticks of both stations' logs where the test asked for 32 (run 42550917935). Pace a
