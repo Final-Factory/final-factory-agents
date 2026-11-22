@@ -149,6 +149,14 @@ Recording notes:
   ran there). Then run `record_clip --pid <its pid>`. Place enemies last and record within a second or two: a Razor
   Spawner killed the player in under 25 s, and the first take filmed only the death screen. That audit's default port
   7777 is often held by another sandbox's audit (exit 2), so pass `--port`.
+- **A placement sent with `--do` shows seconds later; the `Clips:` time is the frame it shows** (w5125, lothdesktop,
+  2026-11-22): `record_clip --do "blueprint.placewaiting|<bp>|x|z" --lead 3` sent it at 3.00 s, and the ghosts first
+  drew at 5.27 s (master player) and 5.38 s (branch player), measured by counting their green pixels frame by frame. A
+  crop at 3.2 s showed empty space. Give `--seconds` 3 s or more after the send, find the first frame the effect draws,
+  and name that time in the PR's `Clips:` and `Close-ups:` lines. The "before" needs no build: the machine's shared
+  player cache (`python scripts/nightly/player_cache.py root`) usually holds a master player from today; check it with
+  `git merge-base --is-ancestor <sha> origin/master` and launch it through `player_slots.py launch <entry>` like the
+  branch's player.
 - **`record_clip --unity` records whatever lies over the editor's window** (w1667, lothdesktop slot4, 2026-10-21): with
   other sandboxes' editors open, 90 s of "my" editor were another sandbox's editor on top of it (another save, another
   HUD), exit 0. Look at one frame of every desktop capture before you use it (`ffmpeg -ss 5 -i clip.mp4 -frames:v 1
