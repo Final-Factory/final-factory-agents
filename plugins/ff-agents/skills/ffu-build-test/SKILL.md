@@ -639,6 +639,14 @@ never rewritten (`tools/check_snapshot_compat.sh BASE_REF` holds it in CI). No t
 - CI runs on ffu's own runners, one job at a time each: `ffu-linux` (biscuit's four and FFBox's ffu containers),
   `ffu-linux-biscuit` (biscuit alone: check, lint), `ffu-ffbox` (FFBox alone: the fuzz nightly), `ffu-windows` (BEAST,
   LothDesktop), `ffu-macos` (the M3). A job waits while its machine is off; a queue of several minutes is normal.
+- **A pull request runs no macOS job; the Mac legs and `crosscompare` run after the merge** (lothsahn, w4923: "Run
+  crosscompare and the mac-only checks after merge, reverting on red"; ffu #921). On a push to main (or a dispatch)
+  ci.yml's `macos` job runs Mac clippy, tests and hashcheck, then `crosscompare`; when either is red, the `culprit`
+  job (`tools/ci-runners/postmerge_culprit.py`) bisects the merges since the last green main, reverts the culprit's
+  merge as a commit on main, comments `POSTMERGE_VERDICT` on its PR and dispatches `ci.yml verify=true`. A red main
+  `test`/`clippy` leg does not start it (those already gated the PR). A sim or platform-`cfg` change that should see
+  the Mac before it merges: `gh workflow run ci.yml -R Final-Factory/ffu --ref <branch> -f verify=true` (the full
+  set, Mac and crosscompare included). Measured, w4923: PR run wall median 45.9 -> 22.8 min, ffu-m3 queue 19.5 h/day -> 0.
 - **Before moving an ffu job onto FFBox, set its length against FFBox's own job watchdog** (w4076): the host ends any
   job 240 minutes after it starts (ffbox `config.md` `watchdog_minutes`, `runners/lib/config.sh`), whatever the job's
   `timeout-minutes` says, and the log shows only "The runner has received a shutdown signal" and a cancelled step. The
