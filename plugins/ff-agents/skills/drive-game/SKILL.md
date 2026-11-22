@@ -207,6 +207,17 @@ snippet, `wait-ready` after a restart. Each is one bounded call with a one-line 
    E/T/V/C/Space use the new Input System (`FFInput` `PlayerController` InputActions) and are
    **unreachable** — `key:W:60` will not move the player. Every panel those keys open has a
    HUD-button or `execute_code` path instead (see recipes.md).
+
+   **Escape through ffauto** (w5059, 2026-11-22, measured in the slot2 editor):
+   - `pointer.holdkey|Escape|2` reached `InputHelper.GetKeyDown` and the selection's Escape.
+   - `input.keys|Escape:2` did not reach `UnitSelector`'s Escape.
+   - An Escape with nothing selected opens the main menu, which pauses the game (timeScale 0). Every later leg then
+     reads a frozen world, so check that the menu is closed before the next leg.
+   - One Escape press has two readers: `UnitSelector`, and `UiController`'s panel-close fall-through, which deselects
+     a building whose window is open. A leg that tests an Escape step must read the selection after the whole frame.
+   - `pointer.moveto|x|y|screen` takes bottom-up screen coordinates (y = 0 is the bottom).
+   - In an unfocused editor game view (1 fps), `ScreenCapture` rendered the world white while the overlay UI drew
+     correctly, and `manage_camera` captures leave the overlay UI out. Take stills a person will see in a built player.
 3. **Mouse is not injectable.** Read directly via `Input.GetMouseButton*`/`Input.mousePosition` in
    ~38 sites across ~23 files (no chokepoint); uGUI clicks go through the EventSystem. UI clicks can
    be simulated via EventSystem (recipes.md); world-mouse would need a refactor.
