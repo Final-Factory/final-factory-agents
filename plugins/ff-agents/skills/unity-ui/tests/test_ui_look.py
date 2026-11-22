@@ -126,6 +126,21 @@ class StandingTest(unittest.TestCase):
         self.assertEqual(len(out["standing"]["loud"]), 2, out)
         self.assertEqual([g["rect"][0] for g in out["loud"]], [100, 1200])
 
+    def test_a_moved_tile_strip_of_the_same_colour_and_size_is_standing_once(self):
+        # w5119: a new filter row moved the research grid 30 px down; each researchable tile's lower 86x21 strip overlapped
+        # its before twin by less than half, so three old strips read as new loud fills.
+        blue = (0x1C, 0xA7, 0xDD)
+        def f(x0, y0, x1, y1, colour=blue):
+            return {"rect": [x0, y0, x1, y1], "colour": colour, "L": 64, "C": 40}
+        xs = (27, 124, 221)
+        before = {"loud": [f(x, 489, x + 86, 553) for x in xs] + [f(x, 554, x + 86, 575) for x in xs], "bleed": [], "fails": []}
+        after = {"loud": [f(x, 519, x + 86, 583) for x in xs] + [f(x, 584, x + 86, 605) for x in xs]
+                         + [f(27, 700, 113, 721), f(400, 700, 520, 740)], "bleed": [], "fails": []}
+        out = uk.split_standing(after, before)
+        self.assertEqual(len(out["standing"]["loud"]), 6, out)
+        # a fourth strip of that size has no unused before twin, and a fill of another size has none at all
+        self.assertEqual(sorted(g["rect"][0] for g in out["loud"]), [27, 400])
+
     def test_one_before_peak_takes_ragged_peaks_in_its_band_and_not_a_solid_box(self):
         # w1908: the 2560x1080 before drew one teal peak where the after drew five in the same band.
         teal = (0x21, 0xA6, 0x9F)

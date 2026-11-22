@@ -778,15 +778,39 @@ def _inside_drawn_area(f: dict, before_loud: list[dict]) -> bool:
     return bool(part) and ul.area(part) >= 0.5 * ul.area(f["rect"])
 
 
+def _moved_twin(f: dict, before_loud: list[dict]) -> dict | None:
+    """A before fill of the same colour (delta E 5 or less) and the same size (2 px) anywhere on the still: the same element
+    moved, so its look is not new (w5119: a new filter row moved the research grid's researchable tiles 30 px down, and each
+    tile's lower 86x21 strip overlapped its before twin by less than half, so three "new" loud fills were the old tiles).
+    Each before fill answers for one after fill only, so a second copy of it is still new; a fill drawn from data (a
+    graph's ragged peak, `_ragged`) is no solid element and has no twin."""
+    if _ragged(f):
+        return None
+    r = f["rect"]
+    w, h = r[2] - r[0], r[3] - r[1]
+    for g in before_loud:
+        q = g["rect"]
+        if not _ragged(g) and abs((q[2] - q[0]) - w) <= 2 and abs((q[3] - q[1]) - h) <= 2 and ul.delta_e(f["colour"], g["colour"]) <= 5.0:
+            return g
+    return None
+
+
 def split_standing(after: dict, before: dict) -> dict:
     """What the before still already had is STANDING (listed, not counted): a loud fill in the same place and colour, a
     bleed in the same row and control, a low-contrast text of the same element and words. What is left is this change's.
-    A fill counts as standing when the before had one at least as loud in the same place, whatever its hue."""
+    A fill counts as standing when the before had one at least as loud in the same place, whatever its hue, or one of the
+    same colour and size elsewhere (a moved element, `_moved_twin`)."""
     standing = {"loud": [], "bleed": [], "fails": []}
     keep = {"loud": [], "bleed": [], "fails": []}
+    moved_twins = list(before["loud"])
     for f in after["loud"]:
         same = any(_iou(f["rect"], g["rect"]) >= 0.5 and g["L"] >= f["L"] - 3 and g["C"] >= f["C"] - 3 for g in before["loud"])
         same = same or _inside_drawn_area(f, before.get("tinted") or before["loud"])
+        if not same:
+            twin = _moved_twin(f, moved_twins)
+            if twin is not None:
+                moved_twins.remove(twin)
+                same = True
         (standing if same else keep)["loud"].append(f)
     for f in after["bleed"]:
         names = {c["path"] for c in f["controls"]}
