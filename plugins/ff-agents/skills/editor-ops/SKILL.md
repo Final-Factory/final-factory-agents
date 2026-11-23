@@ -316,6 +316,12 @@ to its pull request. For #1137's change the selection ran in 75 s against 376 s 
   ["TestsSlow.Circuits.CircuitCalculationBenchmark"]` answered `resultState Passed` with `skipped 1, passed 0` and logged
   nothing; the method's full name (`...CircuitCalculationBenchmark.AThousandLines_CostPerHeartbeat`) ran it. Name the
   method of an `[Explicit]` test, and read `summary.passed`.
+- **`unity-bridge.py run-tests` prints no assert message** (w5256, 2026-11-23, lothdesktop slot5): a failure answers
+  only `FAILED 1 of 1 ... <test name>`, and names must be namespace-qualified (`Tests.PersonalLogistics.<Class>.<Method>`).
+  To read a failing test's numbers from a shell, `UnityEngine.Debug.Log(message)` just before the assert and grep the
+  editor's own log: `echo 'return UnityEngine.Application.consoleLogPath;' | python scripts/unity-bridge.py eval-file -`
+  answers it (`Logs/sandbox-editor.log` in an FF Factory sandbox). In that run an `[Explicit]` recorder named by its
+  qualified method was still skipped; lifting the attribute for the run (and restoring the file after) ran it.
 - Pass `test_names`, never regex `group_names`. One class through a regex took the job 16.6 s
   against 4.0 s by exact name, and regex runs held the main thread for minutes (measured).
 - Give `run_tests` an `init_timeout` of 120000. A call that answers "Timeout receiving Unity

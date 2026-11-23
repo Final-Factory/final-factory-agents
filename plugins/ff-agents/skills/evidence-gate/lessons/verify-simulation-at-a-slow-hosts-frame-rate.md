@@ -209,8 +209,12 @@ frame-order fork a same-speed pair misses shows up (the rule at the top of this 
 `--slow-host 20`, which adds the host's `-ffFeelProbe -ffFeelFps 20 -ffFeelVsync 0`.
 - A requester on Windows or Linux (lothdesktop, biscuit) that has built the head's player and passed the host-only
   `--dry` (w2963) runs the PR's scenarios itself, in its own sandbox
-  (`ffnightly.py run --sha <head> --scenarios-from <head> --scenario <each> --out "$TMPDIR/mp-<time>"` plus the flags
-  above), and reports that run: no `request_pair`.
+  (`ffnightly.py run --sha <head> --scenarios-from <head> --player <player cache>/<head>-win/player --scenario <each>
+  --out "$TMPDIR/mp-<time>"` plus the flags above), and reports that run: no `request_pair`. Pass `--player` with the
+  cache entry `build_player.sh` printed (`V:/ffw/player-cache/<40-hex sha>-win/player` on lothdesktop): without it the
+  runner looks for `finalfactory.exe` in the sandbox and stops before launching with `player_slots.SlotRequired:
+  refusing to start <sandbox>: it is not under the player slot root` (w5256, 2026-11-23: both scenarios failed so
+  in a minute; with `--player` each passed in 1.9 min, and the run leased a slot for the cached player by itself).
 - A requester on a Mac, which cannot run an MP client (w3697), files `request_pair` with `legs: 1`
   (ff-factory#1008). Measured on the first one (w4609, 2026-11-17): 34 min queued for one free Linux computer,
   17 min of work (build 10, preflight under 1, runs 5), against the two-leg w4595 of the same commit that had not
