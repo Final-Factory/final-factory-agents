@@ -455,6 +455,12 @@ and lets Burst errors hide behind it.
 If you turned Burst on, say so in your report — it is a persistent editor setting, and the user
 may have switched it off deliberately.
 
+**Never set it to `false`** (w5270): the option IS the user-wide EditorPref `BurstCompilation`, so "off for this
+session" turns Burst off for every editor of that user on the machine (BEAST's sandbox tests ran managed for ~12 h).
+A run that needs managed jobs starts its own editor with `--burst-disable-compilation`. Since FinalFactory#4225 the
+game's `BurstPrefGuard` turns it back on at editor load and logs `[BurstPrefGuard] Burst compilation was off ...`;
+quote that line in your report if you see it.
+
 **A NEW `[BurstCompile]` entry point needs a forced synchronous compile, not just a green fast
 suite.** The editor compiles Burst lazily — an entry point that no test happens to schedule
 during a fast-suite run can sit un-compiled indefinitely, so "fast suite green" is not evidence

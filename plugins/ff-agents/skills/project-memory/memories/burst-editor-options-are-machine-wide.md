@@ -13,6 +13,11 @@ NativeList index carries an AtomicSafetyHandle check (measured, unlocked editor)
 45 minutes on a machine with three editors. Any other sandbox editor reading it in that window ran its jobs and tests
 without Burst's safety checks. A broken container access then passes silently instead of throwing.
 
+**Second incident (w5270, 2026-11-23, BEAST):** the game's automation launcher set `EnableBurstCompilation = false`
+"for this session"; Burst persisted it to the pref and every sandbox editor's tests ran managed for ~12 h. Any option
+write persists, because `BurstEditorOptions.GlobalOnOptionsChanged` writes every Burst pref from the live values; an
+editor reads them again after each domain reload. Setting it to `true` is always safe.
+
 **How to apply:**
 - Never set a `BurstCompiler.Options` value from a script, eval or the menu on a machine other editors share. Time a
   job with checks on and compare old and new side by side in one run (a `[Category("Performance")]` test that holds a
@@ -21,5 +26,7 @@ without Burst's safety checks. A broken container access then passes silently in
 - If one was flipped anyway, restore it and read the registry back:
   `(Get-Item 'HKCU:\Software\Unity Technologies\Unity Editor 5.x').GetValue('BurstSafetyChecks_h2341251438')` must be 1.
   Then name the window it was off in your report, so the workers whose tests ran then can judge them.
-- The game repo's `NoTestSetsBurstOptionsGuardTest` keeps tests from setting these. An agent's eval is not covered, so
+- Need managed jobs? Start a separate editor with `--burst-disable-compilation` (per process), never flip the option.
+- The game repo's `NoTestSetsBurstOptionsGuardTest` keeps tests from setting these; `NoCodeTurnsBurstPrefOffGuardTest`
+  keeps any game code from writing `EnableBurstCompilation` off, and `BurstPrefGuard` turns it back on at editor load. An agent's eval is not covered, so
   this rule is the guard.
