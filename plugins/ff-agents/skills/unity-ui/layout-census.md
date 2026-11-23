@@ -252,8 +252,14 @@ python "$FF_SKILLS/unity-ui/ui_layout.py" pins a-1920.json a-1280.json a-docked.
   `-ffAutomationRole solo -ffAutomationSeed <s> -ffSoloObjectives Normal`, then run these tour steps:
   `ffauto:player.setposition|X|Z-6`, `ffauto:blueprint.place|<one-item Cargo Hold string>|X|Z`, `ffauto:heartbeats|4`,
   `ffauto:ui.menu|close`, `ffauto:ui.selecttile|X|Z`, `{"at": "0.75,0.985"}`, then the census. X,Z = 10,21. The game
-  repo's `scripts/deck_audit/build_audit_world.py` `blueprint("Cargo Hold")` makes the one-item string. Take a separate
+  repo's `scripts/deck_audit/build_audit_world.py` `blueprint("Cargo Hold")` makes the one-item string; the game repo's
+  `ValidationScenarios/w1903-reading-hold.ffbp.txt` already holds one (its `ffblueprintstart` line). Take a separate
   census for the pins when your own screens have no station selected: the gate counts every census you pass.
+  Dead ends (w5252, 2026-11-23, about an hour lost): a Connector or Command Core selected shows Station Info but no
+  Player Inventory (no slots); `ui.open|inventory` or `playerinventory` with nothing selected shows no MiniInventory; the
+  Cargo Holds of `w1761-calc-station.ffbp.txt` are station buildings, so `ui.selecttile` answers "nothing at tile" on
+  every tile. Measured with the w1903 hold at -6,-6, `player.setposition|-5|-4`, `ui.selecttile|-6|-6`,
+  `pointer.moveto|-6|-6`: 8 pins, 0 broken, 0 not shown at 1920x1080, 1280x800 classic and docked.
 - `moves` compares each element's rect (the RectTransform's, not the clipped part), groups what moved into the highest
   object whose every element moved by the same amount, and prints one line per HUD block (`GamePanels/X`) with its screen
   and layout (`docked` when `StructuredDock` or `StructuredStation` is on screen, else `undocked`), its outer rect before
