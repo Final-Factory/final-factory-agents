@@ -18,6 +18,7 @@ var o = Unity.Burst.BurstCompiler.Options;
 var was = o.EnableBurstCompilation;
 if (!was) o.EnableBurstCompilation = true;   // == Jobs > Burst > Enable Compilation
 return new { was, now = o.EnableBurstCompilation };
+// Never assign false: it is the user-wide pref, read by every editor on the machine (w5270).
 ```
 
 With it off, every job runs managed: a suite can go green while the Burst compile is broken

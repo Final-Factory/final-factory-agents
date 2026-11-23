@@ -1,5 +1,18 @@
 # launch-editor.sh brings editors up with Burst DISABLED — check every relaunch
 
+**Cause found (w5270, 2026-11-23):** the launch script was never the cause. `BurstCompiler.Options` is backed by the
+user-wide EditorPref `BurstCompilation`: com.unity.burst `BurstEditorOptions` reads it at load and writes all five
+Burst prefs back on ANY option change (`GlobalOnOptionsChanged`). The game's `LocalMultiplayerAutomationLauncher`
+auto-start called `DisableBurstForAutomationSession()` (`EnableBurstCompilation = false`) for every config without
+Audit* fields, so one automation run turned Burst off for every editor of that user on the machine, from each one's
+next domain reload. On BEAST that held 2026-11-22 ~23:00Z to 11-23 11:37Z (sandbox tests ran ~4x slower); m5's pref
+was 0 too. Fixed in FinalFactory#4225 (the call is gone; `BurstPrefGuard` turns the pref back on in every editor;
+`NoCodeTurnsBurstPrefOffGuardTest` refuses new code that writes it off) and ff-factory#1093 (the daemon turns it on
+before it starts a sandbox editor). A run that truly needs managed jobs starts its own editor with
+`--burst-disable-compilation` or `UNITY_BURST_DISABLE_COMPILATION=1` (per process). The checks below still hold for
+an editor that predates the fix.
+
+
 **Observed three times, 2026-08-22/23** (M5 main editor once, both M3 editors once each):
 an editor launched via `scripts/launch-editor.sh` comes up with
 `BurstCompiler.Options.EnableBurstCompilation = false`, even when the previous instance had
