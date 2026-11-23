@@ -978,6 +978,16 @@ never rewritten (`tools/check_snapshot_compat.sh BASE_REF` holds it in CI). No t
     looping workspace suite. Build the workspace tests first (`--no-run`): the runs keep `target/debug/ffu-server.exe`
     open, a build beside them fails with "failed to remove file ... Access is denied", and the "load" ran none (w5234's
     first loaded loop).
+  - **A planted stuck disk is a clock too: aim past what its files hold, not a fixed count past the Welcome** (w5220,
+    ffu #1026). With `FFU_WAL_PLANT_SYNC_MS=3600000`, `oplog_crash.rs` keeps only the log thread's first batch of
+    ticks. On a loaded biscuit runner that batch came at tick 121, after the client's target of Welcome + 30 (tick
+    100), so the crash lost nothing ("the restart is at tick 121, the client saw 100: nothing was lost, so nothing is
+    tested", CI run 45239538900). The PR it failed on touched no ffu-server code, and the rerun hook (w3784) refused
+    `gh run rerun --failed`. So the flake was fixed in the same PR. The fix, `settled_files`, copies the files until two
+    copies in a row recover the same tick past the start. The test then follows 10 ticks past that tick, within
+    `wal::MAX_LAG`. The RED took two local-only plants together: the `ffu-oplog` thread's first turn 1.5 s late, and
+    the test thread held 1.5 s after the Welcome. Then the old test failed the same way: the files held 75 and the
+    client followed to 21. A 2.5 s logger delay alone passed, because nothing was written before the kill.
   - **The loop of 50 on a CI runner is `.github/workflows/repeat.yml`** (w3402, ffu #383). It builds once, then runs
     one test target N times in a row and stops at the first failure. Dispatch it with package, target, filter, count
     and os (`gh workflow run repeat.yml -R Final-Factory/ffu -f target=owner_term ...`). A PR that changes repeat.yml
