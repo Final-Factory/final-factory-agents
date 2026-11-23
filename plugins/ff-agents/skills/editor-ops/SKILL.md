@@ -320,8 +320,16 @@ to its pull request. For #1137's change the selection ran in 75 s against 376 s 
   only `FAILED 1 of 1 ... <test name>`, and names must be namespace-qualified (`Tests.PersonalLogistics.<Class>.<Method>`).
   To read a failing test's numbers from a shell, `UnityEngine.Debug.Log(message)` just before the assert and grep the
   editor's own log: `echo 'return UnityEngine.Application.consoleLogPath;' | python scripts/unity-bridge.py eval-file -`
-  answers it (`Logs/sandbox-editor.log` in an FF Factory sandbox). In that run an `[Explicit]` recorder named by its
-  qualified method was still skipped; lifting the attribute for the run (and restoring the file after) ran it.
+  answers it (`Logs/sandbox-editor.log` in an FF Factory sandbox).
+- **An `[Explicit]` recorder runs by its exact name from the shell, with no source edit** (w5308, PR #4238, measured
+  2026-11-23, BEAST slot2): `python scripts/unity-bridge.py run-tests --tests
+  Tests.PersonalLogistics.PersonalLogisticsBotTests.RecordArrivalAtAMovingPlayer` ran all 13 cases; one case runs by
+  its name as NUnit writes it, floats with `.0f`: `'...RecordArrivalAtAMovingPlayer("Circle",140.0f,100.0f)'` (`140f`
+  matched nothing). Before #4238 it was skipped: the bridge's default `!^Performance$` category is an NUnit
+  `NotFilter`, which never counts as an explicit match (forced back on: `passed 0 of 13, 13 skipped`). The bridge now
+  leaves the category off when every name is one test or case; a class name, or a class in the same list, keeps it and
+  skips Explicit tests. Never lift the `[Explicit]` line to run a recorder; in a raw `run_tests` call, send no
+  `category_names` beside its exact name.
 - Pass `test_names`, never regex `group_names`. One class through a regex took the job 16.6 s
   against 4.0 s by exact name, and regex runs held the main thread for minutes (measured).
 - Give `run_tests` an `init_timeout` of 120000. A call that answers "Timeout receiving Unity
