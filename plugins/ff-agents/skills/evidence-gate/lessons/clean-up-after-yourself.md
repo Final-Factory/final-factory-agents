@@ -250,7 +250,9 @@ sandbox already holds the Library and the LFS files, so build there.
 (`find <dirs> -xdev -type f -links 1 -mmin -<n> -printf '%s %p\n'`), or dedupe by inode (`-printf '%i %s %p\n'` and count
 each inode once). Size the folders with one `du` call over all of them (`du -s tmp/*/`), never one call per folder: `du`
 counts a hardlinked file once per call, so separate calls count it in every folder. Report what `df` gained, not what a
-listed size promised. `ff-leftovers remove-slot` already says that hardlinked slots free less than their size.
+listed size promised. Since ff-factory w5168 `ff-leftovers folders`, `remove` and `remove-slot` count a hardlinked file only
+when every link goes (a player slot reads `0 MB, +1.3 GB hard-linked to files kept elsewhere, not freed`): in w5165 the 12
+LothDesktop slots read 15.7 GB as DELETE and freed almost nothing.
 
 **Why.** 2026-11-07, BEAST (w3389, F: at 11 GB free). FF Factory's daemon hardlinks identical files across worker clones.
 One Assets/Audio wav in ffa-932935f8/clone-before, ffa-4c0fdc7a/clone-3307 and ffa-7f09f9cd/clone-3340 was one inode
