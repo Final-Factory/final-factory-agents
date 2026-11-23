@@ -229,6 +229,9 @@ Not verified: the Bats' slot lag (simulation, follow-up PR)
   first-frame resolution, the Steam client or touch ([deck.md](deck.md); w684 -> w768, w767).
 - **Kind `simulation`** needs "Tests", "Determinism audit" (with the heartbeat count, per the
   `determinism-audit` skill) and "Save compatibility" (the repo's hard rule).
+  A state dump the audit compares across peers is taken at one heartbeat (ffauto `waituntil|heartbeat|<n>`), never after
+  each peer's own wall-clock wait (w5254: `run_projector_audit.sh` compared completed 8 against 9, dumps 157 heartbeats
+  apart, with every fingerprint matching).
 - **Save version bumped -> old-save load test present** ([lesson](../lessons/merge-your-own-pr.md#a-save-version-bump-that-keeps-old-saves-loading-needs-no-person-w1826-2026-10-23);
   Ben, 2026-10-23, w1826). The PR's Save compatibility line names the test that loads a save from
   before the bump and says it ran green. With it, the bump merges without a person (a newer save
@@ -241,6 +244,11 @@ Not verified: the Bats' slot lag (simulation, follow-up PR)
   at runtime that old saves never carry is the same case (w4975: `HaulerWaypointPace`, added by the first Hold append
   and emptied when its stops go, went into `ColumnarWorldCapture.KeptEmpty`, else a joiner's station lacks it while the
   host's keeps it, a census desync).
+- **A changed layout rule is a save change when something saved was derived from it** (w5254): a change to how
+  positions, turns or footprints are computed (a pivot, an anchor, a centring rule) greps the `[Save]` components for
+  bounds, areas, tiles or offsets cached through the old rule, and its Save compatibility line names each with its
+  verdict. #4182 moved `PlaceableHelper.RotateItem`'s pivot, said "no saved state is touched", and every Blueprint
+  Projector from a 1.0.0.61 save built a tile off its saved `AreaMin`/`AreaMax`; #4219 added the UpgradeStep.
 - **A re-pinned digest or golden test says what its fixtures don't carry** ([lesson](../lessons/look-early-by-breakdown.md#a-digest-is-blind-to-fields-its-fixtures-never-carry-w2124-2026-10-25);
   w2124): the Tests line names each field the digest excludes and the assertion that pins its value, any feature the
   change touches that no fixture sets and the test that now sets it, and the mutant arm that went red.
