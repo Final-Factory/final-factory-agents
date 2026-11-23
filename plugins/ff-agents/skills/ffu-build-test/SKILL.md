@@ -512,6 +512,16 @@ cargo run --release -p ffu-headless -- crosscheck --threads 1,4,16 --golden gold
   FFU_CAPTURE_DIR=<dir>` and group the pixels that differ from the golden into blobs. Re-bless (`FFU_BLESS=1`, on the
   adapter the golden was blessed on) only when every blob is a change you meant to make; any other blob means the code
   is wrong (w2895 M2.17b: two 15 px discs on the two crafters, nothing else, so the golden was out of date).
+  A golden re-blessed on another adapter moves models your change never touched (w5134, ffu #997):
+  `golden/ff1_gallery.png` was blessed on a GPU, and a plain `FFU_BLESS=1` on biscuit's lavapipe also changed the
+  robot, the V-ship and the heat exchanger. A clean main build there renders that same drift and still passes
+  (`lit_match`'s slack), and the first ui-critic marked the golden BROKEN for it. Capture main and your branch with
+  `FFU_CAPTURE_DIR`, diff them column by column, and splice only your change's columns into the old golden.
+- **Re-bake one model of a pack and keep the others' bytes with `ffu-bake with OUT.ffpack IN.ffpack IN.gltf...`**
+  (w5134, ffu #997). A fresh FF1 export can move an art colour the person wants kept: since w5117 the exporter decodes
+  sRGB masks as FF1's GPU does, which moved the Overdriver's grey paint from 121,111,113 to 110,109,109. When the art
+  colour must stay, put back the old albedo and surface texels, then check texel 0 of each and that the other models
+  are byte-identical.
 - A test that opens a GPU device holds its crate's one-device lock (`ffu-render`'s `tests::gpu`, `ffu-client`'s
   `packs::tests::gpu` / `one_gpu_at_a_time`; a new crate with GPU tests adds one). Several devices made at once crash
   Mesa's Vulkan loader: a SIGSEGV with no Rust panic, in 25 of 200 parallel runs of `ffu-client`'s tests on biscuit
@@ -529,6 +539,8 @@ cargo run --release -p ffu-headless -- crosscheck --threads 1,4,16 --golden gold
   never revert the lock change `tools/fuzz.sh` makes (w2895, ffu #653).
 - `ffu-client` has no library target: `cargo test -p ffu-client --lib` fails with "no library targets found", and a
   `grep "test result"` of it prints nothing, which reads as a pass (w2895 FP.22). Its unit tests run with `--bins`.
+  One test by name: `cargo test -p ffu-client --bin ffu -- <filter>`; an `FFU_BLESS=1` run with `--lib` blesses
+  nothing (w5134).
 - Fuzzing needs nightly and cargo-fuzz (`tools/fuzz.sh [seconds] [target ...]`); BEAST and lothdesktop have neither, and there the script stops before fuzzing yet reports "crashes" with no artifacts: check `cargo fuzz --version` first and write "not run" in the PR (w2895). Run new targets on
   FFBox (fuzz.yml runs only there since w4076, `ffu-ffbox`) by dispatching the nightly job on your branch: `gh workflow run fuzz.yml -R Final-Factory/ffu --ref <branch>
   -f seconds=600 -f targets="a b"`. Each target's result is its `stat::number_of_executed_units` line in
