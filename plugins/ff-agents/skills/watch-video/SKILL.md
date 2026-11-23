@@ -116,7 +116,9 @@ Recording notes:
   `ddagrab` still showed the window, and a window that re-raised itself every 100 ms was caught. Before it (w2380), two
   BEAST takes recorded a browser and another sandbox's editor over the player, exit 0. Toasts and click-through
   overlays escape the check. If `ddagrab` delivers no frame (Desktop Duplication stalled; w1086)
-  `record_clip` falls back to `gdigrab` after 8 s (`FF_CLIP_GRAB=gdigrab` starts there). A player launched
+  `record_clip` falls back to `gdigrab` after 8 s (`FF_CLIP_GRAB=gdigrab` starts there; with an ffmpeg older than 8
+  it refuses instead and asks for it: w5282 on BEAST, 2026-11-23, screen unlocked, ddagrab gave no frame twice and
+  `FF_CLIP_GRAB=gdigrab` with the player pinned on top gave clean 60 fps clips of the game alone). A player launched
   by a script must be raised with `SetWindowPos` argtypes set (a 32-bit HWND_TOPMOST does nothing on 64-bit Windows),
   and the old nightly player may ignore `-screen-width`: `ffprobe` every clip's size before comparing two. It must run in the logged-in desktop
   session: over ssh, launch it with `schtasks /create ... /it` then `schtasks /run`.
