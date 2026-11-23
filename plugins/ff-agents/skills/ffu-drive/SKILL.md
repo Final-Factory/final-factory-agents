@@ -128,6 +128,15 @@ near-match. The PR's `## Evidence` carries `Reference capture:` and `Art languag
   Build `ffu` from the merged tree, shoot after (built-in packs) and before (`--pack <dir of main's old packs>`) with
   that one binary, then run a fresh critic. A `--pack` folder must hold every built-in pack, `station_beam.ffpack`
   included, or the load fails.
+- **Check a pack change with one binary and two `--pack` folders, and a model no scene places in `--gallery`**
+  (w5193, ffu #976). Two commits' builds also differ by every other merge between them: 7bac4660 against main moved
+  two trailer spots, from #970's assembler animation, while main's binary with the old and the new `buildings.ffpack`
+  (each folder from `git archive <rev> art/ff1`) was pixel-identical at all six. A model the scene does not place
+  (the FF1 trailer has no Dyson Segment): `ffu --pack <folder with only that pack> --gallery --view x,y,zoom`. Model i
+  sits at x = 1 + the sum of (width + 1) of the models before it + its width / 2, y = 1 + the tallest model's height / 2
+  (`packs::gallery`), so a change in one model's bounds moves every model after it and the row's y. The flat top-down
+  view (no `--tilt`) ignores height: parts FF1 parks about 1000 tiles up drew flattened over the Battery, the
+  printers, the bays and the Dyson Segment there, and never under `--tilt`. Shoot both.
 - **FF1's glass is URP's specular setup, and its transparent blend is a plain alpha blend** (w4965): GlassDome has
   `_WorkflowMode` 0 with a teal `_SpecColor`, and `_BlendModePreserveSpecular` 0, so Unity blends the whole colour at
   the base alpha (0.141), as FFU's alpha blend does. The exporter writes `_SpecColor` as `KHR_materials_specular`; read
