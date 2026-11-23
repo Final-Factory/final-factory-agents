@@ -158,6 +158,13 @@ near-match. The PR's `## Evidence` carries `Reference capture:` and `Art languag
   over the recessed core (lit FF1 0.57, 0.44, 0.53 against FFU 1.06, 0.72, 0.70). A knob taking the sun off glowing
   texels fixed that core but flattened the fusion reactors' ring lines, which FF1's sun does light: only shadow maps
   tell a recessed glow from an exposed one (w5162).
+- **Stills or timings that come out byte-identical mean the change never reached the frame: print its inputs first**
+  (w5162, ffu #971; w5170, ffu #973). A shadow-reach change gave identical stills because three imported trailer models
+  report about 1000 tiles of height (`model.max[2]`), which widened the map 8x (texel 0.209 tiles against URP's 0.0265);
+  fixed by `RECEIVER_TOP` in `shadow.rs`. And `ffu --frames --stats` ignored `--look` before #973, so a shadows on/off
+  A/B timed one frame twice. Before you grade or time a look, debug-print the values it feeds (the fit's `top`, texel,
+  the light's shadow strength) once per side. FF1 refits its shadow distance every frame from the camera's height
+  (`SceneLightingController.FitShadowDistance`, min(camY x 1.4 + 60, 1400)), so the URP asset's distance is not it.
 - **Colours are numbers, not hex**: `#` starts a comment in a look file.
 
 ## The edit-to-running loop (hot reload)
