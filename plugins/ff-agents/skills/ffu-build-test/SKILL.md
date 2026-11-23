@@ -85,6 +85,10 @@ whole verification. The repo's own `CLAUDE.md` is binding and longer; this skill
   --test-threads 6` cleared it, but six targets of untouched crates (ffu-crash, ffu-platform, ffu-render, ffu-testdir)
   were then "never executed" (os error 2, the exe missing); `cargo test -p <those packages>` passed. Run the workspace
   at `-j 4 -- --test-threads 6` there, rerun any missing or DLL-init target per package, and say so in the PR evidence.
+- **ffu-server's `peers::a_loose_shard_killed_on_a_slow_disk_rewinds_its_clients_and_conserves_cargo` fails under a
+  long Windows TMP** (w5187, ffu #981): "crash monitor: specified path is too long" from a worker's
+  `V:/ffw/tmp/ffa-<session>` temp folder, not your change. Rerun it alone with a short TMP (`TMP=V:/ffw/tmp/p<N>
+  TEMP=V:/ffw/tmp/p<N> cargo test -p ffu-server --test peers <name>`): it passed, and say so in the PR evidence.
 - **Run the whole workspace in debug, or with `--no-fail-fast`: a release run fails 3 tests on purpose** (w4418, ffu
   #853). `cargo test --release --workspace` fails ffu-sim's `*_is_caught_in_a_debug_build` tests (they need
   `debug_assertions`), and cargo then stops before the later crates, so most of the suite never runs (110 of 178
@@ -658,6 +662,10 @@ never rewritten (`tools/check_snapshot_compat.sh BASE_REF` holds it in CI). No t
 
 - Before every push, merge `origin/main` in and run `ci_local.sh [PR] <body file>` (section 2) until it prints no
   `FAIL` (w4917).
+- **`ff-pr push` merges `origin/main` itself: when it pulled in commits, run the workspace clippy on the head it pushed
+  before you wait on CI** (w5187, ffu #981). main had changed unit ids to a u64 `Id`; the merge had no text conflict,
+  the PR's `Option<(Fp, u32)>` no longer type-checked, and CI went red after a 20-minute wait. `git log -1` after
+  `ff-pr push` says whether it merged; then `cargo clippy --workspace --all-targets --all-features -- -D warnings`.
 - Push your branch, `gh pr create -R Final-Factory/ffu --base main --title ... --body-file ...`, with
   `Request: wNNN` (or `Part of: wNNN`) in the body.
 - CI runs on ffu's own runners, one job at a time each: `ffu-linux` (biscuit's four and FFBox's ffu containers),

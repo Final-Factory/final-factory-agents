@@ -157,6 +157,11 @@ near-match. The PR's `## Evidence` carries `Reference capture:` and `Art languag
   bluer shadow tint (the paint is a mid-tone) and saturation 1.3 to 1.4 brought back FF1's chroma within its hue
   (measured). Warmer tops and cobalt paint trade against each other: find the balance point by a sweep (w4040 tried 46
   variants), and name it in the file's comment.
+- **A glow about 2.5x FF1's is `ff1.look`'s old `light.glow`, not the pack** (w5188, ffu #1008). FF1's packs carry
+  FF1's emission raw in linear HDR, so both looks draw it at `light.glow = 1` (ffu.look since w5115, ff1.look since
+  #1008; w4008 had set 2.5). The Ancient Guardian's red strips read 80 linear before bloom against FF1's 31, and
+  showed as a wide halo and fat seams. Before you blame a bake or the bloom, read `light.glow` in the look the still
+  was taken with, and render once with bloom off (`post.bloom = 0`) to split glow from spill.
 - **Glow over about 3 blooms the trim strips into red halos** on a dark frame (round 5): count red pixels where FF1's
   still is black.
 - **Compare glows at FF1's own camera, and split the pixel before you tune it** (w5158, report r370). At FFU's tilted
