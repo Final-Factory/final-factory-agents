@@ -350,6 +350,10 @@ Proven over tutorial objectives 63→78, to a finished tutorial.
   side (or another powered structure) does NOT join that power grid. Every isolated structure cluster
   (lone mass driver, research station) needs its own panel aimed at it (`power=0` until then;
   verifiers like PlaceAndPowerStation gate on satisfaction > 0).
+- **A full Battery without waiting** (w5338): a Battery takes about an hour of game time to charge, so set the charge
+  instead: `python scripts/unity-bridge.py ffauto "charge.fill"` fills every placed Battery and Capacitor (`charge.fill|0.5`
+  or `|50%` for half, `|0` to empty); in the console `FillBatteries [fraction]`. It needs cheats on (the editor and
+  debug builds have them) and applies on every peer through the FillCharge op, so it is safe in a multiplayer test.
 - **Inserters**: `Inserter Bot` is an ITEM craft placed like a structure (1×1, floats at grid y=1).
   Place with arrows AWAY from the source: its START endpoint lands on the structure behind it and it
   picks up automatically once built (cargo visible in its `Cargo` buffer). An unbuilt frame does
