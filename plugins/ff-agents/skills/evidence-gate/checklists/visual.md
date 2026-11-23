@@ -104,6 +104,10 @@ in the built player (drive-game, "The mouse cursor in a built player"; w980).
    reference's, and the numbers and the 1:1 crops go in the report and the PR. Thin glow faces at HDR about 2 read as
    paint ([lesson](../lessons/visual-fixes-are-verified-by-looking.md#a-glow-is-measured-against-a-glowing-reference-in-the-same-frame-w1323);
    w1323, Ben after two rounds that an impression from stills passed: "you just didn't add any red glow lines").
+   Judge a glow under the play-mode sun and headlight, never a sunless builder or prefab preview: an emissive face on a
+   white albedo texel washes out to white in play mode while the preview shows the colour (w5282: the Battery's
+   gauge read (235,245,248) in a player and cyan in `BatteryModelBuilder`'s preview; a black per-instance albedo,
+   `[MaterialProperty("_ColorAG")]`, fixed it).
 5e. **Hero art: creative, detailed and different, not literal or generic (w1470, w1466).** A new model or hero VFX
    (an end-game or siege weapon's projectile and impact, a signature ship) does not go to Ben as one take. (1) The
    first look is 2 or 3 clearly different concepts. (2) A concept that is a literal real-world object (a bow, a disc)

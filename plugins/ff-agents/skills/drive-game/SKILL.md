@@ -171,6 +171,11 @@ this (the heartbeat clock is a Stopwatch, and UPS changes each step's Dt). Full 
 - **It needs frames**: one heartbeat per frame, so k needs 16·k fps. A windowed 60 Hz editor or player reaches 3.75x at
   most; the game lowers `Time.timeScale` to what the frame rate reaches, so it never runs ahead of the simulation.
 - `ffauto:wait|N` and `movement.goto` are game time (scaled), so they still cover N game seconds.
+- **Set the state a check needs; never wait for it in game time** (lothsahn, w5282, 2026-11-23: "It's silly that
+  the worker is waiting an hour for the battery to fill instead of just running a command to fill it"). A full
+  Battery, a stocked storage, a finished research: write it through the editor bridge (`eval-file -`) or a temporary
+  editor-only script you do not commit, then save the game and load that save in the built player you film. A
+  worker fill command is filed as w5338.
 
 ## Control channels
 
