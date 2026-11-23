@@ -125,7 +125,7 @@ on a mismatch, a ledger error, an unbalanced window or a short fleet). Measured 
   the 3 s probe.
 - **Don't agree a fixed wall-clock start before both exclusive tickets are in force.** On a big computer the turn can
   run out while its CI jobs drain: in w3444 beast's first ticket (granted 20:17Z) spent its whole 20-minute turn in
-  `granted, but N CI job(s) run here` and was revoked at 20:37Z, 3 min before the agreed start. What worked: the leg
+  `N CI job(s) run here` and was revoked at 20:37Z, 3 min before the agreed start. What worked: the leg
   whose ticket comes later messages "GO" at its grant; the other leg starts its long-lived side at once (an echoer with
   `--seconds 1500`, not 150), and the first leg starts its ~100 s timed part the moment its own drain ends (the log line
   `granted <ticket>: time now; it is held until ...`). The second ticket (granted 21:22Z, drained 21:30Z) ran the
