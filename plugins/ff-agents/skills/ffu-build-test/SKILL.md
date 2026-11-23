@@ -21,6 +21,8 @@ whole verification. The repo's own `CLAUDE.md` is binding and longer; this skill
   without w3764): clone into `$TMPDIR` as before, `git clone https://github.com/Final-Factory/ffu.git "$TMPDIR/ffu"`,
   with `CARGO_TARGET_DIR="$TMPDIR/ffu-target"`. Branch from `main` (ffu's trunk is `main`, not `master`). Commit as
   `Final Factory <481770+bryding@users.noreply.github.com>`.
+- **`eval "$(ffu-slot where)"` resets `TMPDIR` to `/tmp` in Git Bash** (w5259): re-export your own temp folder after it
+  (`export TMPDIR=/v/ffw/tmp/ffa-<session>`), or stills, logs and scratch land in `/tmp`, which is not yours.
 - **Check the slot is still yours before every commit** (w3962): run `ffu-slot where` and `git branch --show-current`.
   While w3962 waited for a bench ticket, w3965's session held slot3 and switched it to `w3965-churn-local`. `ffu-slot
   where` printed nothing, and w3962's three commits and a main merge landed on w3965's unpushed branch. If the slot is
@@ -89,6 +91,10 @@ whole verification. The repo's own `CLAUDE.md` is binding and longer; this skill
   long Windows TMP** (w5187, ffu #981): "crash monitor: specified path is too long" from a worker's
   `V:/ffw/tmp/ffa-<session>` temp folder, not your change. Rerun it alone with a short TMP (`TMP=V:/ffw/tmp/p<N>
   TEMP=V:/ffw/tmp/p<N> cargo test -p ffu-server --test peers <name>`): it passed, and say so in the PR evidence.
+- **On LothDesktop's WARP (`FFU_FALLBACK_ADAPTER=1`) `combat::tests::the_fight_capture_matches_its_golden_image`
+  fails on main's own code** (w5259, ffu #1034): Diff over 1039, max 226, while main's CI passes it on all three
+  runners. Before you re-bless a golden for this one, put main's copies of your changed files back (`git show
+  origin/main:<file> > <file>`) and rerun it: an identical diff is the adapter, not your change. Say so in the PR evidence.
 - **Run the whole workspace in debug, or with `--no-fail-fast`: a release run fails 3 tests on purpose** (w4418, ffu
   #853). `cargo test --release --workspace` fails ffu-sim's `*_is_caught_in_a_debug_build` tests (they need
   `debug_assertions`), and cargo then stops before the later crates, so most of the suite never runs (110 of 178
