@@ -958,6 +958,18 @@ never rewritten (`tools/check_snapshot_compat.sh BASE_REF` holds it in CI). No t
   `peers.rs` saw 93 of 100 (measured, ffu #209). Pace such a server from the test (the peers test's `Gate` lets the
   relays the test owns forward only while it is watching). Prove the fix with a planted stall that fails before and
   passes after, plus a loop of 50.
+  - **A loose peered shard is a clock too: the test ends it, starts its peer first, and reads its client on a thread**
+    (w5234, ffu #998). `peers.rs`'s loose crash test ran A to `--until-tick 500`; a test thread held about 1.5 s
+    before the Welcome let A finish and close the client ("tick 500: read tick: failed to fill whole buffer", CI run
+    45132750360), or exit before the connect ("actively refused", main 4 of 40 under workspace load). The fix: loose
+    shards run `--exit-on-stdin-close` and the test ends them; B starts before the client connects, since a loose A
+    alone stops `shard::LOOSE_LEAD` (1024) ticks past B and its disk catches up (`pc-b:5000` then gave "restart is at
+    tick 1024, client saw 305"); the client is followed on its own thread, because on Windows a killed server's RST
+    throws away the frames the client had not read. Find each window with a test-thread hold per step
+    (`tests/support/plant.rs`, `FFU_PLANT_HOLD=<site>:<ms>`), then alternate main's and the fix's test exe under a
+    looping workspace suite. Build the workspace tests first (`--no-run`): the runs keep `target/debug/ffu-server.exe`
+    open, a build beside them fails with "failed to remove file ... Access is denied", and the "load" ran none (w5234's
+    first loaded loop).
   - **The loop of 50 on a CI runner is `.github/workflows/repeat.yml`** (w3402, ffu #383). It builds once, then runs
     one test target N times in a row and stops at the first failure. Dispatch it with package, target, filter, count
     and os (`gh workflow run repeat.yml -R Final-Factory/ffu -f target=owner_term ...`). A PR that changes repeat.yml
