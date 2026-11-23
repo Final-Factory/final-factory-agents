@@ -150,6 +150,14 @@ near-match. The PR's `## Evidence` carries `Reference capture:` and `Art languag
   variants), and name it in the file's comment.
 - **Glow over about 3 blooms the trim strips into red halos** on a dark frame (round 5): count red pixels where FF1's
   still is black.
+- **Compare glows at FF1's own camera, and split the pixel before you tune it** (w5158, report r370). At FFU's tilted
+  trailer camera (pitch 52, fov 40) the sun's highlight on parts that do not glow reads as cream glow flares; at FF1's
+  camera (pitch 81.47, fov 60) they are gone. Read FF1's linear HDR before bloom at the pixel (a RenderTexture
+  readback in the FF1 editor) with its sun shadows on and off, and split it into emission and lit terms: the
+  generator core's emission matched (FF1 0, 0.49, 6.79 against FFU 0.01, 0.61, 8.38), and the gap was FF1's sun shadow
+  over the recessed core (lit FF1 0.57, 0.44, 0.53 against FFU 1.06, 0.72, 0.70). A knob taking the sun off glowing
+  texels fixed that core but flattened the fusion reactors' ring lines, which FF1's sun does light: only shadow maps
+  tell a recessed glow from an exposed one (w5162).
 - **Colours are numbers, not hex**: `#` starts a comment in a look file.
 
 ## The edit-to-running loop (hot reload)
