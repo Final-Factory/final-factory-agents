@@ -372,6 +372,10 @@ whole verification. The repo's own `CLAUDE.md` is binding and longer; this skill
   must not share one `CARGO_TARGET_DIR`. After building main's tests there, `cargo test` on the branch ran main's stale
   test binaries and reported main's failures: the new `ship_flies_over_buildings` failed until its sources were touched
   and rebuilt, then passed 3/3 (measured, BEAST). Use `CARGO_TARGET_DIR="$TMPDIR/ffu-target-main"` for that checkout.
+  The reverse bites too, with a slot (w5157, ffu #975): a second worktree of origin/main built with the slot's target
+  linked the branch's `ffu-sim` lib, so the ignored writer meant to save a version 3 world fixture wrote version 4.
+  Write an old-version fixture from the slot itself checked out at main (the bullet above), and read the version bytes
+  of the file it wrote (a world's bytes 8..12) before you commit it.
 - **Reading cargo's fingerprints yourself: the u64s are bare JSON numbers past 2^53** (w4258). Each
   `.fingerprint/<pkg>-<hash>/<kind>.json` lists `deps: [[id, name, public, fingerprint]]`, and `JSON.parse` (or any
   double-based parser) rounds the fingerprint, so no link matches: a first dry run of ff-factory's sweep marked 98 live
