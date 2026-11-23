@@ -82,5 +82,18 @@ class PrivateDesktopTest(unittest.TestCase):
         self.assertNotIn("<standard_session_servicedirs", conf, "the system service folders would bring gvfs back")
 
 
+    def test_parse_log_reads_the_on_demand_x_display(self):
+        # Mutter starts Xwayland only at the first X client (w5290, biscuit: no Xwayland in 60 s), so start reads the
+        # display from this log line instead of waiting for an Xwayland process.
+        log = self.tmp / "gnome-shell.log"
+        log.write_text("libmutter-Message: 09:27:25.981: Running GNOME Shell (using mutter 46.2) as a Wayland display server\n"
+                       "libmutter-Message: 09:27:26.010: Using public X11 display :1, (using :2 for managed services)\n"
+                       "gnome-shell[4154920]: GNOME Shell started at Mon Nov 23 2026 09:27:26\n")
+        r = self.run_sh("parse-log", log.as_posix())
+        self.assertEqual((r.returncode, r.stdout.strip()), (0, ":1"), r.stderr)
+        log.write_text("gnome-shell[1]: GNOME Shell started\n")
+        self.assertEqual(self.run_sh("parse-log", log.as_posix()).stdout.strip(), "")
+
+
 if __name__ == "__main__":
     unittest.main()
