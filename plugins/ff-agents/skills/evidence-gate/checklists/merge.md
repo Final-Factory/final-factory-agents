@@ -276,7 +276,7 @@ Not verified: the Bats' slot lag (simulation, follow-up PR)
   coverage is acceptable if it can result in significant speed ups"): `ffnightly.py` on the default lab
   (`lab.win.json`, `lab.linux.json`) runs host and client side by side on one computer, the host held at 20 fps
   (`--slow-host 20`, which adds the host's `-ffFeelProbe -ffFeelFps 20 -ffFeelVsync 0`). On Windows or Linux, once your own player build and `--dry` passed (w2963), run the PR's MP
-  scenarios yourself (`--sha <head> --scenarios-from <head>`) and report that run: no `request_pair`. From a Mac,
+  scenarios yourself (`--sha <head> --scenarios-from <head> --player <player cache>/<head>-win/player`; without `--player` it refuses with `SlotRequired`, w5256) and report that run: no `request_pair`. From a Mac,
   `request_pair` `legs: 1` (ff-factory#1008). A check commit older than FinalFactory#3828 lacks
   `preflight` and `--slow-host`: copy master's `scripts/nightly/ffnightly.py` over the worktree's after the build
   and `git checkout` it back after the runs (a copy in `$TMPDIR` finds no repo, w4609). Two computers at once only for a cross-OS pair
