@@ -63,8 +63,9 @@ refused; the editor log says `[UnityMcpStdioAutoStart] UseHttpTransport pref is 
   shader warm-up frames took about 990 ms each, so the client never joined. Instead, run the editor-ops script
   `scripts/private_desktop.sh start "$TMPDIR/<leg>/pd"` (w5285): it starts
   `dbus-run-session -- gnome-shell --headless --wayland --virtual-monitor 1920x1080@60` on a private bus without gvfs
-  or portals, reads the display (`:N`) and `-auth /run/user/1000/.mutter-Xwaylandauth.*` from its `Xwayland` line, and
-  writes them to `pd/env`. `. pd/env`, launch through `player_slots.py`, then `private_desktop.sh stop pd` (or
+  or portals, reads the display (`:N`) from mutter's "Using public X11 display" log line (Xwayland starts only at the
+  first X client: w5290 saw none in 60 s) and the newest `/run/user/1000/.mutter-Xwaylandauth.*`, and writes them to
+  `pd/env`. `. pd/env`, launch through `player_slots.py`, then `private_desktop.sh stop pd` (or
   `ff-leftovers end`). Never point `XDG_RUNTIME_DIR` into a temp folder for it (the guard refuses it): w994 did on
   2026-10-11, its gvfsd-fuse and document portal mounted `<temp>/w994/gs/gvfs` and `gs/doc`, and those dead mounts
   blocked clean-up of the folder for six weeks (w5276). It comes with a window manager and renders on the GPU: frameMs p50 16.7, and the client joined over Relay.

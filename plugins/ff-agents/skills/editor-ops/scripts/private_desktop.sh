@@ -6,6 +6,7 @@
 #   private_desktop.sh stop <out-dir>            end it, unmount any FUSE mount left in <out-dir>, say what is mounted
 #   private_desktop.sh plan <out-dir>            write the bus config and service folder only, print what start runs
 #   private_desktop.sh mounts <dir>              the FUSE mounts at or under <dir> (exit 1 if any)
+#   private_desktop.sh parse-log <log>           the X display a gnome-shell log names (tests)
 #
 # Then: `. <out-dir>/env` and launch the player through player_slots.py on that DISPLAY (WAYLAND_DISPLAY unset). Run
 # `stop` (or `ff-leftovers end`) when done. Use it on a computer whose desktop is locked (biscuit): a window on `:0`
@@ -44,6 +45,18 @@ if [ "$cmd" = mounts ]; then
   [ -z "$m" ] && { echo "no FUSE mount under $out"; exit 0; }
   echo "$m"; exit 1
 fi
+
+# The public X display mutter names in its log ("Using public X11 display :1, (using :2 for managed services)").
+log_display() { [ -r "$1" ] && grep -oE 'Using public X11 display :[0-9]+' "$1" | tail -1 | grep -oE ':[0-9]+'; }
+# The X display whose socket a gnome-shell in process group $1 listens on (ss -xlp lists only our own processes' names).
+sock_display() {
+  local pids
+  pids=$(ps -eo pid=,pgid=,comm= | awk -v g="$1" '$2 == g && $3 == "gnome-shell" { printf "%s%s", s, $1; s = "|" }')
+  [ -n "$pids" ] || return 0
+  ss -xlpn 2>/dev/null | grep -E "pid=($pids)," | grep -oE '/tmp/\.X11-unix/X[0-9]+' | head -1 | sed 's|.*/X|:|'
+}
+
+if [ "$cmd" = parse-log ]; then log_display "$out"; exit 0; fi
 
 uid=$(id -u)
 real="/run/user/$uid"
@@ -104,20 +117,33 @@ case "$cmd" in
     [ -d "$real" ] || die "$real does not exist: no user runtime folder on this computer"
     [ -s "$out/pid" ] && kill -0 "$(cat "$out/pid")" 2>/dev/null && die "already running (pid $(cat "$out/pid")); stop it first"
     plan
+    touch "$out/start.stamp"
     setsid "${launch_env[@]}" "${launch_cmd[@]}" > "$out/gnome-shell.log" 2>&1 < /dev/null &
     pid=$!
     echo "$pid" > "$out/pid"
-    # Its Xwayland: the display and auth file from the command line of the Xwayland in this process group.
-    line=""
+    # Its X display. Mutter starts Xwayland on demand (at the first X client; w5290 on biscuit saw none in 60 s), so
+    # read the display from its log line or from the X socket gnome-shell listens on, then start Xwayland with a client.
+    disp="" auth=""
     for _ in $(seq 1 60); do
-      line=$(ps -eo pgid=,args= | awk -v g="$pid" '$1 == g && $2 ~ /Xwayland$/ { $1 = ""; print; exit }')
-      [ -n "$line" ] && break
+      disp=$(log_display "$out/gnome-shell.log")
+      [ -n "$disp" ] || disp=$(sock_display "$pid")
+      [ -n "$disp" ] && break
       kill -0 "$pid" 2>/dev/null || { tail -20 "$out/gnome-shell.log" >&2; die "gnome-shell exited (log above)"; }
       sleep 1
     done
-    [ -n "$line" ] || die "no Xwayland after 60 s (see $out/gnome-shell.log); run stop"
-    disp=$(echo "$line" | grep -oE ' :[0-9]+' | head -1 | tr -d ' ')
-    auth=$(echo "$line" | grep -oE -- '-auth [^ ]+' | head -1 | cut -d' ' -f2)
+    [ -n "$disp" ] || die "no X display from gnome-shell after 60 s (see $out/gnome-shell.log); run stop"
+    for _ in $(seq 1 20); do
+      auth=$(find "$real" -maxdepth 1 -name '.mutter-Xwaylandauth.*' -newer "$out/start.stamp" 2>/dev/null | head -1)
+      [ -n "$auth" ] && break
+      sleep 1
+    done
+    [ -n "$auth" ] || die "no .mutter-Xwaylandauth.* in $real newer than the start (see $out/gnome-shell.log); run stop"
+    if command -v xprop >/dev/null; then x=(xprop -root); elif command -v xdpyinfo >/dev/null; then x=(xdpyinfo); else x=(); fi
+    if [ ${#x[@]} -gt 0 ]; then
+      DISPLAY=$disp XAUTHORITY=$auth timeout 30 "${x[@]}" >/dev/null 2>&1 || echo "private_desktop.sh: warning: ${x[0]} on $disp did not answer in 30 s" >&2
+    fi
+    xw=$(ps -eo pgid=,args= | awk -v g="$pid" '$1 == g && $2 ~ /Xwayland$/ { print "up"; exit }')
+    [ -n "$xw" ] || echo "private_desktop.sh: note: no Xwayland yet in group $pid; mutter starts it when the player connects" >&2
     printf 'export DISPLAY=%s XAUTHORITY=%s\nunset WAYLAND_DISPLAY\n' "$disp" "$auth" > "$out/env"
     echo "private desktop up: pid $pid (process group), DISPLAY=$disp XAUTHORITY=$auth; '. $out/env' then launch; '$0 stop $out' to end"
     ;;
@@ -127,7 +153,7 @@ case "$cmd" in
       kill -TERM -- "-$pid" 2>/dev/null
       for _ in $(seq 1 10); do kill -0 -- "-$pid" 2>/dev/null || break; sleep 1; done
       kill -KILL -- "-$pid" 2>/dev/null
-      rm -f "$out/pid" "$out/env"
+      rm -f "$out/pid" "$out/env" "$out/start.stamp"
       echo "ended process group $pid"
     fi
     fuse_mounts "$out" | sort -r | while read -r p _; do
