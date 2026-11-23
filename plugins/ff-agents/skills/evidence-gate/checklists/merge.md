@@ -443,4 +443,4 @@ Lessons behind this list:
 [no merge before the review](../lessons/merge-your-own-pr.md#no-merge-before-the-review-913-2026-10-02),
 [a visual fix is verified by looking](../lessons/visual-fixes-are-verified-by-looking.md).
 
-**Before you merge a remote branch you took over, read what it adds** (w5177, 2026-11-23): `git log HEAD..origin/<branch>`; an FF Factory auto-save of a red leg in progress reverts the fix ([lesson](../lessons/a-red-leg-swap-can-be-auto-saved.md)).
+**Before you merge a remote branch you took over, read what it adds** (w5177, 2026-11-23): `git log HEAD..origin/<branch>`; an FF Factory auto-save of a red leg in progress reverts the fix ([lesson](../lessons/merge-your-own-pr.md#a-red-leg-that-swaps-files-in-the-sandbox-can-be-auto-saved-as-a-commit-that-undoes-the-fix-w5177-2026-11-23)).
