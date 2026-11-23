@@ -39,7 +39,10 @@ import urllib.request
 import numpy as np
 
 VERSION = "1.0"
-CACHE = os.path.join(os.path.expanduser("~"), ".cache", "watch_video")
+# On an FF Factory worker the cache stays inside the install folder (w5307; lothsahn, w5297: "under no
+# circumstances should workers write outside of ffw"); elsewhere ~/.cache as before.
+CACHE = (os.path.join(os.environ["FF_WORKER_ROOT"], "cache", "watch_video") if os.environ.get("FF_WORKER_ROOT")
+         else os.path.join(os.path.expanduser("~"), ".cache", "watch_video"))
 
 # Thresholds. Calibrated on the Final Factory trailer cuts (v1-v4) and the three official Steam
 # trailers (see SKILL.md "Calibration"). Motion is in % of frame width per second.
@@ -1078,7 +1081,9 @@ def render_overview(out_dir, shots, frames, sfps):
 
 # ------------------------------------------------------------------- Gemini (whole video + sound)
 
-CONF = os.path.join(os.path.expanduser("~"), ".config", "ff-watch-video")
+CONF = os.path.join(os.path.expanduser("~"), ".config", "ff-watch-video")  # gemini.env, a person's own key file
+# The daily spend ledger is written, so on an FF Factory worker it lives inside the install folder (w5307).
+SPEND_DIR = os.path.join(os.environ["FF_WORKER_ROOT"], "cache", "ff-watch-video") if os.environ.get("FF_WORKER_ROOT") else CONF
 # USD per 1M tokens (input, output incl. thinking), paid tier, from ai.google.dev/gemini-api/docs/pricing
 # (2026-09-29). Unknown models are costed at the most expensive row so the daily cap stays safe.
 PRICES = {"gemini-3.8-flash": (0.75, 3.75), "gemini-3.7-flash": (0.75, 3.75), "gemini-3.5-flash": (1.50, 9.00),
@@ -1108,7 +1113,7 @@ def price(model):
 
 
 def spend_today():
-    p = os.path.join(CONF, "spend.json")
+    p = os.path.join(SPEND_DIR, "spend.json")
     d = json.load(open(p)) if os.path.exists(p) else {}
     return d, d.get(time.strftime("%Y-%m-%d"), 0.0), p
 
@@ -1289,7 +1294,7 @@ def gemini_review(video, info, flags, brief_text, out_dir, model, fps, segment, 
     tout = u.get("candidatesTokenCount", 0) + u.get("thoughtsTokenCount", 0)
     cost = tin / 1e6 * pin + tout / 1e6 * pout
     ledger[time.strftime("%Y-%m-%d")] = round(today + cost, 5)
-    os.makedirs(CONF, exist_ok=True)
+    os.makedirs(SPEND_DIR, exist_ok=True)
     json.dump(ledger, open(lpath, "w"), indent=1)
     res = {"status": "ok", "model": model, "fps": fps, "segment": [a, b], "tokens_in": tin, "tokens_out": tout,
            "cost_usd": cost, "estimate_usd": est, "seconds": took, "spent_today_usd": today + cost}
