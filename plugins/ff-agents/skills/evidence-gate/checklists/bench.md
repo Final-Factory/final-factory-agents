@@ -246,11 +246,15 @@ Mechanics: the game repo's `Documentation/Bench-Lock.md`.
       (`switch_branch` with create_from, build, move the player out, the next). Never a clone of the game repo: the
       guard refuses one and the retired `scratch_clone.sh` (w3703: such clones reached 43 GB on V:).
 - [ ] **A script holding `bench_queue.py timed` in the background starts timing on `granted tNNN: time now`, never on
-      "granted"** (w3158, 2026-11-06, biscuit). `bench queue: tNNN: granted (exclusive)` prints first, then the grant
-      waits up to 20 min for CI jobs (w3112), and that wait counts against the 30-minute turn: a `grep -q granted` leg
-      started at load 69 beside 4 ffu CI jobs, and three later turns spent their whole 20 minutes in the CI wait. Wait for
-      the `^granted .*time now` line, note when the first grant line came, and run a leg only with its length left in
-      the turn (grant + 30 min), else give the turn back; record the ticket log in each leg's folder.
+      an earlier line** (w3158, 2026-11-06, and w5170, 2026-11-23, both biscuit). `bench queue: tNNN: at the head of the
+      queue (exclusive), not yet yours to time ...` prints first, then the turn waits up to 20 min for CI jobs
+      (`tNNN: N CI job(s) run here ...`, w3112), and that wait counts against the 30-minute turn. Before w5179 the first
+      line read `tNNN: granted (exclusive)`: a `grep -q granted` leg started at load 69 beside 4 ffu CI jobs (w3158), and
+      w5170's `until grep -q granted ticket.log` threw out a whole pass the same way. Since w5179 (game repo
+      `scripts/tests/test_bench_first_line.py`) no line before time now holds "granted" or "time now"; a branch older
+      than that still prints the old line, so wait for `^granted .*time now` all the same. Note when the head-of-queue
+      line came, and run a leg only with its length left in the turn (that line + 30 min), else give the turn back;
+      record the ticket log in each leg's folder.
 - [ ] **The ticket holder writes to a file with no pipe, and a separate waiter that exits tells you of the grant**
       (w4530, 2026-11-17, LothDesktop). A background `bench_queue.py timed ... | grep -v ExperimentalWarning` held its
       lines in the pipe's buffer: the grant never reached the output file and 16 of the 30-minute turn went by unseen.

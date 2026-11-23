@@ -48,15 +48,15 @@ whole verification. The repo's own `CLAUDE.md` is binding and longer; this skill
   queued. Check the first lines of a background job's log within seconds of starting it.
 - A wait loop `until ! pgrep -f "<pattern>"` matches its own shell's command line and never ends (w3432); bracket a
   letter (`pgrep -f "[e]cho-biscuit"`) or wait on a pid file.
-- **Time only after `time now`, not after `granted`** (w3962): `bench_queue.py timed` first prints `granted
-  (exclusive)`. It may then wait up to 20 min for CI jobs on the machine ("granted, but 2 CI job(s) run here"), and only
-  `granted <ticket>: time now` starts your turn. A loop on `grep granted` began timing beside two CI jobs. Wait with
-  `until grep -qiE "time now|refused" "$log"`.
-  The 30-minute turn counts from `granted (exclusive)`, not from `time now`: the CI wait is inside it, and the
+- **Time only after `time now`** (w3962, w5170): `bench_queue.py timed` first prints `tNNN: at the head of the queue
+  (exclusive)` (before w5179: `tNNN: granted (exclusive)`). It may then wait up to 20 min for CI jobs on the machine
+  ("2 CI job(s) run here"), and only `granted <ticket>: time now` starts your turn. A loop on `grep granted` began
+  timing beside two CI jobs on a branch older than w5179. Wait with `until grep -qiE "^granted .*time now|refused" "$log"`.
+  The 30-minute turn counts from the head-of-queue line, not from `time now`: the CI wait is inside it, and the
   "held until" time printed with `time now` is too late (w4061, t00007073 on beast: granted about 11:32Z, 606 s of CI
   drain, `time now` said "held until 12:12Z", revoked at 12:02:14Z with a worker waiting, so the third of three
   back-to-back runs, planned to end at 12:07Z, lost its timing after 12:02). Plan every leg to end 30 min after the
-  `granted (exclusive)` line (CI wait included).
+  head-of-queue line (CI wait included).
   End that wait when the ticket holder exits too, and count a log without `time now` as refused (w4051, ffu #756): on
   BEAST the queue turned the ticket away with a note to call `mcp__machine__timed_place` first (w1969), a note without
   the word "refused", and the loop waited 14 min on an exited holder. Use `until grep -qiE "time now|refused" "$log" ||
@@ -173,7 +173,7 @@ whole verification. The repo's own `CLAUDE.md` is binding and longer; this skill
   and biscuit): run `$CARGO_TARGET_DIR/release/ffu-headless` once its mtime is newer than the build, or the newest
   `ls -t "$CARGO_TARGET_DIR"/release/deps/ffu_headless-* | grep -v '\.d$' | head -1`.
 - **Timing builds** (w3764): a build time is shared work, `bench_queue.py run --what "<what>" -- <cmd>`; `timed` refuses a
-  name with "build" in it, and a loop `until grep -q granted` on its log then waits forever (w3764 lost 10 min). Stop a
+  name with "build" in it, and a loop `until grep -q '^granted .*time now'` on its log then waits forever (w3764 lost 10 min). Stop a
   wait loop on `refused` too. Git Bash on Windows has no `bc`: subtract times with `awk "BEGIN{print $t1 - $t0}"`
   (w3764's first run printed 0.0 for every leg).
   `timed` refuses "test" in the name too (exit 78, w4001): call a leg "<what> timing leg" or "A/B timing".

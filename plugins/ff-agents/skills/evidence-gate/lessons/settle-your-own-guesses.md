@@ -230,7 +230,7 @@ this had no transcript tool.
    - One call: `python scripts/unity-bridge.py eval_file --project-path <p> <file.cs> --timed "<what>"`.
    - Several calls, interleaved arms, or MCP `execute_code` reads: run
      `python scripts/bench/bench_queue.py timed --what "<what>" --minutes 20` with `run_in_background`, wait for its
-     `granted` line, time every leg and arm under that one ticket, then run `bench_queue.py timed --release` once.
+     `granted tNNN: time now` line, time every leg and arm under that one ticket, then run `bench_queue.py timed --release` once.
      A `--timed` call made while it is held takes no ticket of its own.
    - A script of calls: `bench_queue.py run --mode exclusive --reason timing --what "<what>" -- bash <script>`.
    - A batch Performance run: `unity-slot run --bench exclusive --bench-reason timing -- ...`.

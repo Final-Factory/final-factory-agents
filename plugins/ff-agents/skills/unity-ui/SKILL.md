@@ -224,7 +224,7 @@ census (`<shot>.json`: small, clipped, off-screen and overlapping text, covered 
   captures outrun the MCP reply timeout, so write the digest to a file in `$TMPDIR` and wait for the file. A dev player
   at 60 fps is vsync-bound: compare the markers' ms per frame, not the frame time. (4) On a big computer call
   `timed_place` before `bench_queue.py timed`, and start the ticket as its own `run_in_background` task (a trailing `&`
-  is refused, hook w3731); a script that waits for `granted` in the ticket's log runs the legs.
+  is refused, hook w3731); a script that waits for `^granted .*time now` in the ticket's log runs the legs.
 - **Regression-check traps (w4561).** (1) A regression check's critic takes its before from the commit before the
   first suspect (`#NNNN^`), so a change another PR in the range made on purpose looks new: w4561's fresh ui-critic called
   the French Station Grid "BROKEN, NEW" for growing 82 px and losing its title glyph, both w4412's own work. Pass each
