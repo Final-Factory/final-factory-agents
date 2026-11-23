@@ -78,5 +78,33 @@ class GdigrabFallback(unittest.TestCase):
         # FF_CLIP_GRAB=ddagrab or no hwnd: the window capture never ran, so its failure says nothing about the display
         self.assertIsNone(rc.gdigrab_fallback_refusal(has_gfxcapture=True, gfx_failed=False))
 
+
+class WorkerRootPaths(unittest.TestCase):
+    """w5307 (lothsahn, w5297: "under no circumstances should workers write outside of ffw")."""
+
+    def load(self, env):
+        import importlib
+        from unittest import mock
+        keep = {k: os.environ.get(k) for k in ("FF_WORKER_ROOT", "FF_GAME_DATA_ROOT")}
+        with mock.patch.dict(os.environ, env):
+            for k in keep:
+                if k not in env:
+                    os.environ.pop(k, None)
+            return importlib.reload(rc)
+
+    def tearDown(self):
+        self.load({})
+
+    def test_a_worker_keeps_the_cache_and_the_game_root_where_ff_factory_puts_them(self):
+        r = self.load({"FF_WORKER_ROOT": "/w", "FF_GAME_DATA_ROOT": "/w/game"})
+        self.assertEqual(r.CACHE, os.path.join("/w", "cache", "watch_video"))
+        self.assertEqual(r.DATA, "/w/game")
+
+    def test_elsewhere_the_paths_are_unchanged(self):
+        r = self.load({})
+        self.assertEqual(r.CACHE, os.path.join(os.path.expanduser("~"), ".cache", "watch_video"))
+        self.assertIn("Never Games", r.DATA)
+
+
 if __name__ == "__main__":
     unittest.main()

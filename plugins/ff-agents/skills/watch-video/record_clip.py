@@ -33,9 +33,16 @@ import time
 HERE = os.path.dirname(os.path.abspath(__file__))
 WIN = platform.system() == "Windows"
 MAC = platform.system() == "Darwin"
-CACHE = os.path.join(os.path.expanduser("~"), ".cache", "watch_video")
-DATA = (os.path.join(os.environ.get("USERPROFILE", ""), "AppData", "LocalLow", "Never Games", "finalfactory")
-        if WIN else os.path.expanduser("~/Library/Application Support/Never Games/finalfactory"))
+# On an FF Factory worker the cache stays inside the install folder (w5307; lothsahn, w5297: "under no
+# circumstances should workers write outside of ffw"); elsewhere ~/.cache as before.
+CACHE = (os.path.join(os.environ["FF_WORKER_ROOT"], "cache", "watch_video") if os.environ.get("FF_WORKER_ROOT")
+         else os.path.join(os.path.expanduser("~"), ".cache", "watch_video"))
+# The game data root as the game repo's scripts/game_data.py default_root() finds it: FF_GAME_DATA_ROOT first.
+DATA = os.environ.get("FF_GAME_DATA_ROOT") or (
+    os.path.join(os.environ.get("USERPROFILE", ""), "AppData", "LocalLow", "Never Games", "finalfactory") if WIN
+    else os.path.expanduser("~/Library/Application Support/Never Games/finalfactory") if MAC
+    else os.path.join(os.environ.get("XDG_CONFIG_HOME") or os.path.expanduser("~/.config"), "unity3d", "Never Games",
+                      "finalfactory"))
 
 # Named effects: `pre` runs before recording (set-up, waited on), `do` fires `lead` seconds into
 # the recording. {px} {pz} = the local player's position. Commands go over the game's agent channel

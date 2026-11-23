@@ -296,12 +296,12 @@ Windows (BEAST). A 45 s cut takes ~25 s plus ~30 s for Gemini.
 |---|---|
 | `--music ff` | The game's soundtrack (`<FinalFactory checkout>/Assets/Audio/Music`, or `$FF_REPO`). Also takes a track file or a folder. It finds which track plays at every moment and where every music edit is, frame-exact. Without it, music edits cannot be verified. Pass it whenever the music comes from a file you have. |
 | `--beats grid.json` | The editor's own beat list (seconds, source-track time) instead of the tracked grid. |
-| `--ref steam` | Compare against Final Factory's three official Steam trailers (downloaded and measured once, cached in `~/.cache/watch_video`). Also takes any video or an earlier `report.json`. Repeatable. |
+| `--ref steam` | Compare against Final Factory's three official Steam trailers (downloaded and measured once, cached in `~/.cache/watch_video`, or `$FF_WORKER_ROOT/cache/watch_video` on an FF Factory worker). Also takes any video or an earlier `report.json`. Repeatable. |
 | `--brief file` | What the cut must do (a capture plan or EDL notes). Gemini judges against it and the report quotes it. |
 | `--model none` | Skip Gemini (free, offline). Default `auto`: run it when a key exists. |
 | `--segment 12-30` | Send only that part to Gemini, to save cost on long videos. |
 | `--gemini-model`, `--gemini-fps` | Default `gemini-3.8-flash` at 2 frames/s. |
-| `--daily-limit 5` | Hard cap on Gemini spend per day in USD (ledger `~/.config/ff-watch-video/spend.json`). |
+| `--daily-limit 5` | Hard cap on Gemini spend per day in USD (ledger `~/.config/ff-watch-video/spend.json`, or `$FF_WORKER_ROOT/cache/ff-watch-video/spend.json` on an FF Factory worker). |
 | `--sheet-fps 4` | Contact-sheet frames per second (12 in vfx mode). |
 | `--mode vfx` | A short effect clip, not a cut: no pacing or music flags; effect lifetime, pops, snaps, flicker, judder; `frames.jpg`. Gemini at 10 fps. |
 | `--compare clip` | vfx mode: the reference (before, or Ben's approved look). Side-by-side `compare.jpg`, a stats table, and Gemini sees both. |
@@ -363,7 +363,7 @@ table still shows their pacing (median shot 1.4-2.2 s), motion and loudness.
   <host>:.config/ff-watch-video/`), then `chmod 600` it; on Windows it is
   `%USERPROFILE%\.config\ff-watch-video\gemini.env`, restricted with
   `icacls <file> /inheritance:r /grant:r %USERNAME%:F`. Never type or paste the key itself.
-- The daily cap and its ledger (`spend.json` beside the key) are per machine.
+- The daily cap and its ledger (`spend.json` beside the key, or under `$FF_WORKER_ROOT/cache/ff-watch-video` on an FF Factory worker, w5307) are per machine.
 - It uploads a 720p proxy through the Files API, samples it at 2 fps, then deletes the upload.
   A 45 s cut costs **~$0.02** (about 10k tokens in, 4k out). The tool estimates the cost first and
   refuses once today's spend would pass `--daily-limit` (default $5). The report prints the actual
