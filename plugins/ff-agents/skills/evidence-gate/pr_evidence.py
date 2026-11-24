@@ -47,7 +47,9 @@ from urllib.parse import quote
 MARKER = "evidence-gate:"
 KINDS = ("visual", "ui", "simulation", "other")
 BASES = ("MEASURED", "SOURCED", "DECIDED", "GUESS")
-PENDING = re.compile(r"\b(pending|not yet|tbd|todo|to be (done|verified|reviewed|recorded|checked)|"
+# w5368: a measured value in backticks (`pending=False`) and a quoted person's words are not unfinished work
+QUOTED_OR_CODE = re.compile(r"`[^`\n]*`|\"[^\"\n]*\"|“[^”\n]*”")
+PENDING = re.compile(r"\b(pending(?!=)|not yet|tbd|todo|to be (done|verified|reviewed|recorded|checked)|"
                      r"will be (reviewed|verified|recorded|checked))\b", re.IGNORECASE)
 # Effect art (w1332): a shader, material or VFX file that draws something in the world. Icons, sprites, UI, holograms
 # and fog are indicators or screen art by design and are left to their own rules.
@@ -1930,7 +1932,7 @@ def check(body: str, files: list[str] | None = None, brief: str | None = None,
                         "put it under its own '## ' heading after the Evidence section and cite it from one claim")
 
     open_lines = [l for l in section.split("\n") if not re.match(r"^\s*Not verified\s*:", l, re.IGNORECASE)]
-    pending = PENDING.search("\n".join(open_lines))
+    pending = PENDING.search(QUOTED_OR_CODE.sub(" ", "\n".join(open_lines)))
     if pending:
         problems.append(f"something is still '{pending.group(0)}': no merge before the review is finished. Finish it, "
                         f"or move the claim it supports to 'Not verified'")
