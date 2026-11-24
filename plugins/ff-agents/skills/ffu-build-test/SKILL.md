@@ -672,6 +672,13 @@ never rewritten (`tools/check_snapshot_compat.sh BASE_REF` holds it in CI). No t
   before you wait on CI** (w5187, ffu #981). main had changed unit ids to a u64 `Id`; the merge had no text conflict,
   the PR's `Option<(Fp, u32)>` no longer type-checked, and CI went red after a 20-minute wait. `git log -1` after
   `ff-pr push` says whether it merged; then `cargo clippy --workspace --all-targets --all-features -- -D warnings`.
+- **Before `ff-pr merge`, compile the PR against today's main when main moved since its CI ran** (w5189, ffu #994).
+  #994 added a field to `ffu_bake::Emissive` and went green; before it merged, w5238 put a new `Emissive { .. }` literal
+  on main (material.rs:315). The merge had no text conflict, main stopped compiling (E0063) on every post-merge leg,
+  and the culprit job reverted #994 (33f5e6df). A PR that adds a struct field, an enum variant or a trait method is
+  exposed: `git fetch origin && git log --oneline HEAD..origin/main | head`; when it lists commits, `git merge origin/main`
+  in the slot and run `cargo check --workspace --all-targets --all-features` (about 2 min warm) before you merge; on an
+  error, fix, push and wait on CI again.
 - Push your branch, `gh pr create -R Final-Factory/ffu --base main --title ... --body-file ...`, with
   `Request: wNNN` (or `Part of: wNNN`) in the body.
 - CI runs on ffu's own runners, one job at a time each: `ffu-linux` (biscuit's four and FFBox's ffu containers),
