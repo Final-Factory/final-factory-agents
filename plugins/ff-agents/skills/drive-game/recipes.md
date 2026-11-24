@@ -705,3 +705,13 @@ attachment att_y8ddk9bw6kon; code checked on FinalFactory master f3708fc28.
     acts only while its grid holds a powered module (`CircuitEvaluationSystem` summary, around :29-37).
 - **Read it on both peers** with `ffauto:grids.dumpstate` before and after each step, so the report shows the crossing
   rather than assuming it.
+
+## A click right after `pointer.moveto` reads the old hover (w5354, 2026-11-23)
+
+- **Run frames between `pointer.moveto` and a click that depends on what is hovered.** In an occluded editor,
+  `MouseRaycastSystem.HoveredEntity` catches up a few frames after the pointer moves. So a `pointer.click` in the same
+  ffauto chain, or in the next call with no frames run in between, acts on the entity the pointer was over before:
+  a Shift+click on a station read `hover=Nothing`, or the last building, and looked like the bug. Both w5354's first
+  repro and its first fix check were wrong for this reason. Move, run about 60 frames (an `eval-file` snippet that
+  calls `EditorApplication.Step()`, or `wait-for`), read the hovered entity, and then click. The map behaves the same
+  way after `ui.mapfocus`.
