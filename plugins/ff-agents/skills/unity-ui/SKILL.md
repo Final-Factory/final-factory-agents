@@ -163,6 +163,13 @@ census (`<shot>.json`: small, clipped, off-screen and overlapping text, covered 
   re-serializes a few `.mat` files (DysonBot, Lance), and `build_player.sh` refuses a tree with tracked changes: restore
   them with `git checkout -- <those files>` before the build. A dev player's title census counts as `title` since w3768
   (its Graphy counter no longer makes pins "not shown").
+- **Deck tour traps for a hint or prompt (w5366).** The Deck tour forces `ControllerPrompts.Forced = Deck`, so every
+  prompt shows a Deck glyph; launch the player with `-ffButtonPrompts keyboard` too to see the keyboard key ([K]). Its
+  `record` frames (`clip-<name>/*.jpg`) are stored upside down: encode them with ffmpeg `-vf vflip` (ui_check flicker
+  does not care). `ui_layout.py check --touched` calls an element the change adds "new, no twin before, not measured", so
+  `Style:` has no delta E: take a twin on the base build (a notification toast: `ffauto:ui.notify|info|<Messages
+  constant>`) and pass `--ref <its path> --ref-census <base census> --ref-shot <base still>` (the toast: delta E 1.0).
+  One Escape on a whole-station selection narrows it to its Station Core, still a building; two clear it.
 - **Fix-pack traps (w3827, fixed or recorded by w3846; checklists/ui.md item 41).** A census from a player built before
   w3846 counts slots in rows a RectMask2D hides (InventoryGridFit's view) as clipped, overlapping and unreachable (w3827's
   core-open at 1280x720: 30, 4 and 4, all masked); the census skips them now (`DeckTourChecks.MaskedOut`). `ui_layout.py
