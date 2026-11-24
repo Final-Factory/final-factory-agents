@@ -175,10 +175,16 @@ the next.
    `(lothsahn: "...")`), `git log -S '<the line>'` and `git blame` on the lines you change (the request or PR that put
    them there, `Request: wNNN` in its body), the docs for the system (`docs/HowToPlay.md`, `Documentation/<system>.md`),
    and tests whose name or message names the design.
-2. **If your change reverses or contradicts it, the requester's word alone does not merge it**, even when the requester
-   is another owner of the game. Hand it up as a question to the person whose design it is (`waiting_on_person`, or your
+2. **If your change reverses or contradicts it, the requester's word alone does not merge it**, unless the requester is
+   an owner asking for it in their own words (below). Hand it up as a question to the person whose design it is (`waiting_on_person`, or your
    report's blocker): what their design says, quoted, who now asks for what, quoted, and your pick. A request that
    asks for the opposite of a recorded design is a disagreement between two people, not a spec.
+   **Owners' own asks (w5387, 2026-11-24).** Either owner's own explicit ask, Ben's or lothsahn's, counts as the
+   designer's word for the change they ask for. When lothsahn's ask contradicts an earlier Ben design or acceptance,
+   lothsahn's wins (Ben's standing rule, w3510, 2026-11-07: lothsahn's call wins over Ben's earlier holds and designs,
+   and Ben is never asked to arbitrate between them). Build it, name the departure in the report and on the
+   `Design reversal:` line, and do not hold the PR or put a card to Ben. The question to Ben is for a change nobody
+   who owns the game asked for, or one where lothsahn has not spoken and Ben is the one whose design it is.
 3. **The same look comes before you ask a person a UI or behaviour design question.** If a recorded design already
    settles it, follow it and say where it is written; do not put the question on a card.
 
@@ -199,8 +205,15 @@ reversal of theirs.
   worker and the orchestrator asked Ben a design card about it. Ben: "it should behave like it did a year ago. the main
   UI panels for structures close if you press E to open inventory panels. please stop regressing this".
 
-Both workers saw the design and changed it anyway because the person asking was an owner; neither asked the person
-whose design it was. The second then asked a question the comment already answered.
+The reverse miss, 2026-11-24, both while Ben was away: w5370 (game PR #4286, forward-core landing) held for Ben
+because "this changes his w1335 design ... and the evidence rules need the designer's word, even though lothsahn asked
+for the change" (lothsahn: "The ship should travel such that its center lines up with the center of the landing zone,
+then rotate into position and land"); w5220 (ffu #1047) asked Ben about replacing the synthesised sounds he accepted on
+2026-11-03 after lothsahn said "You should just use the raw sound files from FF1 for FFU". Lothsahn's explicit ask was
+the designer's word in both; neither needed Ben.
+
+The two w1290/w4937 workers saw the design and changed it anyway because the person asking was an owner; neither asked the person
+whose design it was (there the ask was a relayed description or a player report, not an owner's own words). The second then asked a question the comment already answered.
 
 **How to apply.** Before the first edit, `git blame` the lines you will change and read the comments around them; grep
 the system's docs and tests for the behaviour. Before a design question goes on a card, run the same search and drop

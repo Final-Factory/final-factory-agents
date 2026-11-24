@@ -36,9 +36,9 @@ the shader cache")
 **A change that reverses a person's recorded design asks that designer, not the requester** (w1290, w4937, w5096,
 2026-11-22). Before the first edit, `git blame` the lines you change and read the comments, docs and tests around
 them for a design a person recorded (`w2097 (Ben: "...")`). If the change reverses or contradicts it, hand it up to
-that person with both people's words and your pick; another owner's request does not settle it. The PR carries
+that person with both people's words and your pick; a non-owner's request, or a player's, does not settle it. **Either owner's own explicit ask is the designer's word** (Ben's or lothsahn's), and **when lothsahn's ask contradicts an earlier Ben design, lothsahn's wins** (Ben, w3510, 2026-11-07: lothsahn's call wins over Ben's earlier holds and designs, and Ben is never asked to arbitrate): build it, write the departure in the report and the PR (`Design reversal: lothsahn asked (<where>), departs from Ben's <wNNN>`), and do not hold or put a card to Ben (w5370, w5220). The PR carries
 `Design reversal: asked <person> (<where>)` or `Design reversal: none`; `pr_evidence.py` asks for it beside a comment
-quoting Ben or lothsahn. Search the same way before asking a person a design question. #1731 replaced Ben's Overdriver
+quoting Ben or lothsahn. Search the same way before asking a person a design question. **Last look before any hold or card for a design:** whose words ask for this change? If lothsahn's or Ben's own, quoted, there is no one to ask; if it departs from the other owner's earlier design and lothsahn is the one asking, go on. #1731 replaced Ben's Overdriver
 formula and #4052 his E rule; Ben: "please stop regressing this"
 ([lesson](../lessons/research-the-decision-not-the-topic.md#a-change-that-reverses-a-persons-recorded-design-asks-that-designer-first-w1290-w4937-w5096-2026-11-22)).
 
