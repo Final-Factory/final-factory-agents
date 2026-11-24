@@ -125,6 +125,14 @@ whole verification. The repo's own `CLAUDE.md` is binding and longer; this skill
   own output (`setsid` is not in Git Bash, and PowerShell commands must use `V:/ffw/...` paths, not `/v/ffw`). Then
   `wake_me`. Once the log says `granted`, keep a background task watching for the script's last marker line: a held
   ticket with no turn or task of yours running is revoked (w3715 warns first).
+  **Name Git Bash by its full path, and keep python out of the detached script** (w5218, ffu #1052). In PowerShell,
+  `Get-Command bash.exe` finds WSL's `...\WindowsApps\bash.exe`, which runs nothing on a `V:/` path and exits
+  silently. Use `Start-Process -FilePath "C:\Program Files\Git\usr\bin\bash.exe" -ArgumentList "-l","V:/.../wrap.sh"`.
+  Even under `-l`, `python` in that detached shell was the Microsoft Store alias ("Python was not found"), so
+  `world_bench.sh report` failed after the legs (the per-run JSON lines in its stdout were still enough). Run report
+  steps afterwards from your own shell, or call python by its full path. To move an already queued script into a
+  detached one, stop its task first (TaskStop, then `ff-leftovers list`), which drops its ticket, and take a new one.
+  On lothdesktop the new ticket (t00009964) still reached `time now` 50 min later.
 - **Fit each lock's legs into its 30-minute turn, CI wait included** (w3980, ffu #668). Once a worker waits behind you,
   the wait for CI jobs (up to 20 min) counts in your turn, and the queue then lets timing start beside the CI jobs.
   w3980 planned 6 trailer runs (about 4.5 min each) and 6 FF1 tiled 5x8 runs (2 ticks, about 150 s each) for one lock.
