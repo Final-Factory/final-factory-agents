@@ -179,6 +179,13 @@ near-match. The PR's `## Evidence` carries `Reference capture:` and `Art languag
   A/B timed one frame twice. Before you grade or time a look, debug-print the values it feeds (the fit's `top`, texel,
   the light's shadow strength) once per side. FF1 refits its shadow distance every frame from the camera's height
   (`SceneLightingController.FitShadowDistance`, min(camY x 1.4 + 60, 1400)), so the URP asset's distance is not it.
+- **Time a gallery or a tilted camera with `--clip`'s `render_and_readback_ms`, not `--frames`** (w5314). `ffu --frames`
+  (`frame_bench`, `crates/ffu-client/src/bench.rs`) ignores `--gallery` (art/ff1 gave `buildings 0, meshed_last 0`)
+  and `--tilt` (its camera is `--view` or `scene.fit`), so a sampler or mesh change times as no change. Use
+  `ffu --pack art/ff1 --gallery --look looks/ff1.look --view 60,6,60 --tilt 18,0 --size 1920x1080 --clip c.mp4
+  --seconds 5`: its last JSON line (`"mode":"clip"`) has `render_and_readback_ms` p50, mean and p99 over 300 frames
+  (`--fps` is refused without `--connect`). Check one still of the framing first: the default gallery view at a low
+  tilt is a thin line of models (lothdesktop Arc B580, measured).
 - **Colours are numbers, not hex**: `#` starts a comment in a look file.
 
 ## The edit-to-running loop (hot reload)
