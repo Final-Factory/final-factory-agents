@@ -121,6 +121,17 @@ class CheckTest(unittest.TestCase):
         self.assertEqual(self.problems(body), [])
         self.assertFails(edit(GOOD, "Not verified: nothing\n", ""), "no 'Not verified:' line")
 
+    def test_pending_ignores_code_spans_identifiers_and_quotes(self):
+        # w5368 (found in w5367, PR #4274): none of these lines is unfinished work
+        old = "Looked: yes, every frame of 118-190 at 2x crop"
+        for line in ("Looked: yes, every frame; measured `pending=False` after the order",
+                     "Looked: yes, MovePending pending=False read at the last frame",
+                     'Looked: yes; lothsahn, w5041: "Hitting the r button with a pending multi-select move order ..."',
+                     "Looked: yes; “with a pending move order”"):
+            self.assertEqual(self.problems(edit(GOOD, old, line)), [], line)
+        self.assertFails(edit(GOOD, old, "Looked: yes, but the review pending"), "something is still 'pending'")
+        self.assertFails(edit(GOOD, old, 'Looked: "yes" but review pending'), "something is still 'pending'")
+
     def test_visual_needs_a_built_player_the_events_place_the_look_and_a_look(self):
         self.assertFails(edit(GOOD, "Built player: yes", "Built player: no, the sandbox editor is occluded"),
                          "'Built player: yes' is missing")
