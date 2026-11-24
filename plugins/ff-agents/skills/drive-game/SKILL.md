@@ -223,6 +223,14 @@ snippet, `wait-ready` after a restart. Each is one bounded call with a one-line 
    - `pointer.moveto|x|y|screen` takes bottom-up screen coordinates (y = 0 is the bottom).
    - In an unfocused editor game view (1 fps), `ScreenCapture` rendered the world white while the overlay UI drew
      correctly, and `manage_camera` captures leave the overlay UI out. Take stills a person will see in a built player.
+   **New Input System keys in an unfocused editor** (w5353, 2026-11-23, measured in the slot1 editor):
+   - Keys pressed through ffauto (`input.keys`, `pointer.holdkey`) never reached `InputSystem` readers such as
+     `StationOrderInput`'s L / Shift+L; its key frame stayed -1. The editor's Input System drops device input while the
+     Game view has no focus.
+   - Fix: in an `eval-file` snippet, set `InputSystem.settings.editorInputBehaviorInPlayMode =
+     AllDeviceInputAlwaysGoesToGameView` and `backgroundBehavior = IgnoreFocus`, press the key, wait about 1.5 s, then
+     put both settings back. Leaving it on broke the pointer clicks of later legs. Never save the InputSettings asset;
+     check that `git status` shows it unchanged.
 3. **Mouse is not injectable.** Read directly via `Input.GetMouseButton*`/`Input.mousePosition` in
    ~38 sites across ~23 files (no chokepoint); uGUI clicks go through the EventSystem. UI clicks can
    be simulated via EventSystem (recipes.md); world-mouse would need a refactor.
