@@ -837,6 +837,31 @@ never rewritten (`tools/check_snapshot_compat.sh BASE_REF` holds it in CI). No t
   barely moved. So Linux runs `lint`, `check` and `check-release` as separate jobs on separate runners (ffu #286). A
   new Linux step goes in the job whose build it reuses; never add a step that builds a new profile or feature set to
   `check`.
+- **`check`'s tests run through `tools/run_tests_parallel.py`, and the oracle tests run in `check-oracle` on FFBox**
+  (w5321, ffu #1031, #1035, #1039; lothsahn: "How do we make check run in 10 minutes?"). Before the change `check`
+  took 18.7-36.8 min. Over the 10 pull request runs after #1039 its median was 6.8 min (4.0-12.7), and
+  `check-oracle`'s was 6.6 min over 8 runs (measured).
+  - **How the runner schedules binaries:** it runs every built test binary in a pool of CPUs/4 workers (`FFU_TEST_JOBS`),
+    the slowest first, by `target/ffu-test-times.json`.
+    - The GPU crates' binaries (ffu-render, ffu-client, ffu-ui, ffu-platform) run one at a time in a lane beside the
+      pool.
+    - At most 2 of ffu-server's binaries run at once (`FFU_PACED_JOBS`). Their shard processes keep wall-clock time
+      and give a tick up when a second behind. When failover, lookahead and gateway_standby started together on a
+      loaded biscuit, lookahead's late-peer test got `"skipped":1` (run 45298584346). The guard refused a rerun, so the
+      cap fixed the cause.
+  - **Splitting jobs:** `--only P,Q` and `--skip P,Q` split the packages between jobs, and both fail when a named
+    package has no built binary. `--no-doc` leaves the doctests to the other job.
+  - **Why the oracle moved:** the test step is CPU-bound, and its wall time follows the summed binary time divided by
+    the workers. Four checks at once on biscuit double every binary. ffu-oracle and ffu-bots (no GPU) were about half
+    the summed time, so they run in `check-oracle` on `ffu-ffbox`. That job keeps a warm workspace cache scope of its
+    own, which rebuild-caches.yml refills from main.
+  - **Where the remaining time goes:** the test step is now about 190-200 s. The outliers come from the build: a cold
+    runner compiled all 372 crates in 13 min, and a partial rebuild took 6.4 min. Read a slow run's step times first:
+    `gh api repos/Final-Factory/ffu/actions/jobs/<id> -q '.steps[]|"\(.name) \(.started_at) \(.completed_at)"'`. Its
+    log's last line `run_tests_parallel: N binaries in Xs wall, Ys summed; slowest: ...` names the slow binaries.
+  - **When a debug-built test spends a minute on the same setup in each test, share that setup:** the trailer import
+    took 67 s in a debug build, and ff1_import.rs did it in 15 tests. A `OnceLock` plus a `.clone()` per test fixed it
+    (#1035). Check the cloned type holds no shared mutable state.
 - **Never `cargo test -p <crate>` after the workspace `--all-features` build in one job**: Cargo resolves features
   again for the packages one command selects and rebuilds much of the tree (2.5 min a step idle, 5 under load). Run the
   binaries already built with `tools/run_built_tests.sh <package> [<target>] -- <libtest args>` (ffu #286).
