@@ -393,10 +393,11 @@ One file each under `lessons/`: the rule, why (the incident, dated), how to appl
   to make CI faster; lothsahn reversed both.
 - [A change that reverses a person's recorded design asks that designer first](lessons/research-the-decision-not-the-topic.md#a-change-that-reverses-a-persons-recorded-design-asks-that-designer-first-w1290-w4937-w5096-2026-11-22):
   before you change behaviour, look for a person's recorded design (a comment quoting them, git blame and log, docs,
-  tests naming it); a change that reverses it does not merge on the requester's word, even another owner's: ask the
-  designer, saying who asked for which, and write `Design reversal: asked <person> (<where>)` or `none`. Search the
+  tests naming it); a change that reverses it does not merge on a non-owner's word: ask the designer, saying who asked for which, and write `Design reversal: asked <person> (<where>)` or `none`. Search the
   same way before asking a UI or behaviour question. w1290 (#1731) replaced Ben's Overdriver formula; w4937 (#4052)
-  reversed his w2097 E rule beside the comment quoting it. Ben: "please stop regressing this".
+  reversed his w2097 E rule beside the comment quoting it. Ben: "please stop regressing this". Either owner's own
+  explicit ask is the designer's word, and lothsahn's beats Ben's earlier design (w3510): note the departure, never hold
+  for Ben (w5370 #4286, w5220 ffu#1047).
 - [Build the pick the person saw](lessons/research-the-decision-not-the-topic.md#build-the-pick-the-person-saw-its-still-checked-against-their-words-w1323-w2580-2026-10-31):
   a pick is named by its still and what it shows, checked against the person's own words before building, and the
   PR shows the build beside the picked still (`Picked:` line, `pr_evidence.py`; `--pick` before building). w1323
