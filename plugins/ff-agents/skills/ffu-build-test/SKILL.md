@@ -336,6 +336,13 @@ whole verification. The repo's own `CLAUDE.md` is binding and longer; this skill
     - a `Valve` (`tests/support/valve.rs`) that holds the replica link at the kill tick;
     - `ffu --world --end-on-stdin` (fly until `end T` on stdin and every station is followed to T).
 
+    A switch at T is itself a clock: after `link`, sim_switch's A shards ran to T=600 (about 9.4 s at 64 tps) and
+    exited, while the test still bound the gateway, started ten clients and polled `status` (w5481, ffu #1073, CI run
+    45473948011: "a control answer: ... os error 10054" at sim_switch.rs:231; ten Windows process starts on a loaded
+    runner took longer). Do every step that must come before the end (gateway, client and sender spawns, the switch's
+    announcement) before the run starts, send no control request after it, and plant a hold right after the start
+    (`FFU_PLANT_HOLD=ss-switch:12000` failed all three switch tests on the old order and passes on the new).
+
     Ask a `switch-at` before peered shards are linked: they cannot tick until then. Never `stop-at` a shard whose log
     the test's hash check reads, because stop-at prunes the log through its snapshot. A test that skips on any child
     failure hides the race: connect.rs's still test "passed" as "skipped, no renderer here: ffu: connect: connection
