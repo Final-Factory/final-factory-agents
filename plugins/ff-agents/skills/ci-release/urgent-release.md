@@ -61,41 +61,38 @@ Once per computer, before its first urgent release:
 
 ```sh
 python scripts/release/urgent_release.py preflight      # READY, or what is MISSING
-python scripts/release/urgent_release.py steam-install --account <name>  # steamcmd and its config in <FF_WORKER_ROOT>/steam
 ```
 
-`--account` is the build account FFBox's config names (`release.steam.account`); the first install needs it, then
-`config.json` keeps it. No account is written in code (lothsahn: "It should not be hardcoded in the code").
+then FF Factory's `steam_upload` tool (group ffbox; `ToolSearch` `select:mcp__machine__steam_upload`) with action
+`check`. **No worker holds the Steam login** (w5551, lothsahn's audit item 13: "No worker holds the Steam password; the
+daemon uploads only its own release's build"): the build account's password is in FF Factory's vault for the daemon's job
+alone, steamcmd and its cached login are in `<FF_WORKER_ROOT>/steam`, which no worker can write, and the daemon runs
+FFBox's `ffsteam.py` from its own ffbox clone there. `check` answers whether the account logs in and each app's depots:
+an app whose depots include `linux` goes in `run --linux-depots` (main,demo; main; demo; or none). At most one check
+every 10 minutes a computer. `urgent_release.py steam-install` and `steam-login` refuse; on a new computer `steam_upload`
+action `install` downloads steamcmd and writes its config (w5640), and a `check` there installs first by itself. The
+account it sets up is the portal's setting `steamBuildAccount`, never a name in code (lothsahn: "It should not be
+hardcoded in the code").
 
 `preflight` checks the computer is an urgent-lane one, that its Unity has Windows, Mac and Linux build support
 (`FF_RELEASE_UNITY` names another Unity; BEAST uses `F:\ffw\tools\unity-release\6000.3.19f1\Editor\Unity.exe`, a copy
-with the Linux module, w1639), 60 GB free, steamcmd, and the Steam login. **The Steam login needs no person**
-(lothsahn, w1639: "we should put the secret in the secrets file for ffbox and have it authenticate rather than a manual
-setup step"). FFBox's `ffsteam.py` logs the build account in by itself from `FFSTEAM_PASSWORD`, which FF Factory's
-vault gives the workers of BEAST and LothDesktop as environment; `preflight` says `automatic Steam login:
-FFSTEAM_PASSWORD from the vault`. `FFSTEAM_GUARD_SECRET` (an authenticator's `shared_secret`) is optional: the account
-has no authenticator (lothsahn: "Let's assume no authenticator for now. If we have one we'll deal with that next.").
-Never print, echo or log either; check them by name only.
-- `preflight` says the run has no `FFSTEAM_PASSWORD`, or `steam login:` fails with exit 3 (ffsteam says why, and
-  `auto-login.json` in the steam home keeps it): the step is a vault owner's. Bring it with `waiting_on_person`, asking
-  them to add or fix the vault entry (kind env, `FFSTEAM_PASSWORD`, workers on beast and lothdesktop, shared with any
-  run). Never ask them for the value, and never ask a person to type a login in a terminal.
-- The run says `STOPPED: Steam asked for a Steam Guard code`: the password alone cannot pass the account's Steam
-  Guard. Nothing was uploaded; report it to lothsahn as the blocker (how the account handles Steam Guard is his call),
-  and do not retry.
-- The run says `STOPPED: Steam emailed a Steam Guard code`: the build account has **email** Steam Guard (measured on
-  BEAST, w1639), the password was right, and this computer is new to the account. Once per computer: ask lothsahn with
-  `waiting_on_person` for the code from the newest such email, then run `preflight` once with `FFSTEAM_GUARD_CODE` set
-  to it in that one command's environment (never echoed, never in a file or commit). It logs in past the hour's wait
-  and authorises the computer; later runs need the password alone. Do not run `preflight` again before the code
-  arrives: each try emails a new code.
-- `steam-login` is only the fallback for a computer that cannot have the vault's values.
-- `preflight` says `steam login: ModuleNotFoundError` (or any other import error from an ffbox script): ffbox's own
-  master is broken on Windows, not the login (w3888, 1.0.0.44: ffbox bc00779, w3747, added a top-level `import grp` to
-  `scripts/ci_lane.py`, which `ffsteam.py` loads through `ffwatch`; `grp` exists only on Unix). Do not wait for the fix:
-  clone ffbox into `$TMPDIR`, find the breaking commit (`git log -3 -- scripts/ci_lane.py scripts/ffsteam.py
-  scripts/ffwatch.py`), `git checkout <it>^`, and pass `--ffbox <that clone>` to `preflight` and to `run`. Hand up the
-  ffbox fix with `hand_up_requests`. 1.0.0.44 said READY that way and landed 62 minutes after its bump.
+with the Linux module, w1639) and 60 GB free. **The Steam login needs no person** (lothsahn, w1639: "we should put the
+secret in the secrets file for ffbox and have it authenticate rather than a manual setup step"):
+- `steam_upload` check fails on the login (the answer says why): the step is a vault owner's. Bring it with
+  `waiting_on_person`, asking them to add or fix the vault entry `FFSTEAM_PASSWORD` (kind env, role `releases`, on beast
+  and lothdesktop). Never ask them for the value, and never ask a person to type a login in a terminal.
+- The check says Steam asked for a Steam Guard code from an authenticator: the password alone cannot pass the account's
+  Steam Guard. Nothing was uploaded; report it to lothsahn as the blocker (how the account handles Steam Guard is his
+  call), and do not retry.
+- The check says Steam **emailed** a Steam Guard code: the build account has email Steam Guard (measured on BEAST,
+  w1639), the password was right, and this computer is new to the account. Once per computer: ask lothsahn with
+  `waiting_on_person` for the code from the newest such email, then call `steam_upload` check once with `guard_code`
+  (never echoed, never in a file or commit). It logs in and authorises the computer; later checks need the password
+  alone. Do not check again before the code arrives: each try emails a new code.
+- The check fails with `ModuleNotFoundError` (or any other import error from an ffbox script): ffbox's own master is
+  broken on Windows, not the login (w3888, 1.0.0.44: ffbox bc00779 added a top-level `import grp` to
+  `scripts/ci_lane.py`, which `ffsteam.py` loads through `ffwatch`; `grp` exists only on Unix). The daemon runs ffbox's
+  master, so hand up the ffbox fix with `hand_up_requests` and say the release waits on it.
 
 ## 2. The bump, with the claim
 
@@ -153,17 +150,26 @@ Right after the merge:
 3. Run the lane (about an hour of Unity at first, less once each target's Library is warm; measured in w1639's proof):
 
    ```sh
-   python scripts/release/urgent_release.py run --version <v> --unity "<Unity with Linux support>" \
-       --out "$TMPDIR/urgent-<v>" > "$TMPDIR/urgent-<v>.log" 2>&1 &
+   python scripts/release/urgent_release.py run --version <v> --linux-depots <from the check> \
+       --unity "<Unity with Linux support>" --out "$TMPDIR/urgent-<v>" > "$TMPDIR/urgent-<v>.log" 2>&1 &
    ```
 
    It refuses anything not claimed for this computer (FFBox builds those), then builds Windows, Mac and Linux, main then
    demo, with `.github/scripts/build-release.sh` itself (one Unity slot and one exclusive bench ticket per target), checks
-   each player with FFBox's `ffrelease-check.py`, waits until every `Test in` job of the push run passed and FFBox
-   declined every Release job, uploads each app with FFBox's `ffsteam.py` as the build account (main live on
-   **development** only, never pre-release or default; the demo nowhere), opens the regenerated-files PR, and writes
-   `urgent-release.json` (every phase's start, end and seconds; the BuildIDs) in its run folder. Exit 3: it could not
-   log in to Steam by itself (section 1). Use `--preview` for a first run on a new computer (manifests, no upload).
+   each player with FFBox's `ffrelease-check.py`, and waits until every `Test in` job of the push run passed and FFBox
+   declined every Release job. **It uploads nothing** (w5551): it prints one `NEXT: call steam_upload with {...}` line
+   per app (also in `<out>/steam-upload-<app>.json`) and writes `urgent-release.json` (every phase's start, end and
+   seconds) in its run folder. Call `steam_upload` with each NEXT line's arguments as they are (action upload; main live
+   on **development** only, never pre-release or default; the demo nowhere). The portal refuses another release's build
+   and a branch the release did not name; the daemon re-checks the players and uploads. Call it again with the same
+   arguments, or action `status` with its job, until it answers done with the BuildIDs. Then:
+
+   ```sh
+   python scripts/release/urgent_release.py finish --out "$TMPDIR/urgent-<v>"
+   ```
+
+   packs the symbols and opens the regenerated-files PR. Use `--preview` on `run` (and `finish`) for a first run on a
+   new computer: its NEXT lines are previews (manifests, no upload, nothing live).
    It takes 60+ minutes. **Follow it every 2 to 3 minutes, never with a 20 or 30 minute `wake_me`** (lothsahn, w1656:
    "Please update the urgent build instructions to have the worker check back every couple minutes to see if the build
    is done. It's waiting for almost 20 minutes, which seems far too long."):
@@ -256,5 +262,6 @@ broken. On a Windows worker (measured on BEAST):
   -projectPath <sandbox> -buildTarget Win64 -quit -logFile "$TMPDIR/<name>.log"` and start the editor again.
   `-ignoreCompilerErrors` matters when another worker in the sandbox has uncommitted code that does not compile:
   without it the switch aborts.
-- **steamcmd failed mid-upload** (one Steam session per account, and FFBox uses the same account): run again with
-  `--skip-build --out <the same folder>`; it re-checks and uploads what is built.
+- **The upload failed mid-way** (`steam_upload` answered failed; one Steam session per account, and FFBox uses the same
+  account): call `steam_upload` again with the same NEXT arguments; if the players are gone, `run --skip-build --out
+  <the same folder>` stages and prints them again.
