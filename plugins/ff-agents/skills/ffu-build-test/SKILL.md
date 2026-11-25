@@ -132,6 +132,15 @@ whole verification. The repo's own `CLAUDE.md` is binding and longer; this skill
   long Windows TMP** (w5187, ffu #981): "crash monitor: specified path is too long" from a worker's
   `V:/ffw/tmp/ffa-<session>` temp folder, not your change. Rerun it alone with a short TMP (`TMP=V:/ffw/tmp/p<N>
   TEMP=V:/ffw/tmp/p<N> cargo test --workspace --all-features --locked --test peers <name>`): it passed, and say so in the PR evidence.
+  `ci_local.sh`'s lint-14 (`tools/test_postmerge_culprit.py`) fails the same way on BEAST (w5488, ffu #1088): 6 of 11
+  errors, `RuntimeError: git ('init', '-q', '--bare', ...)` with an empty stderr, under `F:\ffw\tmp\ffa-<session>`;
+  with `TMP=TEMP='F:\ffw\tmp\p<N>'` it passed 11 of 11 (297 s, measured). Run `ci_local.sh` with a short TMP and TEMP.
+- **Main can stop compiling with no conflict anywhere: look for its open fix PR and wait on it** (w5488, ffu #1088).
+  #1109 (w5585) added `Weapon::GuardianCannon` and #1145 (w5661) added a sound `match` on `Weapon` without it. Each was
+  green alone, and together they broke `ffu-client` (E0004), so every PR that merged main failed clippy and tests
+  outside its own files. When a local check fails in a crate your diff does not touch, build `origin/main` alone. If it
+  fails there, find the fix (`gh pr list -R Final-Factory/ffu --search "<symbol>"`), apply its diff locally to check
+  your own work (uncommitted, then `git checkout --` it), and `blocked_on` that PR instead of pushing a red merge.
 - **On LothDesktop's WARP (`FFU_FALLBACK_ADAPTER=1`) `combat::tests::the_fight_capture_matches_its_golden_image`
   fails on main's own code** (w5259, ffu #1034): Diff over 1039, max 226, while main's CI passes it on all three
   runners. Before you re-bless a golden for this one, put main's copies of your changed files back (`git show
