@@ -74,7 +74,7 @@ whole verification. The repo's own `CLAUDE.md` is binding and longer; this skill
   is added only when it has content, but the `golden_snapshot.rs` v3, v5 and v8 fixtures fight for 64 ticks and fill
   it, so their pinned hashes failed, while the crate's own tests and hashcheck stayed green. Run the whole workspace
   suite before you push. Then prove the part is the only cause: switch it off (`if false && ...`), run
-  `cargo test -p ffu-sim --test golden_snapshot` against the old pins, and look for a pass. Then re-pin with a "wNNN
+  `cargo test --workspace --all-features --locked --test golden_snapshot` against the old pins, and look for a pass. Then re-pin with a "wNNN
   moved it from ..." comment. ffu-sim's clippy denies `indexing_slicing`: a `windows(2).all(|w| w[0] <= w[1])` fails
   it, so use `is_sorted_by_key`.
 - **A new hash part moves crosscheck goldens too: read every drift line, then re-pin with a cause proof** (w5489, ffu
@@ -121,7 +121,7 @@ whole verification. The repo's own `CLAUDE.md` is binding and longer; this skill
 - **ffu-server's `peers::a_loose_shard_killed_on_a_slow_disk_rewinds_its_clients_and_conserves_cargo` fails under a
   long Windows TMP** (w5187, ffu #981): "crash monitor: specified path is too long" from a worker's
   `V:/ffw/tmp/ffa-<session>` temp folder, not your change. Rerun it alone with a short TMP (`TMP=V:/ffw/tmp/p<N>
-  TEMP=V:/ffw/tmp/p<N> cargo test -p ffu-server --test peers <name>`): it passed, and say so in the PR evidence.
+  TEMP=V:/ffw/tmp/p<N> cargo test --workspace --all-features --locked --test peers <name>`): it passed, and say so in the PR evidence.
 - **On LothDesktop's WARP (`FFU_FALLBACK_ADAPTER=1`) `combat::tests::the_fight_capture_matches_its_golden_image`
   fails on main's own code** (w5259, ffu #1034): Diff over 1039, max 226, while main's CI passes it on all three
   runners. Before you re-bless a golden for this one, put main's copies of your changed files back (`git show
@@ -573,8 +573,20 @@ cargo run --release -p ffu-headless -- crosscheck --threads 1,4,16 --golden gold
   pushed b616ee6e6c for that).
 - `sweep_target_test.sh` fails on Windows (NTFS reads do not move access times) and skips on macOS (no GNU find);
   CI runs it on Linux. Run it there, or leave it to CI, unless you changed `tools/ci-runners/` (measured, w4510).
-- Run what your change touches locally (`cargo test -p <crate>`); CI runs all of them on Linux and clippy, tests and
-  hashcheck on Windows and ARM macOS.
+- Run what your change touches locally; CI runs all of them on Linux and clippy, tests and hashcheck on Windows and ARM
+  macOS.
+- **Run one test file as `cargo test --workspace --all-features --locked --test <file> [<name>]`, not `-p <crate> --test <file>`**
+  (w5816). The warm build every slot and CI keep is `--workspace --all-features`, where ffu-sim has its
+  `fault-injection` feature; `-p` resolves features for the packages it names only (`cargo tree -i ffu-sim -e
+  features`: `-p ffu-sim`, `-p ffu-server` and `-p ffu-headless` give ffu-sim only `default`), so it builds a second
+  copy of ffu-sim, third-party crates with other features and everything above them, and the next workspace build
+  relinks again ("the list of features changed"). On LothDesktop ffu slot4, warm target, `--no-run` (measured,
+  2026-11-25): `--workspace --all-features --test peers` compiled nothing in 11 s; `-p ffu-server --test peers`
+  compiled 83 units in 147 s and added 119 MB; the workspace form run again after it relinked ffu-server in 35 s.
+  LothDesktop's slots held up to 29 copies of ffu_headless and 3-8.6 GB of superseded test binaries each, mostly such
+  feature variants (w5796). `--test <file>` with `--workspace` runs every crate's test of that name (`world_cells` is
+  in two crates; add `<name>` or accept both). A crate's lib or bin unit tests have no `--test` target: run them from
+  the warm build with `tools/run_built_tests.sh <package>` (below), or with `-p` and accept the rebuild.
 - **Run the lint job's `keep_sorted.py` too; it is a separate CI job** (w4039, ffu #724). Kind, op and section lists sit
   between `// keep-sorted start` and `// keep-sorted end` (w3864). A match arm with an `if` guard inside such a block
   fails it ("a guarded arm goes outside the sorted list", run 43371893957): put the guarded arm above the
@@ -674,8 +686,8 @@ never rewritten (`tools/check_snapshot_compat.sh BASE_REF` holds it in CI). No t
   `check_sim_rules.sh` nor `cargo test` catches it: only the workspace clippy step does. Write `saturating_*` or
   `checked_*` from the start, even in a read-only helper whose values cannot overflow, and say in a comment why it
   cannot saturate (w3728, ffu #507: four errors on the new `Sector::spawn_point`, found only after the tests passed).
-- **Run a fixture writer by its exact name**: `FFU_WRITE_FIXTURE=1 cargo test -p ffu-sim --test golden_snapshot
-  <writer> -- --ignored --exact`. A bare `--ignored` runs every writer and rewrites the old fixtures, which
+- **Run a fixture writer by its exact name**: `FFU_WRITE_FIXTURE=1 cargo test --workspace --all-features --locked
+  --test golden_snapshot <writer> -- --ignored --exact`. A bare `--ignored` runs every writer and rewrites the old fixtures, which
   `check_snapshot_compat.sh` then refuses (w3489). A new `include_bytes!` fixture needs an empty placeholder file before
   its writer can compile.
 - **A new FF1 build can move every item id** (w3489, ffu #436: FF1 1.0.0.41 added ids 9, 10, 11 and 15, so 1.0.0.30's
