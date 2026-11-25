@@ -665,6 +665,20 @@ never rewritten (`tools/check_snapshot_compat.sh BASE_REF` holds it in CI). No t
 
   (w3459.)
 
+  A new build-menu entry (a working passive such as M6.8's Construction Tower, w5473, ffu #1080) moves five pinned
+  lists: `ffu-agent`'s ui_tree list, `ffu-ui/tests/names.rs`, the pin test in `ffu-ui/src/build_menu.rs`,
+  `ffu-ui/tests/build_menu.rs`'s list and its `its_own` map. It can also give the crafting panel's Stations tab
+  another page: a 4th pager dot put ja and uk's page line 1 px past its row at 1280x800 ("craft.page leaves its
+  parent" in the UI gate), fixed with 1 px of right padding on the dots row in `frame::pager`. Run
+  `cargo test -p ffu-agent -p ffu-ui --test gate --test names --test build_menu` (and ffu-agent's lib tests) before
+  you push.
+- **`tools/tick_census` skips a `#[cfg(test)]` module only when each attribute after it fits on one line** (w5473, ffu
+  #1080). rustfmt wrapped a long `#[allow(clippy::indexing_slicing, ...)]` onto several lines, and the census then
+  counted a new sim file's tests as sim readers. Put the allow inside the module as `#![allow(...)]`.
+- **In an FF sandbox, `ci_local.sh`'s `build_gate.sh` steps (clippy, `cargo test --no-run`) fail with "CreateOrOpen ...
+  Access to the path is denied"** (w5473, BEAST): the gate's machine-wide memory map belongs to the CI runners. Run
+  the wrapped cargo command directly and count that, not the wrapper's exit.
+
 - **After merging `origin/main`, a red test you did not touch is main's until a run shows otherwise** (w3797, ffu #551).
   A PR merged while its CI was still queued can leave main red, and a new test can miss what another PR made live.
   #524 broke `the_trailer_save_powers_every_mass_driver` and #557 fixed it; #557's new
