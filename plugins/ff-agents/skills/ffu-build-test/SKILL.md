@@ -501,6 +501,15 @@ bash "$FF_SKILLS/ffu-build-test/ci_local.sh" [PR] [BODY_FILE]   # Codex/no FF_SK
   `SetSecurityInfo(SE_KERNEL_OBJECT, LABEL_SECURITY_INFORMATION)`. A gate that finds an older gate's unlabelled map
   opens it read-only and still takes its slot. If you still see "could not be labelled" or a denial, that is the gate,
   not your change: report it (and, to get on, run the step's cargo command directly with `CARGO_BUILD_JOBS=8`).
+  - **Verified at Low on lothdesktop** (w5623, 2026-11-25, ffu at 07fd1336): the gate around clippy and around
+    `cargo test --workspace --all-features --locked --no-run` printed `build gate: slot k of 2` and exited 0. A Low
+    PowerShell opened `Local\ffu-build-claims` read-write while a Medium runner's gate on main held it (the `play`
+    zip job). `build gate: the claims map was made without the Low label (an older gate holds it); reading it only`
+    is not a failure: a CI job whose code predates #1095 holds the map (a run created before 08:58Z that day, or a PR
+    run whose merge commit was made before then). The gate still holds its slot and only skips writing its claim.
+  - **The gate prints `all N build slots busy for S s; waiting` only after each 60 s wait** (`build_gate.ps1`, the
+    `WaitAny(..., 60000)` loop). A shorter wait shows only as `slot k of N after M s`: to see the wait line in a
+    two-gate test, hold the first gate for more than 60 s.
   - **A label in the create call's own security descriptor is refused at Medium** ("A required privilege is not held by
     the client", every Windows runner, runs 45536839733 and 45544315316), while a Low creator may set it: so a shared
     named object (mutex, mapping, event) between Low workers and Medium processes is created first and labelled after.
@@ -727,9 +736,6 @@ never rewritten (`tools/check_snapshot_compat.sh BASE_REF` holds it in CI). No t
 - **`tools/tick_census` skips a `#[cfg(test)]` module only when each attribute after it fits on one line** (w5473, ffu
   #1080). rustfmt wrapped a long `#[allow(clippy::indexing_slicing, ...)]` onto several lines, and the census then
   counted a new sim file's tests as sim readers. Put the allow inside the module as `#![allow(...)]`.
-- **In an FF sandbox, `ci_local.sh`'s `build_gate.sh` steps (clippy, `cargo test --no-run`) fail with "CreateOrOpen ...
-  Access to the path is denied"** (w5473, BEAST): the gate's machine-wide memory map belongs to the CI runners. Run
-  the wrapped cargo command directly and count that, not the wrapper's exit.
 
 - **After merging `origin/main`, a red test you did not touch is main's until a run shows otherwise** (w3797, ffu #551).
   A PR merged while its CI was still queued can leave main red, and a new test can miss what another PR made live.
