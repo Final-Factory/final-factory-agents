@@ -5,7 +5,7 @@ description: "Before any consequential action (spending money, publishing, a liv
 
 # Evidence gate: research the decision before acting
 
-**Scripts** (w2012): this skill's scripts are in `$FF_SKILLS/evidence-gate/` (`python "$FF_SKILLS/evidence-gate/pr_evidence.py"`; PowerShell `$env:FF_SKILLS`). FF Factory sets `FF_SKILLS` for its workers to the `skills` folder of the ff-agents plugin the session loaded; without it, the folder is the "Base directory for this skill" Claude Code printed above this text. Never search a disk for them: `find / -name ui_look.py` walked all of lothsahn's C: ("Stop messing with my c:"), and FF Factory's guard refuses a search of `/`, a drive or a home folder.
+**Scripts** (w2012): this skill's scripts are in `$FF_SKILLS/evidence-gate/` (`python "$FF_SKILLS/evidence-gate/pr_evidence.py"`; PowerShell `$env:FF_SKILLS`). `python` is Windows' name; on macOS or Linux use `python3`, or run the script itself (`"$FF_SKILLS/evidence-gate/pr_evidence.py"`, `#!/usr/bin/env python3`). An FF Factory worker on a machine with only python3 also gets a `python` that runs it (w5836: biscuit has no `python`). FF Factory sets `FF_SKILLS` for its workers to the `skills` folder of the ff-agents plugin the session loaded; without it, the folder is the "Base directory for this skill" Claude Code printed above this text. Never search a disk for them: `find / -name ui_look.py` walked all of lothsahn's C: ("Stop messing with my c:"), and FF Factory's guard refuses a search of `/`, a drive or a home folder.
 
 One rule: **every choice or claim behind a consequential action carries a basis that fits it, and
 you do not act while one that affects the outcome is a guess.**
