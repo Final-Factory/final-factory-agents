@@ -97,6 +97,14 @@ whole verification. The repo's own `CLAUDE.md` is binding and longer; this skill
     line `pub const MINER_PERIOD: u16 = ...;`. Changing that line fails `check-release` with "no longer has ...; plant
     another sim change here". That job runs only in CI, after the local checks are green. Move both scripts' anchors in
     the same PR.
+- **A measured count in a test goes stale when another PR's rule lands beside it: rerun the scenario after main moves**
+  (w5510, ffu #1099). #1087 (M6.3d, spawners fall asleep with no friendly chunk near) and #1089 (w5490, the FF1 world
+  with its cells on, `world_ff1` expecting 24 spawns, measured with every camp awake) were each green alone and merged
+  together. Main then went red on `world_ff1` (0 spawns) and on the `world-ff1` crosscheck from tick 7, and every open
+  PR that merged main in (#1096's `hashcheck (ffu-linux)`) inherited the red. Before you merge on an old green, merge
+  `origin/main` in when it touched the rules your scenario reads, and rerun its test and crosscheck row. When main is
+  red on a measured count, probe the state the rule reads per tick (here: 0 asleep before tick 7, 907 of 921 after),
+  decide from FF1's code whether the count or the sim is wrong, and fix that one.
 - **A storm of 0xc0000142 or missing test exes on Windows is load, not your change: rerun narrower before you count
   it** (w4284, ffu #817). On lothdesktop a full `cargo test --workspace --all-features --no-fail-fast` at default
   parallelism failed 98 test targets with STATUS_DLL_INIT_FAILED (0xc0000142), none of them real. `-j 4 --
