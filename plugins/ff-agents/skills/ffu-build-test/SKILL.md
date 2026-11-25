@@ -30,6 +30,9 @@ whole verification. The repo's own `CLAUDE.md` is binding and longer; this skill
   `eval "$(ffu-slot where)"` and use `$FFU_DIR`; before any checkout or switch, `git branch --show-current` must be the
   branch you took and `git status --short` must hold only your edits. Uncommitted files you did not write mean the wrong
   checkout: stop, put back what you moved (`git reflog`), and touch nothing else.
+  Write it `cd "$FFU_DIR" || exit 1` (w5476): after a wait on another PR the worker's slot had been released and
+  retaken, `ffu-slot where` printed nothing, the bare `cd` failed and the call's `git fetch` and `git merge origin/main` ran
+  in the game sandbox instead (no harm: `origin/main` does not exist there). Then `ffu-slot take --branch <yours>` again.
 - **Check the slot is still yours before every commit** (w3962): run `ffu-slot where` and `git branch --show-current`.
   While w3962 waited for a bench ticket, w3965's session held slot3 and switched it to `w3965-churn-local`. `ffu-slot
   where` printed nothing, and w3962's three commits and a main merge landed on w3965's unpushed branch. If the slot is
