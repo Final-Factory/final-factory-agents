@@ -1,0 +1,17 @@
+[from the orchestrator, for ben]
+Repo: Final-Factory/ffu.
+
+The Mass Driver's Target row shows a hint while no target is set. Today the row reads "Pick a Mass Driver to aim at"
+and the Aim button jumps right when the hint appears. The new hint reads "Click a Mass Driver in range to aim" and the
+button keeps its place.
+
+Ben asked: "the aim button shouldn't jump around when the hint shows up"
+
+Ben's words:
+- "keep the hint inside the Target row"
+
+The old tooltip said "Select a target Mass Driver first", which goes.
+
+Done when:
+- the hint sits in the Target row at 1280x720, 1280x800 and 1920x1080;
+- a fresh ui-critic on the stills reports 0 broken.
