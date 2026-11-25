@@ -221,6 +221,14 @@ whole verification. The repo's own `CLAUDE.md` is binding and longer; this skill
   `deps/ffu_headless`, only `deps/ffu_headless-<hash>` (w4988: a brief's `release/deps/ffu_headless` failed on the m3
   and biscuit): run `$CARGO_TARGET_DIR/release/ffu-headless` once its mtime is newer than the build, or the newest
   `ls -t "$CARGO_TARGET_DIR"/release/deps/ffu_headless-* | grep -v '\.d$' | head -1`.
+- **Never build a second ffu worktree into your slot's `CARGO_TARGET_DIR`** (w5492, ffu #1092). A release build of an
+  `origin/main` worktree in `$TMPDIR`, made to compare a crosscheck, used the slot's target. Path crates share artifact
+  names, so the slot's next build linked main's newer `ffu-sim` as fresh: `ffu-headless` failed with "no variant named
+  `TowerFleet`", and a `crosscheck --write-golden` in between ran main's binary over the branch's golden files. Give a
+  comparison worktree its own `CARGO_TARGET_DIR="$TMPDIR/<name>-target"`; if it already happened, run `cargo clean
+  --release -p ffu-sim -p ffu-oracle -p ffu-headless -p ffu-agent` before you trust the slot's build again.
+  To find which part of a world scenario drifted, a throwaway test printing `Sector::section_hashes()` each tick on
+  both builds named it in one run (w5492: only `towers` differed through tick 34).
 - **Timing builds** (w3764): a build time is shared work, `bench_queue.py run --what "<what>" -- <cmd>`; `timed` refuses a
   name with "build" in it, and a loop `until grep -q '^granted .*time now'` on its log then waits forever (w3764 lost 10 min). Stop a
   wait loop on `refused` too. Git Bash on Windows has no `bc`: subtract times with `awk "BEGIN{print $t1 - $t0}"`
