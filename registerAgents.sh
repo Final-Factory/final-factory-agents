@@ -206,12 +206,16 @@ SCRIPT_DIR=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
 # later publish-skills run on the machine to a checkout that is gone (w2655: a worker on BEAST
 # cloned into its $TMPDIR because the person's checkout held someone's uncommitted edits, ran this
 # script there to install its new version, and the marker named that clone until its temp folder
-# was removed). The marker keeps naming the lasting checkout instead.
+# was removed). The marker keeps naming the lasting checkout instead. So is FF Factory's publish run folder,
+# <root>/tools-medium/ff-agents-run-*/ (w5784: BEAST's marker named a removed F:/ffw/tools/ff-agents-run-jadTAl clone).
 lower() { printf '%s' "$1" | tr '[:upper:]' '[:lower:]'; }
 is_temp_dir() {  # $1 = posix path, $2 = native path
   for _p in "$1" "$2"; do
     case "$(lower "$_p")/" in
       /tmp/*|*/tmp/*|*/temp/*|/var/folders/*|/private/var/folders/*) return 0 ;;
+      # FF Factory's agent tools publish runs this script from a fresh clone in an ff-agents-run-* folder it removes
+      # after (ff-factory server/agentTools.ts; <root>/tools/ before w5597, <root>/tools-medium/ since). w5784.
+      */ff-agents-run-*/*) return 0 ;;
     esac
   done
   for _v in "${TMPDIR:-}" "${TMP:-}" "${TEMP:-}"; do
