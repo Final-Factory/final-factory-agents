@@ -115,6 +115,13 @@ whole verification. The repo's own `CLAUDE.md` is binding and longer; this skill
   `origin/main` in when it touched the rules your scenario reads, and rerun its test and crosscheck row. When main is
   red on a measured count, probe the state the rule reads per tick (here: 0 asleep before tick 7, 907 of 921 after),
   decide from FF1's code whether the count or the sim is wrong, and fix that one.
+- **A push that starts no CI run may be a PR with an empty diff: another PR already landed its code** (w5618, ffu
+  #1137). Follow-up #1142 (w5685) had merged w5618's branch and reached main first. #1137 then changed 0 files, so
+  ci.yml's `paths-ignore: ['docs/**']` left nothing to run. No run ever started at 454533e or ddb7b33, merge-on-green
+  waited for a run that never came, and two workers re-merged main and re-ran the whole local suite (about 40 min)
+  for nothing. When a push gets no run, check `gh pr view <n> --json changedFiles` and `git diff --name-only
+  origin/main...HEAD` first. If they are empty, land only what is left (here, the row note) and run `ff-pr merge`:
+  with no workflow left to run it merges on the head check.
 - **A storm of 0xc0000142 or missing test exes on Windows is load, not your change: rerun narrower before you count
   it** (w4284, ffu #817). On lothdesktop a full `cargo test --workspace --all-features --no-fail-fast` at default
   parallelism failed 98 test targets with STATUS_DLL_INIT_FAILED (0xc0000142), none of them real. `-j 4 --
