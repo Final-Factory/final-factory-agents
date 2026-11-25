@@ -23,6 +23,13 @@ whole verification. The repo's own `CLAUDE.md` is binding and longer; this skill
   `Final Factory <481770+bryding@users.noreply.github.com>`.
 - **`eval "$(ffu-slot where)"` resets `TMPDIR` to `/tmp` in Git Bash** (w5259): re-export your own temp folder after it
   (`export TMPDIR=/v/ffw/tmp/ffa-<session>`), or stills, logs and scratch land in `/tmp`, which is not yours.
+- **Never `cd` into a slot path you remember; take it from `ffu-slot where`** (w2895, 2026-11-25): after a context
+  compaction, a planner took `F:/ffw/ffu-sandboxes/slot1/ffu` from its summary while it held slot3, ran `git checkout
+  --detach origin/main` there and moved running worker 5d9746da (w5484) off `design/w5484-pd-beam` with its uncommitted
+  edits for 20 minutes (restored by `git cherry-pick -n` and a matching `git patch-id`). Start every shell call with
+  `eval "$(ffu-slot where)"` and use `$FFU_DIR`; before any checkout or switch, `git branch --show-current` must be the
+  branch you took and `git status --short` must hold only your edits. Uncommitted files you did not write mean the wrong
+  checkout: stop, put back what you moved (`git reflog`), and touch nothing else.
 - **Check the slot is still yours before every commit** (w3962): run `ffu-slot where` and `git branch --show-current`.
   While w3962 waited for a bench ticket, w3965's session held slot3 and switched it to `w3965-churn-local`. `ffu-slot
   where` printed nothing, and w3962's three commits and a main merge landed on w3965's unpushed branch. If the slot is
