@@ -652,7 +652,7 @@ never rewritten (`tools/check_snapshot_compat.sh BASE_REF` holds it in CI). No t
   `perl -pi -e 's/\bCell\b/EnergyCell/g' <files>`: BSD sed has no `\b` and silently changes nothing. An oracle CSV in
   `crates/ffu-sim/tests/fixtures/` failed `golden_snapshot`'s `every_version_has_a_fixture_that_loads`, which allows only
   `v<N>_*.snap` there; put recordings in `crates/ffu-sim/tests/oracle/`. Recording an FF1 boss for an oracle: hold its
-  Swarmers off (`FleetCommander.MaxFleetSize` = `CurrentFleetSize` each editor update, ffu `tools/ff1_guardian/noswarm.cs`),
+  Swarmers off (`FleetCommander.MaxFleetSize` = `CurrentFleetSize` each editor update, as ffu's `tools/ff1_guardian/` README says),
   or their Stingers do most of the player's damage and hide the boss's own weapons.
 - **ffu-sim's clippy denies plain `+`, `-` and `*` on integers** (`clippy::arithmetic_side_effects`), and neither
   `check_sim_rules.sh` nor `cargo test` catches it: only the workspace clippy step does. Write `saturating_*` or
