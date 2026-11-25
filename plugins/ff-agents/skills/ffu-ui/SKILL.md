@@ -42,6 +42,14 @@ design gate, a fresh `ui-critic` agent on the stills, and **move only what the p
 screen starts before all this, with a design and mocks beside FF1's equivalent window for the person's pick, and no
 code until they pick (UI checklist item 0, w2895 and w4008; FP.21's 32 pages of identical buttons were the miss).
 
+- **Check a "FF1 draws no X" claim in FF1's presentation code and a real-game still before you write it** (w5484,
+  lothsahn: "Power distributers show a link in FF1 when powered.  Why do you say there's no link?"). The Power
+  Distributor aim design said FF1 draws no line between linked distributors, from a search summary; FF1 draws a teal
+  beam through `ScalableLaserOwner` only while power flows (traced in ffu's `docs/design/power-distributor-aim.md`,
+  "The link FF1 draws"). Grep the presentation side (`ScalableLaser*`, `*LinkSystem`, `*Highlight*`) and the
+  building's config for a WeaponConfig or effect prefab, and look at a still of the real game in the state the claim
+  is about (powered, unpowered, ghost), before any negative claim about FF1.
+
 - **Draw a new panel's mocks over the person's picked HUD, and list what they drop from FF1, before the pick** (w4299,
   the Hauler route panel). Round 1 sat on a plain background, and ben's orchestrator sent it back: "shoot each mock over
   the real FFU HUD from r197's picked HUD mock", and list every FF1 control the panel drops "with why" and the row that
