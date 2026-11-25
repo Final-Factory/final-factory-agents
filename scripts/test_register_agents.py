@@ -79,6 +79,20 @@ class RecordCheckoutTest(unittest.TestCase):
         self.assertFalse(os.path.exists(self.marker))
         self.assertIn("WARNING", r.stderr)
 
+    def test_ff_factorys_publish_run_folder_is_never_recorded(self):
+        # w5784: FF Factory's publish runs this script from <root>/tools-medium/ff-agents-run-*/, which it removes after;
+        # BEAST's marker named such a removed F:/ffw/tools/ff-agents-run-jadTAl clone.
+        lasting = make_checkout(self.lasting_root, "final-factory-agents")
+        self.assertEqual(self.run_marker_only(lasting, self.tmp).returncode, 0)
+        before = self.read_marker()
+        parent = os.path.join(self.lasting_root, "tools-medium", "ff-agents-run-jadTAl")
+        os.makedirs(parent)
+        run = make_checkout(parent, "final-factory-agents")
+        r = self.run_marker_only(run, self.tmp)
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertEqual(self.read_marker(), before)
+        self.assertIn("checkout marker kept on", r.stderr)
+
 
 if __name__ == "__main__":
     unittest.main()
