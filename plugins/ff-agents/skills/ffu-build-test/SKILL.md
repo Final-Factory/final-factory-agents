@@ -454,6 +454,13 @@ bash "$FF_SKILLS/ffu-build-test/ci_local.sh" [PR] [BODY_FILE]   # Codex/no FF_SK
 - No step hangs the run: one past its `timeout-minutes`, else `CI_LOCAL_STEP_MINUTES` (default 60), is ended and prints
   `TIMEOUT` with its log's tail, and counts as a failure. On macOS that needs `gtimeout` (Homebrew coreutils); without
   it the script says so and runs untimed.
+- **On BEAST its two `build_gate.sh` steps can FAIL in 2 to 4 s before cargo starts: run their commands directly**
+  (w5460, ffu #1082, 2026-11-24). In a worker session `build_gate.ps1:42`,
+  `MemoryMappedFile.CreateOrOpen('Local\ffu-build-claims')`, threw "Access to the path is denied", so lint's clippy
+  step and check's `cargo test --workspace --all-features --locked --no-run` step failed with no build. That is the
+  gate, not your change: run `CARGO_BUILD_JOBS=8 cargo clippy --workspace --all-targets --all-features --locked -- -D
+  warnings` and the `--no-run` build yourself, and say so in the PR's Checks. The suite itself still runs in the next
+  step (`run_tests_parallel.py`, which builds what it needs), and its `PASS` counts.
 - **Drift stops it**: a step with an `if:` it cannot evaluate, a `${{ }}` it does not know, a key or a shell it does not
   expect ends the plan with exit 2 naming the step. Teach `ci_local.py` the new form (and its test), never skip it.
 - Local differences, each kept small on purpose: `git fetch --depth=1` runs without `--depth` (it would make the shared
