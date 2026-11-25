@@ -84,8 +84,14 @@ parent `ButtonPanel`), then pump ~300 steps and re-probe. Enumerate saves on dis
 var dir = Serialization.SaveGameManager.SaveGamePath;
 var files = System.IO.Directory.GetFiles(dir, "*.zip"); // filename minus .zip = the name shown in the UI
 ```
-`SaveGamePath` is `<persistentDataPath>/UserData/saves/` (`GameDataPaths.Saves`, `SaveGameManager.cs:294`; Windows
-`%USERPROFILE%\AppData\LocalLow\Never Games\finalfactory\UserData\saves\`). The older `<persistentDataPath>/saves/`
+`SaveGamePath` is `<data root>/UserData/saves/` (`GameDataPaths.Saves`, `SaveGameManager.cs:294`). The data root is what
+`python scripts/game_data.py where` prints: on a worker install your sandbox's own folder,
+`<install>/gamedata/sandboxes/<sandbox>`, which FF Factory gives your editor and agent in `FF_GAME_DATA_DIR` (w5557), so
+the players you start use it too; for a person's own game it is `persistentDataPath` (Windows
+`%USERPROFILE%\AppData\LocalLow\Never Games\finalfactory`). Copy a person's save in from their folder, never into it
+(`read_rules saves`). With `FF_GAME_DATA_DIR` set the game makes no Steam Cloud call (`Steam.SteamCloud`, game PR
+#4338; lothsahn: "Can we make it so workers never sync the steam cloud?"): never clear it, and never launch the game
+through Steam (`steam://`, `-applaunch`), which would run Steam's Auto-Cloud. The older `<data root>/saves/`
 still holds copies from before the move, but the game no longer reads it: a save copied there loads as "not found"
 (w1065, lothdesktop, 2026-10-12).
 Headless alternative without UI (what `Assets/Editor/DevLoadSave.cs` does):
