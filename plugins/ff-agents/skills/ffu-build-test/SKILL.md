@@ -645,6 +645,15 @@ or unsafe code, and no panics in the tick (use `get`, `checked_*`, `saturating_*
 `SNAPSHOT_VERSION`, keeps the old decoder and adds a fixture in `crates/ffu-sim/tests/fixtures`; existing fixtures are
 never rewritten (`tools/check_snapshot_compat.sh BASE_REF` holds it in CI). No thread count may change a hash.
 
+- **The sim-rules words are banned as whole words anywhere in `crates/ffu-sim/src`, names included; keep FF1 oracle
+  data out of `tests/fixtures`** (w5585, ffu #1109). A loot struct named `Cell` and a comment "round(f32 x 2^32)"
+  failed `check_sim_rules.sh` (it bans `Cell`, `f32`, `HashMap` ... by `\b` word), after every test had passed: name
+  types around the list (`EnergyCell`) and run the script before you push. On a Mac rename with
+  `perl -pi -e 's/\bCell\b/EnergyCell/g' <files>`: BSD sed has no `\b` and silently changes nothing. An oracle CSV in
+  `crates/ffu-sim/tests/fixtures/` failed `golden_snapshot`'s `every_version_has_a_fixture_that_loads`, which allows only
+  `v<N>_*.snap` there; put recordings in `crates/ffu-sim/tests/oracle/`. Recording an FF1 boss for an oracle: hold its
+  Swarmers off (`FleetCommander.MaxFleetSize` = `CurrentFleetSize` each editor update, ffu `tools/ff1_guardian/noswarm.cs`),
+  or their Stingers do most of the player's damage and hide the boss's own weapons.
 - **ffu-sim's clippy denies plain `+`, `-` and `*` on integers** (`clippy::arithmetic_side_effects`), and neither
   `check_sim_rules.sh` nor `cargo test` catches it: only the workspace clippy step does. Write `saturating_*` or
   `checked_*` from the start, even in a read-only helper whose values cannot overflow, and say in a comment why it
