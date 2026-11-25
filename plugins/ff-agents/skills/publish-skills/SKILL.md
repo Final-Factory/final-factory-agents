@@ -60,8 +60,10 @@ the edit unpublished but unreported is worse than not starting.
 `git -C <checkout> pull` before editing so you are not branching off stale content, then
 continue to step 2.
 
-If the checkout holds someone else's uncommitted edits, or `pull` cannot fast-forward, do not touch them: clone into
-your `$TMPDIR` and make the change there. Its `registerAgents.sh` in step 5 installs the new version and leaves the
+If the checkout is not writable, holds someone else's uncommitted edits, or `pull` cannot fast-forward, do not touch it:
+clone into your `$TMPDIR` and make the change there. On a worker root the marker names FF Factory's own checkout,
+`<root>/tools-medium/final-factory-agents`, which no worker can write (ff-factory #1233, w5597), so a worker's `pull`
+there fails with "Permission denied": that is this case, not a broken marker (w5777). Its `registerAgents.sh` in step 5 installs the new version and leaves the
 marker on the lasting checkout, since it never records a clone in a temp folder (w2655: the marker on BEAST named a
 swept `$TMPDIR` clone for two days before that rule).
 
