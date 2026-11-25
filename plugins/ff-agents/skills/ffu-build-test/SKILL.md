@@ -1063,6 +1063,16 @@ never rewritten (`tools/check_snapshot_compat.sh BASE_REF` holds it in CI). No t
   `peers.rs` saw 93 of 100 (measured, ffu #209). Pace such a server from the test (the peers test's `Gate` lets the
   relays the test owns forward only while it is watching). Prove the fix with a planted stall that fails before and
   passes after, plus a loop of 50.
+  - **A native death CI hit once (a segfault or hang with no `ffu: <error>` line): loop it under load, then read its
+    minidump** (w5500, ffu `ffu --audio`). On biscuit 1100 unloaded runs of `ffu --audio CancelClick` all passed.
+    32 at a time beside 24 busy loops (`timeout 600 sh -c 'while :; do :; done' &`) and a `dd oflag=dsync` writer,
+    each run under `timeout -s TERM 30`, failed 5 of 600: 2 SIGSEGV and 3 hangs. Set `FFU_CRASH_DIR` per loop. Build
+    the reader with `cargo build -p ffu-crash --features symbolicate --bin ffu-minidump`, then run
+    `ffu-minidump <dmp> <binary>`, which names the thread and the frames with file:line. The cause was a
+    use-after-free in sdl3 0.20's callback drop, fixed by a pause first (`crates/ffu-platform/src/audio.rs`,
+    `impl Drop for AudioOut`). Count the fix by the same loaded loop (0 of 1200), not by an unloaded one. Before
+    w5500 a temp path over 107 bytes (`check_temp_leaks.sh` on CI) stopped the crash monitor ("the socket name is
+    invalid") and left no dump. Linux now uses an abstract socket name (ffu-crash `native.rs`, `Socket`).
   - **A loose peered shard is a clock too: the test ends it, starts its peer first, and reads its client on a thread**
     (w5234, ffu #998). `peers.rs`'s loose crash test ran A to `--until-tick 500`; a test thread held about 1.5 s
     before the Welcome let A finish and close the client ("tick 500: read tick: failed to fill whole buffer", CI run
