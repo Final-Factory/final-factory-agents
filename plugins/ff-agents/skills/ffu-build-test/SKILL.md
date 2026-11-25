@@ -493,13 +493,19 @@ bash "$FF_SKILLS/ffu-build-test/ci_local.sh" [PR] [BODY_FILE]   # Codex/no FF_SK
 - No step hangs the run: one past its `timeout-minutes`, else `CI_LOCAL_STEP_MINUTES` (default 60), is ended and prints
   `TIMEOUT` with its log's tail, and counts as a failure. On macOS that needs `gtimeout` (Homebrew coreutils); without
   it the script says so and runs untimed.
-- **On BEAST its two `build_gate.sh` steps can FAIL in 2 to 4 s before cargo starts: run their commands directly**
-  (w5460, ffu #1082, 2026-11-24). In a worker session `build_gate.ps1:42`,
-  `MemoryMappedFile.CreateOrOpen('Local\ffu-build-claims')`, threw "Access to the path is denied", so lint's clippy
-  step and check's `cargo test --workspace --all-features --locked --no-run` step failed with no build. That is the
-  gate, not your change: run `CARGO_BUILD_JOBS=8 cargo clippy --workspace --all-targets --all-features --locked -- -D
-  warnings` and the `--no-run` build yourself, and say so in the PR's Checks. The suite itself still runs in the next
-  step (`run_tests_parallel.py`, which builds what it needs), and its `PASS` counts.
+- **The Windows build gate's objects are labelled Low; a Low worker's gated steps run** (w5460 found it, w5498 fixed it,
+  ffu #1090 and #1095, 2026-11-25). FF Factory workers run at Low integrity and the CI runners at Medium, as the same
+  user, so an unlabelled `Local\ffu-build-claims` map that a runner made refused a worker's gate read-write
+  (no-write-up: "Access to the path is denied" from `CreateOrOpen`, and lint's clippy and check's `--no-run` step
+  failed in 2 to 4 s). `build_gate.ps1` now creates each mutex and the map with the DACL only, then lowers the label with
+  `SetSecurityInfo(SE_KERNEL_OBJECT, LABEL_SECURITY_INFORMATION)`. A gate that finds an older gate's unlabelled map
+  opens it read-only and still takes its slot. If you still see "could not be labelled" or a denial, that is the gate,
+  not your change: report it (and, to get on, run the step's cargo command directly with `CARGO_BUILD_JOBS=8`).
+  - **A label in the create call's own security descriptor is refused at Medium** ("A required privilege is not held by
+    the client", every Windows runner, runs 45536839733 and 45544315316), while a Low creator may set it: so a shared
+    named object (mutex, mapping, event) between Low workers and Medium processes is created first and labelled after.
+    Test such a change at both levels, and check that the green run reached the create (its log line), not only an open
+    of objects something else made: #1090 went green while every runner fell back to unlabelled objects.
 - **Drift stops it**: a step with an `if:` it cannot evaluate, a `${{ }}` it does not know, a key or a shell it does not
   expect ends the plan with exit 2 naming the step. Teach `ci_local.py` the new form (and its test), never skip it.
 - Local differences, each kept small on purpose: `git fetch --depth=1` runs without `--depth` (it would make the shared
