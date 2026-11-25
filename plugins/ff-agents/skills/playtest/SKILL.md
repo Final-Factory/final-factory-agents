@@ -141,7 +141,7 @@ dies on "Determinism report publication failed". ⚠️ Windowed, never `-batchm
 renders no frames, so `/v1/screenshot` answers 409 `no_frame_available`.
 
 The game publishes `session-{pid}.json` (port + bearer token) under
-`<persistentDataPath>/AgentControl/`, **one folder for every player on the computer, any worker's**: bind to the pid
+`<data root>/AgentControl/` (`python scripts/game_data.py where`; on a worker install your sandbox's own folder, w5557), **one folder for every player of that root**: bind to the pid
 your `launch --detach` printed (its JSON names that pid's `agent_session` file) or ask
 `python scripts/nightly/player_slots.py mine --one` (your session's own players, each with its own file), and pass
 `--pid` to `ff-agent`; never take the newest file there (w1856: a worker drove another worker's player that way; evidence-gate
@@ -210,7 +210,7 @@ captures an occluded window fine, so a still of it is safe; input is not.
 - **State reads:** `ui.modal` returns `controllerState` (`Default`, `Copy`, `Cut`, `Deconstruct`, `BlueprintPlacement`,
   `VehicleRideState`, `AddMoveCommandState`...); read it before pressing Escape, since an Escape that opens the Esc
   menu strands the session (above). `perf.sample|<seconds>` writes `[PerfProbe] PerfSummary` and `PerfSystems` lines
-  (per-system main-thread ms) to the player log. Saves load by name from `<persistentDataPath>/UserData/saves/`
+  (per-system main-thread ms) to the player log. Saves load by name from `<data root>/UserData/saves/`
   (drive-game `recipes.md`), not the older `saves/` folder beside it.
 
 ### What the agent channel cannot reach in a built player (w2470)
