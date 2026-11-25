@@ -70,6 +70,22 @@ whole verification. The repo's own `CLAUDE.md` is binding and longer; this skill
   `cargo test -p ffu-sim --test golden_snapshot` against the old pins, and look for a pass. Then re-pin with a "wNNN
   moved it from ..." comment. ffu-sim's clippy denies `indexing_slicing`: a `windows(2).all(|w| w[0] <= w[1])` fails
   it, so use `is_sorted_by_key`.
+- **A new hash part moves crosscheck goldens too: read every drift line, then re-pin with a cause proof** (w5489, ffu
+  #1087). The cells' new near-chunk part moved three `golden_world_cells.rs` pins and also four crosscheck traces
+  (`world-cells`, `world-refine`, `fleet-cells`, `fleet-casts`), all first differing at tick 8. A `head` of the
+  crosscheck log showed only two of them, so the first re-pin missed the fleet pair. Read every line of
+  `grep drift <log>`. Then switch the part off (`if true || ...`): all rows must match the old goldens. Re-write the
+  drifting traces with `crosscheck --scenario a,b --threads 1 --golden golden/crosscheck --write-golden`, rerun
+  `--threads 1,4,16` until it shows N of N matches, and put the proof in the PR evidence.
+- **Before you take a snapshot section number, read the open PRs' tags as well as main's** (w5489). Section 62
+  was free on main, but open #1086 held it and #1085 held 63, so w5489 moved to 64:
+  `for n in $(gh pr list -R Final-Factory/ffu --json number -q '.[].number'); do echo "$n $(gh pr diff $n -R
+  Final-Factory/ffu | grep -E '^\+.*tag: [0-9]+,' | tr '\n' ' ')"; done`.
+- **A note that rides an existing message kind is seen by every test that filters on that kind** (w5489). The cells'
+  `NEAR_CHUNK` note was sent as a `Damage` message marked `back`. `world_cells_cadence.rs` counted it as a cell step
+  and failed, because the notes come every 8th tick and broke its every-3rd-tick cadence. Before you reuse a kind,
+  run `grep -rn "kind == MsgKind::<Kind>" crates/*/tests crates/*/src`, and filter the note out (or give it its own
+  kind) in the same PR.
 - **A change to a sim rate or per-tick constant: check every main merge, saved per-tick fields and the planted-rule
   scripts** (w4405, ffu #861, the sector moved from 16 to 20 UPS). Three things went wrong:
   - While the PR was open, three of main's merges added new hard-coded 16s: w4400's bot step, w4302's landing linger,
