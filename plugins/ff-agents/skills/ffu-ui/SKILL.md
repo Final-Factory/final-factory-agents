@@ -45,8 +45,8 @@ code until they pick (UI checklist item 0, w2895 and w4008; FP.21's 32 pages of 
 - **Check a "FF1 draws no X" claim in FF1's presentation code and a real-game still before you write it** (w5484,
   lothsahn: "Power distributers show a link in FF1 when powered.  Why do you say there's no link?"). The Power
   Distributor aim design said FF1 draws no line between linked distributors, from a search summary; FF1 draws a teal
-  beam through `ScalableLaserOwner` (`PowerTransmitterBehaviorSystem.cs:160-203`, `ScalableLaserPresentationSystem.cs:187`),
-  only while power flows. Grep the presentation side (`ScalableLaser*`, `*LinkSystem`, `*Highlight*`) and the
+  beam through `ScalableLaserOwner` only while power flows (traced in ffu's `docs/design/power-distributor-aim.md`,
+  "The link FF1 draws"). Grep the presentation side (`ScalableLaser*`, `*LinkSystem`, `*Highlight*`) and the
   building's config for a WeaponConfig or effect prefab, and look at a still of the real game in the state the claim
   is about (powered, unpowered, ghost), before any negative claim about FF1.
 
