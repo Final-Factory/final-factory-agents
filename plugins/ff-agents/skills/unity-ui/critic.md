@@ -29,7 +29,11 @@ brief's reasoning or the worker's notes, given only what a person would see.
    ```
 
    - `--after`: every still and mock that will go to the person, each with its census, or with `@x0,y0,x1,y1` around the
-     panel when there is none.
+     panel when there is none. Stills of several sizes with no census: one `--rect` per `--after`, in order, or
+     `--rect 1280x720:x0,y0,x1,y1` per size (w5744).
+   - `--brief`: a quote is the person's only under a heading that says words ("Ben's words:") or on a line naming who
+     said it ("Ben asked: ...", "(lothsahn, 2026-10-02: ...)"); the brief's other quotes go to `b/words.md` as context,
+     not the person's words. Write the brief's own descriptions (old UI text, new strings) without quote marks (w5744).
    - `--before`: the same screens before, in the same order. For a round of options or mocks, master's still of the
      same screen is each option's before, so the critic can fail an option that moves an element the person did not
      name (w1429; run `ui_layout.py options` first and pack only the options it keeps).
@@ -41,7 +45,8 @@ brief's reasoning or the worker's notes, given only what a person would see.
      lower-quality JPEG);
    - each open window at its own pixels and at 2x;
    - the game's reference panels (the game repo's `docs/ui-style/ref/ref-*.png`);
-   - in `b/`, the quotes from the brief and the before stills, which the critic opens only after it has judged the
+   - in `b/`, the person's quotes from the brief (its other quotes under their own heading as context) and the before
+     stills, which the critic opens only after it has judged the
      stills alone.
 
    It prints its id: the same stills give the same id, so a re-roll shows.

@@ -361,6 +361,68 @@ class PackTest(unittest.TestCase):
             self.assertIn('"move the alerts so they don\'t cover the count"', words)
             self.assertNotIn("brief's ask", words)
 
+    def test_a_brief_quoting_old_ui_text_keeps_it_out_of_the_persons_words(self):
+        """w5744: w5685's pack filed every quote in the brief as the person's, the old hint row's text and the new UI
+        strings too, and a fresh ui-critic graded the new wording BROKEN three times as a misquote. Only a quote under a
+        words heading or on a line naming who said it is the person's; the rest is context."""
+        with tempfile.TemporaryDirectory() as d:
+            out = Path(d) / "pack"
+            with redirect_stdout(io.StringIO()), redirect_stderr(io.StringIO()):
+                code = uk.main(["pack", "--after", f"{RealCaseTest.R2}@0,0,450,310", "--ref", str(RealCaseTest.R1),
+                                "--brief", str(FIX / "w5685-brief.txt"), "--out", str(out)])
+            self.assertEqual(code, 0)
+            words = (out / "b" / "words.md").read_text(encoding="utf-8")
+            person, _, rest = words.partition("# Quoted in the brief: context, not the person's words")
+            self.assertIn('"the aim button shouldn\'t jump around when the hint shows up"', person)
+            self.assertIn('"keep the hint inside the Target row"', person)
+            for ui_text in ("Pick a Mass Driver to aim at", "Click a Mass Driver in range to aim",
+                            "Select a target Mass Driver first"):
+                self.assertNotIn(ui_text, person)
+                self.assertIn(f'"{ui_text}"', rest.partition("# The brief's ask")[0])
+
+    def test_brief_quotes_take_a_speaker_not_a_ui_texts_verb(self):
+        person, context = uk.brief_quotes(
+            'The old row said "Pick a Mass Driver to aim at".\n'
+            '(lothsahn, 2026-10-02: "stop holding prs, just merge them")\n'
+            'It said "Nothing selected yet" before.\n'
+            'The player said "the hint covers my ammo count"\n'
+            'Words:\n- "first of the words list"\n\nThe label is "Second paragraph text" now.')
+        self.assertEqual(person, ["stop holding prs, just merge them", "the hint covers my ammo count",
+                                  "first of the words list"])
+        self.assertEqual(context, ["Pick a Mass Driver to aim at", "Nothing selected yet", "Second paragraph text"])
+
+    def test_a_pack_over_three_sizes_takes_a_rect_per_size(self):
+        """w5744: a pack over three screen sizes needs a rect per size; w5618 and w5685 each built three packs by hand."""
+        with tempfile.TemporaryDirectory() as d:
+            stills = []
+            for w, h in ((320, 200), (400, 250), (480, 300)):
+                path = Path(d) / f"s{w}.png"
+                uk.write_png(path, uk.Still(w, h, bytes(3 * w * h)))
+                stills.append(path)
+
+            def windows(rects):
+                out = Path(d) / f"pack{len(list(Path(d).glob('pack*')))}"
+                args = ["pack", "--ref", str(RealCaseTest.R1), "--out", str(out)]
+                for s in stills:
+                    args += ["--after", str(s)]
+                for r in rects:
+                    args += ["--rect", r]
+                with redirect_stdout(io.StringIO()), redirect_stderr(io.StringIO()):
+                    self.assertEqual(uk.main(args), 0)
+                m = json.loads(Path(str(out) + ".map.json").read_text(encoding="utf-8"))
+                by_after = {Path(v["after"]).name: k for k, v in m["stills"].items()}
+                return {name: uk.read_png(out / "a" / f"{sid}-w1.png") for name, sid in by_after.items()}
+
+            want = {"s320.png": (100, 80), "s400.png": (106, 88), "s480.png": (128, 88)}   # rect + 12 px each side
+            for rects in (["320x200:20,20,96,76", "400x250:30,30,112,94", "480x300:40,40,144,104"],
+                          ["20,20,96,76", "30,30,112,94", "40,40,144,104"]):
+                got = {n: (s.width, s.height) for n, s in windows(rects).items()}
+                self.assertEqual(got, want, rects)
+            with redirect_stdout(io.StringIO()), redirect_stderr(io.StringIO()):
+                code = uk.main(["pack", "--after", str(stills[0]), "--ref", str(RealCaseTest.R1), "--rect",
+                                "999x99:0,0,10,10", "--out", str(Path(d) / "bad")])
+            self.assertEqual(code, 2)
+
     def test_a_pack_without_a_reference_window_is_refused(self):
         """The critic judges a window beside the game's others (w1818): no --ref and no --repo is an error."""
         with tempfile.TemporaryDirectory() as d:

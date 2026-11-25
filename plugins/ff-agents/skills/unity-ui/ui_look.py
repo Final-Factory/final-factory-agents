@@ -27,11 +27,15 @@ painful on the eyes"; w1334, game PR #1817). These look at the pixels a player s
         Dialog/Modal/Popup), else its panels; with no census at all, the whole still.
 
     ui_look.py pack --after <still.png>[::<census.json>|@x0,y0,x1,y1] [...] [--before <still.png> ...] [--ref <png> ...]
-                    [--repo <game repo>] [--brief <brief.txt>] [--words "<quote>" ...] --out <dir>
+                    [--repo <game repo>] [--brief <brief.txt>] [--words "<quote>" ...]
+                    [--rect [WxH:]x0,y0,x1,y1 ...] --out <dir>
         The design critic's whole input (unity-ui critic.md), built here so the worker's account of the change never
         reaches it: each still whole (halved while it would be over 500 KB, which Claude Code re-encodes as JPEG) and each
         window at its own pixels and 2x, the reference panels (default <repo>/docs/ui-style/ref/ref-*.png), and the person's
         quoted words in b/, which the prompt opens only after the stills are judged alone. Prints the pack id.
+        A brief's quote is the person's only under a words heading or on a line naming who said it; its other quotes
+        (old UI text, new strings, names) go to b/words.md as context, not the person's words (w5744). --rect
+        WxH:x0,y0,x1,y1 crops the stills of that size, or give one plain --rect per --after over several sizes.
 
     ui_look.py family <still.png>::<census.json>[#<window>] [--ref <still.png>::<census.json>[#<window>] ...] [--json <out>]
         The `Family:` line (evidence-gate checklists/ui.md item 33): the window against the game's other windows (Ben,
@@ -195,6 +199,16 @@ def read_png(path: str | Path) -> Still:
             out += line
         prev = line
     return Still(width, height, out, Path(path).stem)
+
+
+def still_size(path: str | Path) -> tuple[int, int]:
+    """A still's width and height, from a PNG's header without decoding it."""
+    with open(path, "rb") as f:
+        head = f.read(24)
+    if head[:8] == b"\x89PNG\r\n\x1a\n" and head[12:16] == b"IHDR":
+        return struct.unpack(">II", head[16:24])
+    image = load_still(path)
+    return image.width, image.height
 
 
 def load_still(path: str | Path) -> Still:
@@ -675,6 +689,20 @@ def parse_rect(text: str) -> list[float]:
     if len(parts) != 4:
         raise ValueError(f"a rect is x0,y0,x1,y1, got {text!r}")
     return parts
+
+
+def pack_rects(specs: list[str]) -> tuple[dict, list]:
+    """pack's --rect values: WxH:x0,y0,x1,y1 (for the stills of that size; repeat for several windows) and plain
+    x0,y0,x1,y1. A pack over three screen sizes needs a rect per size; w5618 and w5685 each built three packs by hand."""
+    sized: dict[tuple[int, int], list] = {}
+    plain = []
+    for spec in specs:
+        m = re.match(r"^\s*(\d+)\s*[xX]\s*(\d+)\s*:(.*)$", spec)
+        if m:
+            sized.setdefault((int(m.group(1)), int(m.group(2))), []).append(parse_rect(m.group(3)))
+        else:
+            plain.append(parse_rect(spec))
+    return sized, plain
 
 
 def panel_rects(census: dict) -> list[list[float]]:
@@ -1282,6 +1310,71 @@ def quotes_in(text: str) -> list[str]:
     return out
 
 
+# A line that says who said its quotes: a speech verb after a name or a person ("Ben asked", "the player said"), a dated
+# attribution ("Ben, 2026-10-18:", "(lothsahn, w4966: "), a person's name opening the line ("Ben: "), or a standing rule
+# (CLAUDE.md's rules quote people). A UI text's own verb ("the old row said") is no speaker (w5744).
+_PEOPLE = r"(?:ben|lothsahn|the person|the requester|the user|the players?|players|a player|a tester|testers?)"
+_NOT_A_NAME = {"it", "this", "that", "which", "the", "a", "an", "its", "text", "label", "hint", "button", "row", "title",
+               "tooltip", "header", "message", "string", "old", "new", "before", "after", "now", "currently", "panel",
+               "window", "line", "note", "notes", "repo", "goal", "fix", "ask", "done", "status", "screen", "card",
+               "dialog", "popup", "field", "caption", "prompt", "error", "warning", "toast", "menu", "tab", "entry"}
+_SAID = r"(?:said|says|asked|asks|wrote|writes|put it|wants|wanted|answered|replied|picked|chose)"
+_SPEAKER_VERB = re.compile(rf"\b(?:{_PEOPLE}|([A-Z][\w.-]*))\s*(?:\([^)]*\)\s*)?,?\s+{_SAID}\b", re.I)
+_SPEAKER_DATED = re.compile(r"\b([A-Za-z][\w.-]*)\s*,\s*(?:\d{4}-\d\d-\d\d|w\d+)\b")
+_SPEAKER_OPEN = re.compile(rf"^\s*(?:[-*•>]\s*)*\(?({_PEOPLE}|[A-Z][\w.-]*)\s*(?:\([^)]*\))?\s*:\s*[\"“]", re.I)
+_STANDING_RULE = re.compile(r"\bstanding rule\b|\bin (?:their|his|her) (?:own )?words\b", re.I)
+_HEADING = re.compile(r"^\s*(?:#+\s*(.*?)\s*:?\s*$|([^\"“”:]{1,60}):\s*$)")
+
+
+def _speaker_at(line: str) -> int:
+    """Where on a line the person's quotes start (-1: the line names nobody as saying them)."""
+    starts = []
+    for m in _SPEAKER_VERB.finditer(line):
+        if not m.group(1) or (m.group(1).lower() not in _NOT_A_NAME and m.group(1)[0].isupper()):
+            starts.append(m.start())
+    for m in _SPEAKER_DATED.finditer(line):
+        if m.group(1).lower() not in _NOT_A_NAME:
+            starts.append(m.start())
+    m = _SPEAKER_OPEN.match(line)
+    if m and m.group(1).lower() not in _NOT_A_NAME:
+        starts.append(m.start())
+    m = _STANDING_RULE.search(line)
+    if m:
+        starts.append(m.start())
+    return min(starts) if starts else -1
+
+
+def brief_quotes(text: str) -> tuple[list[str], list[str]]:
+    """A brief's quotes split in two: the person's words, and the rest (context, not the person's words). A quote is the
+    person's only on a line the brief marks so: under a heading that says words ("The person's words:", "## Ben's
+    words"), or after a name that says it on the same line ("Ben asked: ...", "(lothsahn, 2026-10-02: ...)"). In w5685
+    every quote went in as the person's, the old hint row's text and the new UI strings too, and a fresh ui-critic graded
+    the new wording BROKEN three times as a misquote (w5744)."""
+    person: list[str] = []
+    under_words = after_blank = False
+    for line in text.splitlines():
+        if not line.strip():
+            after_blank = True
+            continue
+        if after_blank and not line.lstrip().startswith(("-", "*", "•", ">", '"', "“")):
+            under_words = False   # a words section is its list; prose after a blank line is the brief's again
+        after_blank = False
+        h = _HEADING.match(line)
+        if h:
+            title = h.group(1) if h.group(1) is not None else h.group(2)
+            under_words = bool(re.search(r"\bwords\b|\bquotes? from\b", title, re.I))
+            continue
+        inline = re.match(r"^\s*(?:[-*•]\s*)?(?:the person's |their |[A-Za-z]+'s )?words\s*:", line, re.I)
+        start = 0 if (under_words or inline) else _speaker_at(line)
+        if start < 0:
+            continue
+        for q in quotes_in(line[start:]):
+            if q not in person:
+                person.append(q)
+    context = [q for q in quotes_in(text) if q not in person]
+    return person, context
+
+
 ASK_SENTENCE = re.compile(r"^(?:the fix|fix:|the ask|ask:)|\bmoves? only\b|\bonly (?:moves?|changes?)\b", re.I)
 
 
@@ -1331,6 +1424,13 @@ def run_pack(args) -> int:
         return still, (census or None)
     afters = [split(s) for s in args.after]
     befores = [split(s) for s in args.before or []]
+    sized, plain = pack_rects(args.rect or [])
+    sizes = [still_size(s) for s, _ in afters]
+    one_each = len(plain) == len(afters) > 1 and len(set(sizes)) > 1
+    for wh in sized:
+        if wh not in sizes:
+            raise ValueError(f"--rect {wh[0]}x{wh[1]}:... matches no --after still (their sizes: "
+                             + ", ".join(f"{w}x{h}" for w, h in sizes) + ")")
     digest = hashlib.sha256()
     for still, _ in afters:
         digest.update(Path(still).read_bytes())
@@ -1348,7 +1448,12 @@ def run_pack(args) -> int:
             (a_dir / names[0]).unlink()
             names = [f"{sid}-full-half.png"]
             write_png(a_dir / names[0], image.halved())
-        rects = [parse_rect(r) for r in args.rect or []]
+        if (image.width, image.height) in sized:
+            rects = list(sized[(image.width, image.height)])
+        elif one_each:
+            rects = [plain[i]]   # one --rect per --after, in order, over stills of several sizes (w5744)
+        else:
+            rects = list(plain)
         if census_path and census_path.startswith("@"):
             rects = [parse_rect(census_path[1:])]
         elif census_path:
@@ -1383,9 +1488,12 @@ def run_pack(args) -> int:
         ref_files.append(f"- {name}")
     words = list(args.words or [])
     asks: list[str] = []
+    context: list[str] = []
     if args.brief:
         brief_text = Path(args.brief).read_text(encoding="utf-8", errors="replace")
-        words += [q for q in quotes_in(brief_text) if q not in words]
+        person, context = brief_quotes(brief_text)
+        words += [q for q in person if q not in words]
+        context = [q for q in context if q not in words]
         if not args.words:
             # w3111: without --words the quotes may name none of what the change moves; the brief's ask goes in beside them.
             asks = [a for a in ask_lines(brief_text) if not any(a in w or w in a for w in words)]
@@ -1393,6 +1501,10 @@ def run_pack(args) -> int:
                   f"own heading, the brief's ask ({len(asks)} line(s)): read it, and pass the person's ask with --words "
                   f"\"<their words>\" when you have them (w3111)", file=sys.stderr)
     text = "# The person's words, verbatim\n\n" + "\n".join(f"- \"{w}\"" for w in words) + "\n"
+    if context:
+        text += ("\n# Quoted in the brief: context, not the person's words\n\nUI text, names and descriptions the brief quotes "
+                 "on a line that names no speaker (an old label, a new string, a window's name). Never grade a change as a "
+                 "misquote of these.\n\n" + "\n".join(f"- \"{q}\"" for q in context) + "\n")
     if asks:
         text += ("\n# The brief's ask (the dispatcher's words, not the person's)\n\nAn element these lines say the change "
                  "moves or changes is named, not an unnamed move.\n\n" + "\n".join(f"- {a}" for a in asks) + "\n")
@@ -1436,9 +1548,13 @@ def main(argv=None) -> int:
     q.add_argument("--before", action="append", help="the same screen before, in the same order as --after")
     q.add_argument("--ref", action="append", help="a reference panel still (default: <repo>/docs/ui-style/ref/ref-*.png)")
     q.add_argument("--repo", help="the game repo (for the reference panels)")
-    q.add_argument("--brief", help="the request's brief: its quoted words go to Pass B, and without --words its ask and Done-when lines too, labelled as the brief's (w3111)")
+    q.add_argument("--brief", help="the request's brief: the quotes on lines it marks as the person's (a words heading, a "
+                   "line naming who said them) go to Pass B as the person's, its other quotes as context (w5744), and "
+                   "without --words its ask and Done-when lines too, labelled as the brief's (w3111)")
     q.add_argument("--words", action="append", help="a quote of the person's to add")
-    q.add_argument("--rect", action="append", help="the panel's rect when there is no census, x0,y0,x1,y1")
+    q.add_argument("--rect", action="append", help="the panel's rect when there is no census: x0,y0,x1,y1 (on every still, "
+                   "or one per --after in order when the stills are of several sizes and the counts match), or "
+                   "WxH:x0,y0,x1,y1 for the stills of that size; repeat")
     q.add_argument("--out", required=True)
     f = sub.add_parser("family", help="corners, header and edges against the game's other windows (w1818)")
     f.add_argument("window", help="still.png::census.json[#window path fragment]: the window under review")

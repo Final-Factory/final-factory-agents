@@ -394,7 +394,10 @@ control, and a redesign goes out as 2 or 3 clearly different options built from 
     child given the pack's `prompt.md`); never brief it with what you changed or meant. Before it starts, read the pack's
     `b/words.md`: the element your change moves must be named there, by the person's words (`--words "<their ask>"`) or
     the brief's ask heading pack adds without `--words`. A list of window names and rules alone grades the asked-for move
-    BROKEN (w3111: w3099's critic, 4 BROKEN, then 0 with the ask passed). A style the brief names counts as an ask too: quote its own tokens (title font and tracking, accent, corners) from its source report into `--words`, or the critic grades the style's own type UGLY on every still (w4147: style B, Ben's pick in r197, Khyay caps titles; 11 of 11 mock stills UGLY for the title alone, three passes). A mock's backdrop is a whole game frame with the new window where the game opens the one it replaces, never a cropped panel on black (w4147). Its `critic.md` goes in the review
+    BROKEN (w3111: w3099's critic, 4 BROKEN, then 0 with the ask passed). Write the brief's own descriptions (old UI
+    text, new strings) without quote marks, and the person's words under a `Ben's words:` heading or after their name:
+    `b/words.md` must list no UI text as the person's (w5744: w5685's critic graded the new hint BROKEN three times as a
+    misquote of the old row's text, 0 once fixed). A style the brief names counts as an ask too: quote its own tokens (title font and tracking, accent, corners) from its source report into `--words`, or the critic grades the style's own type UGLY on every still (w4147: style B, Ben's pick in r197, Khyay caps titles; 11 of 11 mock stills UGLY for the title alone, three passes). A mock's backdrop is a whole game frame with the new window where the game opens the one it replaces, never a cropped panel on black (w4147). Its `critic.md` goes in the review
     folder with the stills. Fix every NEW broken or ugly finding or answer it with the person's words asking for exactly
     that; note the STANDING ones (`S standing, noted`; not filed or handed up by default, w4341; a small fix on a screen
     you already shoot is made here, w1546); before a finding is fixed, filed or handed up, name its still's setup: which

@@ -703,6 +703,12 @@ still or a mock goes to anyone:
    `b/words.md` under their own heading, labelled as the brief's (w3111). Read `b/words.md` before you start the critic.
    `--words` carries only the requester's own quoted words from the brief, never your design summary or description of the
    change: the pack files them as the person's (w4488: caught and rebuilt before the critic ran).
+   **Write a pack brief's descriptions without quote marks** (w5744): quote only the person, under a `Ben's words:`
+   heading or on a line that names who said it (`Ben asked: "..."`). `--brief` files every other quote as context, not
+   the person's words, but in w5685 the old hint row's text and the new strings, quoted, reached the critic as Ben's and
+   it graded the new wording BROKEN three times as a misquote (0 once `words.md` was fixed). Read `b/words.md` first.
+   Stills of several sizes without a census take one `--rect` per `--after` or `--rect <W>x<H>:x0,y0,x1,y1` per size, in
+   one pack (w5618 and w5685 each built three packs by hand).
    After a person picks among options, the next round's brief quotes their picks and the findings they accepted by
    picking, and carries every earlier brief's list of what the request adds (new panels, cards, a hotbar). A fresh critic
    knows none of it: w4014's first round on Ben's picked combination gave 3 BROKEN, each a decided item or a new element
