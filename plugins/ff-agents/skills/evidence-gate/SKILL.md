@@ -246,6 +246,7 @@ carried over ([lesson](lessons/research-the-decision-not-the-topic.md#name-the-p
   diagnostics included. Run `pr_evidence.py --body-file <body> --repo <repo> --pr <n>` and `gh pr ready` a draft before
   you arm `merge_on_green` (w4495: #3748 and #3760 refused after green CI, #3741 as a draft).
 - **On ff-factory, `npm run prepush` before every push** ([lesson](lessons/merge-your-own-pr.md#before-the-push-the-repos-own-pre-push-check-ff-factory-w924-2026-10-10)).
+- **An independent review cannot approve a PR its own token opened**: compare `gh api user -q .login` with the PR author; if equal post `--comment` headed PASS/FAIL ([lesson](lessons/an-independent-review-may-not-be-able-to-approve.md), w5852).
   Push only when it passes; report any `SKIPPED` step (a tool missing on the machine) instead of ignoring it.
 - **Ask for the go-live moment before big content reaches a Steam branch** ([lesson](lessons/ask-before-content-goes-live.md)).
   Before a build, a bump PR, or a brief or plan that makes major new content live on any Steam branch (1.0, a

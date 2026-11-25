@@ -395,6 +395,11 @@ Not verified: the Bats' slot lag (simulation, follow-up PR)
 - **Before the merge's first git write after a wait**, `git branch --show-current` names your branch
   (`lessons/merge-your-own-pr.md`, w807). **Post the verdict with `--comment` only from the
   newest ff-agents**: a stale copy's FAIL is about the copy, so `pr_evidence.py` now refuses to post it.
+- **An independent or lockout review compares accounts before it posts**: `gh api user -q .login` against
+  `gh pr view <n> --json author -q .author.login`. The same account cannot approve, so post `gh pr review <n>
+  --comment` with `PASS` or `FAIL` in its first line and say it is not an approval because the token's account
+  opened the PR. As the author, take a `PASS` comment review from a different worker as the independent review,
+  as much as an APPROVED one ([lesson](../lessons/an-independent-review-may-not-be-able-to-approve.md), w5851).
 - **"Not verified"** is always there, even when it says "nothing". It is the honest place for
   what you could not check.
 - Nothing in the section may be pending. Finish the review, then merge.
