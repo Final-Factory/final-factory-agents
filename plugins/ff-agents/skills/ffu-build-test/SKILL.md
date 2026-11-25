@@ -293,6 +293,18 @@ whole verification. The repo's own `CLAUDE.md` is binding and longer; this skill
     test (the follower's dial reaching the test's front, `Front::relayed`), and wait for the child's answer as an event
     bounded by `stall::ALIVE`. Plant a child-only stall with `NtSuspendProcess` on the child's new pid: wait for a pid
     that was not there before, since its log file appears before the spawn and a pid read then is another process.
+  - **A child's disk-write stall is invisible to the test too: a lockstep shard's tick waits for its op log's write**
+    (w5594, ffu #1129). lookahead's late-peer test failed on biscuit under `load=workspace` (`skipped` 1) while the
+    test's stall watch saw nothing. One shard's tick waited 3,994 ms in `log.wait_durable`, because a lockstep tick's
+    batches leave only after its records are on disk (w4035), even with `--sync none`. Its peer then waited 4,028 ms
+    for the batch and gave a tick up (repeat run 45596647621). To find such a stall, probe each tick with `step`,
+    `peer_wait` and `disk_wait` lines:
+    - inherit the child's stderr, since the test sets it to `Stdio::null()`;
+    - print only the lines over a threshold, since repeat.yml shows only a failed run's last 60 lines.
+
+    The done line now carries `clock_tick` and `disk_wait_max_ms`. Assert a promise by tick count (`clock_tick == 1`).
+    Judge a wall-clock outcome only when `disk_wait_max_ms` and `stall::worst()` are under a bound; otherwise print
+    "not judged" with the numbers.
   - **Before a test ends a process that is the only route of state to another, wait until the state arrived** (w3798,
     ffu #561). failover.rs's chain killed an early taker right after opening its valve; a standby that a loaded runner
     had stopped held no world yet, and a standby with no world never takes over (`Standby::follow`), so it sat silent
