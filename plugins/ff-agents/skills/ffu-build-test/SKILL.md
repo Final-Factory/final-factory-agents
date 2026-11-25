@@ -991,6 +991,13 @@ never rewritten (`tools/check_snapshot_compat.sh BASE_REF` holds it in CI). No t
   - **Open a draft PR the moment you take a kind, op tag or section number** (`tools/row_numbers.py next ... --prs`): a
     number held only in a branch is no claim. ffu #567 committed op tags at 06:40Z and opened at 09:47Z; ffu #566,
     opened at 09:14Z, kept them and #567 had to renumber (w3844).
+    w5488 (ffu #1088) did it again: it took section 62 at the start and opened its PR only when the code was done, by
+    which time #1082 and #1086 held 61 and 62, and #1085 and #1087 held 63 and 64, so it moved to 65. Open the draft
+    at your first commit. Then run `ci_local.sh` with the PR number: without it the run treats the branch as a new PR
+    and lint-09 names your own section as clashing with any PR opened after yours (#1089 on 65), which is no clash.
+    With the number, lint-10 (`check_row_docs.py`) reads the pushed PR's files, so a fix you have only committed
+    locally (a new row's table line moved from docs/PLAN.md into the first line of `docs/rows/<Id>.md`) fails until
+    you push it.
   - **Run `tools/row_numbers.py check --base origin/main --prs` again right before you merge, not only when you
     claim** (w4272). ffu #810 (alarms, w4264) and #812 (ship hits, w4271) both took snapshot section 28 and merged two
     minutes apart. Each section lives in its own `snapshot/<name>.rs` and `SECTIONS` is sorted at compile time, so git
