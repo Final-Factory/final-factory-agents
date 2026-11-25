@@ -227,6 +227,10 @@ whole verification. The repo's own `CLAUDE.md` is binding and longer; this skill
   `TowerFleet`", and a `crosscheck --write-golden` in between ran main's binary over the branch's golden files. Give a
   comparison worktree its own `CARGO_TARGET_DIR="$TMPDIR/<name>-target"`; if it already happened, run `cargo clean
   --release -p ffu-sim -p ffu-oracle -p ffu-headless -p ffu-agent` before you trust the slot's build again.
+  The same stale reuse hit w5587 (ffu #1120), whose work moved between two slots' checkouts on one machine: the
+  build kept linking old code for files the branch had changed until those files were touched (a newer mtime). After
+  you move a branch into another checkout that shares a target, `touch` the files your branch changes (or `cargo clean
+  -p` their crates) before you trust a test run.
   To find which part of a world scenario drifted, a throwaway test printing `Sector::section_hashes()` each tick on
   both builds named it in one run (w5492: only `towers` differed through tick 34).
 - **Timing builds** (w3764): a build time is shared work, `bench_queue.py run --what "<what>" -- <cmd>`; `timed` refuses a
@@ -766,6 +770,14 @@ never rewritten (`tools/check_snapshot_compat.sh BASE_REF` holds it in CI). No t
   parent" in the UI gate), fixed with 1 px of right padding on the dots row in `frame::pager`. Run
   `cargo test -p ffu-agent -p ffu-ui --test gate --test names --test build_menu` (and ffu-agent's lib tests) before
   you push.
+
+  A new passive or crafter kind needs its FF1-import alias in `crates/ffu-oracle/src/ff1import.rs` too (w5587, ffu
+  #1120): the six stations M6.7c added (four crafters, the Light Structure and High Density Station Core passives)
+  had none, and `ff1_import::passive_and_crafter_aliases_name_their_own_entries` failed ("Light Structure: left None")
+  on CI's ffu-windows leg after the ffu-ui and ffu-sim tests had passed. Nothing in ffu-ui or ffu-sim catches it: add
+  the alias with the kind and run `cargo test -p ffu-oracle` before you push. A passive's index is the id an imported
+  FF1 save points at, so on a clash with main (M6.9's Requester Cargo Hold took 21) main's index stays and yours moves,
+  in `ff1power::PASSIVES` and the alias both.
 - **`tools/tick_census` skips a `#[cfg(test)]` module only when each attribute after it fits on one line** (w5473, ffu
   #1080). rustfmt wrapped a long `#[allow(clippy::indexing_slicing, ...)]` onto several lines, and the census then
   counted a new sim file's tests as sim readers. Put the allow inside the module as `#![allow(...)]`.
