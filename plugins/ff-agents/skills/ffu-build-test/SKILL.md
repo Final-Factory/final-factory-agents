@@ -663,6 +663,10 @@ cargo run --release -p ffu-headless -- crosscheck --threads 1,4,16 --golden gold
   sRGB masks as FF1's GPU does, which moved the Overdriver's grey paint from 121,111,113 to 110,109,109. When the art
   colour must stay, put back the old albedo and surface texels, then check texel 0 of each and that the other models
   are byte-identical.
+- **A `.ffpack` conflict is re-baked, never resolved by hand** (w5653, ffu #1164). When main bakes into the same
+  pack while your PR waits (w5636 put the Requester Cargo Hold into `art/ff1/buildings.ffpack`), take main's pack,
+  `packs.rs` and `art/ff1/README.md`, run `ffu-bake with` again on main's pack with your glTFs, re-apply your edits, and
+  re-measure the README's byte count (11,777,520 -> 12,034,312 there, not the 12,027,245 measured before the merge).
 - A test that opens a GPU device holds its crate's one-device lock (`ffu-render`'s `tests::gpu`, `ffu-client`'s
   `packs::tests::gpu` / `one_gpu_at_a_time`; a new crate with GPU tests adds one). Several devices made at once crash
   Mesa's Vulkan loader: a SIGSEGV with no Rust panic, in 25 of 200 parallel runs of `ffu-client`'s tests on biscuit
