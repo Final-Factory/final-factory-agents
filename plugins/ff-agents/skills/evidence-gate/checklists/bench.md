@@ -311,7 +311,7 @@ Mechanics: the game repo's `Documentation/Bench-Lock.md`.
       A CI time far above both the warm time and a lone batchmode run is the long CI process (w4759): look in the
       case's call path for `GC.Collect` and `FindObjectOfType`/`.Instance` reads in loops; discard the first run after
       a recompile (Burst compile).
-- [ ] **A test that needs CPU load caps and demotes its hogs** (w6164, 2026-11-26, [lesson](../lessons/load-tests-must-not-saturate-a-shared-machine.md);
+- [ ] **A test that needs CPU load caps and demotes its hogs** (w6164, 2026-11-26, [lesson](../lessons/settle-your-own-guesses.md#a-load-test-must-not-saturate-a-machine-that-hosts-ci-runners-w6164-2026-11-26);
       w6066 ran 16 to 96 Normal-priority busy loops on a 16-thread LothDesktop and ffu CI beside it slowed 10 to 25 times,
       crosscheck 56.6 min against 1.1 to 4.2, clippy 50.2 against 6.5, both to timeouts). Before launching any hog on a
       machine that hosts CI runners or other agents: at most cores/2 of them, at Idle priority (`start /low`, `nice -n 19`,
