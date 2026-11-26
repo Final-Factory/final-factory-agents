@@ -9,6 +9,9 @@
 # `timeout-minutes`, else CI_LOCAL_STEP_MINUTES (default 60), is ended and prints TIMEOUT, so no step hangs the run
 # (w4987: a test of tools/ci-runners/postmerge_culprit.py hung for 20 min and more on BEAST). Every step runs with
 # PYTHONUTF8=1, as CI's Linux Python writes UTF-8 (w4987: the PR body's emoji stopped the row-doc step on Windows).
+# A failed step whose every failed test failed only for what this machine lacks (a GPU adapter, a crash monitor allowed
+# to start: ci_local.py LACKS) prints SKIP with that reason and counts neither as passed nor as failed (w5994: a
+# sandboxed, screen-locked m5). Any other failure in it keeps it FAIL.
 #
 #   PR         the pull request number: row_numbers.py and check_row_docs.py check as on that PR, and its body is read
 #              with gh unless BODY_FILE is given
@@ -110,7 +113,7 @@ step_minutes=${CI_LOCAL_STEP_MINUTES:-60}
 tmo=$(command -v timeout || command -v gtimeout || true)
 [ -z "$tmo" ] && [ "$list" = 0 ] && echo "note: no timeout or gtimeout on PATH; a step that hangs is not ended" >&2
 
-fails=0 n=0
+fails=0 n=0 lacked=0
 while IFS=$'\t' read -r verdict slug third name mins; do
   n=$((n + 1))
   if [ "$verdict" = SKIP ]; then
@@ -138,6 +141,11 @@ while IFS=$'\t' read -r verdict slug third name mins; do
     printf 'TIMEOUT %-50s %5ss  ended after %s min  %s\n' "$slug" "$secs" "$m" "$name"
     echo "      log: $log; its last lines:"
     tail -n 30 "$log" | sed 's/^/      | /'
+  elif why=$("$PY" "$here/ci_local.py" classify --log "$(native "$log")" 2> /dev/null); then
+    # every failed test failed only for what this machine lacks (no GPU adapter, no crash monitor; w5994): not passed
+    lacked=$((lacked + 1))
+    printf 'SKIP  %-52s %5ss  %s\n' "$slug" "$secs" "($why)"
+    echo "      log: $log"
   else
     fails=$((fails + 1))
     printf 'FAIL  %-52s %5ss  exit %s  %s\n' "$slug" "$secs" "$rc" "$name"
@@ -152,9 +160,11 @@ if [ "$had_captures" = 0 ] && [ -d "$repo/lavapipe-captures" ]; then
 fi
 
 [ "$list" = 1 ] && exit 0
+skipped=""; [ "$lacked" != 0 ] && skipped="; $lacked step(s) SKIPPED for what this machine lacks, not passed: CI runs them"
 if [ "$fails" = 0 ]; then
-  echo "ci_local: every step passed ($n in the plan; scripts in $run_dir)"
+  if [ "$lacked" = 0 ]; then echo "ci_local: every step passed ($n in the plan; scripts in $run_dir)"
+  else echo "ci_local: no step failed$skipped ($n in the plan; scripts in $run_dir)"; fi
   exit 0
 fi
-echo "ci_local: $fails step(s) failed; logs at $tmp/step-<name>.log, scripts in $run_dir"
+echo "ci_local: $fails step(s) failed$skipped; logs at $tmp/step-<name>.log, scripts in $run_dir"
 exit 1
