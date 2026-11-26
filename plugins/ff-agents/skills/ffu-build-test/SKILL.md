@@ -71,6 +71,13 @@ whole verification. The repo's own `CLAUDE.md` is binding and longer; this skill
   **Checklist, before any git write in a slot** (merge, commit, rebase, reset, push, `ff-pr`): (1) did this turn start
   after a wait or resume? Then re-run `take --branch <yours>` first; (2) `git branch --show-current` equals your
   branch; (3) `git status --short` holds only your edits. Any "no" means stop and touch nothing.
+  **The tool now enforces (1) and (2)** (w6038, ff-factory #1354): `ffu-slot take` points every slot at hooks
+  (reference-transaction, pre-push, pre-rebase) that refuse a ref update, push or rebase by a session that does not
+  hold the slot, or on a branch other than the one ffu-slot recorded, and `ff-pr push`/`merge` refuse the same; the
+  message names the slot, its holder session and the holder's branch. It is live on a machine once its daemon deploys
+  #1354, on each slot's next take. It cannot stop `git reset --hard` or `git checkout -- <path>` rewriting files before
+  the refused ref move, nor a merge's merged files (run `git merge --abort`), so keep the checklist. A refusal means
+  you are in someone else's checkout: leave it, `take --branch <yours>`, and never work around it.
 - `rust-toolchain.toml` pins Rust 1.94.0 with clippy and rustfmt; `cargo` picks it up by itself.
 - When `cargo` is not on PATH, look for the machine's shared toolchain before installing one. On lothdesktop it is
   under `V:/ffw/tools` (measured, w2895):
