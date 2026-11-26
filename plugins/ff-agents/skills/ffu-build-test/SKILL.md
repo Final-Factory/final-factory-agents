@@ -112,6 +112,20 @@ whole verification. The repo's own `CLAUDE.md` is binding and longer; this skill
   BEAST the queue turned the ticket away with a note to call `mcp__machine__timed_place` first (w1969), a note without
   the word "refused", and the loop waited 14 min on an exited holder. Use `until grep -qiE "time now|refused" "$log" ||
   ! ps -p $TPID > /dev/null`, and on a big computer call `timed_place` before the script takes its ticket.
+- **A big new building kind breaks ffu-ui and ffu-client tests that size sectors for every kind** (w5695, ffu #1177).
+  Adding the 21 by 43 Dark Star Gate failed six tests outside ffu-sim, found only by `ci_local.sh`:
+  - ffu-client `place.rs`, the pick test, which places every tool in a 128 by 160 grid. The gate covered the Dyson
+    Segment's spot, so it was sorted last and the sector grown to 180.
+  - ffu-client `place.rs`, the click, keyboard and gamepad place test. The 96 by 44 factory has no room for the gate,
+    so the test skips it.
+  - ffu-ui `tests/names.rs`, which needs the kind's Japanese name in its list.
+  - ffu-ui `tests/gate.rs`, which needs some sector holding every kind. The gate was added to `dyson_sky`.
+  - ffu-ui `tests/released_stations.rs`, which fails on a kind still named in `docs/delta-ledger.md`, and on a sector
+    too small for the kind (`OffGrid`).
+  - lint-12, the match arms' name order (fixed with `tools/keep_sorted.py --fix <files>`).
+
+  Right after you add a `Kind`, run `cargo test -p ffu-ui -p ffu-client` and `tools/keep_sorted.py --fix` on the new
+  arms.
 - **A new hash part kept out of the hash while empty still moves the combat fixtures' pins** (w4264, ffu #810). A part
   is added only when it has content, but the `golden_snapshot.rs` v3, v5 and v8 fixtures fight for 64 ticks and fill
   it, so their pinned hashes failed, while the crate's own tests and hashcheck stayed green. Run the whole workspace
