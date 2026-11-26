@@ -644,13 +644,16 @@ cargo run --release -p ffu-headless -- crosscheck --threads 1,4,16 --golden gold
   pushed b616ee6e6c for that).
 - `sweep_target_test.sh` fails on Windows (NTFS reads do not move access times) and skips on macOS (no GNU find);
   CI runs it on Linux. Run it there, or leave it to CI, unless you changed `tools/ci-runners/` (measured, w4510).
-- **Three `ci_local.sh` steps always fail on a sandboxed, screen-locked Mac (m5, macOS arm64), in code your PR did not
-  touch** (w5683 on ffu #1172, logs `step-*.log`; ben's request w5992): lint-20 `tools/ci-runners/runner_health_test.sh`
-  (`date: illegal option -- d`: it calls GNU `date -d`, BSD date has none); check-07 `run_tests_parallel`, the
-  `ffu-client` crash_upload, `ffu-crash-receiver` route and `ffu-crash` monitor tests (`crash monitor: Operation not
-  permitted (os error 1)` inside the worker sandbox); check-08 renderer golden images on lavapipe (42 of 87 fail with
-  `no GPU adapter`, no adapter on a locked headless Mac). Say so in the PR evidence, with the log line, and rely on CI's
-  Linux and Windows runners for them. A failure in any other step, or a different message, is yours.
+- **On a sandboxed, screen-locked Mac (m5, macOS arm64) two `ci_local.sh` steps print SKIP, not PASS, in code your PR
+  did not touch** (w5683 on ffu #1172; ben's requests w5992, w5994): check-07 `run_tests_parallel`, whose
+  `ffu-client` crash_upload, `ffu-crash-receiver` route and `ffu-crash` monitor tests cannot start the crash monitor
+  inside the worker sandbox (`crash monitor: Operation not permitted (os error 1)`, 9 tests), and check-08 renderer
+  golden images on lavapipe (`no GPU adapter`, 42 of 87 in `ffu_render`; the step stops there, so its `ffu-client`
+  packs, capture_check and `ffu-ui` gate commands do not run). `ci_local.py classify` reads a failed step's log and
+  turns it to `SKIP ... (not passed: N test(s) need ...)` only when every failed test in every failed binary shows one
+  of the `LACKS` messages; any other failure keeps the step FAIL, and the summary says `N step(s) SKIPPED for what this
+  machine lacks, not passed`. Say so in the PR evidence and rely on CI's runners for them. lint-20
+  (`runner_health_test.sh`, `date: illegal option -- d`) passes on macOS since ffu #1174 (BSD `date -j -f`).
 - Run what your change touches locally; CI runs all of them on Linux and clippy, tests and hashcheck on Windows and ARM
   macOS.
 - **Run one test file as `cargo test --workspace --all-features --locked --test <file> [<name>]`, not `-p <crate> --test <file>`**

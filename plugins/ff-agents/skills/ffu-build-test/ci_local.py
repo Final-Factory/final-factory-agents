@@ -347,6 +347,95 @@ def plan(args) -> int:
     return 0
 
 
+# ---------------------------------------------------------------------------------------------------------------------
+# A failed step whose every failing test failed only for what this machine lacks is reported SKIPPED, never passed
+# (w5994). On a sandboxed, screen-locked Mac (m5) check-07's crash tests cannot start the crash monitor, and check-08's
+# renderer tests find no GPU adapter (FFU_REQUIRE_GPU=1 makes them panic, as on CI, instead of passing silently). CI's
+# runners have both, and run these tests from ci.yml itself: this changes only what a local run reports.
+
+# (text every such failure shows, what is missing). Each failed test must show one, or the step stays FAIL.
+LACKS = [
+    ("no GPU adapter", "a GPU adapter (none here: a locked or headless Mac has none)"),
+    ("crash monitor: Operation not permitted (os error 1)",
+     "the crash monitor, which may not start here (Operation not permitted: the worker sandbox refuses it)"),
+]
+
+SECTION = re.compile(r"^\s+Running (.+?) \(", re.M)  # cargo / run_built_tests.sh / run_tests_parallel.py headers
+FAILED_TEST = re.compile(r"^test (\S+) \.\.\. FAILED", re.M)
+PARALLEL_FAILED = re.compile(r"^run_tests_parallel: FAILED: (.+)$", re.M)
+ANSI = re.compile(r"\x1b\[[0-9;]*m")
+
+
+def _lack(text: str):
+    for sig, what in LACKS:
+        if sig in text:
+            return what
+    return None
+
+
+def _evidence(section: str, test: str) -> str:
+    """The text that tells why `test` failed: libtest's captured block, a custom harness's lines after its FAILED line,
+    or a --nocapture panic under the test's thread name."""
+    out = []
+    t = re.escape(test)
+    m = re.search(rf"^---- {t} stdout ----\n(.*?)(?=^---- |^failures:|\Z)", section, re.M | re.S)
+    if m:
+        out.append(m.group(1))
+    m = re.search(rf"^test {t} \.\.\. FAILED(.*?)(?=^test |^running |^failures:|\Z)", section, re.M | re.S)
+    if m:
+        out.append(m.group(1))
+    for m in re.finditer(rf"^thread '{t}' .*panicked at .*\n(.*)\n?(.*)", section, re.M):
+        out.append(m.group(1) + "\n" + m.group(2))
+    return "\n".join(out)
+
+
+def classify_log(text: str):
+    """(reason, None) when every failure in the log is for something this machine lacks, else (None, why not)."""
+    text = ANSI.sub("", text).replace("\r\n", "\n")
+    heads = list(SECTION.finditer(text))
+    sections = {}
+    for i, h in enumerate(heads):
+        end = heads[i + 1].start() if i + 1 < len(heads) else len(text)
+        sections[h.group(1).replace(" ", "/")] = text[h.end():end]
+    par = PARALLEL_FAILED.search(text)
+    if par:
+        failed = [re.sub(r" \(exit \d+\)$", "", x.strip()) for x in par.group(1).split(";")]
+    else:
+        failed = [k for k, s in sections.items() if re.search(r"^test result: FAILED", s, re.M)]
+    if not failed:
+        return None, "no failed test binary found in the log"
+    counts, parts = {}, []
+    for key in failed:
+        sec = sections.get(key)
+        if sec is None:
+            return None, f"{key} failed with no output section"
+        tests = FAILED_TEST.findall(sec)
+        if not tests:
+            return None, f"{key} failed with no failed test (a crash or a build error)"
+        for t in tests:
+            what = _lack(_evidence(sec, t))
+            if what is None:
+                return None, f"{key}: {t} failed for another reason"
+            counts[what] = counts.get(what, 0) + 1
+        total = re.search(r"^test result: FAILED\. (\d+) passed; (\d+) failed", sec, re.M)
+        parts.append(f"{len(tests)} of {int(total.group(1)) + int(total.group(2))} in {key}" if total
+                     else f"{len(tests)} in {key}")
+    needs = "; ".join(f"{n} test(s) need {what}" for what, n in counts.items())
+    reason = f"not passed: {needs} ({', '.join(parts)}); every other test that ran passed; CI runs them"
+    if not par and heads and heads[-1].group(1).replace(" ", "/") in failed:
+        reason += "; the step stopped there, so its later commands did not run"
+    return reason, None
+
+
+def classify(args) -> int:
+    reason, why = classify_log(Path(args.log).read_text(encoding="utf-8", errors="replace"))
+    if reason is None:
+        print(why, file=sys.stderr)
+        return 1
+    print(reason)
+    return 0
+
+
 def main(argv=None) -> int:
     p = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     sub = p.add_subparsers(dest="cmd", required=True)
@@ -359,7 +448,12 @@ def main(argv=None) -> int:
     q.add_argument("--base", default="main")
     q.add_argument("--all", action="store_true", help="run the Linux-only steps on this OS too")
     q.add_argument("--ci-cargo-env", action="store_true", help="keep CARGO_INCREMENTAL and CARGO_PROFILE_DEV_DEBUG")
+    c = sub.add_parser("classify", help="a failed step's log: SKIP reason (exit 0) when every failure is for what "
+                                        "this machine lacks, else exit 1")
+    c.add_argument("--log", required=True)
     args = p.parse_args(argv)
+    if args.cmd == "classify":
+        return classify(args)
     try:
         return plan(args)
     except PlanError as e:
