@@ -111,6 +111,45 @@ A connected clip (`--connect ... --clip`) draws the builder's notice, as the win
 "2 tiles taken" (ffu #654, w2895). Before that PR a clip drew panels but no notice, so no still could show one.
 `--autodrag N` drags an N-tile belt line east from the free tile nearest the view's centre, then releases it.
 
+## A live window for a person on their Mac desktop
+
+When a person asks to see FFU on their own Mac (w6208, Ben on m5, 2026-11-26: "can youi open ffu on my m5 just so i
+can check it out with my eyeballs"), this route worked, measured on m5:
+
+1. **No ssh.** A worker shell on the Mac is already in the person's GUI session: `launchctl managername` prints
+   `Aqua`. Neither ssh nor `launchctl asuser` is needed; a window you start opens on their screen.
+2. **Build in a slot, then copy out.** `cargo build --release -p ffu-client` in your ffu slot (1 min 10 s warm on m5).
+   Copy `$CARGO_TARGET_DIR/release/ffu` (to a name of your own, `ffu-wNNN`) and `looks/ffu.look` out of the slot into
+   your temp folder, and launch the copy. The slot and its target go to the next worker once you release it, and its
+   next build or clean replaces that `ffu`. The art packs are built into the binary, so the copy runs on its own.
+   (A plain release build has no hot reload: that is the `hot-reload` feature, off by default.)
+3. **Launch so it survives you.** Write a wrapper and start it with `ff-leftovers launch /bin/sh <wrapper.sh>`:
+
+   ```sh
+   #!/bin/sh
+   cd <D>
+   exec <D>/ffu-wNNN --connect 100.98.100.42:7778 --name <Name> --look <D>/ffu.look > <D>/client.log 2>&1
+   ```
+
+   7778 on biscuit is the shared FF1 world (7777 is the engine's test world); join as a client only, never restart
+   it. Started this way neither the sweep nor `ff-leftovers end` ends it, and `ffu-slot release` left it running
+   (checked with `pgrep -fl ffu-wNNN` after the release). Check the join in `client.log`: "following ...:7778 from
+   tick N as client K". Your temp folder is deleted after your request closes; the running client keeps its binary
+   open and goes on, but a relaunch needs a new build.
+4. **A still of that window only.** Find its CGWindow number by the client's pid with a three-line Swift script, then
+   grab just that window (works while other windows cover it):
+
+   ```swift
+   import CoreGraphics
+   let l = CGWindowListCopyWindowInfo([.optionOnScreenOnly], kCGNullWindowID) as! [[String: Any]]
+   for w in l { if let p = w["kCGWindowOwnerPID"] as? Int, p == Int(CommandLine.arguments[1])! { print(w["kCGWindowNumber"]!, w["kCGWindowName"] ?? "", w["kCGWindowBounds"]!) } }
+   ```
+
+   `swift wid.swift <pid>`, then `screencapture -x -o -l <id> out.png`.
+
+Tell the person the controls from the client's own key bindings (crates/ffu-platform/src/keymap.rs, docs/play.md):
+WASD or arrows fly, M the full map, Esc the pause menu, whose Quit Game quits; closing the window quits too.
+
 ## Art previews
 
 New or recreated art (a model, texture, material or effect under `art/`) follows the evidence-gate visual checklist,
