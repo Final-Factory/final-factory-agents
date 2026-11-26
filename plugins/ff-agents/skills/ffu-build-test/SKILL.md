@@ -31,6 +31,10 @@ whole verification. The repo's own `CLAUDE.md` is binding and longer; this skill
   (ff-factory docs/ffu-sandboxes.md). A light clone in `$TMPDIR` with no cargo build (to read code, or a `git merge`
   only) is fine: it holds no target. No `ffu-slot` command at all (a machine without w3764) is the one case for a
   clone of your own in `$TMPDIR`.
+- **Exit 5 is the other exception** (w5870, ff-factory #1315): `ffu-slot take` or `where` refused you because you run
+  outside the worker fences. Clone ffu into your own temp folder (`git clone https://github.com/Final-Factory/ffu.git
+  "$TMPDIR/ffu"`, `CARGO_TARGET_DIR="$TMPDIR/ffu-target"`, inside ffw) and build there, as the refusal message says. Exit 4
+  still means wait for a free slot.
 - **Your slot may be given away while you wait** (w5885): stopped or waiting past 30 min unused, it goes to the next
   worker that needs one. Your work is never lost: your next `take` says `your slot slotN went to another worker ...;
   your work there is on branch rescue/ffu-slot/...` (pushed to origin). Take a slot again and merge that branch, or
@@ -57,6 +61,16 @@ whole verification. The repo's own `CLAUDE.md` is binding and longer; this skill
   gone, take one again (`eval "$(ffu-slot take --wait 9 --branch <your branch>)"`, w5885) and cherry-pick your commits
   onto `git checkout -B <your branch> origin/main` there. Then put the other branch back with `git reset
   --keep <its last own commit>` (from its reflog), but only while its tree is clean.
+- **Never save a slot path in a file either: a `$TMPDIR` env script is a remembered path** (w5681, 2026-11-26): a worker
+  took slot1 for `w5681-m61c-ffone-export`, wrote its path into a `$TMPDIR` env script, then waited hours on another
+  PR (blocked_on). By the resume, slot1 was w5475's on `w5475-m6-14-bug-report`; the script cd'd there and `git merge
+  origin/main` made a local merge commit on that branch. `git branch --show-current` caught it and `git reset --keep
+  b1ba4f7c` (that branch's pushed head) undid it; nothing was pushed. After ANY wait or resume, get the slot from
+  `eval "$(ffu-slot take --branch <your branch>)"` (or `ffu-slot where --branch <b>`), never from a script, a summary
+  or a note.
+  **Checklist, before any git write in a slot** (merge, commit, rebase, reset, push, `ff-pr`): (1) did this turn start
+  after a wait or resume? Then re-run `take --branch <yours>` first; (2) `git branch --show-current` equals your
+  branch; (3) `git status --short` holds only your edits. Any "no" means stop and touch nothing.
 - `rust-toolchain.toml` pins Rust 1.94.0 with clippy and rustfmt; `cargo` picks it up by itself.
 - When `cargo` is not on PATH, look for the machine's shared toolchain before installing one. On lothdesktop it is
   under `V:/ffw/tools` (measured, w2895):
