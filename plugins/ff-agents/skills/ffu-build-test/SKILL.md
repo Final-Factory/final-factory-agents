@@ -31,6 +31,10 @@ whole verification. The repo's own `CLAUDE.md` is binding and longer; this skill
   (ff-factory docs/ffu-sandboxes.md). A light clone in `$TMPDIR` with no cargo build (to read code, or a `git merge`
   only) is fine: it holds no target. No `ffu-slot` command at all (a machine without w3764) is the one case for a
   clone of your own in `$TMPDIR`.
+- **Exit 5 is the other exception** (w5870, ff-factory #1315): `ffu-slot take` or `where` refused you because you run
+  outside the worker fences. Clone ffu into your own temp folder (`git clone https://github.com/Final-Factory/ffu.git
+  "$TMPDIR/ffu"`, `CARGO_TARGET_DIR="$TMPDIR/ffu-target"`, inside ffw) and build there, as the refusal message says. Exit 4
+  still means wait for a free slot.
 - **Your slot may be given away while you wait** (w5885): stopped or waiting past 30 min unused, it goes to the next
   worker that needs one. Your work is never lost: your next `take` says `your slot slotN went to another worker ...;
   your work there is on branch rescue/ffu-slot/...` (pushed to origin). Take a slot again and merge that branch, or
