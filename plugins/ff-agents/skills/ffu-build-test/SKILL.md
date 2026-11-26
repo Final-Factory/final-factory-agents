@@ -154,6 +154,14 @@ whole verification. The repo's own `CLAUDE.md` is binding and longer; this skill
   `ff1_import`) on its debug assert against the whole sync. `Op::CrafterProgress` raised an Assembler's need without
   telling its grid, and only the next whole sync had carried it there. Keep a `#[cfg(debug_assertions)]` compare with
   the whole path and run `cargo test --workspace --all-features --no-fail-fast` before claiming the two are equal.
+- **Plant the removal of each dirty mark of an incremental hash and see a test fail; time it on a world that fills
+  it** (w5674, ffu cells hash). The debug compare against the whole hash caught a missing mark on the combats
+  (`Slot::change`) in 4 ffu-sim tests. A missing mark on `Targets::of_station_mut`, where a flying station moves its
+  targets, failed no test until a new test flew a station that had a target. A harness that called
+  `World::step_units` without `World::route` timed cells with 0 targets and 0 combats, so the hash looked free. Import
+  the FF1 raid world (`ffu-headless ff1 import tools/world/ff1-trailer-staging-0.50.0.54.zip --world --out
+  start.world`, about 53 cells and 5,400 targets) and call `route` every tick. A `#[cfg(test)]` read method on the new
+  wrapper broke the build when main merged code that called it (w5649), so leave read methods un-gated.
 - **Stopping a background task leaves its children running: `ff-leftovers list` before the next bench ticket** (w3963,
   ffu #655). A bench wrapper stopped with TaskStop left its `tools/bench/p4.sh` loop going. That loop timed beside the
   next ticketed leg and appended to the same `runs.jsonl` and log. It was still running after that ticket was released.
