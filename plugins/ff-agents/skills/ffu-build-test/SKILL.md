@@ -33,6 +33,10 @@ whole verification. The repo's own `CLAUDE.md` is binding and longer; this skill
   Write it `cd "$FFU_DIR" || exit 1` (w5476): after a wait on another PR the worker's slot had been released and
   retaken, `ffu-slot where` printed nothing, the bare `cd` failed and the call's `git fetch` and `git merge origin/main` ran
   in the game sandbox instead (no harm: `origin/main` does not exist there). Then `ffu-slot take --branch <yours>` again.
+  `ff-pr merge` and `ff-pr status` act on the branch checked out where they run (w5656, ffu #1159): resumed after CI,
+  w5656 ran `ff-pr merge` in its remembered slot2, by then w5472's `w5472-turrets-shields`, and only a refused
+  `gh pr merge` stopped it merging that PR. On resume, run `eval "$(ffu-slot take --branch <yours>)"` first, or read and
+  merge by number from `$TMPDIR` (`gh pr view <n> --json headRefOid,mergeable`, `gh run list --commit <head>`).
 - **Check the slot is still yours before every commit** (w3962): run `ffu-slot where` and `git branch --show-current`.
   While w3962 waited for a bench ticket, w3965's session held slot3 and switched it to `w3965-churn-local`. `ffu-slot
   where` printed nothing, and w3962's three commits and a main merge landed on w3965's unpushed branch. If the slot is
@@ -87,7 +91,10 @@ whole verification. The repo's own `CLAUDE.md` is binding and longer; this skill
   `grep drift <log>`. Then switch the part off (`if true || ...`): all rows must match the old goldens. Re-write the
   drifting traces with `crosscheck --scenario a,b --threads 1 --golden golden/crosscheck --write-golden`, rerun
   `--threads 1,4,16` until it shows N of N matches, and put the proof in the PR evidence.
-- **Before you take a snapshot section number, read the open PRs' tags as well as main's** (w5489). Section 62
+- **Before you take a snapshot section number, read the open PRs' tags as well as main's** (w5489): `python
+  tools/row_numbers.py next section --prs` prints the next free one, and CI's lint fails a clash with an open PR
+  opened earlier (`row_numbers.py check --base origin/main --prs --pr <n>`; w5656, ffu #1159, took 76 that #1155 held
+  and moved to 77). Section 62
   was free on main, but open #1086 held it and #1085 held 63, so w5489 moved to 64:
   `for n in $(gh pr list -R Final-Factory/ffu --json number -q '.[].number'); do echo "$n $(gh pr diff $n -R
   Final-Factory/ffu | grep -E '^\+.*tag: [0-9]+,' | tr '\n' ' ')"; done`.
