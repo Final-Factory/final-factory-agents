@@ -105,13 +105,22 @@ whole verification. The repo's own `CLAUDE.md` is binding and longer; this skill
   `grep drift <log>`. Then switch the part off (`if true || ...`): all rows must match the old goldens. Re-write the
   drifting traces with `crosscheck --scenario a,b --threads 1 --golden golden/crosscheck --write-golden`, rerun
   `--threads 1,4,16` until it shows N of N matches, and put the proof in the PR evidence.
-- **Before you take a snapshot section number, read the open PRs' tags as well as main's** (w5489): `python
-  tools/row_numbers.py next section --prs` prints the next free one, and CI's lint fails a clash with an open PR
-  opened earlier (`row_numbers.py check --base origin/main --prs --pr <n>`; w5656, ffu #1159, took 76 that #1155 held
-  and moved to 77). Section 62
-  was free on main, but open #1086 held it and #1085 held 63, so w5489 moved to 64:
-  `for n in $(gh pr list -R Final-Factory/ffu --json number -q '.[].number'); do echo "$n $(gh pr diff $n -R
-  Final-Factory/ffu | grep -E '^\+.*tag: [0-9]+,' | tr '\n' ' ')"; done`.
+- **A new snapshot section takes `tag: hashed("<its name>")`, never a number; a passive is `ff1power::passive("<name>")`,
+  never an index** (w5923, ffu PR `w5923-stable-numbers`). Hand-picked numbers clashed between parallel rows with no
+  text conflict: #1136 (Incinerator) went green, then moved its tech-table section from 74 to 78 and its passive from 23
+  to 27 because #1097, #1105 and #1114 took them first; w5656 (#1159) took 76 that #1155 held; w5489 moved from 62 to
+  64. Now:
+  - `tools/row_numbers.py next section "<name>" --prs` prints the line (`--skippable` for state no tick reads, from
+    0xc000). The build fails on two sections with one tag (rename yours a little), a hashed tag that is not its own
+    name's, or 0xffff. The numbered tags 1 to 78 and 0x8000 stay as they are: old snapshots carry them. A hashed section
+    is read after every numbered one, so it may rely on their state, never on another hashed section's.
+  - `PASSIVES` is append-only (its index is saved). The build fails on a duplicate or unknown name, and CI's
+    `row_numbers.py check --base origin/main --prs` fails an insert, a reorder, or a hand-written index in
+    ff1import.rs, build_menu.rs or storage.rs. Two rows that each append one conflict only at the list's end: keep
+    main's entries first.
+  - A list rows add to is `&[T]`, never `[T; N]`: its length line conflicts on every addition (packs.rs `UNBAKED`).
+  - Kinds and op tags are still numbered: `row_numbers.py next kind --prs` / `next op --prs`, and open a draft PR as
+    soon as you take one.
 - **A note that rides an existing message kind is seen by every test that filters on that kind** (w5489). The cells'
   `NEAR_CHUNK` note was sent as a `Damage` message marked `back`. `world_cells_cadence.rs` counted it as a cell step
   and failed, because the notes come every 8th tick and broke its every-3rd-tick cadence. Before you reuse a kind,
