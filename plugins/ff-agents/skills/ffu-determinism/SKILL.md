@@ -24,6 +24,7 @@ $B/ffu-headless crosscheck --threads 1,4,16 --golden golden/crosscheck # every s
   `--scenario a,b` picks some; `--inject-float` plants libm rounding from tick 100 to show the check failing.
   Re-pin with `--write-golden` only for a change meant to move the hash, and say so in the PR.
 - A new scenario is an entry in `crosscheck::SCENARIOS` plus its golden trace from `--write-golden`.
+- **A PR that moves the state hash re-runs the crosscheck after every merge of origin/main, before it pushes** (`ffu-headless crosscheck --threads 1,4,16 --golden golden/crosscheck`): main may have added a scenario pinned without your change. w5686: main's new `dragon-cells` scenario went red at tick 1540 ("no part differs: only the total") once the victory tallies counted its kills; re-pin one with `crosscheck --scenario <name> --write-golden`.
 
 ## Across machines
 
