@@ -267,6 +267,15 @@ the whole play session via `unity-cli eval_file`.
   clone — never write triggers/configs there. Always derive the clone path from the current
   project folder name (`$(basename "$PWD")_clone_0`) and confirm the `Assets` symlink target
   before using it.
+- ⚠️ **On a fenced Mac worker the clone editor needs the fenced editor's home** (w5806/w5961, m5): a clone editor started
+  from the worker's shell inherits its Seatbelt profile, is refused its layout write in `~/Library/Preferences` and hangs
+  on a hidden "Moving file failed" modal with no MCP bridge (log ends at `[LAYOUT] About to save layout` + `Curl error
+  23`). `unity-slot run -- <Unity> -projectPath <sandbox>_clone_0` sets `HOME` and `CFFIXED_USER_HOME` to
+  `FF_UNITY_EDITOR_HOME` (`<root>/home`) by itself since ff-factory #1320; a script that launches Unity itself under one
+  `unity-slot run` must pass them on (`HOME=$FF_UNITY_EDITOR_HOME CFFIXED_USER_HOME=$FF_UNITY_EDITOR_HOME`; HOME alone
+  is not enough). Start your sandbox editor first, so the licensing client already runs. A clone you make by hand: copy
+  `Library` and `Packages` with `cp -cR` (APFS clone, no extra disk), symlink `Assets` and `ProjectSettings`, and add an
+  empty `.clone` file (ParrelSync `ClonesManager.CreateCloneFromPath`).
 - On some Windows machines the clone's `Packages/` is a REAL directory, not a symlink — package
   pin bumps must be copied in and resolved on the clone explicitly (see project-memory
   `knn-profiling-and-fork-pin-gotchas`).
