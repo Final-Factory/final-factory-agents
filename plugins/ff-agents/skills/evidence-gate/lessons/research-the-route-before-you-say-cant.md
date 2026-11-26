@@ -175,3 +175,28 @@ search for it (`WebSearch`, the vendor's docs, `<tool> --help`, the API's model 
 person's name for it. Not found: say what you checked (the URLs, the exact error), and still try it once where trying
 is cheap (an API call with that model id). A brief carries the person's words unchanged ("Fable 5.2"), not "X if it
 exists, else Y".
+
+## A shell approval is a nudge to find another route (w5914, 2026-11-26)
+
+**The rule.** Prefer the dedicated tools to the shell (Read, Grep and Glob to read and search, Edit and Write to
+change a file, an `mcp__machine__*` tool for FF Factory's steps) and avoid any command that needs a person's approval.
+When FF Factory denies a shell command with `[FF Factory, w5914: no person was asked yet]`, no person has seen it yet:
+do the same thing another way that needs none (a dedicated tool, an MCP tool, or the command without the part Claude
+Code flagged, such as one step per call or a delete with every path written out). Only when there is truly no such
+route, run the same command again with its description starting `No other route: ` and the concrete reason: what you
+need, and why no tool or allowed command does it. A person is asked then, with your reason beside the command, and FF
+Factory files a request to build that route. When the harness later denies the command naming a new route, use that
+route; don't ask for the old command again.
+
+**Why.** lothsahn, 2026-11-26: "Every time a worker needs approval for a bash command, can we send it back a message
+asking if there's a non bash way to do it rather than blocking on bash approval?", and "Make this part of the FF
+harness, not just your rules for yourself". Workers sat waiting on approval cards for commands a Read, an Edit or an
+MCP tool would have done. In one case, w5869's card d732483b stayed on lothsahn's panel after the worker had been told to
+use Edit instead. The harness now enforces it (ff-factory `docs/bash-nudge.md`, `server/bashNudge.ts`): one nudge per
+command per agent per turn, one route request per need, and the card clears when a message reaches the worker, its
+turn ends or the route deploys.
+
+**How to apply.** Read the nudge as "find the route", not as a refusal to argue with. A bare retry with no reason
+still reaches a person, and so does a vague one ("needed it"), but either one wastes that person's time and files a
+route request nobody can build. Give the reason a reviewer could act on: "No other route: unity-slot run needs a
+second editor for the peer run and no MCP tool starts one".

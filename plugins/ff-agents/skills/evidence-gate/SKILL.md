@@ -194,6 +194,10 @@ carried over ([lesson](lessons/research-the-decision-not-the-topic.md#name-the-p
   (their own login, password or 2FA code, an approval). Ben corrected this twice: w935 (Unity on his m5: "You can close
   Unity") and w1287 (the Factions design doc in Claude Design: "I already asked for this").
 - **Check the web before you say it doesn't exist** ([lesson](lessons/research-the-route-before-you-say-cant.md#check-the-web-before-you-say-it-doesnt-exist-w4-2026-11-13)). Before you write or relay that a model, software version, product, release, API or feature a person named does not exist or is not out yet, look it up (official docs, release notes, model lists, the tool's own `--help` or API) and use it: what you do not recognise is newer than your training. Call it missing only with the URLs you checked or the exact error text; without web access, brief a worker to look it up, with the person's name for it unchanged.
+- **A shell approval is a nudge to find another route** ([lesson](lessons/research-the-route-before-you-say-cant.md#a-shell-approval-is-a-nudge-to-find-another-route-w5914-2026-11-26)).
+  Prefer Read, Grep, Glob, Edit, Write and `mcp__machine__*` to the shell. Denied with `[FF Factory, w5914: no person was
+  asked yet]`: take the route that needs no approval; only with none, run it again described `No other route: <the
+  concrete reason>`; once the harness names a new route, use it (lothsahn, w5914).
 - **Drive only the windows you opened** ([lesson](lessons/research-the-route-before-you-say-cant.md#drive-only-the-windows-you-opened-w1287-2026-10-14)). Before any
   computer-use click or key on a person's computer, name the app and the window id you opened in this request and pass
   that window to every call; never click, type or scroll in a window they had open (their Claude desktop app, chat,
