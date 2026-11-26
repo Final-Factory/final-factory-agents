@@ -685,6 +685,8 @@ slots").
   in `<cache>/cache.log`) before any checkout check, so build a player for a pair, a rerun or a repeat diagnostic run
   this way and never into `$TMPDIR`; never delete an entry (it evicts least recently used past 24 GB / 8 entries).
   Commit a diagnostic patch so it gets its own cached sha; a flag or scenario needs no build.
+  A pre-1.0 (0.50) commit's script requires the cache root as a 4th argument and builds `mac|win` only:
+  `"$FF_WORKER_ROOT/player-cache"`; its player cannot run on a fenced worker (determinism-audit gotchas, w5965).
 - **`build_player.sh` builds the checkout at its commit and reverts uncommitted tracked edits** (w1155: a probe change,
   a doc section and a report fix made while a build ran were gone after it). Commit before you start a build, and
   edit nothing in that tree until it ends; to build another commit (master for a before census), switch the sandbox
