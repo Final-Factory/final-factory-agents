@@ -630,6 +630,13 @@ cargo run --release -p ffu-headless -- crosscheck --threads 1,4,16 --golden gold
   pushed b616ee6e6c for that).
 - `sweep_target_test.sh` fails on Windows (NTFS reads do not move access times) and skips on macOS (no GNU find);
   CI runs it on Linux. Run it there, or leave it to CI, unless you changed `tools/ci-runners/` (measured, w4510).
+- **Three `ci_local.sh` steps always fail on a sandboxed, screen-locked Mac (m5, macOS arm64), in code your PR did not
+  touch** (w5683 on ffu #1172, logs `step-*.log`; ben's request w5992): lint-20 `tools/ci-runners/runner_health_test.sh`
+  (`date: illegal option -- d`: it calls GNU `date -d`, BSD date has none); check-07 `run_tests_parallel`, the
+  `ffu-client` crash_upload, `ffu-crash-receiver` route and `ffu-crash` monitor tests (`crash monitor: Operation not
+  permitted (os error 1)` inside the worker sandbox); check-08 renderer golden images on lavapipe (42 of 87 fail with
+  `no GPU adapter`, no adapter on a locked headless Mac). Say so in the PR evidence, with the log line, and rely on CI's
+  Linux and Windows runners for them. A failure in any other step, or a different message, is yours.
 - Run what your change touches locally; CI runs all of them on Linux and clippy, tests and hashcheck on Windows and ARM
   macOS.
 - **Run one test file as `cargo test --workspace --all-features --locked --test <file> [<name>]`, not `-p <crate> --test <file>`**
