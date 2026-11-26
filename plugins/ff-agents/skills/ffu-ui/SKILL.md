@@ -60,6 +60,14 @@ code until they pick (UI checklist item 0, w2895 and w4008; FP.21's 32 pages of 
 - **A still of an opened panel from the built client** (w2895, ffu #652): `ffu --start world.snap --still out.png
   --inspect X,Y --press A,B` opens the inspector of the building at X,Y and presses the named nodes in order before
   the still. The FF1 world: `ffu-headless ff1 import tools/world/ff1-trailer-staging-0.50.0.54.zip`.
+- **Render every client still with `--look looks/ffu.look`** (w5475, w6204). `ffu --still out.png ...` without it draws
+  the panels with `Theme::default()` (`crates/ffu-client/src/main.rs`: `ui_theme` starts at `Theme::default()` and only
+  the look file's `ui.*` keys replace it), so the still has no navy, no bevel and a teal-slab focus row. A ui-critic
+  round in w5475 graded such a still a lost frame. The same holds for the map still (`ffu --map --still`, named in
+  w5475's brief; the `--map` flag is not in the checkout I read, ffu `0b4e64c5`, so check `ffu --help` first).
+- **Add a state to the `ffu-ui` crate's examples for every visual change** (`crates/ffu-ui/examples/*.rs`: `crafting`,
+  `inspector`, `minimap`, `station_menu`, ...). Each renders headless stills per state, so a changed or new panel state
+  gets one there, not only a hand-driven client still.
 - **Aim FF1-world stills and clips at its base, not its centre** (w4852, w4853). The centre (1291,1248) is empty space.
   The base is at about `--view 820,1680,10`; at zoom 10 the whole base fits, and at 56 each connector's chevrons can be
   read. `--connect ... --still` takes no pilot, adds no ship ("0 new owners") and fits the whole sector. A clip that
