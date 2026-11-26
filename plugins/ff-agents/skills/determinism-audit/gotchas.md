@@ -52,6 +52,7 @@ load-bearing for future runs even where the original defect is fixed.
 - [A census diff at heartbeat 8 after every join: an empty saved buffer; the client report holds both halves](#empty-buffer-join) (w2868)
 - [A cross-OS mod desync hunt from a Linux client: cap its fps, script its rejoins, wait out the outlive window](#linux-client-mod-hunt) (w2826)
 - [A 0.50 (pre-1.0) belt and drop-box pair: circuits need their toggle, stacked boxes by a lethal hit, bot pickup needs research](#pre10-belt-dropbox-pair) (w3295)
+- [A pair run of a 0.50 (pre-1.0) player: never on a fenced worker, the cache root as a 4th argument, master's runner](#pre-w5297-player-pair) (w5965)
 - [A Windows built-player client with the audit on: a 3-minute log, the report at exit, a launcher that is not the player](#win-client-audit-log) (w3371)
 - [A kill-and-rebuild pair in a flat-map world: no bot, 20-tile range, a rebuild in 3 seconds, calcs refuse ghosts](#kill-rebuild-pair) (w3562)
 - [Gatling firing and a held recipe: what the fingerprint and observe.state cannot show](#gatling-and-held-recipe-witness) (w3371)
@@ -1896,3 +1897,17 @@ through `peer.py` and a headless biscuit Linux client over Tailscale) passed aft
 - **On the typed `# audit-record-v1` reports, `compare_determinism_reports.sh` compares 0 heartbeats (`count=0`).**
   That is unsupported input, not a pass. Use `compare_audit_records.py` (it stops at the 16384-sample cap: 14790 of
   18773 here), and run the .sh script on the two players' `[DeterminismAudit]` log lines for the full window.
+
+## A pair run of a 0.50 (pre-1.0) player: never on a fenced worker, the cache root as a 4th argument, master's runner {#pre-w5297-player-pair}
+
+w5944 (2026-11-26, lothdesktop slot5, ac80d7b0 on the 0.50 line) ended `no host-ready within 420s` twice, and w5965 found why:
+
+- **A player from before w5297 never reads `FF_GAME_DATA_DIR`.** It writes the per-OS default folder in the owner's profile: `LocalLow\Never Games\finalfactory` on Windows, which `workerIntegrityLockGameData` labels Medium. A Low-integrity (fenced) Windows worker cannot write there at all, so the host never wrote its ready file. `player_slots.build_reads_game_data_dir(<exe>)` says which kind a player is: False for ac80d7b0, True for master's.
+- **No per-process redirect exists on Windows (measured).** `SHGetKnownFolderPath(FOLDERID_LocalAppDataLow)`, which UnityPlayer.dll uses, still answered `C:\Users\<owner>\AppData\LocalLow` with a child's `USERPROFILE` pointed into `$TMPDIR`. pre-1.0 has no Linux multiplayer build (no `BuildLinuxMultiplayerDev`), and a Mac refuses a client.
+- **Route it:**
+  - Use `request_pair` with `legacy_data: "<why>"`. Words like "pre-1.0", "0.50 line" or "0.50.x" in what/brief mark it too, and `"none"` unmarks it. Its legs then go only to computers whose worker fence is off, and never Linux (ff-factory #1331).
+  - On a fenced worker, master's `ffnightly.py run` refuses such a player in seconds with the reason (FinalFactory #4365). Don't wait out 420 s; don't relabel or write on C: yourself.
+- **Build:**
+  - pre-1.0's `build_player.sh` is `<project-dir> <sha> <mac|win> <cache-root>`, and the cache root is required: `bash scripts/nightly/build_player.sh "$PWD" <sha> win "$FF_WORKER_ROOT/player-cache"`.
+  - master's defaults that cache root.
+- **Run with master's `ffnightly.py`** (copied over the sandbox's after the build) and `--scenarios-from <pre-1.0 sha>`. Since #4365, that checks today's scenario rules only for the scenarios you name. Before #4365, it refused the whole 0.50 set for `MP-W1859-host-drives-remote-client.json` (no `"weekdays": ["Never"]`).
