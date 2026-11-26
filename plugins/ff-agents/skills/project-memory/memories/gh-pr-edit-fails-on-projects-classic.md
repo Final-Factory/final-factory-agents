@@ -3,6 +3,8 @@
 **Seen:** w1577, 2026-10-20, biscuit, on `Final-Factory/FinalFactory` (PRs #2035 and #2037, adding lothsahn's
 "OK both" review line to their bodies before merging).
 
+Seen again: w5728, 2026-11-25, game PR #4341 (the `-F body=@file` form below worked).
+
 `gh pr edit <n> --body-file <file>` exits non-zero with a GraphQL error that "Projects (classic) is being
 deprecated" and changes nothing: gh's edit path queries the pull request's classic project cards, and GitHub
 now refuses that field. The body stays as it was, so a review line or a `Discord:` / `Report:` line you meant
