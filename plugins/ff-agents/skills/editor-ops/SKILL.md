@@ -640,6 +640,13 @@ slots").
   local, both sandboxes' (`journalctl -k`, the "Out of memory" lines, anon-rss 6.6 to 12.9 GB). On a small machine, run
   such a leg as a `-batchmode -runTests -testPlatform playmode` launch under `unity-slot run`, with your own editor
   stopped, and clear what an ended run left first (references/recovery.md, the Linux hang).
+- **Loading many saves one after another in one editor gets it killed for memory, and a save census needs live loads**
+  (w5728, biscuit, 26 GB of RAM, 2026-11-25; the landing-zone save census, game PR #4341). The kernel ended the editor at
+  15:29:18 (11.5 GB) and again at 16:49:55 (17.8 GB, on the 21 MB `Just_Play_1.0.0.22` save) (`journalctl -k`).
+  Restart it after about 5 loads (`mcp__machine__unity` restart), and drive the loop from a batch script that skips every
+  save already in its results file, so a restart or a kill resumes instead of starting over. Count from live loads
+  only: the offline save reader's landing-zone counts were unreliable in w5728 (a census of what the game does with a
+  save is the game loading it).
 - **`main.unity` alone takes an editor to 9 to 13 GB** (w2472, biscuit, 2026-10-28). An EditMode test that opened
   `Assets/Scenes/main.unity` additively (`EditorSceneManager.OpenScene`) grew the sandbox editor to 9.6 GB and the kernel
   ended it (04:23:10); the restarted editor reopened `main.unity` by itself (`Library/LastSceneManagerSetup.txt` lists
