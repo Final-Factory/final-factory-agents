@@ -1140,6 +1140,10 @@ never rewritten (`tools/check_snapshot_compat.sh BASE_REF` holds it in CI). No t
   - **Several rows landing at once outrun a green PR** (w2895 FP.22, ffu #659): it went "not mergeable" after each of two
     green runs (about 40 min each) and took three main merges. Merge the moment you are resumed on green; if refused,
     merge main in and push at once, then read the jobs while the new run goes.
+  - **Two open PRs that claim the same row id: the one that reaches main second renumbers its row in the main merge**
+    (w6181; w5695's #1177 and #1181). Rename its `docs/rows/<Id>.md` and `docs/oracle/<Id>.md`, change the id in its code
+    comments and its PR title, and leave main's files for that id untouched. #1181 landed as M6.11c while #1177 (the Dark
+    Star Gate, also M6.11c) was open; #1177 became M6.11d in merge commit 09772ea7.
   - **Check a "keep both" resolution compiles before you commit it** (w2895, #659): two tests appended at one file's end
     shared their closing braces, git kept them once, and the committed merge did not parse. Run `cargo fmt --all
     --check` before `git commit` on a merge.
