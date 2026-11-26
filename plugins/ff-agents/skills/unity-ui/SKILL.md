@@ -205,6 +205,21 @@ census (`<shot>.json`: small, clipped, off-screen and overlapping text, covered 
   its parts could not give. When one language's window is shorter, compare its placed rect and height with English first,
   then run the leg with `-ffPanelTrace` and read the `[w4289 trace] grow down` and `[w4487 trace] fit` lines (max, want,
   parts, scrolls) before you change a row count.
+- **Tour traps from w5828 (stop arrows on the landed stop, lothdesktop, ff-agents 1.37.43/1.37.44).** (1) A Command
+  Core's window or a Landing Zone's window does not bring up the Player Inventory (`MiniInventory`; w4207 above);
+  `ffauto:ui.open|playerinventory` refuses ("opens with a selected building's panel") and `ui.open|inventory` closes the
+  open stop window. Select a Station Core (`ffauto:ui.selecttile|<x>|<y>` on it) and take the `pins` census on that
+  shot, or `Pinned:` reports pins "not shown" (the game repo's `specs/w5828-stop-arrows/tour/make_tour.py`, its
+  `inventory` shot). (2) `ffauto:hauler.conditions` in the same step batch as `hauler.addstop` is refused by the host (no
+  stop 0 yet) while ffauto still reports it requested: wait 2 s after the addstops, then check it took with
+  `ffauto:hauler.stops`. (3) `ffauto:station.facingaudit` logs each landing zone's facing: run it before and after a
+  click to prove a rotation in a built player. (4) `pr_evidence.py`'s `Moved:` count needs every listed move marked
+  asked; a transient hint (`GamePanels/MiddleInstructionText`, "[X] to enter or exit structure") that comes and goes run
+  to run shows as "gone from the screen" in one pair: re-take, or use the pair of the same moment where it is present in
+  both, and say so in a separate note bullet (a `not asked: reverted` line does not count toward the total). (5)
+  `ui_layout.py check --shot` needs Pillow: `uv run -q --no-project --with pillow python "$FF_SKILLS/unity-ui/ui_layout.py" ...`.
+  (6) `ff-leftovers end` also ends your own `unity-slot run --detach` build (the job ended with exit 64): never run it
+  while a build of yours runs.
 - **Keyboard labels on a tour need the Live Deck and a keyboard layout (w4879).** The tour hands the game a scripted
   Deck, so Settings > Keybindings draws controller glyphs (Redo's button is empty), and a `key` step does not switch it.
   Run with `-ffDeckTourLive` and, after the Keybindings tab is open, `{"setup": "steamLayout:community"}` then a wait:
