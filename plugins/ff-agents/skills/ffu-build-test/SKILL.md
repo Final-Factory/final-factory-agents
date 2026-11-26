@@ -31,6 +31,8 @@ whole verification. The repo's own `CLAUDE.md` is binding and longer; this skill
   (ff-factory docs/ffu-sandboxes.md). A light clone in `$TMPDIR` with no cargo build (to read code, or a `git merge`
   only) is fine: it holds no target. No `ffu-slot` command at all (a machine without w3764) is the one case for a
   clone of your own in `$TMPDIR`.
+- **A second branch takes a second slot** (`ffu-slot take --branch <b>` again with the other branch; two per worker at
+  most, each with its own checkout and target; `ffu-slot --help`, w6204). Never two checkouts in one target.
 - **Exit 5 is the other exception** (w5870, ff-factory #1315): `ffu-slot take` or `where` refused you because you run
   outside the worker fences. Clone ffu into your own temp folder (`git clone https://github.com/Final-Factory/ffu.git
   "$TMPDIR/ffu"`, `CARGO_TARGET_DIR="$TMPDIR/ffu-target"`, inside ffw) and build there, as the refusal message says. Exit 4
@@ -742,6 +744,10 @@ cargo run --release -p ffu-headless -- crosscheck --threads 1,4,16 --golden gold
   pack while your PR waits (w5636 put the Requester Cargo Hold into `art/ff1/buildings.ffpack`), take main's pack,
   `packs.rs` and `art/ff1/README.md`, run `ffu-bake with` again on main's pack with your glTFs, re-apply your edits, and
   re-measure the README's byte count (11,777,520 -> 12,034,312 there, not the 12,027,245 measured before the merge).
+- **`ffu-render`'s GPU tests share one device; never create a device per test** (w6184, ffu #1208; Ben, 2026-11-26).
+  A device per test set off an NVIDIA Vulkan driver race: `ffu-render --lib` died with 0xc0000005 on loaded Windows
+  runners. With the shared device it crashed 0 times in 80 parallel runs (measured, w6184). Do not merge past that crash
+  by naming a request: it is fixed.
 - A test that opens a GPU device holds its crate's one-device lock (`ffu-render`'s `tests::gpu`, `ffu-client`'s
   `packs::tests::gpu` / `one_gpu_at_a_time`; a new crate with GPU tests adds one). Several devices made at once crash
   Mesa's Vulkan loader: a SIGSEGV with no Rust panic, in 25 of 200 parallel runs of `ffu-client`'s tests on biscuit
@@ -964,6 +970,10 @@ never rewritten (`tools/check_snapshot_compat.sh BASE_REF` holds it in CI). No t
     and running jobs. In w3543 (ffu #442), a rerun of old run 42442283959's Windows hashcheck at 05:51:08Z cancelled
     run 42450726658's Windows `test` and `clippy` in that same second, before they had a runner (measured from the
     job times). The newer run then reads red as "cancelled". Rerun or wait on the newest run only.
+  - **The rerun hook reads only a literal job id** (w3784, `server/rerunGuard.ts`): it takes the id from `--job <id>`,
+    `--job=<id>`, `-j<id>` or a bare run id in the command text, so write `gh run rerun --job 12345` with the number
+    itself. An id held in a shell variable (`--job "$J"`) is not a number the hook can read, so it cannot check that
+    rerun against the rule below; do not route around the guard that way.
   - **FF Factory's guard refuses a rerun of a job that failed in a step, except one rerun of an out-of-resource runner
     fault** (w3784, w3836; ff-factory `server/rerunGuard.ts`). It reads the failed job's log. When the log shows the runner
     ran out of a resource (os error 1453 "Insufficient quota", 1455 or "The paging file is too small", LNK1171 with
