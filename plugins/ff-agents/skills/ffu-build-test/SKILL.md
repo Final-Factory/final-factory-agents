@@ -17,10 +17,24 @@ whole verification. The repo's own `CLAUDE.md` is binding and longer; this skill
   took 221 s, warm 0.6 s unchanged, 60 s after an edit, 92 s after a switch 5 commits away (measured, w3764 r176). Run
   `eval "$(ffu-slot where)"` at the top of every later shell call (shell state does not persist); `ffu-slot list` shows
   every slot. A new branch is made from `origin/main`; a branch another slot has comes detached at its tip (push with
-  `git push origin HEAD:<branch>`). Exit 3 (every slot held, or the drive short) or no `ffu-slot` command (a machine
-  without w3764): clone into `$TMPDIR` as before, `git clone https://github.com/Final-Factory/ffu.git "$TMPDIR/ffu"`,
-  with `CARGO_TARGET_DIR="$TMPDIR/ffu-target"`. Branch from `main` (ffu's trunk is `main`, not `master`). Commit as
+  `git push origin HEAD:<branch>`). Branch from `main` (ffu's trunk is `main`, not `master`). Commit as
   `Final Factory <481770+bryding@users.noreply.github.com>`.
+- **No free slot: wait for one; never build ffu anywhere else** (w5885, lothsahn: "Update instructions so workers block
+  on those slots instead of doing builds in temp directories to workaround and causing space issues"). When `take`
+  says every slot is held or the drive is short (exit 4 since ff-factory w5885; exit 3 before, whose message still said
+  "Build in your temp folder this time": ignore that), run `ffu-slot take --wait 9 --branch <yours>` (it looks every
+  30 s; keep it under the Bash tool's 10 min), or set a `wake_me` check-in (15 min) and end your turn, then take
+  again. Never a `$TMPDIR/ffu-target`, a clone or a worktree of your own with a cargo build in it: on LothDesktop on
+  2026-11-25 five workers built in their temp folders while one Unity worker held a slot all day, and one such target
+  held 15.4 GB (w3330). A stale holder's slot frees itself: on no open request at once, stopped or waiting after 30 min
+  unused, any holder after 2 h unused, its work saved first on branch `rescue/ffu-slot/<slot>-<holder>-<sha8>`
+  (ff-factory docs/ffu-sandboxes.md). A light clone in `$TMPDIR` with no cargo build (to read code, or a `git merge`
+  only) is fine: it holds no target. No `ffu-slot` command at all (a machine without w3764) is the one case for a
+  clone of your own in `$TMPDIR`.
+- **Your slot may be given away while you wait** (w5885): stopped or waiting past 30 min unused, it goes to the next
+  worker that needs one. Your work is never lost: your next `take` says `your slot slotN went to another worker ...;
+  your work there is on branch rescue/ffu-slot/...` (pushed to origin). Take a slot again and merge that branch, or
+  check it out. Release your slot with `ffu-slot release` as soon as your work is pushed and you wait on CI.
 - **`eval "$(ffu-slot where)"` resets `TMPDIR` to `/tmp` in Git Bash** (w5259): re-export your own temp folder after it
   (`export TMPDIR=/v/ffw/tmp/ffa-<session>`), or stills, logs and scratch land in `/tmp`, which is not yours.
 - **Never `cd` into a slot path you remember; take it from `ffu-slot where`** (w2895, 2026-11-25): after a context
@@ -40,8 +54,8 @@ whole verification. The repo's own `CLAUDE.md` is binding and longer; this skill
 - **Check the slot is still yours before every commit** (w3962): run `ffu-slot where` and `git branch --show-current`.
   While w3962 waited for a bench ticket, w3965's session held slot3 and switched it to `w3965-churn-local`. `ffu-slot
   where` printed nothing, and w3962's three commits and a main merge landed on w3965's unpushed branch. If the slot is
-  gone, use a worktree of your own in `$TMPDIR` (`git -C <install>/ffu-sandboxes/repo worktree add ...`). Cherry-pick
-  your commits onto `git checkout -B <your branch> origin/main` there. Then put the other branch back with `git reset
+  gone, take one again (`eval "$(ffu-slot take --wait 9 --branch <your branch>)"`, w5885) and cherry-pick your commits
+  onto `git checkout -B <your branch> origin/main` there. Then put the other branch back with `git reset
   --keep <its last own commit>` (from its reflog), but only while its tree is clean.
 - `rust-toolchain.toml` pins Rust 1.94.0 with clippy and rustfmt; `cargo` picks it up by itself.
 - When `cargo` is not on PATH, look for the machine's shared toolchain before installing one. On lothdesktop it is
@@ -50,7 +64,7 @@ whole verification. The repo's own `CLAUDE.md` is binding and longer; this skill
   ```sh
   export RUSTUP_HOME=V:/ffw/tools/rustup CARGO_HOME=V:/ffw/tools/cargo
   export PATH=/v/ffw/tools/cargo/bin:/v/ffw/tools/cmake-4.4.5-windows-x86_64/bin:$PATH
-  # in an ffu slot, CARGO_TARGET_DIR is the slot's (ffu-slot where); without one: "$TMPDIR/ffu-target"
+  # CARGO_TARGET_DIR is your slot's (ffu-slot where); no slot free: wait for one (above), never "$TMPDIR/ffu-target"
   ```
 
   `ffu-client` (the `ffu` binary) builds SDL3 from source and needs cmake on PATH: without it the build stops with
@@ -469,11 +483,10 @@ whole verification. The repo's own `CLAUDE.md` is binding and longer; this skill
 - **Keep one target per worker; never share a `CARGO_TARGET_DIR` across parallel workers** (w3396). Two builds on one
   target wait on cargo's build-directory lock ("Blocking waiting for file lock"): one rebuild alone took 44 s, two at
   once 48 s and 71 s (measured, BEAST). A shared target is also never idle, so FF Factory's clean-up can never prune it.
-- **Use the one target (your slot's, else `CARGO_TARGET_DIR="$TMPDIR/ffu-target"`) for every leg; never a new target per leg** (w3617). One
+- **Use the one target (your slot's) for every leg; never a new target per leg** (w3617). One
   worker on biscuit made a target per leg (`ffu-target`, `ffu-target-m13`, `ffu-target-g10`, ...): 12 of them held 22 GB
   together (measured, 2026-11-08), each a cold build's worth of deps. A leg on the same checkout reuses the target and
-  builds in seconds; a new target rebuilds everything. The only second target is a slotless worker's second checkout's (below,
-  `ffu-target-main`). FF Factory's clean-up caps the sum of one worker's targets (8 GB): the oldest idle ones lose their
+  builds in seconds; a new target rebuilds everything. There is no second target: a RED run checks main out in the slot itself (below). FF Factory's clean-up caps the sum of one worker's targets (8 GB): the oldest idle ones lose their
   `debug/incremental` first, then whole idle targets go, oldest first.
 - **Holding a slot, build only in the slot's target, the RED baseline too** (w4258, lothsahn: "A worker that holds an
   ffu slot builds in that slot's target and never in a private $TMPDIR/ffu-target"). LothDesktop's clean-up log of
@@ -481,8 +494,9 @@ whole verification. The repo's own `CLAUDE.md` is binding and longer; this skill
   the slot, `git checkout <main sha>` there, build and run, then check your branch out again: one checkout, one target,
   both builds stay warm, and the slot's stale-unit sweep keeps both while either is recent. Since ff-factory #973 the
   guard refuses `CARGO_TARGET_DIR`/`--target-dir` into your temp folder while you hold a slot, and the clean-up takes
-  such a target (cap 0). `$TMPDIR/ffu-target` is only for a worker with no slot (`ffu-slot take` exit 3).
-- **Without a slot, give a second checkout its own target** (w3480): a `main` worktree for the RED run and your branch
+  such a target (cap 0). With no slot free, wait for one (w5885, above); `$TMPDIR/ffu-target` is only for a machine
+  with no `ffu-slot` command at all.
+- **On a machine with no `ffu-slot` command, give a second checkout its own target** (w3480): a `main` worktree for the RED run and your branch
   must not share one `CARGO_TARGET_DIR`. After building main's tests there, `cargo test` on the branch ran main's stale
   test binaries and reported main's failures: the new `ship_flies_over_buildings` failed until its sources were touched
   and rebuilt, then passed 3/3 (measured, BEAST). Use `CARGO_TARGET_DIR="$TMPDIR/ffu-target-main"` for that checkout.
