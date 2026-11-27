@@ -157,7 +157,9 @@ Right after the merge:
    It refuses anything not claimed for this computer (FFBox builds those), then builds Windows, Mac and Linux, main then
    demo, with `.github/scripts/build-release.sh` itself (one Unity slot and one exclusive bench ticket per target), checks
    each player with FFBox's `ffrelease-check.py`, and waits until every `Test in` job of the push run passed and FFBox
-   declined every Release job. **It uploads nothing** (w5551): it prints one `NEXT: call steam_upload with {...}` line
+   declined every Release job. `--waive-tests <who>`, on Ben's or lothsahn's own word only, skips waiting for the tests
+   on any release, master and 0.50.x alike, and the release still goes live on its usual branch (w6534; lothsahn: "you
+   can do --waive-tests on any release, both master and the .50 branch actually"). **It uploads nothing** (w5551): it prints one `NEXT: call steam_upload with {...}` line
    per app (also in `<out>/steam-upload-<app>.json`) and writes `urgent-release.json` (every phase's start, end and
    seconds) in its run folder. Call `steam_upload` with each NEXT line's arguments as they are (action upload; main live
    on **development** for master, on **pre-release** for a 0.50.x pre-1.0 hotfix (w6534; lothsahn: "Can it set that
