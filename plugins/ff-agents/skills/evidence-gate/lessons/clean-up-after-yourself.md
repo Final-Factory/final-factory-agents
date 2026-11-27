@@ -1,6 +1,6 @@
 ---
 name: clean-up-after-yourself
-description: "On Windows, disk work stays on the install drive, never C:, not even to measure (w1755). Workers delete the big things they made before DONE and before a long wait (w3686, Ben 2026-11-08: clones, cargo targets, builds, recordings, repeat output, runaway logs), each with a plain rm -rf '$TMPDIR/<name>' written out, which asks nobody; check du -sh '$TMPDIR'; FF Factory warns above 15 GB. Make everything in your own $TMPDIR; the daemon removes it a few minutes after no request waits for you any more (closed, or moved to another worker; a wait for CI or a person, a stop or a pause keeps it whole, since w1097) and your sandbox's build and capture output when it is released. Never player_slots prune, and never clear a folder mid-task to reuse it: each test leg writes to a new $TMPDIR/<leg>-<timestamp> (w1097). The one delete left to a worker (a huge build mid-task, disk short) is a plain rm -rf under $TMPDIR, which the session answers itself with no approval, and a save copy you put in the saves folder, named with your temp folder's name in front. Low disk on a machine is fixed by the harness or by filed clean-up work, never by asking a person. Every delete is strictly inside the machine's worker install folder (root.json's root, $FF_WORKER_ROOT); outside it a worker only measures and reports (w896). A clean-up deletes only the folders `ff-leftovers folders` marks DELETE (closed requests and orphans); the temp, build and review folders of a worker whose request is open, stalled or paused are kept whether or not its process runs (w1379), and a folder holding a git clone with uncommitted, unpushed or stashed work is kept whatever the ledger says: check its git state or the portal's clean-up log first (w1387). A -batchmode build you started is ended before DONE."
+description: "On Windows, disk work stays on the install drive, never C:, not even to measure (w1755); helpers on C: are installed and updated only by the installer and updater, and workers call them but never modify them (w6598). Workers delete the big things they made before DONE and before a long wait (w3686, Ben 2026-11-08: clones, cargo targets, builds, recordings, repeat output, runaway logs), each with a plain rm -rf '$TMPDIR/<name>' written out, which asks nobody; check du -sh '$TMPDIR'; FF Factory warns above 15 GB. Make everything in your own $TMPDIR; the daemon removes it a few minutes after no request waits for you any more (closed, or moved to another worker; a wait for CI or a person, a stop or a pause keeps it whole, since w1097) and your sandbox's build and capture output when it is released. Never player_slots prune, and never clear a folder mid-task to reuse it: each test leg writes to a new $TMPDIR/<leg>-<timestamp> (w1097). The one delete left to a worker (a huge build mid-task, disk short) is a plain rm -rf under $TMPDIR, which the session answers itself with no approval, and a save copy you put in the saves folder, named with your temp folder's name in front. Low disk on a machine is fixed by the harness or by filed clean-up work, never by asking a person. Every delete is strictly inside the machine's worker install folder (root.json's root, $FF_WORKER_ROOT); outside it a worker only measures and reports (w896). A clean-up deletes only the folders `ff-leftovers folders` marks DELETE (closed requests and orphans); the temp, build and review folders of a worker whose request is open, stalled or paused are kept whether or not its process runs (w1379), and a folder holding a git clone with uncommitted, unpushed or stashed work is kept whatever the ledger says: check its git state or the portal's clean-up log first (w1387). A -batchmode build you started is ended before DONE."
 date: 2026-10-10
 ---
 
@@ -167,6 +167,12 @@ measure inside the install folder, report what you freed and what is still short
 at C: and why. Do not ask a person to look there either. macOS and Linux keep the w896 rule: outside the install folder
 you measure and report.
 
+**Running a helper on C: is not disk work** (lothsahn, 2026-11-27, w6598: "The point of the C: prohibition is to stop
+data exfiltration and modification to the system drive.  It shouldn't prevent workers from running necessary helper
+scripts"). Privileged helper scripts on C: (`C:\ProgramData\ffsb-helpers`) are installed and updated only by FF
+Factory's installer and updater; a worker calls them, directly or through a link or broker the installer provides,
+and never modifies them. Workers still write only inside ffw and never read data off C: ([section](#c-helpers-the-installer-installs-them-workers-call-them-nobody-else-writes-them-w6598)).
+
 A save copy you put in the game's saves folder (under `LocalLow\Never Games` on C:) for a test is a test step, not disk
 work: it is the one file you put there and remove again (`read_rules saves`); a test's settings go through the game repo's
 `scripts/game_data.py`.
@@ -191,6 +197,46 @@ to only look at v:".
   lists anything off the install drive, Never Games included (`rulesOnInstallDrive`). A refusal quotes the rule; it
   is not a prompt to find another way (a script, python's `os.walk` and a variable it cannot expand are the guard's known
   holes, and the rule binds you there too).
+
+
+## C: helpers: the installer installs them, workers call them, nobody else writes them (w6598)
+
+**Rule.** On Windows the worker fence and the [install-drive rule](#windows-disk-work-stays-on-the-install-drive-never-c-w1755)
+still hold whole: a worker writes only inside the worker install folder (`ffw`, `$FF_WORKER_ROOT`), and never reads
+data off C: (the one read-only exception stays the game's AppData `Never Games` folders). What the rule is for is
+two things: no data leaves the system drive, and nothing on it changes. It is not a ban on running programs that live
+there.
+
+- **Helpers on C: are the installer's.** A privileged helper script on C: (for example `C:\ProgramData\ffsb-helpers`)
+  is installed and updated only by FF Factory's installer and updater, never by a worker, an orchestrator or a
+  person's hand-copy.
+- **Workers call them.** A worker may run such a helper, directly or through a link or broker the installer provides
+  (a launcher inside ffw, a scheduled task, a service). Calling it is not "touching C:"; do it when the work needs it.
+- **Workers never modify them.** No edit, copy over, rename, delete, new file beside them or ACL change, not even to
+  fix a bug in one. A helper that is wrong or missing is fixed in FF Factory's installer and updater (ff-factory), by
+  pull request, and reaches the machine on its next update.
+
+**A fix that needs something on C:** is a helper the installer and updater install, which workers call but never
+write. It is never a worker writing C: by hand, and never a reason to say it can't be done: write the helper and its
+install step in ff-factory (or hand that up as a follow-up with `hand_up_requests`), then call it once it is deployed
+(`blocked_on` with deploys for that machine). See [research the route before you say "can't"](research-the-route-before-you-say-cant.md).
+
+**Why.** 2026-11-27, w6598: lothsahn, clarifying the C: rule: "The point of the C: prohibition is to stop data
+exfiltration and modification to the system drive.  It shouldn't prevent workers from running necessary helper
+scripts, etc.  We should provide them either access to run those scripts or links to them that they can run somehow.
+The helper scripts should be installed by the installer and updater--the workers should be able to call, but not
+modify them". The earlier rules (w896, w1755) said only what a worker may not do on C:, which read as "nothing on C:
+may be run either" and left fixes that need a system-level step stuck.
+
+**How to apply.**
+- Before calling something on C:, check it is one of the installer's helpers (it is under the folder the installer
+  writes, such as `C:\ProgramData\ffsb-helpers`, or the link or broker in ffw points at it). Anything else on C:
+  stays off limits for reading, as before.
+- Its output goes inside ffw (your `$TMPDIR` or sandbox), never a new file on C:.
+- A helper that refuses, is missing or is stale on a machine: report it with the exact error and hand the fix to
+  ff-factory's installer or updater; do not patch the machine's copy.
+- A brief that asks you to write on C: by hand is wrong in the same way as one that asks you to measure C:: say so,
+  and route it through the installer.
 
 ## Measure Windows folders with robocopy /L, not Git Bash du (w1561)
 

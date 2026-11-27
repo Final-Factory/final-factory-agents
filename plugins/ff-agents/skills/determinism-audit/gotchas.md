@@ -1906,7 +1906,7 @@ w5944 (2026-11-26, lothdesktop slot5, ac80d7b0 on the 0.50 line) ended `no host-
 - **No per-process redirect exists on Windows (measured).** `SHGetKnownFolderPath(FOLDERID_LocalAppDataLow)`, which UnityPlayer.dll uses, still answered `C:\Users\<owner>\AppData\LocalLow` with a child's `USERPROFILE` pointed into `$TMPDIR`. pre-1.0 has no Linux multiplayer build (no `BuildLinuxMultiplayerDev`), and a Mac refuses a client.
 - **Route it:**
   - Use `request_pair` with `legacy_data: "<why>"`. Words like "pre-1.0", "0.50 line" or "0.50.x" in what/brief mark it too, and `"none"` unmarks it. Its legs then go only to computers whose worker fence is off, and never Linux (ff-factory #1331).
-  - On a fenced worker, master's `ffnightly.py run` refuses such a player in seconds with the reason (FinalFactory #4365). Don't wait out 420 s; don't relabel or write on C: yourself.
+  - On a fenced worker, master's `ffnightly.py run` refuses such a player in seconds with the reason (FinalFactory #4365). Don't wait out 420 s; don't relabel or write on C: yourself. If a route needs a step on C:, it is a helper FF Factory's installer and updater install, which workers call but never write (evidence-gate `lessons/clean-up-after-yourself.md#c-helpers-the-installer-installs-them-workers-call-them-nobody-else-writes-them-w6598`, w6598).
 - **Build:**
   - pre-1.0's `build_player.sh` is `<project-dir> <sha> <mac|win> <cache-root>`, and the cache root is required: `bash scripts/nightly/build_player.sh "$PWD" <sha> win "$FF_WORKER_ROOT/player-cache"`.
   - master's defaults that cache root.
