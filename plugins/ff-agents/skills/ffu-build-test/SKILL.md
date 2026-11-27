@@ -1906,6 +1906,14 @@ A number is MEASURED only with its machine, build profile, building count and ti
 bench ticket on FF Factory machines (ffu `CLAUDE.md`, "Timing claims"). `ffu-headless run ... --timings t.csv`,
 `ffu-headless phases --start ... --ticks N` and `ffu-headless fpbench` are the timing commands.
 
+- **Time a phase A/B with `ffu-headless parts`, never `crosscheck`** (w6365, ffu #1254). Crosscheck's `ms` is the
+  whole run's wall time, with world setup and the FF1 save import included, so ms divided by ticks is not a per-tick
+  timing. On biscuit at load 40-72, 20 interleaved crosscheck repeats gave B/A medians from 0.72 to 1.40, with
+  min-max spreads of 5-10x (measured). `ffu-headless parts --start ff1:tools/world/ff1-trailer-staging-0.50.0.54.zip
+  --ticks 2000 --threads <t> --out <csv>`, run on A and B interleaved with the order flipped every repeat, gave
+  step_power 90 µs against 148 µs, with no overlap in 8 repeats (measured). Take each run's median tick per column,
+  then the median over runs.
+
 - **`tools/world_range.sh` hangs on a world the shard refuses** (w3739, ffu 551fa2e). `world:N:2:3` makes a sector
   2N+10 tall, and `MAX_SIDE` is 4096 (`crates/ffu-sim/src/sector.rs:80`), so N above 2043 exits at once with
   `world:2048: bad sector size 24x4106` in `n<N>/server.err`. The script's `first_line` then waits forever on the empty
