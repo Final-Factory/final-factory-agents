@@ -160,7 +160,8 @@ Right after the merge:
    declined every Release job. **It uploads nothing** (w5551): it prints one `NEXT: call steam_upload with {...}` line
    per app (also in `<out>/steam-upload-<app>.json`) and writes `urgent-release.json` (every phase's start, end and
    seconds) in its run folder. Call `steam_upload` with each NEXT line's arguments as they are (action upload; main live
-   on **development** only, never pre-release or default; the demo nowhere). The portal refuses another release's build
+   on **development** for master, on **pre-release** for a 0.50.x pre-1.0 hotfix (w6534; lothsahn: "Can it set that
+   whenever a .50 release is made?"), never default, never a 1.0 build on pre-release; the demo nowhere). The portal refuses another release's build
    and a branch the release did not name; the daemon re-checks the players and uploads. Call it again with the same
    arguments, or action `status` with its job, until it answers done with the BuildIDs. Then:
 
@@ -205,7 +206,8 @@ Right after the merge:
 
 ## 4. Live, notes, first check
 
-`python scripts/release-status.py <v>` prints `Lane: URGENT` and LANDED on development with the BuildID. Then post the
+`python scripts/release-status.py <v>` prints `Lane: URGENT` and LANDED on development (a 0.50.x pre-1.0 hotfix: on
+pre-release, w6534; one bumped before that: BUILT, nothing live) with the BuildID. Then post the
 notes as Max (`SKILL.md` section 3: post_as_max, channel dev_patch_notes, key the version, from the committed
 `cicd/release-notes/<v>.md`, skip_lines 2) and do the first check (section 4). The report gives the
 `urgent-release.json` timings, the BuildIDs, the notes link, the symbols (`file_ffbox_symbols`' last answer: each build

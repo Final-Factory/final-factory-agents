@@ -173,7 +173,7 @@ you name the branch it landed on. Never wait for a branch ffbox does not set:
 - **A master bump:** ffbox sets main live on **`development`** (ffbox `release_lane.SETLIVE`). Post once it
   LANDED there; title and restart line name `development`.
 - **A pre-1.0 hotfix:** ffbox sets main live on **`pre-release`** for a 0.50.x version (w6522), so post once
-  `release-status.py` says LANDED there (an urgent-lane hotfix, which sets nothing live: once BUILT); title and restart
+  `release-status.py` says LANDED there (an urgent-lane hotfix too, since w6534); title and restart
   line name the default branch (`pre-1.0-hotfix.md` step 7).
 - **The default branch, and `pre-release` for a master build,** are moved by hand by Ben or Lothsahn, whenever they choose. Their move is
   never a precondition for the post and never a question: don't send a card asking which branch, don't offer

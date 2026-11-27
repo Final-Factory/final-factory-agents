@@ -39,12 +39,12 @@ beta for development branch we will want to bump the version to 1.0.0.0 too". Th
    is made?"), so the verdict is BUILDING, WAITING, then LANDED on pre-release, as a master release on development; its
    notice in #release-build-announce reads "Release 0.50.0.R: main uploaded to Steam, set live on pre-release (BuildID
    N)". A failed or skipped upload leaves pre-release where it was, and the notice says so ("pre-release left where it
-   was"); a version that is not 0.50.x is set live nowhere. An urgent-lane hotfix still sets nothing live: BUILT.
+   was"); a version that is not 0.50.x is set live nowhere. An urgent-lane hotfix sets pre-release the same way since w6534 (`urgent-release.md`).
 6. **Report the main app's BuildID on pre-release; default is theirs.** Ben or Lothsahn set it live on default on the
    partner site, in their own time. Agents never do it, never ask for it, and never send a
    card about it: FF Factory's `waiting_on_person` refuses a Steam branch question (w2444).
-7. **Post the notes as Max once it is live on pre-release** (`release-status.py` says LANDED; an urgent-lane hotfix,
-   which sets nothing live, once it says BUILT, main GOOD on Steam). Don't wait for default (w2444; lothsahn, 2026-10-28, on Build 113: "Add the
+7. **Post the notes as Max once it is live on pre-release** (`release-status.py` says LANDED, from either lane; a hotfix
+   bumped before w6522 or, from the urgent lane, before w6534, sets nothing live: once it says BUILT, main GOOD on Steam). Don't wait for default (w2444; lothsahn, 2026-10-28, on Build 113: "Add the
    patch notes now. I'll update it later. Close the workitem"). The title says **Build R**, the restart line names the
    default branch, where Ben or Lothsahn put it. The first check (crash, desync and hang signatures) counts from that landing.
 
