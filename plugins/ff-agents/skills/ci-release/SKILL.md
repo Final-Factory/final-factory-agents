@@ -30,27 +30,33 @@ description: "Cut a release through CI on the ffbox build server — write the r
 > branches from Steam. Never from memory.
 >
 > ```python
-> SETLIVE = {("master", "main"): ("development",)}
+> SETLIVE = {("master", "main"): ("development",), ("pre-1.0", "main"): ("pre-release",)}
+> SETLIVE_VERSIONS = {"pre-release": "0.50."}
 > RETIRED_BRANCHES = ("develop",)
 > ```
 >
 > (ffbox commit 8fbb8d5, 2026-10-12, w1137: Ben, "i want to get off develop as a branch and do
 > everything off master ... keep development steam branch at the tip of master until we are ready to
 > release a batch of updates into main"; Lothsahn, "Let's just have steam development branch track
-> master and have pre-release and default be manual tags".)
+> master and have pre-release and default be manual tags". ffbox e42c3c7, 2026-11-27, w6522: lothsahn, "The last .50
+> release didn't set the pre-release tag. Can it set that whenever a .50 release is made?")
 >
 > - **A version bump merged into master IS a dev build:** ffbox builds it and sets the **main** app live
 >   on **`development`**, automatically, as it uploads. `development` tracks the tip of master.
 > - **develop is retired** (locked read-only on GitHub). A bump on develop is declined and builds
 >   nothing.
-> - **`pre-release` and the default (public) branch are set by nothing.** A release to players is Ben
->   or Lothsahn moving `pre-release` or the default by hand on the partner site. An agent never sets,
->   moves or plans a Steam branch, and never proposes it while `release-status.py` says BUILDING or
->   WAITING.
-> - **Never:** the demo app is set live nowhere; ffbox never sets `pre-release` or the default branch.
+> - **A version bump merged into `pre-1.0` sets its main app live on `pre-release`**, as it uploads, only for a
+>   0.50.x version (`SETLIVE_VERSIONS`: a 1.0 build never goes onto pre-release). A failed or skipped upload
+>   leaves pre-release where it was, and FFBox's notice in #release-build-announce says so. The urgent lane
+>   sets nothing for a pre-1.0 release.
+> - **The default (public) branch is set by nothing.** A release to players is Ben or Lothsahn moving the
+>   default by hand on the partner site. An agent never sets, moves or plans a Steam branch, and never
+>   proposes it while `release-status.py` says BUILDING or WAITING.
+> - **Never:** the demo app is set live nowhere; ffbox never sets the default branch, nor a master (1.0)
+>   release on `pre-release`.
 > - **pre-1.0 is the production hotfix line until 1.0 ships** (w1436, Ben 2026-10-17: "any bug fixes that are
 >   essential will be cherry picked to the pre 1.0 branch in the mean time for hot fixes"). A bump merged into
->   `pre-1.0` (0.50.0.R) builds and uploads both apps and sets NOTHING live (`UPLOAD_ONLY_BRANCHES`); master is
+>   `pre-1.0` (0.50.0.R) builds and uploads both apps and sets main live on `pre-release` (w6522); master is
 >   the 1.0 line (1.0.0.R, every 1.0 toggle on by default), its first bump after the cut 1.0.0.0. Fixes land on
 >   master first. **Only a hang, crash or desync fix gets a cherry-pick PR into pre-1.0 by default** (unless the port
 >   is high risk: say so instead); anything else goes there only when the request names 0.50 or pre-1.0, and
@@ -420,10 +426,10 @@ release run's `Test in editmode` result (ran, passed, its counts), the
 four results, the two BuildIDs (main app 1383150, demo app 2387320), and the regenerated-files PR if
 there is one. **Run `python scripts/release-status.py <version>`** (game repo): it prints the run,
 the branch `SETLIVE` names for this release, every Steam branch's BuildID and time, a verdict and the
-next step. Report the BuildID on that branch: **`development`** (the notice: "set live on <branch>
-(BuildID …)"; the ledger's `uploads.main.setlive` and `uploads.main.live_builds`). Then say plainly
-where it is not: no build reaches `pre-release` or the default branch until Ben or Lothsahn moves it
-there by hand. BUILDING or WAITING is normal (measured 22-78 min from the
+next step. Report the BuildID on that branch: **`development`** for master, **`pre-release`** for a
+0.50.x hotfix (the notice: "set live on <branch> (BuildID …)"; the ledger's `uploads.main.setlive` and
+`uploads.main.live_builds`). Then say plainly where it is not: no build reaches the default branch (nor
+a master build `pre-release`) until Ben or Lothsahn moves it there by hand. BUILDING or WAITING is normal (measured 22-78 min from the
 bump; about 100 min after a shader or render-pipeline change misses the shader cache: 0.50.0.81's
 URP light layers, Builds 81-82 and master 82 at 95-108 min); only LATE is an ffbox problem for its owner.
 **A target's first release on a branch starts cold and takes far longer** (0.50.0.94, the first Linux
@@ -462,9 +468,10 @@ a `git checkout` there began fetching about 5 GB of blobs.
 build is complete and uploaded"). A release is **done only when both** are true:
 
 - [ ] **Live on its Steam branch**: `python scripts/release-status.py <version>` says LANDED, on
-  `development` (the one branch ffbox sets); a pre-1.0 hotfix, which ffbox sets live nowhere, once it says BUILT.
-- [ ] **The notes post at that landing, never later** (w2444): not when someone moves the build to `pre-release`
-  or the default branch, and never after a question about which branch. A person's branch choice is not a step of the
+  `development` for master, `pre-release` for a 0.50.x pre-1.0 hotfix (w6522; a hotfix bumped before 2026-11-27,
+  or from the urgent lane, sets nothing live: once it says BUILT).
+- [ ] **The notes post at that landing, never later** (w2444): not when someone moves the build to the default
+  branch (or a master build to `pre-release`), and never after a question about which branch. A person's branch choice is not a step of the
   release: don't ask it, don't offer "leave it on development" as an answer that means no notes, and post even when
   the brief says "once live on default" (lothsahn, 2026-10-28, on 1.0 Build 22: "It's a dev build but you still upload
   the patch notes. Why did you suddenly decide not to update patch notes for development builds. We've done that for
@@ -505,9 +512,9 @@ w3245's live-with-notes report had no `For w3246:` line.
 ## 4. The first check, within an hour of live
 
 A release is not done at the upload notice (`evidence-gate`, `checklists/release.md`). "Live" is the landing
-on the branch the lane sets, `development` included (a pre-1.0 hotfix: its upload), and every window here, the
-signature comparison a brief asks for after 24 hours included, counts from that landing time, never from a later move
-to `pre-release` or the default branch (w2444). Within an hour of the build going live: confirm the BuildID on the branch is the new one, then read, by version and by
+on the branch the lane sets, `development` included (a pre-1.0 hotfix: `pre-release`, w6522), and every window here,
+the signature comparison a brief asks for after 24 hours included, counts from that landing time, never from a later
+move to the default branch (w2444). Within an hour of the build going live: confirm the BuildID on the branch is the new one, then read, by version and by
 platform, the crash and desync reports players' games uploaded for it and any new bug threads that name
 it. A save that does not load, a missing platform, or reports clearly above the previous build's: tell
 whoever asked for the release at once, with the evidence and the previous BuildID. Use `wake_me` so the

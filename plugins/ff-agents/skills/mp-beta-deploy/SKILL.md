@@ -12,7 +12,7 @@ needed, say so and wait for him to ask. Proven end to end on 2026-09-23 (0.50.0.
 **Last-resort fallback (Lothsahn, 2026-09-26; tightened 2026-09-28).** ffbox CI is THE way to
 build a release: a master bump through `ci-release` has multiplayer (`FF_ENABLE_MULTIPLAYER_BUILD`
 in ProjectSettings, #613/#614), and ffbox sets its main app live on `development` as it
-uploads (nothing sets `pre-release` or the default branch; ffbox `release_lane.SETLIVE`, w1137). Asked
+uploads (a 0.50.x pre-1.0 bump goes to `pre-release`, w6522; nothing sets the default branch; ffbox `release_lane.SETLIVE`, w1137). Asked
 for "a new build for the testers", use `ci-release`. Come here only when ffbox CI is actually down AND Ben
 OKs the manual build, or for a special build Ben explicitly asks for that must not be a master
 bump; say which in your report. A player that fails on ffbox is reported with the job log's

@@ -60,9 +60,9 @@ adds what a release rests on and the first check after it.
 ## After it is live: the first check, within an hour
 
 6. **It is the build you meant, on the branch ffbox actually sets.** `python scripts/release-status.py
-   <version>` (game repo) says LANDED, with the BuildID on `development` (a master bump; ffbox
-   `release_lane.SETLIVE`, read by the script). `pre-release` and the default branch are set by nothing:
-   a person moves them; never propose moving one while the script says BUILDING or
+   <version>` (game repo) says LANDED, with the BuildID on `development` (a master bump) or `pre-release` (a
+   0.50.x pre-1.0 hotfix, w6522; ffbox `release_lane.SETLIVE`, read by the script). The default branch is set by
+   nothing: a person moves it; never propose moving one while the script says BUILDING or
    WAITING (lesson: [where a release lands is read, not recalled](../lessons/whats-in-a-players-build-is-checked-by-running-it.md#where-a-release-lands-is-read-not-recalled-2026-10-03)).
 7. **Players are not worse off than on the previous build.** Read, by version and by platform
    (Windows, Mac): the crash and desync reports players' games uploaded for the new version
