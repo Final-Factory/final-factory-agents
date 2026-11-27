@@ -48,7 +48,7 @@ description: "Cut a release through CI on the ffbox build server — write the r
 > - **A version bump merged into `pre-1.0` sets its main app live on `pre-release`**, as it uploads, only for a
 >   0.50.x version (`SETLIVE_VERSIONS`: a 1.0 build never goes onto pre-release). A failed or skipped upload
 >   leaves pre-release where it was, and FFBox's notice in #release-build-announce says so. The urgent lane
->   sets nothing for a pre-1.0 release.
+>   sets the same for an urgent 0.50.x release since w6534 (`urgent-release.md`).
 > - **The default (public) branch is set by nothing.** A release to players is Ben or Lothsahn moving the
 >   default by hand on the partner site. An agent never sets, moves or plans a Steam branch, and never
 >   proposes it while `release-status.py` says BUILDING or WAITING.
@@ -468,8 +468,8 @@ a `git checkout` there began fetching about 5 GB of blobs.
 build is complete and uploaded"). A release is **done only when both** are true:
 
 - [ ] **Live on its Steam branch**: `python scripts/release-status.py <version>` says LANDED, on
-  `development` for master, `pre-release` for a 0.50.x pre-1.0 hotfix (w6522; a hotfix bumped before 2026-11-27,
-  or from the urgent lane, sets nothing live: once it says BUILT).
+  `development` for master, `pre-release` for a 0.50.x pre-1.0 hotfix (w6522, and from the urgent lane w6534; a hotfix
+  bumped before 2026-11-27 sets nothing live: once it says BUILT).
 - [ ] **The notes post at that landing, never later** (w2444): not when someone moves the build to the default
   branch (or a master build to `pre-release`), and never after a question about which branch. A person's branch choice is not a step of the
   release: don't ask it, don't offer "leave it on development" as an answer that means no notes, and post even when

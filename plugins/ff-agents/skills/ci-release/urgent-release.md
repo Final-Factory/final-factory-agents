@@ -157,10 +157,13 @@ Right after the merge:
    It refuses anything not claimed for this computer (FFBox builds those), then builds Windows, Mac and Linux, main then
    demo, with `.github/scripts/build-release.sh` itself (one Unity slot and one exclusive bench ticket per target), checks
    each player with FFBox's `ffrelease-check.py`, and waits until every `Test in` job of the push run passed and FFBox
-   declined every Release job. **It uploads nothing** (w5551): it prints one `NEXT: call steam_upload with {...}` line
+   declined every Release job. `--waive-tests <who>`, on Ben's or lothsahn's own word only, skips waiting for the tests
+   on any release, master and 0.50.x alike, and the release still goes live on its usual branch (w6534; lothsahn: "you
+   can do --waive-tests on any release, both master and the .50 branch actually"). **It uploads nothing** (w5551): it prints one `NEXT: call steam_upload with {...}` line
    per app (also in `<out>/steam-upload-<app>.json`) and writes `urgent-release.json` (every phase's start, end and
    seconds) in its run folder. Call `steam_upload` with each NEXT line's arguments as they are (action upload; main live
-   on **development** only, never pre-release or default; the demo nowhere). The portal refuses another release's build
+   on **development** for master, on **pre-release** for a 0.50.x pre-1.0 hotfix (w6534; lothsahn: "Can it set that
+   whenever a .50 release is made?"), never default, never a 1.0 build on pre-release; the demo nowhere). The portal refuses another release's build
    and a branch the release did not name; the daemon re-checks the players and uploads. Call it again with the same
    arguments, or action `status` with its job, until it answers done with the BuildIDs. Then:
 
@@ -205,7 +208,8 @@ Right after the merge:
 
 ## 4. Live, notes, first check
 
-`python scripts/release-status.py <v>` prints `Lane: URGENT` and LANDED on development with the BuildID. Then post the
+`python scripts/release-status.py <v>` prints `Lane: URGENT` and LANDED on development (a 0.50.x pre-1.0 hotfix: on
+pre-release, w6534; one bumped before that: BUILT, nothing live) with the BuildID. Then post the
 notes as Max (`SKILL.md` section 3: post_as_max, channel dev_patch_notes, key the version, from the committed
 `cicd/release-notes/<v>.md`, skip_lines 2) and do the first check (section 4). The report gives the
 `urgent-release.json` timings, the BuildIDs, the notes link, the symbols (`file_ffbox_symbols`' last answer: each build
