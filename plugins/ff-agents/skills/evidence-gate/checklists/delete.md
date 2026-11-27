@@ -19,6 +19,12 @@ For any `rm`, `Remove-Item`, `del`, `rd`, `git clean`, `shutil.rmtree` or clean-
    An install folder on C: allows only that folder. The one exception: the game's `Never Games` folders under AppData
    (`LocalLow`, `Local`, `Roaming`) may be read and measured, and are never deleted, moved or written (lothsahn: "Let's let
    it scan the never games folder, but not the rest of C.  And it shouldn't modify it.").
+   **A fix that needs something on C: is a helper the installer and updater install, which workers call but never
+   write** (w6598): the C: rule stops data leaving the system drive and changes to it, not running a helper. Privileged
+   helper scripts on C: (`C:\ProgramData\ffsb-helpers`) are installed and updated only by FF Factory's installer and
+   updater; you call them, directly or through a link or broker it provides, and never modify them. It is never a worker
+   writing C: by hand, and never a reason to say it can't be done: the helper and its install step go to ff-factory
+   ([lesson](../lessons/clean-up-after-yourself.md#c-helpers-the-installer-installs-them-workers-call-them-nobody-else-writes-them-w6598)).
 1b. **Does a size you report count hardlinks more than once?** (w3177) A scratch clone's `.git/lfs` and its linked LFS
    files share bytes with a sandbox. `du` and robocopy count them in every clone (w3177: 18 GB read per clone, about
    12 GB freed per clone by df). Report what `df` gained, or the size of files with one link

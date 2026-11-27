@@ -335,7 +335,8 @@ carried over ([lesson](lessons/research-the-decision-not-the-topic.md#name-the-p
   `pre-1.0:` lines, every build claim from a run (`build_claim_check.py --done`, w1770).
 - [Delete](checklists/delete.md) (w896): before any remove on a machine's disk, a clean-up above all: every path strictly inside
   the worker install folder (`$FF_WORKER_ROOT`); outside it you measure and report sizes and list what writes there, whatever
-  the brief says. On Windows (w1755) you read, measure and delete only on the install folder's drive, never C:.
+  the brief says. On Windows (w1755) you read, measure and delete only on the install folder's drive, never C:. Helpers on C: (w6598) are the
+  installer's: you call them, directly or through its link or broker, and never write them ([lesson](lessons/clean-up-after-yourself.md#c-helpers-the-installer-installs-them-workers-call-them-nobody-else-writes-them-w6598)).
 - [Visual changes](checklists/visual.md)
 - [UI changes](checklists/ui.md): screens, panels, tabs, HUD, layouts: a late-game save, every
   sub-view, the whole content, the classic look side by side, a real-rate clip, one written line
@@ -382,6 +383,10 @@ carried over ([lesson](lessons/research-the-decision-not-the-topic.md#name-the-p
 
 One file each under `lessons/`: the rule, why (the incident, dated), how to apply.
 
+- [C: helpers are installed by the installer, called by workers, written by nobody else](lessons/clean-up-after-yourself.md#c-helpers-the-installer-installs-them-workers-call-them-nobody-else-writes-them-w6598) (lothsahn,
+  2026-11-27, w6598): the C: rule stops data leaving the system drive and changes to it, not running a helper; workers
+  write only inside ffw, read no data off C:, and call the installer's helpers (`C:\ProgramData\ffsb-helpers`, or its
+  link or broker) without modifying them. A fix that needs C: is such a helper, never a hand-write and never "can't".
 - [A failed call changes its form before it runs again](lessons/settle-your-own-guesses.md#a-failed-call-changes-its-form-before-it-runs-again-w4501-2026-11-17):
   lothsahn, 2026-11-17 (w4501): read the error, name its cause, change the call; an identical retry only for a transient
   you can name. 8 hours of transcripts held about 49 unintended Bash exits, about 36 Unity calls sent before the bridge
@@ -662,6 +667,11 @@ One file each under `lessons/`: the rule, why (the incident, dated), how to appl
   the game's AppData `Never Games` folders alone may be read, never modified: "Let's let it scan the never games folder, but
   not the rest of C.  And it shouldn't modify it.";
   [lesson](lessons/clean-up-after-yourself.md#windows-disk-work-stays-on-the-install-drive-never-c-w1755), [checklist](checklists/delete.md) item 1a).
+  The C: rule stops data leaving the system drive and changes to it, not running a helper (lothsahn, 2026-11-27, w6598):
+  privileged helper scripts on C: (`C:\ProgramData\ffsb-helpers`) are installed and updated only by FF Factory's installer
+  and updater; workers call them, directly or through a link or broker the installer provides, and never modify them. A fix
+  that needs something on C: is such a helper, never a worker writing C: by hand and never a reason to say it can't be done
+  ([lesson](lessons/clean-up-after-yourself.md#c-helpers-the-installer-installs-them-workers-call-them-nobody-else-writes-them-w6598)).
   And (w1379): a clean-up deletes only what `ff-leftovers folders` marks DELETE (closed requests, orphans); the temp, build and review
   folders of a worker whose request is open, stalled or paused stay, running or not, and a brief's list of live workers is not the ledger
   (w1374 deleted stopped worker a735f37c's builds and clips while its request w1332 was stalled; [the rule](lessons/clean-up-after-yourself.md#a-clean-up-never-takes-the-folders-of-a-request-that-has-not-closed-w1379)).
