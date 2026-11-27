@@ -134,8 +134,11 @@ whole verification. The repo's own `CLAUDE.md` is binding and longer; this skill
     too small for the kind (`OffGrid`).
   - lint-12, the match arms' name order (fixed with `tools/keep_sorted.py --fix <files>`).
 
-  Right after you add a `Kind`, run `cargo test -p ffu-ui -p ffu-client` and `tools/keep_sorted.py --fix` on the new
-  arms.
+  - ffu-agent `src/tests.rs`, `schema_names_what_set_accepts` (every kind's name) and
+    `ui_tree_returns_the_build_menu_as_data` (every menu tile): w6245 (ffu #1239, the Dyson power links) failed both.
+
+  Right after you add a `Kind`, run `cargo test -p ffu-ui -p ffu-client -p ffu-agent` and `tools/keep_sorted.py --fix`
+  on the new arms.
 - **A new hash part kept out of the hash while empty still moves the combat fixtures' pins** (w4264, ffu #810). A part
   is added only when it has content, but the `golden_snapshot.rs` v3, v5 and v8 fixtures fight for 64 ticks and fill
   it, so their pinned hashes failed, while the crate's own tests and hashcheck stayed green. Run the whole workspace
