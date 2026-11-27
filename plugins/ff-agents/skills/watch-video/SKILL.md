@@ -219,6 +219,10 @@ Recording notes:
   denied"); the game's own frames need no visible window. The game repo's `scripts/feel/run_comet_catch_clip.py`
   does all of this for a comet dive into a Comet Catcher (whole tail in frame at the farthest zoom with `--dir 1
   --zoom 1000`), and `--catchers 12 --no-frames` is its cost run.
+  **Run a frames scenario only after your player build ends, never beside it** (w6315, lothdesktop, 2026-11-27):
+  beside `build_player.sh` the CPU sat at 100%, the slot mirror took 17 min and `CLIP-W6241-route-line` failed step 0
+  on `invariant ups` (4.3 fps, 2.7 heartbeats/s). Run alone after the build, both sides passed 39/39 and captured
+  58-60 fps at 1280 wide with `-ffFeelFps 60` (not the ~30 cap measured in w1067).
 - **A Deck tour's `record` step** (`{"record": name, "seconds": n}`, the game repo's `DeckTour.cs`; w1488, m3, 2026-10-19)
   writes `clip-<name>/NNNNN.jpg`, `times.txt` and `frames.txt`, upside down on Mac and Windows (vflip). Build a constant
   60 fps MP4 from `times.txt` (each 1/60 s slot holds the newest frame captured by then: an image2 symlink sequence at
