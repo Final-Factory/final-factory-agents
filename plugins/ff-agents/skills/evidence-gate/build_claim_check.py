@@ -17,7 +17,8 @@ A claim resting on a grep, git (`merge-base`, ancestry, a branch's files) or a p
 is a claim with no basis at all. Prints each flagged sentence with its line and exits 1 when there is one.
 
 --done adds the DONE lines of a player-facing fix: `Ships in: <Steam branch>, <build, version or "the next ... bump">`
-and `pre-1.0: <cherry-pick needed (wNNN or PR) | #PR | not needed: why>`.
+and `pre-1.0: <cherry-pick needed (wNNN or PR) | #PR | not needed: why>`. Needed only for a hang, crash or desync fix
+(unless its port is high risk) or a request that names 0.50 or pre-1.0 (w6507).
 
 Why (w1770, 2026-10-22): #1760's Saves/Autosaves tabs were reported done on master without saying master is the 1.0
 build; then an orchestrator told Ben the 1.0 development build "still has the tabs" from a code grep, and w1765 closed
@@ -96,7 +97,8 @@ def done_problems(text: str) -> list[str]:
         out.append(f"'Ships in: {ships.group(1).strip()}' names no Steam branch and build (or the bump that will carry it)")
     pre = PRE10.search(text)
     if not pre:
-        out.append("no 'pre-1.0: ...' line: does the pre-1.0 line need a cherry-pick")
+        out.append("no 'pre-1.0: ...' line: does the pre-1.0 line need a cherry-pick (only a hang, crash or desync"
+                   " fix, or a request that names 0.50)")
     elif not PRE10_ANSWER.search(pre.group(1)):
         out.append(f"'pre-1.0: {pre.group(1).strip()}' says neither 'cherry-pick needed (...)', a PR, nor 'not needed: <why>'")
     return out

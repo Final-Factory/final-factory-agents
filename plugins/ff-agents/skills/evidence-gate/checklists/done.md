@@ -118,6 +118,10 @@ holds, or the report says what is left instead of DONE.
    and build that carry it, or the bump that will, in a `Ships in:` line, and whether the pre-1.0 line needs a
    cherry-pick in a `pre-1.0:` line (`cherry-pick needed (<wNNN or PR>)`, `#<PR>` for one you opened, or `not needed:
    <why>`): master is the 1.0 build on `development`, pre-1.0 the line default-branch players get until 1.0 ships.
+   **Is this a hang, crash or desync fix, or did the request name 0.50? If neither, no pre-1.0 port** (`pre-1.0: not
+   needed: not a hang, crash or desync, and the request did not name 0.50`); a hang, crash or desync fix whose port is
+   high risk says so instead of porting ([port to pre-1.0 only hangs, crashes, desyncs or what was
+   asked](../lessons/whats-in-a-players-build-is-checked-by-running-it.md#port-to-pre-10-only-hangs-crashes-desyncs-or-what-the-request-names-w6507-2026-11-27), w6507).
    Every "is in", "has", "contains", "missing" or "not in" beside a build number, version or Steam branch in the report
    rests on a run of that build or its exact commit with the feature opened (what you ran, what you saw), or says guess
    and names the build to run; a grep, `git merge-base` or a past report is not a run. `python "$FF_SKILLS/evidence-gate/build_claim_check.py"
