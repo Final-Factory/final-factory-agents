@@ -2,9 +2,10 @@
 
 master's players ship multiplayer (`FF_ENABLE_MULTIPLAYER_BUILD` in ProjectSettings, FinalFactory
 #613/#614). Since w1137 (2026-10-12) master is the one trunk and develop is retired. ffbox sets a build's
-main app live as it uploads (`release_lane.SETLIVE = {("master", "main"): ("development",)}`): a version
-bump merged into master lands on **`development`**. Nothing sets `pre-release` or the default (public)
-branch: Ben or Lothsahn move them by hand; agents never move a Steam branch and never ask Ben to.
+main app live as it uploads (`release_lane.SETLIVE = {("master", "main"): ("development",), ("pre-1.0", "main"):
+("pre-release",)}`): a version bump merged into master lands on **`development`**, one merged into `pre-1.0` (a 0.50.x
+version only) on **`pre-release`** (w6522, 2026-11-27). Nothing sets the default (public) branch: Ben or Lothsahn move
+it by hand; agents never move a Steam branch and never ask Ben to.
 
 Decision table:
 

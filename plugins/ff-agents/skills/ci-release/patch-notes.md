@@ -8,7 +8,7 @@ Every release carries its notes (Ben, 2026-09-28). They are written **before** t
    (cut to 200 characters; ffbox `scripts/release_lane.py` `steam_description`, ffbox PR #3). No
    file or no line: desc is the version alone, as 0.50.0.42's was. `mp-beta-deploy` builds the same
    string by hand for its vdf.
-2. **The #dev-patch-notes post.** Once the build is **confirmed live** (LANDED on development; a pre-1.0 hotfix once BUILT; never pre-release or default: a dev build gets its post too, w2440, w2444), the rest of the file is
+2. **The #dev-patch-notes post.** Once the build is **confirmed live** (LANDED on development; a pre-1.0 hotfix LANDED on pre-release, w6522; never the default: a dev build gets its post too, w2440, w2444), the rest of the file is
    posted as Max in #dev-patch-notes (channel `1072387196927094845`).
 
 It is part of the release, not an optional extra: a requested release is done only when it is live
@@ -149,9 +149,9 @@ Restart Steam to pick up the update on the development branch.
 ```
 
 The title and restart line name the branch the build landed on: `development` for a master bump (the
-branch ffbox sets), the default branch for a pre-1.0 hotfix, where Ben or Lothsahn put it (ffbox sets nothing for
-it, so its notes post once it is uploaded; `pre-1.0-hotfix.md`). The 1.0 line's titles say **1.0 Build R**, a hotfix's
-**Build R**. A later move to `pre-release` or the default branch is the person's own; it gets no second post and the
+branch ffbox sets), the default branch for a pre-1.0 hotfix, where Ben or Lothsahn put it (ffbox sets it live on
+`pre-release` and its notes post once it LANDED there; `pre-1.0-hotfix.md`). The 1.0 line's titles say **1.0 Build R**,
+a hotfix's **Build R**. A later move to the default branch (or of a master build to `pre-release`) is the person's own; it gets no second post and the
 first post never waits for it (w2444). Omit a section that would be empty.
 
 Before triggering, check the post's length, dashes, version names and internal terms:
@@ -172,9 +172,10 @@ you name the branch it landed on. Never wait for a branch ffbox does not set:
 
 - **A master bump:** ffbox sets main live on **`development`** (ffbox `release_lane.SETLIVE`). Post once it
   LANDED there; title and restart line name `development`.
-- **A pre-1.0 hotfix:** ffbox sets nothing live, so post once `release-status.py` says BUILT (uploaded, main GOOD);
-  title and restart line name the default branch (`pre-1.0-hotfix.md` step 7).
-- **`pre-release` and the default branch** are moved by hand by Ben or Lothsahn, whenever they choose. Their move is
+- **A pre-1.0 hotfix:** ffbox sets main live on **`pre-release`** for a 0.50.x version (w6522), so post once
+  `release-status.py` says LANDED there (an urgent-lane hotfix, which sets nothing live: once BUILT); title and restart
+  line name the default branch (`pre-1.0-hotfix.md` step 7).
+- **The default branch, and `pre-release` for a master build,** are moved by hand by Ben or Lothsahn, whenever they choose. Their move is
   never a precondition for the post and never a question: don't send a card asking which branch, don't offer
   "leave it on development" as an answer that means no notes, and don't hold the post for an answer (w2444; lothsahn,
   2026-10-28, on 1.0 Build 22: "It's a dev build but you still upload the patch notes. Why did you suddenly decide not

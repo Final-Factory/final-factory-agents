@@ -9,7 +9,7 @@ beta for development branch we will want to bump the version to 1.0.0.0 too". Th
 | Line | Git branch | Version | Toggles in a release player | ffbox on a bump | Steam |
 |---|---|---|---|---|---|
 | 1.0 | `master` | 1.0.0.R (first bump after the cut: 1.0.0.0) | every 1.0 toggle on (`FeatureToggles.OnByDefault`) | builds, uploads, sets main live on development | development |
-| production | `pre-1.0` | 0.50.0.R, R going on from the cut | every toggle off | builds, uploads, sets **nothing** live (`release_lane.UPLOAD_ONLY_BRANCHES`) | default, set by Ben or Lothsahn by hand |
+| production | `pre-1.0` | 0.50.0.R, R going on from the cut | every toggle off | builds, uploads, sets main live on `pre-release`, a 0.50.x version only (`SETLIVE`, `SETLIVE_VERSIONS`; w6522) | pre-release; default, set by Ben or Lothsahn by hand |
 
 ## The route
 
@@ -34,16 +34,19 @@ beta for development branch we will want to bump the version to 1.0.0.0 too". Th
    section for a player-visible change. Same CI gate as master; merge on green.
 4. **The hotfix release**: `scripts/trigger-ci-release.sh pre-1.0 --notes Temp/release-notes-0.50.0.<R>.md`, then
    merge its PR into `pre-1.0` (`gh pr merge <n> --merge`). The script refuses a version of 1.0 or above there.
-5. **Follow it**: `python scripts/release-status.py 0.50.0.<R>` (or `--branch pre-1.0`). The verdict is BUILT with
-   nothing set live; the BuildIDs are in FFBox's notice in #release-build-announce ("Release 0.50.0.R: main uploaded
-   to Steam, nothing set live: BuildID N"; anonymous steamcmd cannot see a build that sits on no branch).
-6. **Report the main app's BuildID; the branch is theirs.** Ben or Lothsahn set it live on default (and pre-release, if
-   they want it there) on the partner site, in their own time. Agents never do it, never ask for it, and never send a
+5. **Follow it**: `python scripts/release-status.py 0.50.0.<R>` (or `--branch pre-1.0`). FFBox sets the main app live
+   on `pre-release` as it uploads (ffbox e42c3c7, w6522, 2026-11-27; lothsahn: "Can it set that whenever a .50 release
+   is made?"), so the verdict is BUILDING, WAITING, then LANDED on pre-release, as a master release on development; its
+   notice in #release-build-announce reads "Release 0.50.0.R: main uploaded to Steam, set live on pre-release (BuildID
+   N)". A failed or skipped upload leaves pre-release where it was, and the notice says so ("pre-release left where it
+   was"); a version that is not 0.50.x is set live nowhere. An urgent-lane hotfix still sets nothing live: BUILT.
+6. **Report the main app's BuildID on pre-release; default is theirs.** Ben or Lothsahn set it live on default on the
+   partner site, in their own time. Agents never do it, never ask for it, and never send a
    card about it: FF Factory's `waiting_on_person` refuses a Steam branch question (w2444).
-7. **Post the notes as Max once it is uploaded** (`release-status.py` says BUILT, main GOOD on Steam): this lane sets
-   nothing live, so the upload is its landing. Don't wait for default (w2444; lothsahn, 2026-10-28, on Build 113: "Add the
+7. **Post the notes as Max once it is live on pre-release** (`release-status.py` says LANDED; an urgent-lane hotfix,
+   which sets nothing live, once it says BUILT, main GOOD on Steam). Don't wait for default (w2444; lothsahn, 2026-10-28, on Build 113: "Add the
    patch notes now. I'll update it later. Close the workitem"). The title says **Build R**, the restart line names the
-   default branch, where Ben or Lothsahn put it. The first check (crash, desync and hang signatures) counts from the upload.
+   default branch, where Ben or Lothsahn put it. The first check (crash, desync and hang signatures) counts from that landing.
 
 ## Protecting a new release branch is not a sandbox step
 

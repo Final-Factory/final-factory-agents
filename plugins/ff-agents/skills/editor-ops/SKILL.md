@@ -834,7 +834,7 @@ and read a `dialog`'s text with `get value of every static text of window 1`.
 Release builds and Steam uploads are NOT made from an editor: they go through CI on the ffbox build
 server, via the `ci-release` skill. Never make a release with `Build > Build and Upload All` or
 steamcmd. ffbox sets a master version bump live on `development` (since w1137, 2026-10-12);
-nothing sets `pre-release` or the default branch; `mp-beta-deploy` is the last-resort M5 fallback, only when ffbox CI is actually down and only with
+a pre-1.0 (0.50.x) bump on `pre-release` (w6522); nothing sets the default branch; `mp-beta-deploy` is the last-resort M5 fallback, only when ffbox CI is actually down and only with
 Ben's OK.
 
 ## Capturing editor memory
