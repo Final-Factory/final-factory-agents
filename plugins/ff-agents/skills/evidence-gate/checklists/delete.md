@@ -79,3 +79,6 @@ For any `rm`, `Remove-Item`, `del`, `rd`, `git clean`, `shutil.rmtree` or clean-
    over plain words, or one leading `cd` into your temp folder or sandbox. It has no zsh-only expansion and no `$(`
    in a grep pattern. It edits through the Edit tool, not a heredoc script
    ([lesson](../lessons/clean-up-after-yourself.md#what-still-reaches-a-person-counted-w5148-2026-11-22)).
+9. **Could the tree hold a junction?** (w6252) On Windows, Git Bash `rm -rf` follows a `mklink /J` junction made in a
+   worker session and deletes what it points at. Delete such a tree with `cmd //c "rd /s /q <windows path>"`
+   ([lesson](../lessons/clean-up-after-yourself.md#on-windows-delete-a-tree-that-may-hold-a-junction-with-rd-s-q-never-git-bash-rm-rf-w6252)).

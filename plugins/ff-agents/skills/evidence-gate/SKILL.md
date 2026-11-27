@@ -478,6 +478,9 @@ One file each under `lessons/`: the rule, why (the incident, dated), how to appl
 - [What still reaches a person](lessons/clean-up-after-yourself.md#what-still-reaches-a-person-counted-w5148-2026-11-22)
   (w5148, 21 questions counted over 30 days): no zsh-only expansions, no `$(` in grep patterns, delete only paths
   written out, one leading `cd`, edits through the Edit tool ([delete checklist](checklists/delete.md) item 8).
+- [On Windows, delete a tree that may hold a junction with `rd /s /q`](lessons/clean-up-after-yourself.md#on-windows-delete-a-tree-that-may-hold-a-junction-with-rd-s-q-never-git-bash-rm-rf-w6252)
+  (w6252, measured): Git Bash `rm -rf` follows a worker's `mklink /J` junction (`\??\Global\`) and deletes its target;
+  `rd /s /q` and `fs.rmSync` do not ([delete checklist](checklists/delete.md) item 9).
 - [Keep rm out of long commands](lessons/clean-up-after-yourself.md#keep-rm-out-of-long-commands-w63-w194-w1097): a deletion chained
   into a long command waits on a permission prompt nobody sees; in bypass mode only an `rm` of
   `$VAR/*` or `$VAR/{a,b}` (or a critical path) asks (measured, w1097). A new folder per run,
