@@ -57,6 +57,13 @@ printf '%s\n' \
   `query {kind?, stalled?, rect?, limit?}`, `set {op: place|remove|set_recipe|insert, x, y, kind?, dir?, param?,
   item?, count?}`,
   `watch {x,y}`, `unwatch {id}`, `step {n?}`, `save {path}`, `capture {path, width?, height?, view?}`, `ui_tree`.
+- **Whose ops `set` sends** (w6493, ffu #1265): sender 2 by default, the first player's connection, so the player
+  gates apply (build costs, ownership, the server's own ops refused). `--sender 1` (the seed's) skips them: pass it
+  only when the run needs the server's rights, and say so in its report. serve prints which on stderr before its first
+  answer (`ffu-agent: set sends as sender 2, a player: the player gates apply`, or a `WARNING` line for a non-player
+  sender), and every `set` answer carries `"sender"`. Before #1265 the default was 1, so an older build or a run that
+  read "sender": 1 played with server rights. `ffu-mcp --sender` follows the same default. Dev tools still go out as
+  the dev sender from a player's session (w6259).
 - "Why is this stalled": `query {"stalled": true}` gives `stall_reasons` counts and each building's `stalled` text;
   `get` on one gives its `stalled` and the tile it `faces`, with the building there.
 - `set` never writes the sector: it submits an op for the next tick through `Sector::submit` and answers the op and
