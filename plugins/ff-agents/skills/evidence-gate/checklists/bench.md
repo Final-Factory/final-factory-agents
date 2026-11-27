@@ -255,6 +255,18 @@ Mechanics: the game repo's `Documentation/Bench-Lock.md`.
       than that still prints the old line, so wait for `^granted .*time now` all the same. Note when the head-of-queue
       line came, and run a leg only with its length left in the turn (that line + 30 min), else give the turn back;
       record the ticket log in each leg's folder.
+      The `granted tNNN: time now; it is held until <T>` line's `<T>` is the grant plus 30 minutes and is NOT the turn's
+      end (w6427, 2026-11-27, lothdesktop: t00000335 at the head of the queue 17:24Z, granted 17:42Z "held until
+      18:12Z", revoked 17:54:15Z; t00000344 "held until 19:13Z", warned for 18:58Z): plan by the head-of-queue line.
+- [ ] **A broker-launched player ends by itself, never by `taskkill /F`; an old arm runs current scripts** (w6427,
+      2026-11-27, lothdesktop). A player force-killed after its leg lingered about a minute without its lease, the daemon
+      read it as a person's game (`lothsahn is playing Final Factory on this PC (game pid <your player>)`, w1894) and
+      every launch there was refused for 10 minutes of grace, which voided the rest of the turn. Give each leg's player
+      `-ffSoloQuitAfterSeconds` sized to the leg (the PERF-W6391 sweep run took 135-215 s from launch; 300 s fit) and
+      wait for its pid to exit before the next launch; a scenario's end does not quit an attached player. An A/B arm
+      at an older commit needs only its player from that commit: run `player_slots.py` and `ffnightly.py` from a
+      current checkout, since the broker (`FF_PLAYER_BROKER=1`) and `--attach-pid` are newer than #4388's tree and the
+      old `player_slots.py` failed every leg on `pool.lock` (`PermissionError`).
 - [ ] **The ticket holder writes to a file with no pipe, and a separate waiter that exits tells you of the grant**
       (w4530, 2026-11-17, LothDesktop). A background `bench_queue.py timed ... | grep -v ExperimentalWarning` held its
       lines in the pipe's buffer: the grant never reached the output file and 16 of the 30-minute turn went by unseen.
