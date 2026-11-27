@@ -35,6 +35,11 @@ survives an engine crash). Keep every request you send, in order, in `$OUT/scrip
 $B/ffu-headless serve --start "$OUT/start.snap" < "$OUT/script.jsonl" > "$OUT/answers.jsonl"
 ```
 
+- Play as a player: serve's default sender is 2, a player's connection, so costs, ownership and the server's own ops
+  are refused as they are to a player (w6493, ffu #1265). Never pass `--sender 1` in a playtest that judges what a
+  player can do: it skips those gates. Check serve's stderr line ("a player: the player gates apply") and the
+  `"sender"` of your first `set` answer; a run whose answers read "sender": 1 was played with server rights and is no
+  honest result.
 - Act with `set`: `{"op":"place","x":..,"y":..,"kind":"crafter","dir":"east","param":"<recipe>"}`, `remove`,
   `set_recipe` (`param`), `insert` (`item`, `count` into a hold, all or nothing). `set` answers `would_apply`; the op
   lands on the next `step`. A refused op is a finding when the game should have allowed it.
