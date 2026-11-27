@@ -281,6 +281,14 @@ Recording notes:
   `bin/linux` first on PATH (`uv run --with static-ffmpeg python3 -c "import static_ffmpeg.run as r;
   print(r.get_or_fetch_platform_executables_else_raise())"`), and run it with `uv run --script` so its own packages
   (OpenCV) install.
+- **A worker on biscuit cannot start that Xvfb any more** (w6282, 2026-11-26). Xvfb must write `/tmp/.tX<N>-lock`
+  and `/tmp/.X11-unix/X<N>`: Claude Code's sandbox blocks it ("Could not create lock file in /tmp/.tX147-lock"), and
+  so does FF Factory's write-outside-ffw fence with `dangerouslyDisableSandbox`; `-nolock` needs root and
+  `unshare -rm` is not permitted. With biscuit's desktop locked, a windowed player there draws no frames
+  (`/v1/screenshot` 409 `no_frame_available`). Before you build players for a windowed scenario or clip on Linux,
+  check both in a minute: `gdbus call --session --dest org.gnome.ScreenSaver --object-path /org/gnome/ScreenSaver
+  --method org.gnome.ScreenSaver.GetActive` (`(true,)` is locked) and an Xvfb start; if both fail, the run belongs on
+  another computer whose screen is unlocked.
 
 ## Run it
 
