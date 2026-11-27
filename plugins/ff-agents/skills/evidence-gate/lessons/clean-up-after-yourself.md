@@ -591,3 +591,19 @@ to be found with `ff-leftovers list` and the process tree, then ended.
 
 **How to apply.** Treat a background script like a running binary: new version, new name. Stopping it is not the end of
 it until `ff-leftovers list` shows none of its children and `git log` shows none of its commits.
+
+## On Windows, delete a tree that may hold a junction with `rd /s /q`, never Git Bash `rm -rf` (w6252)
+**Rule.** A junction made by `cmd /c mklink /J` in a worker session stores its target as `\??\Global\F:\...`. Git Bash's
+`rm -rf` treats that as a plain folder: it goes into it and deletes the **target's** contents, then fails on the
+junction itself ("Directory not empty"). Before you delete a folder that holds such a junction (a junction repro, a test
+fixture, a copied build), delete it with `cmd //c "rd /s /q $(cygpath -w "$TMPDIR/<name>")"`. `rd /s /q` and Node's
+`fs.rmSync(..., {recursive: true})` remove the junction and leave its target alone.
+
+**Why (w6252, 2026-11-26, BEAST, measured at Low).** In a review of ff-factory#1405, `rm -rf "$TMPDIR/rmt/tree"` on a tree
+holding `j`, made by `mklink /J` and pointing at `rmt/target`, deleted `rmt/target` whole and left `tree/j`. The same tree
+under `rd /s /q` and under `fs.rmSync` kept the target file. Node's `lstat` misses this junction form too, which was the
+blocking finding of w6247 on that PR. The target here was inside the temp folder; a junction to a folder outside it would
+have lost that folder.
+
+**How to apply.** If you made a junction, or copied in a tree you did not make, clean it with `rd /s /q`. Treat a
+"Directory not empty" from `rm -rf` as a sign that it followed a junction: check what the junction pointed at.
