@@ -63,6 +63,14 @@ whole verification. The repo's own `CLAUDE.md` is binding and longer; this skill
   gone, take one again (`eval "$(ffu-slot take --wait 9 --branch <your branch>)"`, w5885) and cherry-pick your commits
   onto `git checkout -B <your branch> origin/main` there. Then put the other branch back with `git reset
   --keep <its last own commit>` (from its reflog), but only while its tree is clean.
+- **The Edit, Write and Read tools take a remembered slot path too: build file paths from `$FFU_DIR`** (w6256,
+  2026-11-26, m5). After a compaction the worker held slot3, but its summary named `.../ffu-sandboxes/slot2/ffu`, and
+  an Edit inserted 226 test lines into slot2's `laser.rs`. Slot2 was the checkout of running worker c00f7597 (w6255).
+  A test run in slot3 that did not list the new tests caught it. The block was cut out of slot2 by an exact-marker
+  script, leaving slot2's diff with only w6255's own files, and was then applied in slot3. Before the first
+  Edit/Write of a turn after a compaction or resume, run `ffu-slot where` and take every file path from its
+  `FFU_DIR`. A test run that does not list the tests you just wrote means you edited another checkout: stop, and
+  undo exactly your lines there.
 - **Never save a slot path in a file either: a `$TMPDIR` env script is a remembered path** (w5681, 2026-11-26): a worker
   took slot1 for `w5681-m61c-ffone-export`, wrote its path into a `$TMPDIR` env script, then waited hours on another
   PR (blocked_on). By the resume, slot1 was w5475's on `w5475-m6-14-bug-report`; the script cd'd there and `git merge
