@@ -105,6 +105,17 @@ dozen stills need about a minute of window. Copy `ffu.exe` to a name of your own
 a zoomed-out view (`--view x,y,8`): a world:N:2:3 station keeps its buildings in a strip at one corner, so the default
 zoom 24 at a station's centre shows empty floor (w3754: three blank stills). `--autopilot --fly-speed 10` flies
 world:16's 534-tile tour in about 53 s.
+**Timing a live window's picture against its sound on Windows** (w6369, subtitles against the narrator's voice):
+`av_capture.py` beside this file. It grabs the window's client rect by Desktop Duplication (dxcam) on a 60 Hz grid,
+records the speakers' loopback (soundcard), and puts both on one `perf_counter` clock. FFU draws through Vulkan, so
+PrintWindow and gdigrab give no frames at 60 fps.
+- Set `sys.coinit_flags = 0` before the imports, or soundcard's COM init clashes with dxcam's.
+- Call `SetProcessDpiAwareness(2)`. lothdesktop's 4K screen at 200 % put the 1920x1080 client at physical (960,492).
+- The client drew 28-32 fps there (measured), so the 60 fps file repeats frames. Time against the `new` frames in
+  cap.json.
+- To reach a later tutorial beat, set `AUTO_T`. It presses Skip only after 1.2 s with no subtitle. Faster skips let a
+  Story clip (story_tutorial_end) cut the queue and drop beats.
+- The loopback tap comes before the device's output latency, which this route does not measure.
 `ffu --headless <cmd>` is `ffu-headless <cmd>`. Judge motion from a clip, not a still (`/ff-agents:watch-video`'s
 viewing rules hold; its recorder is for Unity players).
 A connected clip (`--connect ... --clip`) draws the builder's notice, as the window does: a refusal, or FP.20's
