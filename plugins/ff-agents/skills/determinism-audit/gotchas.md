@@ -52,7 +52,7 @@ load-bearing for future runs even where the original defect is fixed.
 - [A census diff at heartbeat 8 after every join: an empty saved buffer; the client report holds both halves](#empty-buffer-join) (w2868)
 - [A cross-OS mod desync hunt from a Linux client: cap its fps, script its rejoins, wait out the outlive window](#linux-client-mod-hunt) (w2826)
 - [A 0.50 (pre-1.0) belt and drop-box pair: circuits need their toggle, stacked boxes by a lethal hit, bot pickup needs research](#pre10-belt-dropbox-pair) (w3295)
-- [A pair run of a 0.50 (pre-1.0) player: never on a fenced worker, the cache root as a 4th argument, master's runner](#pre-w5297-player-pair) (w5965)
+- [A pair run of a 0.50 (pre-1.0) player: never on a fenced worker, the cache root as a 4th argument, master's runner](#pre-w5297-player-pair) (w5965; today's head on Linux: w6413)
 - [A Windows built-player client with the audit on: a 3-minute log, the report at exit, a launcher that is not the player](#win-client-audit-log) (w3371)
 - [A kill-and-rebuild pair in a flat-map world: no bot, 20-tile range, a rebuild in 3 seconds, calcs refuse ghosts](#kill-rebuild-pair) (w3562)
 - [Gatling firing and a held recipe: what the fingerprint and observe.state cannot show](#gatling-and-held-recipe-witness) (w3371)
@@ -1911,3 +1911,17 @@ w5944 (2026-11-26, lothdesktop slot5, ac80d7b0 on the 0.50 line) ended `no host-
   - pre-1.0's `build_player.sh` is `<project-dir> <sha> <mac|win> <cache-root>`, and the cache root is required: `bash scripts/nightly/build_player.sh "$PWD" <sha> win "$FF_WORKER_ROOT/player-cache"`.
   - master's defaults that cache root.
 - **Run with master's `ffnightly.py`** (copied over the sandbox's after the build) and `--scenarios-from <pre-1.0 sha>`. Since #4365, that checks today's scenario rules only for the scenarios you name. Before #4365, it refused the whole 0.50 set for `MP-W1859-host-drives-remote-client.json` (no `"weekdays": ["Never"]`).
+- **Today's pre-1.0 head runs a headless Linux pair on biscuit** (w6413, 2026-11-27, origin/pre-1.0 e24f58cc6c, 0.50.0.117):
+  it has `BuildLinuxMultiplayerDev` (`Assets/Editor/LocalMultiplayerVerificationBuild.cs:55`) and reads `FF_GAME_DATA_DIR`
+  (`Assets/Scripts/FFCore/GameData/GameDataPaths.cs`), so the "no Linux" and "never Linux" lines above hold only for a
+  player from before those landed (`git grep BuildLinuxMultiplayerDev <sha> -- Assets` tells). Its own scripts still lack the
+  route, so take master's: `git archive origin/master scripts | tar -x -C "$TMPDIR/mscripts"`, then
+  `bash "$TMPDIR/mscripts/scripts/nightly/build_player.sh" <sandbox full path> <sha> linux` (pre-1.0's takes only mac|win) and
+  master's `ffnightly_linux.py run ... --slow-host 20` (pre-1.0's runner has no `--slow-host`). Measured: the
+  `MP-W6390-client-take-all-near-full` pair passed, 409 shared heartbeats with no divergence, in 0.9 min.
+  - pre-1.0's merge gate: its `merge-gate-tests.py --base origin/pre-1.0` prints a regex (no `--names-out`, no
+    `MergeGateTestRunner`); run it as `Unity -batchmode -runTests -testPlatform editmode -assemblyNames FFEditorTests
+    -testFilter "<regex>"`, as its CI does (555/555 in w6413).
+  - A batch run with KNN cloned into `Packages/com.akb.knn` (the fenced editor cannot fetch the git package) rewrites the
+    tracked `Packages/packages-lock.json`, and `build_player.sh` then exits 66 ("refused: tracked changes"):
+    `git checkout -- Packages/packages-lock.json` before the build. The untracked clone itself does not block it; delete it after.
