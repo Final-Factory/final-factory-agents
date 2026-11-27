@@ -52,8 +52,11 @@ description: "Cut a release through CI on the ffbox build server — write the r
 >   essential will be cherry picked to the pre 1.0 branch in the mean time for hot fixes"). A bump merged into
 >   `pre-1.0` (0.50.0.R) builds and uploads both apps and sets NOTHING live (`UPLOAD_ONLY_BRANCHES`); master is
 >   the 1.0 line (1.0.0.R, every 1.0 toggle on by default), its first bump after the cut 1.0.0.0. Fixes land on
->   master first, then a cherry-pick PR into pre-1.0. The whole route, numbers and notes: `pre-1.0-hotfix.md`
->   beside this file.
+>   master first. **Only a hang, crash or desync fix gets a cherry-pick PR into pre-1.0 by default** (unless the port
+>   is high risk: say so instead); anything else goes there only when the request names 0.50 or pre-1.0, and
+>   otherwise stays on master with no cherry-pick (lothsahn, 2026-11-27, w6507: ".50 is for hangs, crashes, and
+>   desyncs and specifically requested features and fixes"). The whole route, numbers and notes:
+>   `pre-1.0-hotfix.md` beside this file.
 > - **Timing, measured** (CI run start to the branch moving, 0.50.0.57 to .67, nine uploads): 22 to
 >   78 min, median 36; after the Release jobs ended, -7 to +43 min (main uploads before the demo is
 >   built). `release-status.py` calls it LATE only past 60 min after the Release jobs end.

@@ -179,6 +179,9 @@ carried over ([lesson](lessons/research-the-decision-not-the-topic.md#name-the-p
   it in the same turn. A player-facing fix's DONE names the Steam branch and build that carry it (`Ships in:`) and
   whether pre-1.0 needs a cherry-pick (`pre-1.0:`); `python "$FF_SKILLS/evidence-gate/build_claim_check.py" <report> [--done]` checks both
   (w1770: Ben, "so you're lying to me, or you didn't actually check").
+- **Port to pre-1.0 only hangs, crashes, desyncs or what was asked** ([lesson](lessons/whats-in-a-players-build-is-checked-by-running-it.md#port-to-pre-10-only-hangs-crashes-desyncs-or-what-the-request-names-w6507-2026-11-27)):
+  is this a hang, crash or desync fix, or did the request name 0.50? If neither, no pre-1.0 port; master only
+  (lothsahn, 2026-11-27, w6507: "Stop putting fixes in .50!").
 - **List environment variables by name, never their values** ([lesson](../project-memory/memories/list-env-by-name-never-values.md)).
   `env | cut -d= -f1 | grep -i <word>`, or `printenv NAME | wc -c` to see a value is set; never `env | grep` and a sed
   that redacts what you thought of (w1664: a filter on TOKEN printed the vault's FFSTEAM_PASSWORD into a transcript).
@@ -443,6 +446,10 @@ One file each under `lessons/`: the rule, why (the incident, dated), how to appl
 - [No merge before the review](lessons/merge-your-own-pr.md#no-merge-before-the-review-913-2026-10-02): "pending" is not done.
 - [Merge your own pull request](lessons/merge-your-own-pr.md): verified and green means merge;
   hold only for exceptional risk or a timing reason, and say which and when. A save version bump with its old-save load test green is not a risk (Ben, 2026-10-23, w1826: backwards compatibility is the gate). mechanics: check `git branch --show-current` after a wait, gate `gh pr merge` on a passing check: in an FF Factory worker `ff-pr merge`, one call (w1478; its vault token cannot read checks and the guard refuses `gh pr checks`, w2015); elsewhere `gh pr checks N && gh pr merge N --match-head-commit <sha>` (exit 8 is pending; w864), post the verdict only from the newest ff-agents (w807); a red check that is not your change, and `not our ref` at checkout ([section](lessons/merge-your-own-pr.md#a-red-check-that-is-not-your-change-read-the-failing-test-then-the-cause-w1337-2026-10-15), w1337).
+- [Port to pre-1.0 only hangs, crashes, desyncs or what was asked](lessons/whats-in-a-players-build-is-checked-by-running-it.md#port-to-pre-10-only-hangs-crashes-desyncs-or-what-the-request-names-w6507-2026-11-27):
+  a hang, crash or desync fix is cherry-picked to `pre-1.0` by default (a high-risk port says so instead); anything
+  else only when the request names 0.50 or pre-1.0; otherwise master only, no cherry-pick, and no asking whether
+  (w6507, lothsahn 2026-11-27).
 - [What is in a player's build is checked by running it](lessons/whats-in-a-players-build-is-checked-by-running-it.md):
   "X is (not) in Build N / on branch Z" rests on running that build or its exact commit and opening X, never a grep or
   git ancestry (else: guess, naming the build to run); asked to investigate, run the check (an orchestrator files it in

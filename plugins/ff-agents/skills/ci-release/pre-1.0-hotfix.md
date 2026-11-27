@@ -15,9 +15,18 @@ beta for development branch we will want to bump the version to 1.0.0.0 too". Th
 
 1. **The fix lands on master first**, as any fix, through its own PR. FFBox's own fix runs keep branching from
    master too.
-2. **Essential?** A crash, a desync, a save that will not load or loses work, a progression blocker, or a regression
-   players hit on the production build. Anything else waits for 1.0. The request's person decides when unsure.
-3. **Cherry-pick PR into `pre-1.0`**: a branch off `origin/pre-1.0` (`mcp__machine__switch_branch` in a sandbox),
+2. **Does it go to `pre-1.0` at all?** lothsahn, 2026-11-27 (w6507): "Stop putting fixes in .50! You should only merge
+   things to .50 if I specifically request them! .50 is for hangs, crashes, and desyncs and specifically requested
+   features and fixes". So:
+   - **A hang, crash or desync fix** is ported by default, unless the port is high risk (a large or conflicting pick,
+     a save or simulation change pre-1.0's code does not share): then say so in the report (`pre-1.0: not ported: high
+     risk, <why>`) and leave the call to the request's person.
+   - **Anything else** (a save that will not load, a progression blocker, a regression, a cosmetic, UI or balance fix,
+     a feature) goes to `pre-1.0` only when the request names 0.50 or pre-1.0.
+   - **Otherwise it stays on master only, with no cherry-pick** (`pre-1.0: not needed: not a hang, crash or desync,
+     and the request did not name 0.50`). Do not ask the person whether to port it; do not port it because it applies
+     cleanly. Lesson: evidence-gate `lessons/whats-in-a-players-build-is-checked-by-running-it.md#port-to-pre-10-only-hangs-crashes-desyncs-or-what-the-request-names-w6507-2026-11-27`.
+3. **Cherry-pick PR into `pre-1.0`** (only for a fix step 2 lets through): a branch off `origin/pre-1.0` (`mcp__machine__switch_branch` in a sandbox),
    `git cherry-pick -x -m 1 <the master PR's merge commit>`, then `gh pr create --base pre-1.0`, title
    `[pre-1.0] <the master PR's title>`. Its body carries `Cherry-pick of #<n>`, **every `Discord:` and `Report:` line
    of the master PR, copied exactly** (FFBox reads every merged PR, whatever its base, and tells each named thread

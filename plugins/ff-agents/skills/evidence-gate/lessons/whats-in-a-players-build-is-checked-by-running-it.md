@@ -1,6 +1,6 @@
 ---
 name: whats-in-a-players-build-is-checked-by-running-it
-description: "A claim that a player-facing feature or fix is, or isn't, in a build players run (a Steam branch, a build number) rests on running that build, or a build of its exact commit, and opening the feature; a code grep or git ancestry is a guess that names the build to run. Asked to investigate, investigate: a doubt a quick look leaves is settled by the run (an orchestrator files it in the same turn). A DONE for a player-facing fix names the Steam branch and build that carry it and whether pre-1.0 needs a cherry-pick. Where a release lands is read from release-status.py (SETLIVE), never recalled."
+description: "A claim that a player-facing feature or fix is, or isn't, in a build players run (a Steam branch, a build number) rests on running that build, or a build of its exact commit, and opening the feature; a code grep or git ancestry is a guess that names the build to run. Asked to investigate, investigate: a doubt a quick look leaves is settled by the run (an orchestrator files it in the same turn). A DONE for a player-facing fix names the Steam branch and build that carry it and whether pre-1.0 needs a cherry-pick. Where a release lands is read from release-status.py (SETLIVE), never recalled. Is this a hang, crash or desync fix, or did the request name 0.50? If neither, no pre-1.0 port (w6507)."
 date: 2026-10-22
 ---
 
@@ -25,8 +25,9 @@ they rest on what a player would run:
 - **A DONE for a player-facing fix says where it ships.** The report names the Steam branch and build that carry the
   fix, or the bump that will ("development, Build 112 (1.0.0.112); no pre-release or default build has it"), and says
   whether the pre-1.0 line needs a cherry-pick: master is the 1.0 build on the Steam `development` branch; `pre-1.0` is
-  the hotfix line the default branch's builds come from until 1.0 ships. A fix players on the default branch asked for
-  that lands only on master has not reached them.
+  the hotfix line the default branch's builds come from until 1.0 ships. A fix that lands only on master has not
+  reached default-branch players; that is said, not fixed by a port: only a hang, crash or desync fix, or one the
+  request names 0.50 for, goes to pre-1.0 ([lesson](#port-to-pre-10-only-hangs-crashes-desyncs-or-what-the-request-names-w6507-2026-11-27), w6507).
 
 **Why.** Two corrections from Ben on 2026-10-22, both about the Load screen's Saves and Autosaves tabs (w1315, PR #1760,
 merged to master 2026-10-14):
@@ -57,8 +58,9 @@ anymore? hooks? a script?" (the section below).
   (each Steam branch's BuildID, the version's bump commit). Then run that build, or build that commit in the slot pool
   (`player_slots.py launch`), with the person's kind of save if the feature needs one, and open the feature.
 - A player-facing fix's DONE: `Ships in: <branch>, <build or "the next master bump">` and `pre-1.0: cherry-pick needed
-  (<wNNN or PR>)` or `pre-1.0: not needed: <why>`. If players on the default branch reported it, "not needed" needs its
-  reason in their terms (the default branch moves to 1.0 before they'd get a hotfix, or the person said so).
+  (<wNNN or PR>)` or `pre-1.0: not needed: <why>`. "Needed" only for a hang, crash or desync fix (unless its port is
+  high risk: say so) or a request that names 0.50 or pre-1.0; anything else is `not needed: not a hang, crash or
+  desync, and the request did not name 0.50`, even when default-branch players reported it (w6507).
 
 ## Where a release lands is read, not recalled (2026-10-03)
 
@@ -107,3 +109,34 @@ check that the tech is in `ResearchController`'s `_allTechs`. Then confirm on a 
 (a log or a counter on it). An EditMode fixture that builds content itself proves the code, not that players reach
 it. Label the verdict "latent" when the content is off.
 
+## Port to pre-1.0 only hangs, crashes, desyncs, or what the request names (w6507, 2026-11-27)
+
+**Rule.** Every fix lands on master first. After that, decide the `pre-1.0` port this way:
+
+- **A hang, crash or desync fix**: open the cherry-pick PR into `pre-1.0` by default. If the port is high risk (a
+  large or conflicting pick, a save or simulation change that pre-1.0's code does not share, a fix resting on 1.0-only
+  systems), do not port it. Write `pre-1.0: not ported: high risk, <why>` in the report and leave the call to the
+  request's person.
+- **Anything else** (a save that will not load, a progression blocker, a regression, a UI, cosmetic or balance fix, a
+  feature): port it only when the request names 0.50 or pre-1.0.
+- **Otherwise the fix stays on master only, with no cherry-pick**: `pre-1.0: not needed: not a hang, crash or desync,
+  and the request did not name 0.50`. Do not port a fix because it applies cleanly or because default-branch players
+  reported it, and do not ask the person whether to port it.
+
+**Why.** lothsahn, 2026-11-27 (w6507): "Stop putting fixes in .50! You should only merge things to .50 if I
+specifically request them! .50 is for hangs, crashes, and desyncs and specifically requested features and fixes".
+The old rule (`ci-release/pre-1.0-hotfix.md` step 2, the game repo's `Documentation/Pre-1.0-Hotfixes.md`) called a
+fix "essential", and so worth a cherry-pick PR, for a crash or desync but also for a save that will not load, a
+progression blocker or any regression players hit on production, and it said "The request's person decides when
+unsure". The done checklist's `pre-1.0:` line and the build-claim lesson added that a fix default-branch players
+asked for "has not reached them" until ported. Workers who read those steps (w6431, w5020 among them) took porting
+as the default and put fixes on 0.50 that nobody had asked for.
+
+**How to apply.**
+
+- Before any `pre-1.0` branch or cherry-pick, ask: **is this a hang, crash or desync fix, or did the request name
+  0.50? If neither, no pre-1.0 port.** That line is in `checklists/done.md` (8a) and `ci-release/pre-1.0-hotfix.md`
+  step 2.
+- A DONE's `pre-1.0:` line still answers (`build_claim_check.py --done` checks it), and the default answer is now
+  `not needed`.
+- A request that names 0.50 or pre-1.0 is the person's ask: port it, whatever kind of fix it is.
