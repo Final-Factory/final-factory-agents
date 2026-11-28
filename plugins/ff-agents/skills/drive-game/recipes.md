@@ -721,3 +721,22 @@ attachment att_y8ddk9bw6kon; code checked on FinalFactory master f3708fc28.
   repro and its first fix check were wrong for this reason. Move, run about 60 frames (an `eval-file` snippet that
   calls `EditorApplication.Step()`, or `wait-for`), read the hovered entity, and then click. The map behaves the same
   way after `ui.mapfocus`.
+
+## An objective or tutorial card in a built player (w6693, 2026-11-27)
+
+pr_evidence.py refuses a change to `Assets/Resources/Objectives/*.asset` without `Built player: yes, <how>` (w918), so a
+card edit needs a still from a built player. What worked on m5 (about 25 minutes for the build, 3 minutes to the card):
+
+1. Build at the PR head (clean tree, editor stopped): `bash scripts/nightly/build_player.sh <sandbox> <sha> mac` in the
+   background; it prints `ok: <player-cache>/<sha>-mac`.
+2. `python3 scripts/nightly/player_slots.py launch --detach <entry>/player/finalfactory.app -- -ffSoloNewGame 4242
+   -ffSoloObjectives Normal -ffAgentControl true -ffAgentControlDev true -ffSoloQuitAfterSeconds 1500` (HandHoldy for the
+   non-TH chain). Its JSON names `agent_session`: a per-sandbox gamedata path (`<root>/gamedata/sandboxes/<slot>/AgentControl/session-<pid>.json`),
+   not `~/Library/...`. Read `port` and `token` there.
+3. Skip one round at a time: POST `/v1/command` `{"actor":"local-player","command":"ffauto:console.run|completeCurrentObjectives"}`,
+   then `ffauto:console.close`, then poll GET `/v1/snapshot/objectives` (its `active` list) until it changes. A Development
+   player needs no `cheats.enable` (`AchievementProtection` returns false under `Debug.isDebugBuild`).
+4. Match the step on each active entry's `shortDescription`. Its `uid` is a GUID, not the asset name: a loop that matched
+   asset names never stopped and skipped past every step to an empty panel (w6693's first run). Normal reached
+   "You have completed the tutorial" after 40 skips; one more showed "Automate Bat production".
+5. GET `/v1/screenshot?maxEdge=1728` for the still, then `ff-leftovers end`.
