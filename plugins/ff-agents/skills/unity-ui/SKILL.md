@@ -73,6 +73,14 @@ the same frame; and check the census's `screen` equals the PNG's size before `co
 census of another size (exit 2, naming both sizes). `manage_camera screenshot` without a camera returns a 256x256 world
 render with no UI overlay: use `ScreenCapture.CaptureScreenshot` into `$TMPDIR` for a UI still.
 
+**Editor stills of a world card (w6567, m5).** `SetCustomRenderingResolution` drops the MCP bridge like a domain reload:
+called before the new game started, the game never started. Call it once in game, then `scripts/unity-bridge.py
+wait-ready`; at the Game view's own size (1728x917 on m5) the PNG and census matched. A world hover card shows only after
+the tooltip delay: wait about 5 s after moving the pointer (`unity-bridge.py wait-for --match <text that never appears>
+--timeout 5`) or the still has no card. The Debug Info panel covers cards and CleanCapture is read only in `Awake`: set
+`UI.Panels.DebugInfoPanel._parent` inactive by reflection. After play, EditMode tests can fail on stale play-mode state
+(`ControllerPromptsTests`, escape vs b glyph): `unity-bridge.py reload-and-wait` first (34/34 passed after it).
+
 ## 4. Verify in a built player, with full content
 
 The game repo's Deck tour (`Assets/Scripts/Diagnostics/DeckTour.cs`; `docs/UI-Architecture.md`
