@@ -172,6 +172,9 @@ carried over ([lesson](lessons/research-the-decision-not-the-topic.md#name-the-p
   `ffbox_activity show config` / `show signatures`) and quote the key and value, or say unknown.
   For what FF Factory itself did (a deploy, a clean-up, an update, a restart), read the portal's own logs with
   `mcp__machine__portal_logs` (w920) and name the source and window; never infer it from the code.
+- **A hold or "not on X" is read live, never copied from a brief** ([lesson](lessons/check-the-other-systems-live-config.md#a-hold-a-ban-or-a-not-on-x-is-read-live-never-copied-from-a-brief-w6687-2026-11-28)).
+  Before a brief, request_pair `avoid`, decide_work `needs` or `pin` keeps work off a machine, read the live lists
+  (the capacity block's `Crash holds now` line and HELD tags, `clear_crash_hold`, config `placement`) and cite what you read.
 - **What is in a player's build comes from running it** ([lesson](lessons/whats-in-a-players-build-is-checked-by-running-it.md)).
   "X is in Build N", "players on development have it", "it's not in pre-1.0": run that build (or a player of its exact
   commit) and open X, and say what you ran; from a grep, git ancestry or a past report it is a guess that names the
