@@ -743,6 +743,14 @@ class MovedTest(unittest.TestCase):
         result = ul.moves(self.census(station_info(558, 515)), self.census(station_info(558, 515)))
         self.assertEqual((result["moved"], result["gone"]), ([], []))
 
+    def test_an_animated_element_whose_box_changes_is_not_a_move(self):
+        """w6592: the joining screen's spinner turns every frame (JoinConnectingPanel.cs:61), so its drawn box was 25 x 17
+        px off in the after still and read as a move nobody asked for."""
+        spin = lambda w, h: [el("Joining/Content/Spinner", [600, 400, 600 + w, 400 + h])]
+        before, after = self.census(spin(40, 60)), self.census(spin(65, 43))
+        self.assertEqual(len(ul.moves(before, after)["moved"]), 1)
+        self.assertEqual(ul.moves(before, after, animated=["Content/Spinner"])["moved"], [])
+
     def test_a_box_that_moved_as_a_whole_is_one_line_at_its_object(self):
         result = ul.moves(self.census(station_info(558, 515)), self.census(station_info(540, 62)))
         self.assertEqual([u["path"] for u in result["moved"]], [f"{GP}/BuildInfoPanel"])
