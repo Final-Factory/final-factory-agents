@@ -26,3 +26,7 @@ is not a test result to retry, it is a stop.
       verified elsewhere, or a smaller probe that stops before the fault (stop the player at the first stall sign, not
       at the GPU restart).
 - [ ] **FF Factory enforces it** where it can see the crash: see the lesson for the check and how a person clears it.
+- [ ] **A crash hold ends when FF Factory's list says so, not when a brief stops saying it.** Before a brief, a
+      request_pair `avoid` or a queue `needs` keeps work off a machine for a crash hold, read the capacity block's
+      `Crash holds now` line (or `clear_crash_hold`) and cite it; a hold only an earlier brief names is gone (w6687:
+      BEAST was kept free of players for a day by a copied line after its hold cleared in 16 minutes).
