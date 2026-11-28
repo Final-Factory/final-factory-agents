@@ -132,6 +132,18 @@ changed code runs) in your first report and in the PR description.
 
       Then one pair run is a no-new-fork check, not a reproduction. Rest the red/green on the failing-first test and
       each report's dump diff, put the missing reproduction in the PR's `Not verified:` line, and file no third replay.
+- [ ] A fork that lasts fewer heartbeats than the detector's 8-heartbeat sample is proven with the per-heartbeat
+      audit and a state set live, not with the detector or a replay of the player's save. An example is a load that
+      re-spawns an effect one heartbeat late.
+      - Set the state live in a scenario: cast, then `ffauto:desync.forceresync|all` while the effect still holds.
+      - Run both peers with `-ffAutomationDeterminismAudit true` and compare with
+        `scripts/audit/compare_determinism_reports.sh`.
+      - In w6755 (PR #4483, 2026-11-28, a held Guardian shield lost at load), the detector matched 36 of 36 in the run
+        where the audit forked at epoch 2 heartbeat 1.
+      - In w6755 the player's served save stayed green through a join and 12 re-serves: the 8 s Guardian shields had
+        expired before the client joined.
+      - Sandbox note: there the scenario's own `fingerprintsMatch` step cannot spawn Git Bash (0xC0000142). Run the
+        comparison script on each leg's `host.log` and `a.log` by hand.
 - [ ] A diagnosis's claim about content ("the only prefab with a collider under a spinner") is checked by an editor
       scan of every prefab, not copied from the diagnosis. In w4648 a scan of 2,496 prefabs found two more,
       IndomitableObelisk and SingularityVessel; on master the obelisk's collider followed a rotation that
