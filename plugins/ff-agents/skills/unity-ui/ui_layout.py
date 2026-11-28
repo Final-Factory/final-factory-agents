@@ -322,7 +322,8 @@ def world_marker_patterns(spec: dict | None) -> list[str]:
 def animated_patterns(spec: dict | None) -> list[str]:
     """hud-clusters.json `animated`: elements that pulse or fade on the clock (a gauge's glow), so their colour and alpha
     depend on the moment a still was taken, not on the change. `style` lists them as not measured, and pr_evidence.py's
-    Style rule does not count a clause naming one (w4288, PR #3665)."""
+    Style rule does not count a clause naming one (w4288, PR #3665). An element that turns (a spinner) is listed too:
+    `moves` does not count its box changing (w6592)."""
     return list(((spec or {}).get("animated") or {}).get("paths", []))
 
 
@@ -782,7 +783,7 @@ def keyed(census: dict) -> dict:
 
 
 def moves(before: dict, after: dict, move_px: float = 4.0, pins: list | None = None,
-          markers: list[str] | None = None) -> dict:
+          markers: list[str] | None = None, animated: list[str] | None = None) -> dict:
     """What moved between two censuses of the same save, size and open screens (w826).
 
     Every element whose rect (the RectTransform's, not the clipped part) changed more than move_px on any edge is
@@ -794,11 +795,14 @@ def moves(before: dict, after: dict, move_px: float = 4.0, pins: list | None = N
     and "new" are blocks with no element on the other side. A gone block that a pin of `pins` (hud-pins.json) names and
     the game hides by design in the after census (pin_check 'covered', covered_by_window) is in "covered", not "gone"
     (w3196: the hover card under a docked window, w2185, read as gone and asked the requester's words for it). A moved
-    block that `markers` (world_marker_patterns) names is in "markers", not "moved" (w3263)."""
+    block that `markers` (world_marker_patterns) names is in "markers", not "moved" (w3263). An element `animated`
+    (hud-clusters.json `animated`) names turns or pulses on the clock, so its box differs from still to still and is not
+    counted as a move (w6592: the joining screen's spinner, rotated every frame, read as a 25 x 17 px move)."""
     old, now = keyed(before), keyed(after)
     common = [k for k in now if k in old]
     delta = {k: [now[k][i] - old[k][i] for i in range(4)] for k in common}
-    moved = [k for k in common if max(abs(d) for d in delta[k]) > move_px and not SLIDER_VALUE.search(k[0])]
+    moved = [k for k in common if max(abs(d) for d in delta[k]) > move_px and not SLIDER_VALUE.search(k[0])
+             and not any(path_has(k[0], pat) for pat in animated or [])]
 
     def under(prefix: str):
         return [k for k in common if k[0] == prefix or k[0].startswith(prefix + "/")]
@@ -2121,7 +2125,8 @@ def run_check(args) -> int:
 
     pins = json.loads(Path(args.pins or default_pins()).read_text(encoding="utf-8")).get("pins", [])
     markers = world_marker_patterns(spec)
-    for line in moved_lines([moves(before, after, args.move_px, pins, markers)], args.move_px, "ui_layout.py check"):
+    for line in moved_lines([moves(before, after, args.move_px, pins, markers, animated_patterns(spec))], args.move_px,
+                            "ui_layout.py check"):
         print(line)
     return 1 if failed else 0
 
@@ -2136,8 +2141,9 @@ def run_pins(args) -> int:
 
 def run_moves(args) -> int:
     pins = json.loads(Path(args.pins or default_pins()).read_text(encoding="utf-8")).get("pins", [])
-    markers = world_marker_patterns(json.loads(Path(args.clusters or default_clusters()).read_text(encoding="utf-8")))
-    results = [moves(load(b), load(a), args.move_px, pins, markers) for b, a in args.pair]
+    spec = json.loads(Path(args.clusters or default_clusters()).read_text(encoding="utf-8"))
+    markers = world_marker_patterns(spec)
+    results = [moves(load(b), load(a), args.move_px, pins, markers, animated_patterns(spec)) for b, a in args.pair]
     for line in moved_lines(results, args.move_px, "ui_layout.py moves"):
         print(line)
     return 0
