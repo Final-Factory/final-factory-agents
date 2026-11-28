@@ -149,6 +149,12 @@ your `launch --detach` printed (its JSON names that pid's `agent_session` file) 
 (`Tools/AgentKit/<platform>/ff-agent`), otherwise `curl` — same HTTP surface, and
 `contracts/agent-channel-http.md` in the 068 spec is the contract either way. **127.0.0.1, never
 `localhost`**: Mono's `HttpListener` answers a `localhost` Host header with 400.
+⚠️ **On a worker install, go straight to the HTTP call** (w6520, lothdesktop, 2026-11-27, the 1.0.0.67 game repo kit):
+`ff-agent --pid <pid> cmd ...` and `ff-agent --session <file> cmd ...` both answered `unknown command "--pid"`, and
+`ff-agent cmd ... --pid <pid>` answered "no running game with pid N has agent control on" while the player's log said
+`[AgentControl] Listening` and its `session-<pid>.json` sat in `<data root>/AgentControl`. A `POST
+http://127.0.0.1:<port>/v1/command` with `Authorization: Bearer <token>` from that file's `port` and `token`, body
+`{"actor":"local-player","chain":["ffauto:..."]}`, worked at once (a ten-line Python `urllib` script).
 
 | editor path | built-player path |
 |---|---|
