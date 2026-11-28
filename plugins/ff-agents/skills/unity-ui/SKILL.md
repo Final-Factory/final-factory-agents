@@ -170,6 +170,16 @@ census (`<shot>.json`: small, clipped, off-screen and overlapping text, covered 
   `Style:` has no delta E: take a twin on the base build (a notification toast: `ffauto:ui.notify|info|<Messages
   constant>`) and pass `--ref <its path> --ref-census <base census> --ref-shot <base still>` (the toast: delta E 1.0).
   One Escape on a whole-station selection narrows it to its Station Core, still a building; two clear it.
+- **Deck tour traps for a keybinding change (w6651).** The tour's `key` steps never complete a composite rebind in a
+  built player: clicking the Move row in Settings > Keybindings (`KeyboardShortcut.PerformInteractiveRebinding`) shows
+  "Press a key to bind to Move: up" and waits on through every injected key (the w1784 single-key rebind used
+  `StartCapture`, which does read them). Cancel it and set the binding with `ffauto:input.rebind|Move|up|<Keyboard>/upArrow`;
+  that writes the live `GameInput` but fires no `OnKeybindsChanged`, so click a no-op `Reset` on another row
+  (`text:Reset#3`, `UpdateKeybindsFromGameInput`) to fire it as a finished rebind would, and say in the report that the
+  keys were set by command. A HUD element hidden under the pause menu (the tutorial card, `ObjectiveItem`) unsubscribes
+  in `OnDisable` and misses an event raised while the menu is open: shoot it after the menu closes, then again after a
+  forced redraw (`prompts:deck`, then `prompts:keyboardmouse`), which tells a stale draw (w6651: still [W] [A] [S] [D]
+  until the redraw, then [Up] [Q] [S] [D]) from wrong labels.
 - **Fix-pack traps (w3827, fixed or recorded by w3846; checklists/ui.md item 41).** A census from a player built before
   w3846 counts slots in rows a RectMask2D hides (InventoryGridFit's view) as clipped, overlapping and unreachable (w3827's
   core-open at 1280x720: 30, 4 and 4, all masked); the census skips them now (`DeckTourChecks.MaskedOut`). `ui_layout.py
