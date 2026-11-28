@@ -188,6 +188,16 @@ census (`<shot>.json`: small, clipped, off-screen and overlapping text, covered 
   in `OnDisable` and misses an event raised while the menu is open: shoot it after the menu closes, then again after a
   forced redraw (`prompts:deck`, then `prompts:keyboardmouse`), which tells a stale draw (w6651: still [W] [A] [S] [D]
   until the redraw, then [Up] [Q] [S] [D]) from wrong labels.
+- **Style against a classic panel when the touched element has a twin (w6701).** `ui_layout.py check --touched X`
+  compares each touched element that has a twin in the before (or `--ref-census`) census with that twin, never with
+  `--ref` (`style()`: `own`/`twin`), and a fragment like `ObjectiveItem` also takes in the tutorial card's animated
+  `RedAlertFrame/AlertDash` (delta E 21-36 from the dash's phase). To measure against the classic look, pass `--after` a
+  census that holds both the touched panel and the classic one (a station still with `MiniInventory` open), `--before` a
+  census without the classic panel, and `--ref MiniInventory --ref-shot <that same still>`: the reference then comes from
+  the after census and every touched element is compared with it (w6701: the card's body against the Player Inventory,
+  delta E 1.8 at 1920x1080 and 5.4 at 1280x800, alpha 1.00). Read only that run's `Style:` line. For a station still in
+  a HandHoldy solo new game, place Cargo Holds: the Assembler is not researched there, so `blueprint.place` drops it
+  ("1 part of this blueprint is not researched yet") and Station Info stays "not shown".
 - **Fix-pack traps (w3827, fixed or recorded by w3846; checklists/ui.md item 41).** A census from a player built before
   w3846 counts slots in rows a RectMask2D hides (InventoryGridFit's view) as clipped, overlapping and unreachable (w3827's
   core-open at 1280x720: 30, 4 and 4, all masked); the census skips them now (`DeckTourChecks.MaskedOut`). `ui_layout.py
