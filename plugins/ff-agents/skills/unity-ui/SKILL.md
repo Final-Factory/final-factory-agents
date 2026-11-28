@@ -191,6 +191,17 @@ census (`<shot>.json`: small, clipped, off-screen and overlapping text, covered 
 - **A window with no classic twin in the census** (a new window, w5048: UpgradeTool) leaves `ui_layout.py check`'s
   Style line saying the reference panel is missing (it said "nothing checked" before 1.35.13). Pass
   `--touched <window> --ref <window>`: each touched element is measured against its own look in the before census.
+- **A new control copied from a sibling has no twin either (w6563).** `--touched X --ref Y` pairs each touched element
+  only with the same path in the ref census, so PR #4440's StorageOnlyToggle/Switch, a copy of
+  SortButton/AutoSortCheckbox/Switch, printed "new, no twin before, not measured" whatever `--ref` named. Measure it
+  against the control it copies in the same after still with ui_layout's own `fills()` and `fill_distance()` on both
+  rects (import `ui_layout` from `$FF_SKILLS/unity-ui`), and write that on the `Style:` line: "X (touched) vs Y: delta E
+  0.0 (on screen), alpha 1.00 vs 1.00, same art". pr_evidence accepts it.
+- **A foreground launch can be refused while the players broker is on (w6563, LothDesktop 2026-11-28).** With the
+  daemon's shared lock on (`FF_PLAYER_BROKER=1`) a foreground `player_slots.py launch <build> -- ...` failed with "the
+  slot pool failed: PermissionError(13, 'Permission denied')" and started nothing. `launch --detach` goes through the
+  broker and works: read the `pid` from the JSON it prints, wait until that pid is gone (`tasklist //FI "PID eq <pid>"`),
+  then read `tour.log`. Name the build's `player` folder (`<cache>/<sha>-win/player`), not the cache entry's name.
 - **Tour traps from w4120.** (1) A `record` clip's frames (`<out>/clip-<name>/NNNNN.jpg`, where `<name>` is the step's name with each run of characters outside `A-Za-z0-9_-` turned into one `_`, so a path `a/b.c` gives `clip-a_b_c`: `DeckTour.Record`, `Safe`) are stored upside down: `ui_check.py
   flicker` reads them as they are, but a reviewable mp4 needs `ffmpeg -framerate 60 -i <clip>/%05d.jpg -vf vflip ...`,
   and you look at one frame before you publish (w4120 published two flipped mp4s first). (2) The player's seeded world
