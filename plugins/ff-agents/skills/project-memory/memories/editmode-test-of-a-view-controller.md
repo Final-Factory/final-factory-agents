@@ -16,3 +16,13 @@ testing `MapMarkerDisplayController.RefreshView` with the real `Assets/Prefabs/M
   views from the controller's own dictionary, not `GetComponentInChildren` (it returned a dropped, stale view: a false
   "not cyan" failure).
 - Prove the test bites: revert the production hunk (`git diff ... > p; git apply -R p`), run it RED, re-apply.
+- **Skipping that `OnDisable` breaks other tests, not yours** (w6647, 2026-11-27, game PR #4458,
+  `MovementKeysObjectiveTest.ACardShownAgainAfterARebind_ShowsTheNewKey`): the test invoked `ObjectiveItem.OnEnable` by
+  reflection, which subscribed the card to the static `ControllerPrompts.Changed`, and then only `DestroyImmediate`d it.
+  EditMode's destroy does not call `OnDisable` on a plain MonoBehaviour, so the destroyed card stayed subscribed and
+  every later test that refreshed the prompts threw `NullReferenceException`: CI run 46110444706 had 60 red tests in
+  `ControllerPromptsTests`, `TrackpadTapTests`, `RadialHotbarFeedTests`, the Deck glyph tests and more, none of them the
+  new one. Put the asserts in `try` and the `OnDisable` invoke in `finally`. To catch it locally, run the new test
+  first in one `run_tests` call together with two or three classes that fire the same static event.
+- A HUD card that a menu disables misses every event fired while it is hidden (a keybind change in Settings): have it
+  redraw in `OnEnable` as well as on the event (`ObjectiveItem.OnEnable`, w6647).
